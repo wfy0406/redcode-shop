@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, NavLink } from 'react-router';
 import { Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -142,17 +143,28 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* 手機全屏玻璃 overlay 選單 */}
-      {menuOpen && (
-        <nav
-          className="fixed inset-0 top-[60px] z-40 flex flex-col gap-2 px-8 pt-10 md:hidden"
-          style={{
-            background: 'var(--glass-bg-strong)',
-            backdropFilter: 'blur(16px)',
-            WebkitBackdropFilter: 'blur(16px)',
-          }}
-          aria-label="手機導航"
-        >
+      {/* 手機全屏玻璃 overlay 選單 —— 用 createPortal 掛去 document.body，
+          因為 header 有 backdrop-filter，會令入面嘅 fixed 元素變成相對 header 定位，
+          選單會塌落得幾十 px 高兼透出內容變重疊 */}
+      {menuOpen &&
+        createPortal(
+          <nav
+            className="flex flex-col gap-2 overflow-y-auto px-8 pb-10 pt-4 md:hidden"
+            style={{
+              position: 'fixed',
+              top: 60,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 100,
+              // 近乎實色底：部分手機瀏覽器唔支援 backdrop-filter，
+              // 淨用玻璃色會透出內容變重疊，所以用 97% 實色底 + blur 做漸進增強
+              background: 'rgba(10, 6, 20, 0.97)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+            }}
+            aria-label="手機導航"
+          >
           {[
             ...NAV_LINKS,
             { to: '/cart', label: '購物車' },
@@ -186,9 +198,10 @@ export default function Navbar() {
             <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
             員工內部系統
           </a>
-          <style>{`@keyframes mobile-nav-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-        </nav>
-      )}
+            <style>{`@keyframes mobile-nav-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+          </nav>,
+          document.body,
+        )}
     </header>
   );
 }

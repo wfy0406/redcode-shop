@@ -213,7 +213,7 @@ export default function Home() {
         />
         {/* 手機版：主標上方一張細卡 */}
         <FloatCard
-          src="/gloglo-1.jpg"
+          src="/gloglo-5.jpg"
           caption="live ♡"
           rotate={-4}
           parallax={0.8}
@@ -522,12 +522,12 @@ export default function Home() {
         </div>
         <div className="mt-8 flex gap-4 overflow-x-auto px-5 pb-4 md:px-8 xl:px-12 [scrollbar-width:thin]">
           {[
-            { src: '/gloglo-3.jpg', alt: '客戶著身打卡相一' },
-            { src: '/gloglo-1.jpg', alt: '客戶著身打卡相二' },
+            { src: '/gloglo-3.jpg', alt: 'Glo Glo 聖誕造型打卡' },
+            { src: '/gloglo-4.jpg', alt: 'Glo Glo 同店狗合照一' },
             { src: '/video0-mid.jpg', alt: '直播截圖打卡一' },
-            { src: '/gloglo-2.jpg', alt: '客戶著身打卡相三' },
+            { src: '/gloglo-5.jpg', alt: 'Glo Glo 生活照打卡' },
             { src: '/video1-mid.jpg', alt: '直播截圖打卡二' },
-            { src: '/about-texture.jpg', alt: '品牌花絮相' },
+            { src: '/gloglo-2.jpg', alt: 'Glo Glo 同店狗合照二' },
           ].map((photo) => (
             <DuotoneImage
               key={photo.src + photo.alt}
