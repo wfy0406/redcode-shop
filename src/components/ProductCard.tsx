@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
-import { Link } from 'react-router';
-import { Heart, ShoppingBag } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router';
+import { Check, Heart, ShoppingBag } from 'lucide-react';
 import type { Product } from '@/data/products';
 import { formatListedAt, formatPrice, isNewArrival } from '@/data/products';
 import { productCategoryLabel } from '@contracts/types';
+import { trpc } from '@/providers/trpc';
+import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 
 /**
@@ -48,6 +50,23 @@ function sprinkleStars(container: HTMLElement) {
 export default function ProductCard({ product, className }: ProductCardProps) {
   const [wished, setWished] = useState(false);
   const heartRef = useRef<HTMLButtonElement>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
+  const utils = trpc.useUtils();
+  const [added, setAdded] = useState(false);
+  const [addFailed, setAddFailed] = useState(false);
+  const addMutation = trpc.cart.add.useMutation({
+    onSuccess: async () => {
+      setAdded(true);
+      window.setTimeout(() => setAdded(false), 2000);
+      await utils.cart.list.invalidate();
+    },
+    onError: () => {
+      setAddFailed(true);
+      window.setTimeout(() => setAddFailed(false), 2000);
+    },
+  });
   const discounted = product.discountPrice !== undefined && product.discountPrice < product.price;
   const showNew = !product.live && !product.soldOut && isNewArrival(product.listedAt);
 
@@ -74,7 +93,19 @@ export default function ProductCard({ product, className }: ProductCardProps) {
   const onQuickAdd = (e: MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    // CART-SLOT: 之後接購物車 state
+    // 要揀尺寸嘅商品 → 去詳情頁揀；demo 商品（非數字 id）→ 去詳情頁
+    const productId = Number(product.id);
+    if ((product.sizes && product.sizes.length > 0) || !Number.isInteger(productId)) {
+      navigate(`/products/${product.id}`);
+      return;
+    }
+    // 未登入 → 去登入頁（記返邊度嚟）
+    if (!user) {
+      navigate('/login', { state: { from: location.pathname } });
+      return;
+    }
+    if (addMutation.isPending || added) return;
+    addMutation.mutate({ productId, quantity: 1 });
   };
 
   return (
@@ -169,8 +200,19 @@ export default function ProductCard({ product, className }: ProductCardProps) {
               onClick={onQuickAdd}
               className="btn btn-secondary absolute inset-x-4 bottom-4 !py-2.5 text-sm opacity-0 translate-y-3 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100"
             >
-              <ShoppingBag size={16} aria-hidden="true" />
-              快速加入購物車
+              {added ? (
+                <>
+                  <Check size={16} aria-hidden="true" className="text-success" />
+                  已加入購物車 ✓
+                </>
+              ) : addFailed ? (
+                '加入失敗，請再試'
+              ) : (
+                <>
+                  <ShoppingBag size={16} aria-hidden="true" />
+                  快速加入購物車
+                </>
+              )}
             </button>
           )}
         </div>

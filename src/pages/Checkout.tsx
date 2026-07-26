@@ -16,7 +16,7 @@ import { getToken } from '@/lib/auth';
  * RedCode 結帳（design-system.md §P7，含付款截圖上傳）
  * 三步玻璃進度條（步驟點 = 四角星，完成步驟填金）：
  * ① 確認訂單：cart 項目 + 總計；收貨地址 textarea（預填 user.address）+ 備註
- * ② 付款：orders.create → 收款資料卡（FPS 轉數快／銀行轉帳 佔位 + TODO 換真資料）
+ * ② 付款：orders.create → 收款資料卡（中銀／PayMe／Alipay／FPS 真資料）
  *    + dropzone 上傳付款截圖（fetch POST /api/upload，Bearer token）→ orders.attachPaymentProof
  * ③ 完成：許願星著燈 + 訂單編號 + 「職員審核中」+ 去會員中心 CTA
  * 未登入：玻璃卡提示（同 Cart）
@@ -25,19 +25,31 @@ import { getToken } from '@/lib/auth';
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 
-// TODO: 換返 RedCode 真收款資料（而家係佔位，上線前必換）
+// RedCode 官方收款資料（同 /payment 頁一致）
 const PAYMENT_METHODS = [
   {
-    label: 'FPS 轉數快',
-    account: '9123 4567',
-    hint: '戶口名稱：RedCode HK Limited',
-    copyValue: '91234567',
+    label: '中銀香港',
+    account: '012-586-2-113136-9',
+    hint: '戶口名稱：RED CODE HK LIMITED',
+    copyValue: '012-586-2-113136-9',
   },
   {
-    label: '銀行轉帳',
-    account: 'HSBC 123-456789-001',
-    hint: '戶口名稱：RedCode HK Limited',
-    copyValue: '123-456789-001',
+    label: 'PayMe',
+    account: '97083811',
+    hint: 'PayMe 過數',
+    copyValue: '97083811',
+  },
+  {
+    label: 'Alipay 支付寶',
+    account: '97083811',
+    hint: '支付寶香港',
+    copyValue: '97083811',
+  },
+  {
+    label: 'FPS 轉數快',
+    account: '120070784',
+    hint: '收款名稱：RED CODE HK LIMITED',
+    copyValue: '120070784',
   },
 ] as const;
 
