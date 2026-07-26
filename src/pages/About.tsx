@@ -149,7 +149,7 @@ export default function About() {
               style={{ animationDelay: '0.6s' }}
             >
               <p>
-                每晚十點，我會喺 Facebook 開直播，同寶寶們逐件衫慢慢睇。
+                每晚我都會喺 Facebook 開直播，同寶寶們逐件衫慢慢睇。
                 邊個款顯瘦、邊隻色啱黃皮膚、彈性夠唔夠——你想知嘅，我著上身話你知。
               </p>
               <p>
@@ -378,7 +378,7 @@ export default function About() {
         >
           <p className="script text-2xl md:text-3xl">see you in the live room ♡</p>
           <h2 className="mx-auto mt-3 max-w-xl font-serif-tc text-2xl font-semibold leading-[1.3] text-starlight md:text-[32px]">
-            今晚十點，直播房見
+            今晚，直播房見
           </h2>
           <p className="mx-auto mt-4 max-w-md text-[15px] leading-[1.75] text-txt-2">
             追蹤 Facebook 專頁就唔會錯過任何一場；
