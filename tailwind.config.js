@@ -5,6 +5,37 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        /* RedCode 設計系統色板（§1）——對應 index.css custom properties */
+        space: {
+          0: "var(--space-0)",
+          1: "var(--space-1)",
+          2: "var(--space-2)",
+          3: "var(--space-3)",
+          4: "var(--space-4)",
+          line: "var(--space-line)",
+        },
+        pink: {
+          DEFAULT: "var(--pink)",
+          soft: "var(--pink-soft)",
+          tint: "var(--pink-tint)",
+        },
+        purple: {
+          DEFAULT: "var(--purple)",
+          text: "var(--purple-text)",
+        },
+        lavender: "var(--lavender)",
+        gold: {
+          DEFAULT: "var(--gold)",
+          soft: "var(--gold-soft)",
+        },
+        starlight: "var(--starlight)",
+        txt: {
+          1: "var(--text-1)",
+          2: "var(--text-2)",
+          3: "var(--text-3)",
+          disabled: "var(--text-disabled)",
+        },
+        success: "var(--success)",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -48,6 +79,13 @@ module.exports = {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+      },
+      fontFamily: {
+        display: ["'Cormorant Garamond'", "'Noto Serif TC'", "serif"],
+        "serif-tc": ["'Noto Serif TC'", "serif"],
+        body: ["'Noto Sans TC'", "-apple-system", "'PingFang TC'", "'Microsoft JhengHei'", "sans-serif"],
+        mono: ["'DM Mono'", "'Noto Sans TC'", "monospace"],
+        script: ["'Great Vibes'", "cursive"],
       },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",
