@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { Facebook, MessageCircle, Play } from 'lucide-react';
+import { Clapperboard, Facebook, MessageCircle, Play } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
 import { PRODUCTS } from '@/data/products';
@@ -103,6 +103,44 @@ function FloatCard({ src, caption, rotate, parallax, className, dim }: FloatCard
   );
 }
 
+/* ---------- 宣傳影片（404 → 玻璃提示卡 fallback） ---------- */
+function PromoVideo({ src, poster, className }: { src: string; poster: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <div
+        className={`flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-center ${className ?? ''}`}
+        style={{
+          background: 'var(--glass-bg)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+        }}
+        role="img"
+        aria-label="影片即將上架"
+      >
+        <Clapperboard size={28} className="text-purple-text" aria-hidden="true" />
+        <p className="script text-2xl leading-none text-pink-tint">影片即將上架 ♡</p>
+        <p className="text-[13px] text-txt-3">宣傳影片準備中，敬請期待</p>
+      </div>
+    );
+  }
+
+  return (
+    <video
+      src={src}
+      poster={poster}
+      controls
+      muted
+      loop
+      playsInline
+      preload="metadata"
+      onError={() => setFailed(true)}
+      className={`h-full w-full object-cover ${className ?? ''}`}
+    />
+  );
+}
+
 /* ---------- Section 標題 ---------- */
 function SectionHeading({ en, zh, center }: { en: string; zh: string; center?: boolean }) {
   return (
@@ -117,6 +155,16 @@ function SectionHeading({ en, zh, center }: { en: string; zh: string; center?: b
   );
 }
 
+/* ---------- 客戶打卡牆靜態 fallback（API 失敗或未有資料時用，保證永遠有嘢睇） ---------- */
+const STATIC_WALL_PHOTOS = [
+  { src: '/gloglo-3.jpg', alt: 'Glo Glo 聖誕造型打卡' },
+  { src: '/gloglo-4.jpg', alt: 'Glo Glo 同店狗合照一' },
+  { src: '/gloglo-1.jpg', alt: 'Glo Glo 白西裝造型打卡' },
+  { src: '/gloglo-5.jpg', alt: 'Glo Glo 生活照打卡' },
+  { src: '/promo-1-poster.jpg', alt: '公司宣傳拍攝打卡' },
+  { src: '/gloglo-2.jpg', alt: 'Glo Glo 同店狗合照二' },
+];
+
 export default function Home() {
   // 後端連唔到（純前端預覽）時 fallback 用內建示範商品
   const { data: dbProducts, isError: productsError } = trpc.products.list.useQuery(
@@ -126,6 +174,25 @@ export default function Home() {
   const allProducts =
     productsError || !dbProducts ? PRODUCTS : dbProducts.map(mapDbProduct);
   const featured = allProducts.slice(0, 4);
+
+  // 客戶打卡牆：API 失敗或空陣列 → 靜態 6 張預設相
+  const { data: praiseData, isError: praiseError } = trpc.praise.list.useQuery(undefined, {
+    retry: false,
+  });
+  const wallPhotos =
+    !praiseError && praiseData && praiseData.length > 0
+      ? praiseData.map((p) => ({
+          key: `praise-${p.id}`,
+          src: p.image,
+          alt: p.caption ?? '客戶打卡分享',
+          caption: p.caption ?? undefined,
+        }))
+      : STATIC_WALL_PHOTOS.map((p) => ({
+          key: `static-${p.src}`,
+          src: p.src,
+          alt: p.alt,
+          caption: undefined as string | undefined,
+        }));
   const picksRef = useReveal<HTMLDivElement>();
   const newRef = useReveal<HTMLDivElement>();
   const liveRef = useReveal<HTMLDivElement>();
@@ -172,7 +239,7 @@ export default function Home() {
           caption="tonight's pick"
           rotate={3}
           parallax={0.5}
-          className="bottom-[16%] right-[22%] hidden w-44 lg:block"
+          className="bottom-6 right-4 w-28 sm:w-32 md:bottom-[10%] md:right-[8%] lg:bottom-[16%] lg:right-[22%] lg:w-44"
         />
         <FloatCard
           src="/gloglo-2.jpg"
@@ -182,13 +249,13 @@ export default function Home() {
           dim
           className="bottom-[8%] right-[4%] hidden w-40 xl:block"
         />
-        {/* 手機版：主標上方一張細卡 */}
+        {/* 手機版：細卡放主標右側空白位（唔壓花體字），tonight's pick 卡就喺右下 */}
         <FloatCard
           src="/gloglo-5.jpg"
           caption="live ♡"
           rotate={-4}
           parallax={0.8}
-          className="right-5 top-20 w-28 md:hidden"
+          className="right-4 top-[34%] w-24 md:hidden"
         />
 
         {/* 文字區：左對齊，佔欄 1–7 */}
@@ -411,16 +478,7 @@ export default function Home() {
               style={{ borderColor: 'var(--glass-border)' }}
             >
               <div className="relative aspect-video">
-                <video
-                  src="/promo-1.mp4"
-                  poster="/promo-1-poster.jpg"
-                  controls
-                  muted
-                  loop
-                  playsInline
-                  preload="metadata"
-                  className="h-full w-full object-cover"
-                />
+                <PromoVideo src="/promo-1.mp4" poster="/promo-1-poster.jpg" />
                 <span
                   className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-gold px-3 py-1 font-mono text-xs font-medium text-space-1"
                   aria-hidden="true"
@@ -441,16 +499,7 @@ export default function Home() {
               style={{ borderColor: 'var(--glass-border)' }}
             >
               <div className="relative aspect-[9/16] max-h-[520px] w-full">
-                <video
-                  src="/promo-2.mp4"
-                  poster="/promo-2-poster.jpg"
-                  controls
-                  muted
-                  loop
-                  playsInline
-                  preload="metadata"
-                  className="h-full w-full object-cover"
-                />
+                <PromoVideo src="/promo-2.mp4" poster="/promo-2-poster.jpg" />
                 <span
                   className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-gold px-3 py-1 font-mono text-xs font-medium text-space-1"
                   aria-hidden="true"
@@ -522,7 +571,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ============ 7. 客戶打卡牆（IG 風格横 scroll，全彩顯示） ============ */}
+      {/* ============ 7. 客戶打卡牆（IG 風格横 scroll，duotone→hover 上色） ============ */}
       <section className="mt-16 md:mt-24">
         <div ref={wallRef} className="reveal mx-auto max-w-[1280px] px-5 md:px-8 xl:px-12">
           <SectionHeading en="Star Girls" zh="客戶打卡牆" center />
@@ -531,22 +580,21 @@ export default function Home() {
           </p>
         </div>
         <div className="mt-8 flex gap-4 overflow-x-auto px-5 pb-4 md:px-8 xl:px-12 [scrollbar-width:thin]">
-          {[
-            { src: '/gloglo-3.jpg', alt: 'Glo Glo 聖誕造型打卡' },
-            { src: '/gloglo-4.jpg', alt: 'Glo Glo 同店狗合照一' },
-            { src: '/gloglo-1.jpg', alt: 'Glo Glo 白西裝造型打卡' },
-            { src: '/gloglo-5.jpg', alt: 'Glo Glo 生活照打卡' },
-            { src: '/promo-1-poster.jpg', alt: '公司宣傳拍攝打卡' },
-            { src: '/gloglo-2.jpg', alt: 'Glo Glo 同店狗合照二' },
-          ].map((photo) => (
-            <DuotoneImage
-              key={photo.src + photo.alt}
-              off
-              src={photo.src}
-              alt={photo.alt}
-              wrapperClassName="w-56 shrink-0 rounded-2xl border md:w-64"
-              className="aspect-square w-full object-cover"
-            />
+          {wallPhotos.map((photo) => (
+            <div key={photo.key} className="w-56 shrink-0 md:w-64">
+              <DuotoneImage
+                off
+                src={photo.src}
+                alt={photo.alt}
+                wrapperClassName="rounded-2xl border"
+                className="aspect-square w-full object-cover"
+              />
+              {photo.caption && (
+                <p className="mt-2 text-center text-[13px] leading-[1.5] text-txt-3">
+                  {photo.caption}
+                </p>
+              )}
+            </div>
           ))}
         </div>
       </section>
