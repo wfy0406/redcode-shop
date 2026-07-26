@@ -74,11 +74,16 @@ export default function Footer() {
           style={{ borderColor: 'var(--space-line)' }}
         >
           <p>© {new Date().getFullYear()} RedCode HK Limited. All rights reserved.</p>
-          {/* 員工入口（低調） */}
-          <Link to="/admin" className="flex items-center gap-2 transition-colors hover:text-lavender">
+          {/* 員工入口（低調，連去 Render 倉庫系統） */}
+          <a
+            href="https://red-code-wms.onrender.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 transition-colors hover:text-lavender"
+          >
             <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
             員工內部系統
-          </Link>
+          </a>
         </div>
       </div>
     </footer>

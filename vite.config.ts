@@ -7,6 +7,8 @@ import { inspectAttr } from 'plugin-inspect-react-code'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // 相對資產路徑：預覽環境若喺子路徑服務，絕對 /assets 會 404 導致白畫面
+  base: './',
   plugins: [
     devServer({ entry: "api/boot.ts", exclude: [/^\/(?!api\/).*$/] }),
     inspectAttr(), react()],

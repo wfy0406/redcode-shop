@@ -2,8 +2,9 @@ import "dotenv/config";
 
 function required(name: string): string {
   const value = process.env[name];
-  if (!value && process.env.NODE_ENV === "production") {
-    throw new Error(`Missing required environment variable: ${name}`);
+  if (!value) {
+    // 唔好令 server 成個 crash（會變白畫面）；降級，DB 查詢先至報錯
+    console.warn(`[env] Missing environment variable: ${name}`);
   }
   return value ?? "";
 }

@@ -13,6 +13,9 @@ import { useAuth } from '@/hooks/useAuth';
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85200000000';
 
+/** 員工內部系統（倉庫/HR，Render 託管） */
+const STAFF_SYSTEM_URL = 'https://red-code-wms.onrender.com/';
+
 const NAV_LINKS = [
   { to: '/', label: '首頁' },
   { to: '/products', label: '商品' },
@@ -115,14 +118,16 @@ export default function Navbar() {
             </Link>
           )}
 
-          {/* 員工內部系統：最右、低調但搵得到 */}
-          <Link
-            to="/admin"
+          {/* 員工內部系統：最右、低調但搵得到（連去 Render 倉庫系統） */}
+          <a
+            href={STAFF_SYSTEM_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="hidden items-center gap-2 text-[13px] text-txt-3 transition-colors hover:text-lavender lg:flex"
           >
             <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
             員工內部系統
-          </Link>
+          </a>
 
           {/* 手機 hamburger */}
           <button
@@ -171,14 +176,16 @@ export default function Navbar() {
               </NavLink>
             ),
           )}
-          <NavLink
-            to="/admin"
+          <a
+            href={STAFF_SYSTEM_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             onClick={() => setMenuOpen(false)}
             className="mt-6 flex items-center gap-2 text-[13px] text-txt-3"
           >
             <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
             員工內部系統
-          </NavLink>
+          </a>
           <style>{`@keyframes mobile-nav-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
         </nav>
       )}
