@@ -2,61 +2,55 @@ import { useMemo, useState } from 'react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
-import ProductCard from '@/components/ProductCard';
-import WishingStar from '@/components/shop/WishingStar';
-import { toCardProduct, demoShopProducts } from '@/components/shop/shop-utils';
-import type { ShopProduct } from '@/components/shop/shop-utils';
+import ProductCard from '@/components/shop/ProductCard';
+import WishingStar from '@/components/account/WishingStar';
 import { useRevealDep } from '@/components/shop/useRevealDep';
-import { PRODUCT_CATEGORIES } from '@contracts/types';
-import type { ProductCategory } from '@contracts/types';
+import { demoShopProducts } from '@/lib/demoProducts';
 import { cn } from '@/lib/utils';
+import type { ShopProduct } from '@/lib/demoProducts';
+import type { CardProduct } from '@/components/shop/ProductCard';
 
 /**
- * 全部商品 /products（design-system.md §P2）
- * - trpc.products.list.useQuery({ keyword, category }) 攞真數據；server 篩名稱/描述/類別，
- *   另用全量 cache 補貨號 sku 匹配（list API 唔包 sku 欄位搜尋）
- * - 頂：H1 + 花體副標「pick your star」；玻璃工具列（搜尋框 §4.6 + DM Mono 排序 dropdown）
- * - 類別 pill 篩選列（全部 + 7 類）+ 上架日期篩選（全部／今日／近 3 日／近 7 日／較早），可疊加
- * - 格網 §4.1：desktop 4 欄 / 平板 3 欄 / 手機 2 欄；卡片重用 shared <ProductCard>（§4.4 duotone hover）
- * - loading 用許願星（§3.7）；空結果用 empty-cart.png 插畫
- * - 篩選生效時格網 300ms opacity 過渡，唔好閃爍重排
+ * 全部商品頁 §4 —— 頁首 H1 + 玻璃工具列（搜尋 + 排序 + 類別 + 上架日期篩選）+ 格網
+ * F-C：頁首標題/副題由 siteSettings CMS 讀（後台可改）；冇設定就用返預設文案
  */
 
 type SortKey = 'latest' | 'price-asc' | 'price-desc';
-type CategoryFilter = ProductCategory | 'all';
-type DateFilter = 'all' | 'today' | '3d' | '7d' | 'older';
+
+type CategoryFilter = ShopProduct['category'] | 'all';
+
+type DateFilter = 'all' | '3d' | '7d' | 'older';
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'latest', label: '最新上架' },
-  { value: 'price-asc', label: '價錢 低 → 高' },
-  { value: 'price-desc', label: '價錢 高 → 低' },
+  { value: 'price-asc', label: '價錢由低至高' },
+  { value: 'price-desc', label: '價錢由高至低' },
+];
+
+const PRODUCT_CATEGORIES: { value: ShopProduct['category']; label: string }[] = [
+  { value: 'top', label: '上衣' },
+  { value: 'pants', label: '褲' },
+  { value: 'dress', label: '裙' },
+  { value: 'shoes', label: '鞋' },
+  { value: 'daily', label: '生活用品' },
+  { value: 'skincare', label: '護膚品' },
+  { value: 'other', label: '其他' },
 ];
 
 const DATE_OPTIONS: { value: DateFilter; label: string }[] = [
-  { value: 'all', label: '全部日期' },
-  { value: 'today', label: '今日上架' },
-  { value: '3d', label: '近 3 日' },
-  { value: '7d', label: '近 7 日' },
-  { value: 'older', label: '較早' },
+  { value: 'all', label: '全部' },
+  { value: '3d', label: '3 日內' },
+  { value: '7d', label: '7 日內' },
+  { value: 'older', label: '7 日前' },
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** 今日 00:00（本地時間） */
-function startOfToday(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-function matchDateFilter(listedDate: Date | string, filter: DateFilter): boolean {
-  if (filter === 'all') return true;
-  const listed = new Date(listedDate).getTime();
-  const today0 = startOfToday();
-  const age = Date.now() - listed;
-  switch (filter) {
-    case 'today':
-      return listed >= today0;
+function matchDateFilter(listedDate: Date | string, f: DateFilter): boolean {
+  if (f === 'all') return true;
+  const t = listedDate instanceof Date ? listedDate.getTime() : new Date(listedDate).getTime();
+  const age = Date.now() - t;
+  switch (f) {
     case '3d':
       return age < 3 * DAY_MS;
     case '7d':
@@ -91,6 +85,15 @@ export default function Products() {
   );
   // 全量 cache：補返 sku 貨號搜尋（server list 只 LIKE name/description）
   const allQuery = trpc.products.list.useQuery(undefined, { staleTime: 5 * 60_000, retry: false });
+
+  // F-C：頁首標題/副題由 siteSettings CMS 讀（後台「業務分析」底可改）；冇設定就用返預設文案
+  const introTitleQuery = trpc.settings.get.useQuery({ key: 'products_intro_title' }, { retry: false });
+  const introSubQuery = trpc.settings.get.useQuery({ key: 'products_intro_sub' }, { retry: false });
+  type SettingEntry = { key: string; value: string };
+  const introTitle =
+    (introTitleQuery.data as SettingEntry | null | undefined)?.value?.trim() || '全部商品';
+  const introSub =
+    (introSubQuery.data as SettingEntry | null | undefined)?.value?.trim() || 'pick your star ✦';
 
   const products = useMemo<ShopProduct[]>(() => {
     // 靜態示範模式：後端連唔到（API error）→ 用內建示範商品
@@ -133,11 +136,11 @@ export default function Products() {
 
   return (
     <section className="mx-auto max-w-[1280px] px-5 py-16 md:px-8 md:py-24 xl:px-12">
-      {/* 頁首：H1 + 花體副標（§P2） */}
+      {/* 頁首：H1 + 花體副標（§P2；F-C 由 siteSettings CMS 讀，fallback 預設文案） */}
       <header>
-        <p className="script text-3xl md:text-4xl">pick your star ✦</p>
+        <p className="script text-3xl md:text-4xl">{introSub}</p>
         <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">
-          全部商品
+          {introTitle}
         </h1>
       </header>
 
@@ -271,9 +274,9 @@ export default function Products() {
           <WishingStar size={48} label="許願星載入中…" />
         </div>
       ) : products.length === 0 ? (
-        /* 空結果：empty-cart.png 插畫 */
+        /* 空結果：empty-cart.png 插畫 */}
         <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 py-16 text-center">
-          <img src="/empty-cart.jpg" alt="" className="w-48 max-w-full opacity-90 md:w-64" />
+          <img src="/empty-cart.png" alt="" className="w-48 max-w-full opacity-90 md:w-64" />
           <p className="font-serif-tc text-xl font-semibold text-txt-1">
             {kw
               ? `搵唔到同「${kw}」相關嘅商品`
