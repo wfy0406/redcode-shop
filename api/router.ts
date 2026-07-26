@@ -1,12 +1,15 @@
 import { createRouter, publicQuery } from "./middleware";
+import { authRouter } from "./authRouter";
+import { productsRouter } from "./productsRouter";
+import { cartRouter } from "./cartRouter";
+import { ordersRouter } from "./ordersRouter";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
-
-  // TODO: add feature routers here, e.g.
-  // todo: createRouter({
-  //   list: publicQuery.query(() => findTodos()),
-  // }),
+  auth: authRouter,
+  products: productsRouter,
+  cart: cartRouter,
+  orders: ordersRouter,
 });
 
 export type AppRouter = typeof appRouter;
