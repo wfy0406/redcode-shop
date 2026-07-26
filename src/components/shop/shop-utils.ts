@@ -1,4 +1,5 @@
 import type { Product } from '@/data/products';
+import { PRODUCTS as DEMO_PRODUCTS } from '@/data/products';
 
 /**
  * 商店頁共用輔助 —— 將 tRPC products router 嘅 DB row 映射做 shared <ProductCard> 用嘅 Product 型。
@@ -57,4 +58,23 @@ export function toCardProduct(p: ShopProduct): Product {
     image: p.image,
     soldOut: p.stock <= 0,
   };
+}
+
+/**
+ * 靜態示範模式：當後端 API 連唔到（例如純前端預覽），用呢啲內建示範商品。
+ * 回傳 ShopProduct 形狀，等 shop 頁面可以無縫 fallback。
+ */
+export function demoShopProducts(): ShopProduct[] {
+  return DEMO_PRODUCTS.map((p, i) => ({
+    id: i + 1,
+    sku: p.sku,
+    name: p.name,
+    description: null,
+    image: p.image,
+    price: p.price,
+    discountPrice: p.discountPrice ?? null,
+    sizes: p.sizes ? p.sizes.join(',') : null,
+    listedDate: new Date(p.listedAt),
+    stock: p.soldOut ? 0 : 10,
+  }));
 }
