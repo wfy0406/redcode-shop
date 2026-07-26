@@ -229,8 +229,8 @@ export default function About() {
           <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
             {[
               { src: '/gloglo-1.jpg', alt: 'Glo Glo 直播造型一', cls: '' },
-              { src: '/gloglo-2.jpg', alt: 'Glo Glo 直播造型二', cls: 'md:mt-10' },
-              { src: '/gloglo-3.jpg', alt: 'Glo Glo 直播造型三', cls: 'col-span-2 md:col-span-1 md:mt-20' },
+              { src: '/gloglo-4.jpg', alt: 'Glo Glo 同店狗合照', cls: 'md:mt-10' },
+              { src: '/gloglo-3.jpg', alt: 'Glo Glo 聖誕造型', cls: 'col-span-2 md:col-span-1 md:mt-20' },
             ].map((photo, i) => (
               <div
                 key={photo.src}
