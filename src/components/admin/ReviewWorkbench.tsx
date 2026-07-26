@@ -182,6 +182,14 @@ export default function ReviewWorkbench({
               ))}
             </div>
 
+            {/* 優惠碼折扣細行（應收金額已係折後價） */}
+            {selected.discountAmount > 0 && (
+              <p className="mt-2 text-right text-[13px] text-gold">
+                優惠碼 <span className="font-mono">{selected.promoCode}</span>{' '}
+                <span className="font-mono">−{fmtHKD(selected.discountAmount)}</span>
+              </p>
+            )}
+
             <div className="mt-5">
               <ProofSection
                 ref={proofRef}

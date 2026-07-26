@@ -9,7 +9,7 @@ import WishingStar from './WishingStar';
 
 /**
  * 全部訂單列表 —— status 篩選 tabs + 單號搜尋 + 點入行展開詳情
- * 詳情：items / 地址 / 備註 / 付款截圖審批 / 訂單狀態操作
+ * 詳情：items / 優惠碼折扣行 / 地址 / 備註 / 付款截圖審批 / 訂單狀態操作
  */
 
 interface OrderListProps {
@@ -178,6 +178,17 @@ export default function OrderList({
                             </li>
                           ))}
                         </ul>
+                        {/* 優惠碼折扣行（total 已係折後價） */}
+                        {order.discountAmount > 0 && (
+                          <div className="mt-2 flex items-baseline justify-between gap-3 text-[13px]">
+                            <span className="text-gold">
+                              優惠碼 <span className="font-mono">{order.promoCode}</span>
+                            </span>
+                            <span className="shrink-0 font-mono text-gold">
+                              −{fmtHKD(order.discountAmount)}
+                            </span>
+                          </div>
+                        )}
                         <dl className="mt-4 flex flex-col gap-2 border-t pt-4" style={{ borderColor: 'var(--space-line)' }}>
                           <div className="flex gap-2 text-[14px]">
                             <dt className="w-16 shrink-0 text-txt-3">收件地址</dt>

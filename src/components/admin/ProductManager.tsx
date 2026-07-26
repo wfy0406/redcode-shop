@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { PRODUCT_CATEGORIES, productCategoryLabel } from '@contracts/types';
 import { fmtDate, fmtHKD } from './format';
@@ -8,8 +8,9 @@ import WishingStar, { LoadingBlock } from './WishingStar';
 import type { ToastKind } from './useToasts';
 
 /**
- * 商品管理（簡單版）—— products.list / create / update（isActive toggle）/ remove
- * 注意：products.list 只回傳上架中商品；下架後重新載入會喺列表隱藏。
+ * 商品管理 —— products.adminList（包括下架貨，dim 顯示）/ create / update / remove
+ * 編輯模式：撳行內「編輯」→ populate 表單 → submit 分流 products.update；
+ * 編輯中表單標題轉「編輯商品」+ 出「取消編輯」掣。
  */
 
 const inputCls =
@@ -28,43 +29,81 @@ const initialForm = {
   description: '',
 };
 
+/** products.adminList 未 merge 前嘅本地型別（同 products 表 $inferSelect 一致） */
+type ProductRow = {
+  id: number;
+  sku: string;
+  name: string;
+  description: string | null;
+  image: string;
+  price: number;
+  discountPrice: number | null;
+  sizes: string | null;
+  note: string | null;
+  category: string;
+  listedDate: Date;
+  stock: number;
+  isActive: boolean;
+  createdAt: Date;
+};
+
 export default function ProductManager({
   toast,
 }: {
   toast: (text: string, kind?: ToastKind) => void;
 }) {
   const utils = trpc.useUtils();
-  const listQuery = trpc.products.list.useQuery(undefined);
+  const listQuery = trpc.products.adminList.useQuery(undefined);
   const [form, setForm] = useState(initialForm);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
+
+  /** 後台同前台 cache 一齊更新（adminList 包下架貨，list 係前台用） */
+  const invalidateProducts = () => {
+    void utils.products.adminList.invalidate();
+    void utils.products.list.invalidate();
+  };
 
   const createMutation = trpc.products.create.useMutation({
     onSuccess: (created) => {
       toast(`已新增商品「${created?.name ?? ''}」`, 'success');
       setForm(initialForm);
       setFormError(null);
-      void utils.products.list.invalidate();
+      invalidateProducts();
     },
     onError: (err) => toast(err.message || '新增商品失敗', 'error'),
   });
 
-  // isActive toggle：樂觀更新 cache，保持行可見（dim 顯示）
+  // 編輯模式 submit（products.update 全欄位）
+  const editMutation = trpc.products.update.useMutation({
+    onSuccess: (updated) => {
+      toast(`已更新商品「${updated?.name ?? ''}」`, 'success');
+      setForm(initialForm);
+      setEditingId(null);
+      setFormError(null);
+      invalidateProducts();
+    },
+    onError: (err) => toast(err.message || '更新商品失敗', 'error'),
+  });
+
+  // isActive toggle：樂觀更新 adminList cache，下架貨 dim 顯示、可以隨時重新上架
   const toggleMutation = trpc.products.update.useMutation({
     onMutate: async (vars) => {
-      await utils.products.list.cancel();
-      const prev = utils.products.list.getData(undefined);
-      utils.products.list.setData(undefined, (old) =>
+      await utils.products.adminList.cancel();
+      const prev = utils.products.adminList.getData(undefined) as ProductRow[] | undefined;
+      utils.products.adminList.setData(undefined, (old: ProductRow[] | undefined) =>
         old?.map((p) => (p.id === vars.id ? { ...p, isActive: vars.isActive ?? p.isActive } : p)),
       );
       return { prev };
     },
     onError: (err, _vars, ctx) => {
-      utils.products.list.setData(undefined, ctx?.prev);
+      utils.products.adminList.setData(undefined, ctx?.prev);
       toast(err.message || '更新失敗', 'error');
     },
     onSuccess: (updated) => {
-      toast(updated?.isActive ? '已重新上架' : '已下架（重新載入後會喺列表隱藏）', 'success');
+      toast(updated?.isActive ? '已重新上架' : '已下架（列表 dim 顯示，可以隨時再上架）', 'success');
+      invalidateProducts();
     },
   });
 
@@ -72,19 +111,46 @@ export default function ProductManager({
     onSuccess: () => {
       toast('已刪除商品', 'info');
       setConfirmRemoveId(null);
-      void utils.products.list.invalidate();
+      invalidateProducts();
     },
-    onError: (err) => toast(err.message || '刪除失敗', 'error'),
+    onError: (err) => {
+      setConfirmRemoveId(null);
+      toast(err.message || '刪除失敗', 'error');
+    },
   });
 
   // 類別即時修改（列表行內 dropdown）
   const categoryMutation = trpc.products.update.useMutation({
     onSuccess: (updated) => {
       toast(`已將「${updated?.name ?? ''}」歸類做${productCategoryLabel(updated?.category)}`, 'success');
-      void utils.products.list.invalidate();
+      invalidateProducts();
     },
     onError: (err) => toast(err.message || '更新類別失敗', 'error'),
   });
+
+  /** 進入編輯模式：populate 表單（日期轉 YYYY-MM-DD、null 欄轉空字串） */
+  const startEdit = (p: ProductRow) => {
+    setEditingId(p.id);
+    setFormError(null);
+    setForm({
+      name: p.name,
+      sku: p.sku,
+      price: String(p.price),
+      discountPrice: p.discountPrice != null ? String(p.discountPrice) : '',
+      category: p.category,
+      listedDate: new Date(p.listedDate).toISOString().slice(0, 10),
+      image: p.image,
+      stock: String(p.stock),
+      note: p.note ?? '',
+      description: p.description ?? '',
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setForm(initialForm);
+    setFormError(null);
+  };
 
   const set = (key: keyof typeof initialForm) => (value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -111,6 +177,23 @@ export default function ProductManager({
       return;
     }
     setFormError(null);
+    if (editingId != null) {
+      // 編輯模式：products.update 全欄位（可清空嘅欄用 null 覆寫）
+      editMutation.mutate({
+        id: editingId,
+        name: form.name.trim(),
+        sku: form.sku.trim(),
+        price,
+        discountPrice: discount ?? null,
+        note: form.note.trim() || null,
+        category: form.category,
+        listedDate: form.listedDate ? new Date(`${form.listedDate}T00:00:00`) : undefined,
+        image: form.image.trim() || '/product-1.jpg',
+        stock,
+        description: form.description.trim() || null,
+      });
+      return;
+    }
     createMutation.mutate({
       name: form.name.trim(),
       sku: form.sku.trim(),
@@ -125,19 +208,24 @@ export default function ProductManager({
     });
   };
 
-  const products = listQuery.data ?? [];
+  const products = (listQuery.data ?? []) as ProductRow[];
+  const submitting = createMutation.isPending || editMutation.isPending;
 
   return (
     <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
-      {/* 左：新增商品表單（5） */}
+      {/* 左：新增／編輯商品表單（5） */}
       <form
         onSubmit={submit}
         className="rounded-2xl border p-5 backdrop-blur-xl md:p-6 xl:col-span-5"
         style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
       >
         <h3 className="flex items-center gap-2 text-[16px] font-bold text-txt-1">
-          <Plus size={16} className="text-gold" aria-hidden="true" />
-          新增商品
+          {editingId != null ? (
+            <Pencil size={16} className="text-gold" aria-hidden="true" />
+          ) : (
+            <Plus size={16} className="text-gold" aria-hidden="true" />
+          )}
+          {editingId != null ? '編輯商品' : '新增商品'}
         </h3>
         <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
@@ -163,6 +251,11 @@ export default function ProductManager({
               className={`${inputCls} font-mono`}
               placeholder="RC-0001"
             />
+            {editingId != null && (
+              <p className="mt-1.5 text-[12px] leading-[1.5] text-gold-soft">
+                改貨號要小心：唔可以同其他商品重複，舊訂單快照唔會跟住改。
+              </p>
+            )}
           </div>
           <div>
             <label htmlFor="np-date" className="mb-1.5 block text-[14px] text-txt-2">
@@ -282,12 +375,29 @@ export default function ProductManager({
         )}
         <button
           type="submit"
-          disabled={createMutation.isPending}
+          disabled={submitting}
           className="btn btn-primary mt-5 w-full disabled:opacity-60"
         >
-          {createMutation.isPending ? <WishingStar size={16} /> : <Plus size={16} aria-hidden="true" />}
-          新增商品
+          {submitting ? (
+            <WishingStar size={16} />
+          ) : editingId != null ? (
+            <Pencil size={16} aria-hidden="true" />
+          ) : (
+            <Plus size={16} aria-hidden="true" />
+          )}
+          {editingId != null ? '儲存修改' : '新增商品'}
         </button>
+        {editingId != null && (
+          <button
+            type="button"
+            onClick={cancelEdit}
+            disabled={submitting}
+            className="btn btn-secondary mt-3 w-full disabled:opacity-60"
+          >
+            <X size={16} aria-hidden="true" />
+            取消編輯
+          </button>
+        )}
       </form>
 
       {/* 右：現有商品列表（7） */}
@@ -381,6 +491,16 @@ export default function ProductManager({
                       {lowStock ? '（緊張）' : ''}
                     </p>
                   </div>
+                  {/* 編輯：populate 表單進入編輯模式 */}
+                  <button
+                    type="button"
+                    onClick={() => startEdit(p)}
+                    disabled={editingId === p.id}
+                    aria-label={`編輯 ${p.name}`}
+                    className="btn btn-secondary shrink-0 !h-10 !w-10 !rounded-full !p-0 disabled:opacity-50"
+                  >
+                    <Pencil size={15} aria-hidden="true" />
+                  </button>
                   {/* isActive toggle */}
                   <button
                     type="button"
