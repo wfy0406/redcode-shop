@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ClipboardCheck, Images, LayoutList, LogIn, Package, Store } from 'lucide-react';
+import { ClipboardCheck, Images, LayoutList, LogIn, Package, ShieldCheck, Store } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -11,18 +11,19 @@ import ReviewWorkbench from '@/components/admin/ReviewWorkbench';
 import OrderList from '@/components/admin/OrderList';
 import ProductManager from '@/components/admin/ProductManager';
 import PraiseManager from '@/components/admin/PraiseManager';
+import StaffManager from '@/components/admin/StaffManager';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
 
 /**
  * §P9 員工後台 /admin —— 訂單付款截圖審批工作枱
  * - 權限守衛：未登入 → 登入卡；member → 冇權限卡；isStaff → 工作枱
- * - 左固定側欄：待審批（金 badge）／全部訂單／商品管理／客戶打卡牆／返回前台
+ * - 左固定側欄：待審批（金 badge）／全部訂單／商品管理／返回前台
  * - 頂部 stats：待審核數／今日訂單數／總訂單數（由 adminList 計）
  * - 審批：A 批准、R 拒絕（必填備註）、↑↓ 揀單；截圖大圖 + 燈箱
  */
 
-type ViewKey = 'review' | 'orders' | 'products' | 'praise';
+type ViewKey = 'review' | 'orders' | 'products' | 'praise' | 'staff';
 
 /** 有待審批付款截圖嘅訂單（舊單優先，FIFO 隊列） */
 function buildQueue(orders: AdminOrder[]): AdminOrder[] {
@@ -58,6 +59,8 @@ function GuardCard({
 
 function AdminConsole() {
   const utils = trpc.useUtils();
+  const { user: me } = useAuth();
+  const isAdmin = me?.role === 'admin';
   const { toasts, push: pushToast } = useToasts();
   const [view, setView] = useState<ViewKey>('review');
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -132,6 +135,10 @@ function AdminConsole() {
     { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
     { key: 'praise', label: '客戶打卡牆', icon: <Images size={17} aria-hidden="true" /> },
+    // 員工帳號管理只限最高管理員（admin）
+    ...(isAdmin
+      ? [{ key: 'staff' as ViewKey, label: '員工帳號', icon: <ShieldCheck size={17} aria-hidden="true" /> }]
+      : []),
   ];
 
   const STATS: { label: string; value: number; color: string }[] = [
@@ -256,6 +263,12 @@ function AdminConsole() {
             />
           ) : view === 'products' ? (
             <ProductManager toast={pushToast} />
+          ) : view === 'staff' ? (
+            isAdmin ? (
+              <StaffManager toast={pushToast} />
+            ) : (
+              <p className="py-14 text-center text-[14px] text-txt-3">需要最高管理員權限。</p>
+            )
           ) : (
             <PraiseManager toast={pushToast} />
           )}

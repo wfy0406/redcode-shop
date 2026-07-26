@@ -20,11 +20,11 @@ const initialForm = {
   sku: '',
   price: '',
   discountPrice: '',
-  sizes: '',
   category: 'other',
   listedDate: new Date().toISOString().slice(0, 10),
   image: '/product-1.jpg',
   stock: '0',
+  note: '',
   description: '',
 };
 
@@ -116,7 +116,7 @@ export default function ProductManager({
       sku: form.sku.trim(),
       price,
       discountPrice: discount,
-      sizes: form.sizes.trim() || undefined,
+      note: form.note.trim() || undefined,
       category: form.category,
       listedDate: form.listedDate ? new Date(`${form.listedDate}T00:00:00`) : undefined,
       image: form.image.trim() || '/product-1.jpg',
@@ -220,18 +220,6 @@ export default function ProductManager({
             />
           </div>
           <div>
-            <label htmlFor="np-sizes" className="mb-1.5 block text-[14px] text-txt-2">
-              尺寸（逗號分隔，選填）
-            </label>
-            <input
-              id="np-sizes"
-              value={form.sizes}
-              onChange={(e) => set('sizes')(e.target.value)}
-              className={`${inputCls} font-mono`}
-              placeholder="S,M,L"
-            />
-          </div>
-          <div>
             <label htmlFor="np-stock" className="mb-1.5 block text-[14px] text-txt-2">
               庫存
             </label>
@@ -254,6 +242,18 @@ export default function ProductManager({
               onChange={(e) => set('image')(e.target.value)}
               className={`${inputCls} font-mono`}
               placeholder="/product-1.jpg"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label htmlFor="np-note" className="mb-1.5 block text-[14px] text-txt-2">
+              備註（選填，內部用，例如：直播講過嘅重點、供應商貨號）
+            </label>
+            <input
+              id="np-note"
+              value={form.note}
+              onChange={(e) => set('note')(e.target.value)}
+              className={inputCls}
+              placeholder="內部備註，客人睇唔到"
             />
           </div>
           <div className="sm:col-span-2">
@@ -328,8 +328,12 @@ export default function ProductManager({
                     <p className="truncate text-[14px] font-bold text-txt-1">{p.name}</p>
                     <p className="mt-0.5 font-mono text-[12px] text-txt-3">
                       {p.sku} · 上架 {fmtDate(p.listedDate)}
-                      {p.sizes ? ` · ${p.sizes}` : ''}
                     </p>
+                    {p.note && (
+                      <p className="mt-1 text-[12px] leading-[1.5] text-gold-soft">
+                        備註：{p.note}
+                      </p>
+                    )}
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       {/* 類別 badge */}
                       <span
