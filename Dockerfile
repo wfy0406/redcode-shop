@@ -8,7 +8,11 @@ RUN npm install -g npm@11 --no-audit --no-fund
 
 # 先裝依賴（利用 docker layer cache）
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# lockfile 生成時寫咗沙盒內部/中國 mirror 嘅 resolved URL，公網 build 要轉返 npmjs 官方 registry
+RUN sed -i -e 's#https://npm\.mirrors\.msh\.team#https://registry.npmjs.org#g' \
+           -e 's#https://registry\.npmmirror\.com#https://registry.npmjs.org#g' \
+           package-lock.json \
+  && npm ci --no-audit --no-fund
 
 # 拷貝源碼、還原圖片/影片（assets-b64 → public/），然後 build
 COPY . .
