@@ -24,8 +24,8 @@ import { cn } from '@/lib/utils';
  * - trpc.products.byId.useQuery({ id }) 攞真數據
  * - 左 55%：主圖 duotone → 進入視窗上色（DuotoneImage reveal，全站 signature）
  * - 右 45%：品名 Serif TC 32px → 貨號/上架日期 → DM Mono 價錢（詳情尺寸，有折扣刪除線原價）
- *   → 尺寸 pill 選擇（有 sizes 時必填）→ 數量步進器（± 玻璃圓鈕）
- *   → Primary「加入購物車」全寬 → WhatsApp 鈕「即刻WHATSAPP我地！」全寬
+ *   → 尺寸 pill 選擇（有 sizes 時必填）→ 數量步進器（± 玻璃圓鈕，上限 clamp 庫存）
+ *   → Primary「加入購物車」全寬 → WhatsApp 鈕「問 Glo Glo 著身效果」全寬
  * - 加入購物車：未登入 → navigate /login（state.from 記返邊度嚟）；
  *   已登入 → trpc.cart.add.useMutation，成功後細玻璃提示 + 導購物車連結
  * - 底部：商品故事（Serif TC 引文式）+ 相關商品 4 卡（list 前 4 件排除自己）
@@ -224,7 +224,7 @@ export default function ProductDetail() {
             </fieldset>
           )}
 
-          {/* 數量步進器（± 玻璃圓鈕） */}
+          {/* 數量步進器（± 玻璃圓鈕，＋ 上限 clamp 庫存） */}
           <div className="mt-6">
             <p className="text-sm text-txt-2">數量</p>
             <div className="mt-3 flex items-center gap-3">
@@ -246,7 +246,7 @@ export default function ProductDetail() {
               </span>
               <button
                 type="button"
-                onClick={() => setQuantity((q) => q + 1)}
+                onClick={() => setQuantity((q) => Math.min(q + 1, product.stock))}
                 aria-label="增加數量"
                 className="btn btn-secondary !h-11 !w-11 !rounded-full !p-0"
               >

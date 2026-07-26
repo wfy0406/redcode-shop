@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { Check, Copy, MessageCircle } from 'lucide-react';
+import { Check, Copy, MessageCircle, TicketPercent, X } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
 import LoginPrompt from '@/components/cart/LoginPrompt';
 import PaymentDropzone from '@/components/cart/PaymentDropzone';
@@ -15,7 +15,7 @@ import { getToken } from '@/lib/auth';
 /**
  * RedCode 結帳（design-system.md §P7，含付款截圖上傳）
  * 三步玻璃進度條（步驟點 = 四角星，完成步驟填金）：
- * ① 確認訂單：cart 項目 + 總計；收貨地址 textarea（預填 user.address）+ 備註
+ * ① 確認訂單：cart 項目 + 優惠碼 + 總計；收貨地址 textarea（預填 user.address）+ 備註
  * ② 付款：orders.create → 收款資料卡（中銀／PayMe／Alipay／FPS 真資料）
  *    + dropzone 上傳付款截圖（fetch POST /api/upload，Bearer token）→ orders.attachPaymentProof
  * ③ 完成：許願星著燈 + 訂單編號 + 「職員審核中」+ 去會員中心 CTA
@@ -176,6 +176,54 @@ function MeteorProgressBar() {
   );
 }
 
+/* ---------- F5 優惠碼：choreography 動效 keyframes + 行內小組件 ---------- */
+const PROMO_STYLES = `
+@keyframes promo-check-draw { to { stroke-dashoffset: 0; } }
+@keyframes promo-dot-bounce { 0%, 100% { transform: scale(.75); opacity: .4; } 50% { transform: scale(1); opacity: 1; } }
+@keyframes promo-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes promo-total-in { from { opacity: .35; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .promo-check-path { animation: none !important; stroke-dashoffset: 0 !important; }
+  .promo-dot { animation: none !important; opacity: 1 !important; }
+}
+`;
+
+/** 成功剔號（stroke-draw 0.3s，R3 §4 micro-interaction） */
+function StrokeCheck({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        className="promo-check-path"
+        d="M5 12.5l4.5 4.5L19 7.5"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{
+          strokeDasharray: 24,
+          strokeDashoffset: 24,
+          animation: 'promo-check-draw .3s cubic-bezier(0.65,0,0.45,1) forwards',
+        }}
+      />
+    </svg>
+  );
+}
+
+/** 行內三點跳動 loading（0.8s staggered，唔好用成版 WishingStar） */
+function DotsLoader() {
+  return (
+    <span className="inline-flex items-center gap-1" role="status" aria-label="驗證緊">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="promo-dot inline-block h-1 w-1 rounded-full bg-current"
+          style={{ animation: `promo-dot-bounce .8s ease-in-out ${i * 0.12}s infinite` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 /* ---------- ① 確認訂單 ---------- */
 interface ConfirmStepProps {
   items: CartLine[];
@@ -186,10 +234,22 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   const { user } = useAuth();
   const utils = trpc.useUtils();
   const createOrder = trpc.orders.create.useMutation();
+  const promoValidate = trpc.promo.validate.useMutation();
 
   const [address, setAddress] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // F5 優惠碼：收起（文字連結）→ 展開 input → 成功後 morph 做 code chip
+  const [promoOpen, setPromoOpen] = useState(false);
+  const [promoInput, setPromoInput] = useState('');
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [promoSuccess, setPromoSuccess] = useState(false); // 剔號緊（morph 做 chip 前嘅確認幀）
+  const [appliedPromo, setAppliedPromo] = useState<{
+    code: string;
+    discountAmount: number;
+    finalTotal: number;
+  } | null>(null);
 
   // 預填會員地址（唔覆蓋用戶已改嘅內容）
   useEffect(() => {
@@ -198,6 +258,38 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   }, [user?.address]);
 
   const subtotal = cartSubtotal(items);
+  // 客戶端折扣只係顯示用途；落單時 server 會用 promoCode 重算，以 server 為準
+  const displayTotal = appliedPromo ? appliedPromo.finalTotal : subtotal;
+
+  const onApplyPromo = async () => {
+    const code = promoInput.trim().toUpperCase();
+    if (!code || promoValidate.isPending || promoSuccess) return;
+    setPromoError(null);
+    try {
+      const res = await promoValidate.mutateAsync({ code, subtotal });
+      // choreography：剔號（0.3s 畫完 + 停一停）→ 輸入區 morph 做 chip
+      setPromoSuccess(true);
+      window.setTimeout(() => {
+        setAppliedPromo({
+          code: res.code,
+          discountAmount: res.discountAmount,
+          finalTotal: res.finalTotal,
+        });
+        setPromoSuccess(false);
+        setPromoInput('');
+      }, 450);
+    } catch (err) {
+      // BAD_REQUEST 中文訊息直接 persist 顯示喺 input 下面（唔好用 toast）
+      setPromoError(err instanceof Error ? err.message : '優惠碼用唔到，請再試一次');
+    }
+  };
+
+  const onRemovePromo = () => {
+    // 移除優惠碼可逆、無損失，唔使兩步確認
+    setAppliedPromo(null);
+    setPromoError(null);
+    setPromoInput('');
+  };
 
   const onCreate = async () => {
     setError(null);
@@ -205,6 +297,8 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
       const created = await createOrder.mutateAsync({
         address: address.trim() || undefined,
         note: note.trim() || undefined,
+        // 有先用嘅優惠碼先傳；server 會重算折扣
+        promoCode: appliedPromo?.code,
       });
       // 後端已清車，invalidate 令購物車頁 / badge 同步
       void utils.cart.list.invalidate();
@@ -263,13 +357,127 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
             );
           })}
         </ul>
-        <div
-          className="flex items-baseline justify-between border-t pt-4"
-          style={{ borderColor: 'var(--space-line)' }}
-        >
-          <span className="text-[15px] text-txt-2">總計（運費順豐到付）</span>
-          <span className="font-mono text-2xl text-pink">{formatHKD(subtotal)}</span>
+        {/* F5 優惠碼（放總計區上方）：預設收起做文字連結，唔好一入結帳就大輸入框 */}
+        {appliedPromo ? (
+          /* 成功後：輸入區 morph 做 gold 邊 code chip（× 可移除，唔使 confirm） */
+          <div className="mt-4" style={{ animation: 'promo-fade-in .2s ease both' }}>
+            <span
+              className="inline-flex h-11 items-center gap-2.5 rounded-full border px-4 font-mono text-sm uppercase tracking-wider text-gold"
+              style={{ borderColor: 'var(--gold)', background: 'rgba(247, 215, 116, 0.08)' }}
+            >
+              <TicketPercent size={15} aria-hidden="true" />
+              {appliedPromo.code}
+              <span className="text-gold-soft">−{formatHKD(appliedPromo.discountAmount)}</span>
+              <button
+                type="button"
+                onClick={onRemovePromo}
+                aria-label={`移除優惠碼 ${appliedPromo.code}`}
+                className="-mr-1 flex min-h-8 min-w-8 items-center justify-center rounded-full text-gold transition-colors duration-150 hover:text-gold-soft"
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </span>
+          </div>
+        ) : promoOpen ? (
+          <div className="mt-4" style={{ animation: 'promo-fade-in .2s ease both' }}>
+            <div className="flex gap-2">
+              <input
+                value={promoInput}
+                onChange={(e) => {
+                  setPromoInput(e.target.value.toUpperCase());
+                  if (promoError) setPromoError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void onApplyPromo();
+                  }
+                }}
+                placeholder="輸入優惠碼"
+                aria-label="優惠碼"
+                aria-invalid={!!promoError}
+                autoFocus
+                className="h-11 min-w-0 flex-1 rounded-xl border bg-space-2 px-4 font-mono text-[15px] uppercase tracking-wider text-txt-1 placeholder:normal-case placeholder:tracking-normal placeholder:text-txt-disabled focus:border-pink"
+                style={{ borderColor: promoError ? 'var(--pink)' : 'var(--space-line)' }}
+              />
+              {/* 「使用」掣同 input 高度逐 px 對齊（h-11 對 h-11） */}
+              <button
+                type="button"
+                onClick={() => void onApplyPromo()}
+                disabled={promoValidate.isPending || promoSuccess || !promoInput.trim()}
+                className="btn btn-secondary h-11 shrink-0 !px-6 !py-0 disabled:opacity-50"
+              >
+                {promoValidate.isPending ? (
+                  <DotsLoader />
+                ) : promoSuccess ? (
+                  <span className="text-gold">
+                    <StrokeCheck />
+                  </span>
+                ) : (
+                  '使用'
+                )}
+              </button>
+            </div>
+            {/* 錯誤 persist 喺 input 下面，留到用戶改正（唔好用 toast） */}
+            {promoError && (
+              <p
+                role="alert"
+                className="mt-2 text-[13px] text-pink-soft"
+                style={{ animation: 'promo-fade-in .2s ease both' }}
+              >
+                {promoError}
+              </p>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setPromoOpen(true)}
+            className="mt-4 inline-flex items-center gap-2 text-sm text-gold underline decoration-gold underline-offset-4 transition-colors duration-150 hover:text-gold-soft"
+          >
+            <TicketPercent size={15} aria-hidden="true" />
+            有優惠碼？
+          </button>
+        )}
+
+        {/* 價格明細：小計 / 優惠碼（有名有姓一條行）/ 總計（醒目），靠字重分層唔靠色 */}
+        <div className="mt-4 border-t pt-4" style={{ borderColor: 'var(--space-line)' }}>
+          <div className="flex items-baseline justify-between">
+            <span className="text-[15px] text-txt-2">小計（運費順豐到付）</span>
+            <span className="font-mono text-base tabular-nums text-txt-1">
+              {formatHKD(subtotal)}
+            </span>
+          </div>
+          {appliedPromo && (
+            <div
+              className="mt-2.5 flex items-baseline justify-between"
+              style={{ animation: 'promo-fade-in .2s ease both' }}
+            >
+              <span className="inline-flex items-center gap-1.5 text-[15px] text-gold">
+                <TicketPercent size={14} aria-hidden="true" />
+                優惠碼{' '}
+                <span className="font-mono uppercase tracking-wider">{appliedPromo.code}</span>
+              </span>
+              <span className="font-mono text-base tabular-nums text-gold">
+                −{formatHKD(appliedPromo.discountAmount)}
+              </span>
+            </div>
+          )}
+          {/* key 綁金額：總額變更時 re-mount 觸發 slide 更新，唔會「啪」一聲跳 */}
+          <div
+            key={displayTotal}
+            className="mt-3 flex items-baseline justify-between"
+            style={{ animation: 'promo-total-in .18s ease both' }}
+          >
+            <span className="font-serif-tc text-lg font-semibold text-txt-1">
+              {appliedPromo ? '折後總計' : '總計'}
+            </span>
+            <span className="font-mono text-2xl tabular-nums text-pink">
+              {formatHKD(displayTotal)}
+            </span>
+          </div>
         </div>
+        <style>{PROMO_STYLES}</style>
       </div>
 
       {/* 右：收貨資料（§4.6 表單） */}

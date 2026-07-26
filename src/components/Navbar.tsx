@@ -4,6 +4,8 @@ import { Link, NavLink } from 'react-router';
 import { Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { trpc } from '@/providers/trpc';
+import type { CartLine } from '@/components/cart/types';
 
 /**
  * RedCode 設計系統 §4.2 —— 玻璃導航
@@ -27,8 +29,15 @@ const NAV_LINKS = [
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { user, logout } = useAuth();
-  // CART-SLOT: 之後接購物車 state 顯示真數量
-  const cartCount = 0;
+  // F4：badge 接通真購物車數量（未登入唔好 call，enabled 守住）
+  const cartQuery = trpc.cart.list.useQuery(undefined, {
+    enabled: !!user,
+    refetchOnWindowFocus: false,
+  });
+  const cartCount = ((cartQuery.data ?? []) as CartLine[]).reduce(
+    (sum, line) => sum + line.quantity,
+    0,
+  );
 
   return (
     <header
