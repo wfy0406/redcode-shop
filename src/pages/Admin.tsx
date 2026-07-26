@@ -1,15 +1,306 @@
+import { useCallback, useMemo, useState } from 'react';
+import { Link } from 'react-router';
+import { ClipboardCheck, LayoutList, LogIn, Package, Store } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { trpc } from '@/providers/trpc';
+import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
+import ToastStack from '@/components/admin/Toast';
+import { useToasts } from '@/components/admin/useToasts';
+import Lightbox from '@/components/admin/Lightbox';
+import ReviewWorkbench from '@/components/admin/ReviewWorkbench';
+import OrderList from '@/components/admin/OrderList';
+import ProductManager from '@/components/admin/ProductManager';
+import { isToday } from '@/components/admin/format';
+import type { AdminOrder } from '@/components/admin/types';
+
 /**
- * 員工內部系統（Admin）— scaffold placeholder
- * TODO(page-agent): 訂單審批工作枱：付款截圖對數、Approve / Reject（§P9）
+ * §P9 員工後台 /admin —— 訂單付款截圖審批工作枱
+ * - 權限守衛：未登入 → 登入卡；member → 冇權限卡；isStaff → 工作枱
+ * - 左固定側欄：待審批（金 badge）／全部訂單／商品管理／返回前台
+ * - 頂部 stats：待審核數／今日訂單數／總訂單數（由 adminList 計）
+ * - 審批：A 批准、R 拒絕（必填備註）、↑↓ 揀單；截圖大圖 + 燈箱
  */
-export default function Admin() {
+
+type ViewKey = 'review' | 'orders' | 'products';
+
+/** 有待審批付款截圖嘅訂單（舊單優先，FIFO 隊列） */
+function buildQueue(orders: AdminOrder[]): AdminOrder[] {
+  return orders
+    .filter((o) => o.proofs.some((p) => p.status === 'pending'))
+    .slice()
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+function GuardCard({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc: string;
+  children?: React.ReactNode;
+}) {
   return (
-    <section className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 xl:px-12">
-      <p className="script text-3xl">Staff System</p>
-      <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">
-        員工內部系統
-      </h1>
-      <p className="mt-4 max-w-lg text-[15px] text-txt-2">訂單審批工作枱：付款截圖對數、Approve / Reject（§P9）</p>
+    <section className="mx-auto flex max-w-[1280px] justify-center px-5 py-24 md:px-8">
+      <div
+        className="w-full max-w-[420px] rounded-3xl border p-8 text-center backdrop-blur-xl"
+        style={{ background: 'var(--glass-bg-strong)', borderColor: 'var(--glass-border)' }}
+      >
+        <p className="script text-3xl">Staff only ✦</p>
+        <h1 className="mt-2 font-serif-tc text-2xl font-bold leading-[1.3] text-txt-1">{title}</h1>
+        <p className="mt-3 text-[14px] leading-relaxed text-txt-2">{desc}</p>
+        {children && <div className="mt-6">{children}</div>}
+      </div>
     </section>
   );
+}
+
+function AdminConsole() {
+  const utils = trpc.useUtils();
+  const { toasts, push: pushToast } = useToasts();
+  const [view, setView] = useState<ViewKey>('review');
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [reviewingProofId, setReviewingProofId] = useState<number | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<number | null>(null);
+  const [leavingIds, setLeavingIds] = useState<ReadonlySet<number>>(new Set());
+
+  const listQuery = trpc.orders.adminList.useQuery(undefined, {
+    enabled: true,
+    refetchOnWindowFocus: false,
+  });
+  const orders = useMemo(() => listQuery.data ?? [], [listQuery.data]);
+
+  const queue = useMemo(() => buildQueue(orders), [orders]);
+  const todayCount = useMemo(() => orders.filter((o) => isToday(o.createdAt)).length, [orders]);
+
+  const reviewProof = trpc.orders.reviewProof.useMutation();
+  const updateStatus = trpc.orders.updateStatus.useMutation();
+
+  const errMsg = (err: unknown) => (err instanceof Error ? err.message : '操作失敗，請再試');
+
+  /** 審批付款截圖：成功 → toast + 該單向右飛出（300ms）+ invalidate adminList */
+  const handleReview = useCallback(
+    async (proofId: number, approve: boolean, note: string | undefined, order: AdminOrder) => {
+      setReviewingProofId(proofId);
+      try {
+        await reviewProof.mutateAsync({ proofId, approve, note });
+        pushToast(
+          approve ? `已批准 ${order.orderNo}，訂單轉做已確認` : `已拒絕 ${order.orderNo}`,
+          approve ? 'success' : 'info',
+        );
+        setLeavingIds((prev) => new Set(prev).add(order.id));
+        window.setTimeout(() => {
+          setLeavingIds(new Set());
+          void utils.orders.adminList.invalidate();
+        }, 300);
+      } catch (err) {
+        pushToast(errMsg(err), 'error');
+      } finally {
+        setReviewingProofId(null);
+      }
+    },
+    [reviewProof, pushToast, utils],
+  );
+
+  /** 訂單狀態操作：標記寄出／完成／取消 */
+  const handleStatus = useCallback(
+    async (orderId: number, status: 'shipped' | 'completed' | 'cancelled') => {
+      setStatusBusyId(orderId);
+      try {
+        await updateStatus.mutateAsync({ orderId, status });
+        const label =
+          status === 'shipped' ? '已標記寄出' : status === 'completed' ? '已標記完成' : '已取消訂單';
+        pushToast(label, status === 'cancelled' ? 'info' : 'success');
+        await utils.orders.adminList.invalidate();
+      } catch (err) {
+        pushToast(errMsg(err), 'error');
+      } finally {
+        setStatusBusyId(null);
+      }
+    },
+    [updateStatus, pushToast, utils],
+  );
+
+  const NAV: { key: ViewKey; label: string; icon: React.ReactNode; badge?: number }[] = [
+    {
+      key: 'review',
+      label: '待審批',
+      icon: <ClipboardCheck size={17} aria-hidden="true" />,
+      badge: queue.length,
+    },
+    { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
+    { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
+  ];
+
+  const STATS: { label: string; value: number; color: string }[] = [
+    { label: '待審核截圖', value: queue.length, color: 'var(--gold)' },
+    { label: '今日訂單', value: todayCount, color: 'var(--starlight)' },
+    { label: '總訂單數', value: orders.length, color: 'var(--lavender)' },
+  ];
+
+  return (
+    <section className="mx-auto max-w-[1280px] px-5 pb-24 pt-10 md:px-8 xl:px-12">
+      <header>
+        <p className="script text-3xl">Staff System</p>
+        <h1 className="mt-1 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[36px]">
+          訂單審批工作枱
+        </h1>
+      </header>
+
+      {/* 頂部 stats 卡 */}
+      <div className="mt-6 grid grid-cols-3 gap-3 md:gap-4">
+        {STATS.map((s) => (
+          <div
+            key={s.label}
+            className="rounded-2xl border px-4 py-4 backdrop-blur-xl md:px-6"
+            style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
+          >
+            <p className="text-[12px] text-txt-3 md:text-[13px]">{s.label}</p>
+            <p
+              className="mt-1 font-mono text-[26px] leading-none md:text-[32px]"
+              style={{ color: s.color }}
+            >
+              {listQuery.isLoading ? '·' : s.value}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-8 flex flex-col gap-8 lg:flex-row">
+        {/* 左固定側欄（§P9：240px，--space-1）；手機轉頂部橫 scroll chips */}
+        <aside
+          className="shrink-0 rounded-2xl border p-3 lg:sticky lg:top-24 lg:w-60 lg:self-start"
+          style={{ borderColor: 'var(--space-line)', background: 'var(--space-1)' }}
+        >
+          <Link to="/" className="mb-2 hidden items-center gap-2 px-3 pt-2 lg:flex" aria-label="RedCode 首頁">
+            <img src="/logo.png" alt="RedCode Fashion Design" className="h-9 w-auto" />
+          </Link>
+          <nav className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible" aria-label="後台功能">
+            {NAV.map((item) => {
+              const active = view === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setView(item.key)}
+                  aria-current={active}
+                  className="flex shrink-0 items-center gap-2.5 rounded-xl px-4 py-3 text-[14px] transition-colors"
+                  style={{
+                    background: active ? 'var(--space-3)' : 'transparent',
+                    color: active ? 'var(--text-1)' : 'var(--text-2)',
+                    fontWeight: active ? 700 : 400,
+                  }}
+                >
+                  {item.icon}
+                  {item.label}
+                  {item.badge != null && item.badge > 0 && (
+                    <span
+                      className="ml-auto rounded-full px-2 py-0.5 font-mono text-[11px] font-bold leading-none"
+                      style={{ background: 'var(--gold)', color: 'var(--space-1)' }}
+                      aria-label={`${item.badge} 張待審批`}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+            <Link
+              to="/"
+              className="flex shrink-0 items-center gap-2.5 rounded-xl px-4 py-3 text-[14px] text-txt-3 transition-colors hover:text-lavender"
+            >
+              <Store size={17} aria-hidden="true" />
+              返回前台
+            </Link>
+          </nav>
+        </aside>
+
+        {/* 主區 */}
+        <div className="min-w-0 flex-1">
+          {listQuery.isLoading ? (
+            <LoadingBlock text="許願星搬緊訂單…" />
+          ) : listQuery.isError ? (
+            <div
+              className="rounded-2xl border px-6 py-10 text-center"
+              style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
+            >
+              <p className="text-[15px] text-pink-soft">
+                載入訂單失敗：{listQuery.error.message}
+              </p>
+              <button
+                type="button"
+                onClick={() => void listQuery.refetch()}
+                className="btn btn-secondary mt-5 !px-6 !py-2.5 text-[14px]"
+              >
+                重試
+              </button>
+            </div>
+          ) : view === 'review' ? (
+            <ReviewWorkbench
+              queue={queue}
+              onReview={(pid, approve, note, order) => void handleReview(pid, approve, note, order)}
+              reviewingProofId={reviewingProofId}
+              onOpenLightbox={setLightboxSrc}
+              leavingIds={leavingIds}
+            />
+          ) : view === 'orders' ? (
+            <OrderList
+              orders={orders}
+              onReview={(pid, approve, note, order) => void handleReview(pid, approve, note, order)}
+              reviewingProofId={reviewingProofId}
+              onStatus={(oid, status) => void handleStatus(oid, status)}
+              statusBusyId={statusBusyId}
+              onOpenLightbox={setLightboxSrc}
+            />
+          ) : (
+            <ProductManager toast={pushToast} />
+          )}
+        </div>
+      </div>
+
+      {lightboxSrc && <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
+      <ToastStack toasts={toasts} />
+    </section>
+  );
+}
+
+export default function Admin() {
+  const { user, isLoading, isStaff } = useAuth();
+
+  if (isLoading) {
+    return (
+      <section className="flex min-h-[60dvh] items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <WishingStar size={32} />
+          <p className="text-[14px] text-txt-3">核實緊員工身份…</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (!user) {
+    return (
+      <GuardCard title="員工請先登入" desc="呢個係 RedCode 內部訂單審批系統，請用員工帳號登入。">
+        <Link to="/login" className="btn btn-primary w-full">
+          <LogIn size={16} aria-hidden="true" />
+          去登入
+        </Link>
+      </GuardCard>
+    );
+  }
+
+  if (!isStaff) {
+    return (
+      <GuardCard
+        title="呢個帳號冇員工權限"
+        desc={`你好 ${user.name}，你嘅帳號係會員身份。如果你係 RedCode 同事，請搵 Glo Glo 開通員工權限。`}
+      >
+        <Link to="/" className="btn btn-secondary w-full">
+          返回前台
+        </Link>
+      </GuardCard>
+    );
+  }
+
+  return <AdminConsole />;
 }
