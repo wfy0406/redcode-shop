@@ -340,7 +340,7 @@ export default function About() {
                 </span>
                 <div>
                   <p className="text-lg font-bold text-txt-1">Red Code HK直播台</p>
-                  <p className="text-sm text-txt-3">約 4,390 位粉絲 · 直播晚場 22:00 ／ 快閃場 15:30</p>
+                  <p className="text-sm text-txt-3">約 4,390 位粉絲 · 直播時間以專頁公佈為準</p>
                 </div>
               </div>
               <span className="font-mono text-lg text-pink-soft md:text-xl">@redcodexhk</span>

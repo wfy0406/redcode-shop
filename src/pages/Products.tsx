@@ -71,7 +71,7 @@ export default function Products() {
     else if (sort === 'price-desc') list.sort((a, b) => effectivePrice(b) - effectivePrice(a));
     // 'latest'：server 已按 listedDate desc 排
     return list;
-  }, [kw, sort, listQuery.data, allQuery.data]);
+  }, [kw, sort, listQuery.data, listQuery.isError, allQuery.data]);
 
   const isInitialLoading = listQuery.isLoading && !listQuery.data;
   const gridRef = useRevealDep<HTMLDivElement>([kw, products.length]);

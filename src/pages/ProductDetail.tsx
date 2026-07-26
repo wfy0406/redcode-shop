@@ -49,7 +49,7 @@ export default function ProductDetail() {
     { enabled: validId, retry: false },
   );
   // 相關商品：同 list 排序（listedDate desc），排除自己，取前 4 件
-  const relatedQuery = trpc.products.list.useQuery(undefined, { staleTime: 5 * 60_000 });
+  const relatedQuery = trpc.products.list.useQuery(undefined, { staleTime: 5 * 60_000, retry: false });
 
   // 靜態示範模式：後端連唔到 → 用內建示範商品
   const product = (productQuery.data ??
@@ -107,8 +107,8 @@ export default function ProductDetail() {
     );
   }
 
-  /* ---------- 搵唔到 / 錯誤 ---------- */
-  if (!validId || productQuery.isError || !product) {
+  /* ---------- 搵唔到 / 錯誤（示範模式有 fallback 商品，唔會入嚟） ---------- */
+  if (!validId || !product) {
     return (
       <section className="mx-auto flex min-h-[60vh] max-w-[1280px] flex-col items-center justify-center gap-4 px-5 text-center">
         <p className="script text-3xl">lost in the stars</p>

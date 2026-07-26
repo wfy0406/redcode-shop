@@ -373,7 +373,7 @@ export default function Home() {
         <div ref={liveRef} className="reveal">
           <SectionHeading en="Live Room" zh="Facebook 直播專區" />
           <p className="mt-3 max-w-xl text-[15px] text-txt-2">
-            每晚 22:00，Glo Glo 喺 Facebook 同大家見面。錯過咗直播？
+            每晚 Glo Glo 都會喺 Facebook 同大家見面。錯過咗直播？
             下面有回顧片段，或者入專頁重溫晒所有場次。
           </p>
 
