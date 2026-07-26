@@ -1,11 +1,11 @@
-import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Zap } from 'lucide-react';
+import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Sun, Sunrise, Zap } from 'lucide-react';
 import { useReveal } from '@/hooks/useReveal';
 
 /**
  * RedCode 直播專區（/live）
  * 1. Hero：live-banner.png 底 + 「直播專區」標題 + LIVE 眨燈 badge（§3.5 steps(2) 眨燈）
  * 2. Facebook 直播嵌入：FB page plugin iframe（玻璃框包住 + fallback 連結）
- * 3. 直播時間表卡（brief.md：晚場 22:00 ／ 快閃場 15:30，單場可逾 3 小時，以 FB 公佈為準）
+ * 3. 日常直播時間表卡（#早上場／#下午場／#晚上場／#快閃場，以 FB 公佈為準）
  * 4. （已移除直播回顧 video cards — 公司宣傳影片移咗去首頁）
  * 5. 「點樣睇直播落單」四步（大字編號 DM Mono）
  * 6. CTA：去 Facebook 睇直播 + WhatsApp
@@ -20,6 +20,20 @@ const FB_PAGE_PLUGIN =
 /* ---------- 直播場次（唔寫死時間，以 FB 公佈為準） ---------- */
 const SCHEDULE = [
   {
+    icon: Sunrise,
+    tag: '#早上場',
+    time: '朝早',
+    title: '早上場',
+    body: '間中朝早開場，同寶寶們吹住水慢慢睇新款。返工前都可以掃定心水，開啟靚靚一日。',
+  },
+  {
+    icon: Sun,
+    tag: '#下午場',
+    time: '下午',
+    title: '下午場',
+    body: '下午茶時間開播，輕輕鬆鬆邊睇邊揀。快閃價款色限時開搶，手快有手慢冇。',
+  },
+  {
     icon: Moon,
     tag: '#晚上場',
     time: '每晚',
@@ -31,7 +45,7 @@ const SCHEDULE = [
     tag: '#快閃場',
     time: '突襲',
     title: '快閃場',
-    body: '不定期突襲開場，快閃價款色手快有手慢冇。部分場次僅限直播下單，不設加單。',
+    body: '不定期突襲開場，快閃價款色限時搶，手快有手慢冇。部分場次僅限直播下單，不設加單。',
   },
 ];
 
@@ -49,13 +63,13 @@ const STEPS = [
   },
   {
     num: '03',
-    title: 'WhatsApp 確認',
-    body: '落單後 WhatsApp 同 Glo Glo 團隊確認訂單同入數安排——即日入數全單減 $15。',
+    title: '我哋確認訂單 · INBOX 出單',
+    body: '我哋核對訂單後，會經 INBOX 出單俾你，列明款色、數量同金額。核對無誤，就可以安排付款。',
   },
   {
     num: '04',
-    title: '官網會員追蹤訂單',
-    body: '登入官網會員中心，隨時睇返訂單狀態：待對數、已確認、已發貨，一目了然。',
+    title: '付款完成',
+    body: '跟單上嘅方法付款（轉數快／銀行入數），上傳入數截圖。我哋確認後，即刻安排發貨。',
   },
 ];
 
@@ -161,55 +175,66 @@ export default function Live() {
             <span className="font-display-en mr-3 text-purple-text">Live Room</span>
             Facebook 直播間
           </h2>
-          <p className="mt-3 max-w-xl text-[15px] text-txt-2">
-            最新直播同帖文都喺晒度。開播嗰陣，直接喺度睇或者撳入 Facebook 一齊留言。
-          </p>
-          <div
-            className="mt-8 overflow-hidden rounded-2xl border"
-            style={{
-              background: 'var(--glass-bg)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-              borderColor: 'var(--glass-border)',
-            }}
-          >
-            <iframe
-              src={FB_PAGE_PLUGIN}
-              width="500"
-              height="600"
-              style={{ border: 'none', overflow: 'hidden', width: '100%', height: '600px' }}
-              scrolling="no"
-              allowFullScreen
-              allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
-              title="Red Code HK直播台 Facebook 專頁"
-              loading="lazy"
-            />
-          </div>
-          {/* fallback：嵌入載入唔到嘅替代出口 */}
-          <p className="mt-4 text-sm text-txt-3">
-            嵌入內容載入唔到？
-            <a
-              href={FACEBOOK_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-1 inline-flex items-center gap-1 border-b font-medium text-pink-soft transition-colors hover:text-pink-tint"
-              style={{ borderColor: 'var(--pink)' }}
+          <div className="mt-8 grid items-start gap-8 lg:grid-cols-5">
+            {/* 左：說明 + fallback 連結 */}
+            <div className="lg:col-span-2">
+              <p className="max-w-xl text-[15px] leading-[1.75] text-txt-2">
+                最新直播同帖文都喺晒度。開播嗰陣，直接喺度睇或者撳入 Facebook 一齊留言。
+              </p>
+              <p className="mt-4 text-sm leading-[1.75] text-txt-3">
+                嵌入內容載入唔到？
+                <a
+                  href={FACEBOOK_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-1 inline-flex items-center gap-1 border-b font-medium text-pink-soft transition-colors hover:text-pink-tint"
+                  style={{ borderColor: 'var(--pink)' }}
+                >
+                  直接去 Facebook 專頁
+                  <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              </p>
+            </div>
+            {/* 右：FB plugin（最寬 500px，框跟返佢比例置中） */}
+            <div
+              className="flex justify-center overflow-hidden rounded-2xl border lg:col-span-3"
+              style={{
+                background: 'var(--glass-bg)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                borderColor: 'var(--glass-border)',
+              }}
             >
-              直接去 Facebook 專頁
-              <ExternalLink size={14} aria-hidden="true" />
-            </a>
-          </p>
+              <iframe
+                src={FB_PAGE_PLUGIN}
+                width="500"
+                height="600"
+                style={{
+                  border: 'none',
+                  overflow: 'hidden',
+                  width: '100%',
+                  maxWidth: '500px',
+                  height: '600px',
+                }}
+                scrolling="no"
+                allowFullScreen
+                allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+                title="Red Code HK直播台 Facebook 專頁"
+                loading="lazy"
+              />
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* ============ 3. 直播時間表卡 ============ */}
+      {/* ============ 3. 日常直播時間表卡 ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
         <div ref={scheduleRef} className="reveal">
           <h2 className="font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
             <span className="font-display-en mr-3 text-purple-text">Schedule</span>
-            直播時間表
+            日常直播時間
           </h2>
-          <div className="mt-8 grid gap-6 md:grid-cols-2">
+          <div className="mt-8 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
             {SCHEDULE.map((slot, i) => {
               const Icon = slot.icon;
               return (
