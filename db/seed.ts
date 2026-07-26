@@ -96,7 +96,7 @@ async function seed() {
   }
 
   console.log("Done.");
-  process.exit(0); // close MySQL connection pool
+  process.exit(0); // close Postgres connection pool
 }
 
 seed();

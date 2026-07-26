@@ -47,7 +47,7 @@ export const authRouter = createRouter({
           address: input.address ?? null,
           age: input.age ?? null,
         })
-        .$returningId();
+        .returning({ id: users.id });
       const user = await db.query.users.findFirst({ where: eq(users.id, id) });
       const token = await signToken({ userId: id, role: user!.role });
       return { token, user: publicUser(user!) };

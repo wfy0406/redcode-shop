@@ -59,22 +59,23 @@ export const ordersRouter = createRouter({
         orderNo = generateOrderNo();
       }
 
-      const [{ id: orderId }] = await db
-        .insert(orders)
-        .values({
-          orderNo,
-          userId: ctx.user.userId,
-          status: "pending_payment",
-          total,
-          address: input?.address ?? null,
-          note: input?.note ?? null,
-        })
-        .$returningId();
+      // PostgreSQL 支援真 transaction：insert order + items + clear cart 一齊 atomic
+      const orderId = await db.transaction(async (tx) => {
+        const [{ id }] = await tx
+          .insert(orders)
+          .values({
+            orderNo,
+            userId: ctx.user.userId,
+            status: "pending_payment",
+            total,
+            address: input?.address ?? null,
+            note: input?.note ?? null,
+          })
+          .returning({ id: orders.id });
 
-      try {
-        await db.insert(orderItems).values(
+        await tx.insert(orderItems).values(
           cart.map((item) => ({
-            orderId,
+            orderId: id,
             productId: item.productId,
             productName: item.product.name,
             sku: item.product.sku,
@@ -83,13 +84,9 @@ export const ordersRouter = createRouter({
             quantity: item.quantity,
           })),
         );
-        await db.delete(cartItems).where(eq(cartItems.userId, ctx.user.userId));
-      } catch (err) {
-        // best-effort compensation (no transactions in planetscale mode)
-        await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
-        await db.delete(orders).where(eq(orders.id, orderId));
-        throw err;
-      }
+        await tx.delete(cartItems).where(eq(cartItems.userId, ctx.user.userId));
+        return id;
+      });
 
       return db.query.orders.findFirst({
         where: eq(orders.id, orderId),
@@ -144,10 +141,10 @@ export const ordersRouter = createRouter({
       const [{ id }] = await db
         .insert(paymentProofs)
         .values({ orderId: order.id, imagePath: input.imagePath, status: "pending" })
-        .$returningId();
+        .returning({ id: paymentProofs.id });
       await db
         .update(orders)
-        .set({ status: "payment_review" })
+        .set({ status: "payment_review", updatedAt: new Date() })
         .where(eq(orders.id, order.id));
       return db.query.paymentProofs.findFirst({
         where: eq(paymentProofs.id, id),
@@ -207,7 +204,7 @@ export const ordersRouter = createRouter({
         .where(eq(paymentProofs.id, proof.id));
       await db
         .update(orders)
-        .set({ status: input.approve ? "approved" : "rejected" })
+        .set({ status: input.approve ? "approved" : "rejected", updatedAt: new Date() })
         .where(eq(orders.id, proof.orderId));
       return db.query.paymentProofs.findFirst({
         where: eq(paymentProofs.id, proof.id),
@@ -231,7 +228,7 @@ export const ordersRouter = createRouter({
       }
       await db
         .update(orders)
-        .set({ status: input.status })
+        .set({ status: input.status, updatedAt: new Date() })
         .where(eq(orders.id, input.orderId));
       return db.query.orders.findFirst({
         where: eq(orders.id, input.orderId),

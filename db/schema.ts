@@ -1,112 +1,115 @@
 import {
-  mysqlTable,
-  mysqlEnum,
+  pgTable,
+  pgEnum,
   serial,
   varchar,
   text,
   timestamp,
-  int,
+  integer,
   boolean,
   bigint,
   uniqueIndex,
-} from "drizzle-orm/mysql-core";
+} from "drizzle-orm/pg-core";
 
-export const users = mysqlTable("users", {
+export const roleEnum = pgEnum("role", ["member", "staff", "admin"]);
+
+export const orderStatusEnum = pgEnum("order_status", [
+  "pending_payment",
+  "payment_review",
+  "approved",
+  "rejected",
+  "shipped",
+  "completed",
+  "cancelled",
+]);
+
+export const paymentProofStatusEnum = pgEnum("payment_proof_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+
+export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
   phone: varchar("phone", { length: 32 }).notNull().unique(),
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
   address: text("address"),
-  age: int("age"),
-  role: mysqlEnum("role", ["member", "staff", "admin"])
-    .notNull()
-    .default("member"),
+  age: integer("age"),
+  role: roleEnum("role").notNull().default("member"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
-export const products = mysqlTable("products", {
+export const products = pgTable("products", {
   id: serial("id").primaryKey(),
   sku: varchar("sku", { length: 64 }).notNull().unique(),
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
   image: varchar("image", { length: 512 }).notNull(),
-  price: int("price").notNull(),
-  discountPrice: int("discountPrice"),
+  price: integer("price").notNull(),
+  discountPrice: integer("discountPrice"),
   sizes: varchar("sizes", { length: 255 }),
   listedDate: timestamp("listedDate").notNull(),
-  stock: int("stock").notNull().default(0),
+  stock: integer("stock").notNull().default(0),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
-export const cartItems = mysqlTable(
+export const cartItems = pgTable(
   "cartItems",
   {
     id: serial("id").primaryKey(),
-    userId: bigint("userId", { mode: "number", unsigned: true })
+    userId: bigint("userId", { mode: "number" })
       .notNull()
       .references(() => users.id),
-    productId: bigint("productId", { mode: "number", unsigned: true })
+    productId: bigint("productId", { mode: "number" })
       .notNull()
       .references(() => products.id),
     size: varchar("size", { length: 64 }),
-    quantity: int("quantity").notNull(),
+    quantity: integer("quantity").notNull(),
     createdAt: timestamp("createdAt").notNull().defaultNow(),
   },
   (t) => [uniqueIndex("cart_user_product_size").on(t.userId, t.productId, t.size)],
 );
 
-export const orders = mysqlTable("orders", {
+export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
   orderNo: varchar("orderNo", { length: 32 }).notNull().unique(),
-  userId: bigint("userId", { mode: "number", unsigned: true })
+  userId: bigint("userId", { mode: "number" })
     .notNull()
     .references(() => users.id),
-  status: mysqlEnum("status", [
-    "pending_payment",
-    "payment_review",
-    "approved",
-    "rejected",
-    "shipped",
-    "completed",
-    "cancelled",
-  ])
-    .notNull()
-    .default("pending_payment"),
-  total: int("total").notNull(),
+  status: orderStatusEnum("status").notNull().default("pending_payment"),
+  total: integer("total").notNull(),
   address: text("address"),
   note: text("note"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
-  updatedAt: timestamp("updatedAt").notNull().defaultNow().onUpdateNow(),
+  // PostgreSQL 冇 ON UPDATE CURRENT_TIMESTAMP，updatedAt 由應用層更新時一併 set
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 });
 
-export const orderItems = mysqlTable("orderItems", {
+export const orderItems = pgTable("orderItems", {
   id: serial("id").primaryKey(),
-  orderId: bigint("orderId", { mode: "number", unsigned: true })
+  orderId: bigint("orderId", { mode: "number" })
     .notNull()
     .references(() => orders.id),
-  productId: bigint("productId", { mode: "number", unsigned: true })
+  productId: bigint("productId", { mode: "number" })
     .notNull()
     .references(() => products.id),
   productName: varchar("productName", { length: 255 }).notNull(),
   sku: varchar("sku", { length: 64 }).notNull(),
   size: varchar("size", { length: 64 }),
-  price: int("price").notNull(),
-  quantity: int("quantity").notNull(),
+  price: integer("price").notNull(),
+  quantity: integer("quantity").notNull(),
 });
 
-export const paymentProofs = mysqlTable("paymentProofs", {
+export const paymentProofs = pgTable("paymentProofs", {
   id: serial("id").primaryKey(),
-  orderId: bigint("orderId", { mode: "number", unsigned: true })
+  orderId: bigint("orderId", { mode: "number" })
     .notNull()
     .references(() => orders.id),
   imagePath: varchar("imagePath", { length: 512 }).notNull(),
-  status: mysqlEnum("status", ["pending", "approved", "rejected"])
-    .notNull()
-    .default("pending"),
-  reviewedBy: bigint("reviewedBy", { mode: "number", unsigned: true }).references(
-    () => users.id,
-  ),
+  status: paymentProofStatusEnum("status").notNull().default("pending"),
+  reviewedBy: bigint("reviewedBy", { mode: "number" }).references(() => users.id),
   reviewNote: text("reviewNote"),
   reviewedAt: timestamp("reviewedAt"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),

@@ -79,7 +79,7 @@ export const productsRouter = createRouter({
           listedDate: input.listedDate ?? new Date(),
           stock: input.stock ?? 0,
         })
-        .$returningId();
+        .returning({ id: products.id });
       return db.query.products.findFirst({ where: eq(products.id, id) });
     }),
 

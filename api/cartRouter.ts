@@ -58,7 +58,7 @@ export const cartRouter = createRouter({
           size,
           quantity: input.quantity,
         })
-        .$returningId();
+        .returning({ id: cartItems.id });
       return db.query.cartItems.findFirst({
         where: eq(cartItems.id, id),
         with: { product: true },
