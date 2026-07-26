@@ -4,9 +4,10 @@ import { cn } from '@/lib/utils';
 import type { OrderStatus } from './types';
 
 /**
- * 訂單狀態 badge（R3 §1 配色階梯 + lucide icon 雙重編碼）
- * 進行中狀態用 palette 色階梯：待付款=--gold → 審核中=--lavender → 已確認=--pink → 已出貨=--pink 深級；
- * 終態先出灰綠／中性灰／暖紅。bg 12% 透明、text 全色、1px 同色 30% 邊（深底友好）。
+ * 訂單狀態 badge（R3 §1 配色階梯 + lucide icon 雙重編碼；F-D 四步流程）
+ * 進行中狀態用 palette 色階梯：待付款=--gold → 審核中=--lavender → 已確認=--pink；
+ * 終態：進行出貨（shipped／legacy completed）=--success、已取消=中性灰、已拒絕=暖紅。
+ * bg 12% 透明、text 全色、1px 同色 30% 邊（深底友好）。未知 status 顯示 neutral badge + 原字。
  */
 
 /** 由 --pink 向紅推導嘅暖紅（同飽和同明度），rejected 專用 */
@@ -26,14 +27,19 @@ const STATUS_META: Record<OrderStatus, StatusMeta> = {
   pending_payment: { label: '待付款', color: 'var(--gold)', icon: Clock, pulse: true },
   payment_review: { label: '審核中', color: 'var(--lavender)', icon: Hourglass },
   approved: { label: '已確認', color: 'var(--pink)', icon: BadgeCheck },
-  shipped: { label: '已出貨', color: 'var(--pink-soft)', icon: Truck, strong: true },
-  completed: { label: '已完成', color: 'var(--success)', icon: CheckCircle2 },
+  // F-D：shipped／completed（legacy）都映射「進行出貨」完成終態（success 色）
+  shipped: { label: '進行出貨', color: 'var(--success)', icon: Truck, strong: true },
+  completed: { label: '進行出貨', color: 'var(--success)', icon: CheckCircle2 },
   cancelled: { label: '已取消', color: 'var(--text-3)', icon: XCircle },
   rejected: { label: '已拒絕', color: REJECT_RED, icon: AlertCircle },
 };
 
+/** 未知狀態兜底（例如 DB 遷移空窗嘅新 enum 值）：neutral badge + raw status 字 */
+const UNKNOWN_META: Omit<StatusMeta, 'label'> = { color: 'var(--text-3)', icon: AlertCircle };
+
 export default function StatusBadge({ status }: { status: OrderStatus }) {
-  const meta = STATUS_META[status];
+  const known = STATUS_META[status] as StatusMeta | undefined;
+  const meta: StatusMeta = known ?? { ...UNKNOWN_META, label: String(status) };
   const Icon = meta.icon;
   return (
     <span

@@ -16,7 +16,5 @@ export type ReviewHandler = (
   order: AdminOrder,
 ) => void;
 
-export type StatusHandler = (
-  orderId: number,
-  status: 'shipped' | 'completed' | 'cancelled',
-) => void;
+// F-D：新流程 approved → shipped（進行出貨＝完成終態），移除 completed 寫入
+export type StatusHandler = (orderId: number, status: 'shipped' | 'cancelled') => void;

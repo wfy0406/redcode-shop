@@ -28,13 +28,13 @@ export const ORDER_STATUS_META: Record<OrderStatus, StatusMeta> = {
     className: 'border-pink/70 text-pink-soft',
     dot: 'var(--pink-soft)',
   },
+  // F-D：shipped＝進行出貨（完成終態）；completed 係 legacy 值，顯示層映射去同一終態
   shipped: {
-    label: '已寄出',
-    className: 'border-purple-text/60 text-purple-text',
-    dot: 'var(--purple-text)',
+    label: '進行出貨',
+    className: 'border-success bg-success text-space-1 font-bold',
   },
   completed: {
-    label: '完成',
+    label: '進行出貨',
     className: 'border-success bg-success text-space-1 font-bold',
   },
   cancelled: {
@@ -50,7 +50,7 @@ export const STATUS_FILTERS: { key: OrderStatus | 'all'; label: string }[] = [
   { key: 'payment_review', label: '審核中' },
   { key: 'approved', label: '已確認' },
   { key: 'rejected', label: '已拒絕' },
-  { key: 'shipped', label: '已寄出' },
-  { key: 'completed', label: '完成' },
+  // F-D：進行出貨＝完成終態；legacy completed 歸入「全部」（badge 同樣顯示進行出貨）
+  { key: 'shipped', label: '進行出貨' },
   { key: 'cancelled', label: '取消' },
 ];
