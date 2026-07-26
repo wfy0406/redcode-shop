@@ -5,7 +5,7 @@ import { useReveal } from '@/hooks/useReveal';
  * RedCode 直播專區（/live）
  * 1. Hero：live-banner.png 底 + 「直播專區」標題 + LIVE 眨燈 badge（§3.5 steps(2) 眨燈）
  * 2. Facebook 直播嵌入：FB page plugin iframe（玻璃框包住 + fallback 連結）
- * 3. 日常直播時間表卡（#早上場／#下午場／#晚上場／#快閃場，以 FB 公佈為準）
+ * 3. 直播時間表卡（brief.md：晚場 22:00 ／ 快閃場 15:30，單場可逾 3 小時，以 FB 公佈為準）
  * 4. （已移除直播回顧 video cards — 公司宣傳影片移咗去首頁）
  * 5. 「點樣睇直播落單」四步（大字編號 DM Mono）
  * 6. CTA：去 Facebook 睇直播 + WhatsApp
@@ -45,7 +45,7 @@ const SCHEDULE = [
     tag: '#快閃場',
     time: '突襲',
     title: '快閃場',
-    body: '不定期突襲開場，快閃價款色限時搶，手快有手慢冇。部分場次僅限直播下單，不設加單。',
+    body: '不定期突襲開場，快閃價款色手快有手慢冇。部分場次僅限直播下單，不設加單。',
   },
 ];
 
@@ -227,7 +227,7 @@ export default function Live() {
         </div>
       </section>
 
-      {/* ============ 3. 日常直播時間表卡 ============ */}
+      {/* ============ 3. 直播時間表卡 ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
         <div ref={scheduleRef} className="reveal">
           <h2 className="font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
