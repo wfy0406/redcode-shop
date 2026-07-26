@@ -99,7 +99,7 @@ function CartLineRow({ line, pending, onQuantityChange, onRemove }: CartLineRowP
 function EmptyCart() {
   return (
     <div className="mt-14 flex flex-col items-center pb-8 text-center">
-      <img src="/empty-cart.png" alt="" className="w-52 max-w-full md:w-64" />
+      <img src="/empty-cart.jpg" alt="" className="w-52 max-w-full md:w-64" />
       <p className="script mt-6 text-3xl md:text-4xl">Your wishlist is still a wish…</p>
       <p className="mt-3 max-w-sm text-[15px] text-txt-2">
         購物車仲係空嘅。今晚直播款唔等人，去揀件啱心水嘅先。

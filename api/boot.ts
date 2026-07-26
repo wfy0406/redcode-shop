@@ -88,10 +88,14 @@ export default app;
 if (env.isProduction) {
   const { serve } = await import("@hono/node-server");
   const { serveStaticFiles } = await import("./lib/vite");
+  const { ensureDatabase } = await import("./boot-migrate");
   serveStaticFiles(app);
 
   const port = parseInt(process.env.PORT || "3000");
   serve({ fetch: app.fetch, port }, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
+
+  // 開機自動建表 + 種子數據（失敗唔會冧 server，淨係 log）
+  ensureDatabase().catch((e) => console.error("[boot-migrate] failed:", e));
 }

@@ -206,7 +206,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   if (items.length === 0) {
     return (
       <div className="mt-14 flex flex-col items-center pb-8 text-center">
-        <img src="/empty-cart.png" alt="" className="w-52 max-w-full md:w-64" />
+        <img src="/empty-cart.jpg" alt="" className="w-52 max-w-full md:w-64" />
         <p className="mt-6 font-serif-tc text-2xl font-semibold text-txt-1">購物車係空嘅</p>
         <p className="mt-2 max-w-sm text-[15px] text-txt-2">
           未有嘢好結帳喎，去揀件衫先啦。

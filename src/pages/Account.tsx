@@ -119,7 +119,7 @@ export default function Account() {
       ) : orders.length === 0 ? (
         /* 空訂單狀態 */
         <div className="mt-8 flex flex-col items-center gap-5 rounded-2xl border border-space-line bg-space-2 px-6 py-16 text-center">
-          <img src="/empty-cart.png" alt="" className="h-32 w-auto opacity-90" loading="lazy" />
+          <img src="/empty-cart.jpg" alt="" className="h-32 w-auto opacity-90" loading="lazy" />
           <p className="script text-3xl">No wishes yet</p>
           <p className="max-w-sm text-[15px] text-txt-2">你仲未有訂單。去揀件啱心水嘅衫，許個願先啦。</p>
           <Link to="/products" className="btn btn-secondary">

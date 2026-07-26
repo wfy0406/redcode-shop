@@ -33,7 +33,7 @@ export const PRODUCTS: Product[] = [
     discountPrice: 268,
     sizes: ['S', 'M', 'L'],
     listedAt: '2025-07-24',
-    image: '/product-1.png',
+    image: '/product-1.jpg',
     live: true,
   },
   {
@@ -43,7 +43,7 @@ export const PRODUCTS: Product[] = [
     price: 228,
     sizes: ['Free Size'],
     listedAt: '2025-07-22',
-    image: '/product-2.png',
+    image: '/product-2.jpg',
   },
   {
     id: 'rc-1003',
@@ -53,7 +53,7 @@ export const PRODUCTS: Product[] = [
     discountPrice: 248,
     sizes: ['S', 'M', 'L', 'XL'],
     listedAt: '2025-07-20',
-    image: '/product-3.png',
+    image: '/product-3.jpg',
   },
   {
     id: 'rc-1004',
@@ -62,7 +62,7 @@ export const PRODUCTS: Product[] = [
     price: 358,
     sizes: ['M', 'L'],
     listedAt: '2025-07-18',
-    image: '/product-4.png',
+    image: '/product-4.jpg',
   },
   {
     id: 'rc-1005',
@@ -72,7 +72,7 @@ export const PRODUCTS: Product[] = [
     discountPrice: 198,
     sizes: ['S', 'M'],
     listedAt: '2025-07-15',
-    image: '/product-5.png',
+    image: '/product-5.jpg',
     live: true,
   },
   {
@@ -81,7 +81,7 @@ export const PRODUCTS: Product[] = [
     sku: 'RC-1006',
     price: 248,
     listedAt: '2025-07-12',
-    image: '/product-6.png',
+    image: '/product-6.jpg',
     soldOut: true,
   },
 ];

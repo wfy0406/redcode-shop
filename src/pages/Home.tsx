@@ -171,7 +171,7 @@ export default function Home() {
         <div
           aria-hidden="true"
           className="absolute inset-0 bg-cover bg-center opacity-60"
-          style={{ backgroundImage: 'url(/hero-nebula.png)' }}
+          style={{ backgroundImage: 'url(/hero-nebula.jpg)' }}
         />
         <div
           aria-hidden="true"
@@ -197,7 +197,7 @@ export default function Home() {
           className="right-[6%] top-[14%] hidden w-52 md:block"
         />
         <FloatCard
-          src="/product-2.png"
+          src="/product-2.jpg"
           caption="tonight's pick"
           rotate={3}
           parallax={0.5}

@@ -89,7 +89,7 @@ export default function Live() {
         <div
           aria-hidden="true"
           className="absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: 'url(/live-banner.png)' }}
+          style={{ backgroundImage: 'url(/live-banner.jpg)' }}
         />
         {/* 壓暗 + 融入深空底 */}
         <div

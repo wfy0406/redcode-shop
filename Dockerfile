@@ -7,8 +7,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
-# 拷貝源碼並 build（frontend dist/public + backend dist/boot.js）
+# 拷貝源碼、還原圖片/影片（assets-b64 → public/），然後 build
 COPY . .
+RUN node scripts/decode-assets.mjs
 RUN npm run build
 
 ENV NODE_ENV=production

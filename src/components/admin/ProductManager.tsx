@@ -21,7 +21,7 @@ const initialForm = {
   discountPrice: '',
   sizes: '',
   listedDate: new Date().toISOString().slice(0, 10),
-  image: '/product-1.png',
+  image: '/product-1.jpg',
   stock: '0',
   description: '',
 };
@@ -107,7 +107,7 @@ export default function ProductManager({
       discountPrice: discount,
       sizes: form.sizes.trim() || undefined,
       listedDate: form.listedDate ? new Date(`${form.listedDate}T00:00:00`) : undefined,
-      image: form.image.trim() || '/product-1.png',
+      image: form.image.trim() || '/product-1.jpg',
       stock,
       description: form.description.trim() || undefined,
     });
@@ -224,7 +224,7 @@ export default function ProductManager({
               value={form.image}
               onChange={(e) => set('image')(e.target.value)}
               className={`${inputCls} font-mono`}
-              placeholder="/product-1.png"
+              placeholder="/product-1.jpg"
             />
           </div>
           <div className="sm:col-span-2">
