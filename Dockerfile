@@ -3,6 +3,9 @@ FROM node:20
 
 WORKDIR /app
 
+# node:20 自帶 npm 10.8 有「Exit handler never called」bug，先升級 npm
+RUN npm install -g npm@11 --no-audit --no-fund
+
 # 先裝依賴（利用 docker layer cache）
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
