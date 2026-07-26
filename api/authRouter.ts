@@ -85,4 +85,55 @@ export const authRouter = createRouter({
     }
     return publicUser(user);
   }),
+
+  updateProfile: authedProcedure
+    .input(
+      z.object({
+        name: z.string().min(1).max(255).optional(),
+        address: z.string().nullable().optional(),
+        age: z.number().int().min(1).max(120).nullable().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const data: Partial<typeof users.$inferInsert> = {};
+      if (input.name !== undefined) data.name = input.name;
+      if (input.address !== undefined) data.address = input.address;
+      if (input.age !== undefined) data.age = input.age;
+      if (Object.keys(data).length > 0) {
+        await db.update(users).set(data).where(eq(users.id, ctx.user.userId));
+      }
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+      });
+      if (!user) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
+      }
+      return publicUser(user);
+    }),
+
+  changePassword: authedProcedure
+    .input(
+      z.object({
+        oldPassword: z.string().min(1),
+        newPassword: z.string().min(6).max(64),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+      });
+      if (!user) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
+      }
+      if (!verifyPassword(input.oldPassword, user.passwordHash)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "舊密碼唔啱" });
+      }
+      await db
+        .update(users)
+        .set({ passwordHash: hashPassword(input.newPassword) })
+        .where(eq(users.id, user.id));
+      return { ok: true };
+    }),
 });

@@ -91,6 +91,21 @@ CREATE TABLE IF NOT EXISTS "paymentProofs" (
 ALTER TABLE products ADD COLUMN IF NOT EXISTS category varchar(32) NOT NULL DEFAULT 'other';
 ALTER TABLE products ADD COLUMN IF NOT EXISTS note varchar(512);
 
+CREATE TABLE IF NOT EXISTS "promoCodes" (
+  id serial PRIMARY KEY,
+  code varchar(32) NOT NULL UNIQUE,
+  kind varchar(8) NOT NULL,
+  value integer NOT NULL,
+  "minSpend" integer NOT NULL DEFAULT 0,
+  "usageLimit" integer,
+  "usedCount" integer NOT NULL DEFAULT 0,
+  "expiresAt" timestamp,
+  "isActive" boolean NOT NULL DEFAULT true,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "promoCode" varchar(32);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "discountAmount" integer NOT NULL DEFAULT 0;
+
 CREATE TABLE IF NOT EXISTS "praiseWall" (
   id serial PRIMARY KEY,
   image varchar(512) NOT NULL,

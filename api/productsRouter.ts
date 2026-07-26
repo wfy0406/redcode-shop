@@ -38,6 +38,15 @@ export const productsRouter = createRouter({
         .orderBy(desc(products.listedDate));
     }),
 
+  // staff 專用：全部商品（包括下架），俾管理後台用
+  adminList: staffProcedure.query(async () => {
+    const db = getDb();
+    return db
+      .select()
+      .from(products)
+      .orderBy(desc(products.listedDate));
+  }),
+
   byId: publicQuery
     .input(z.object({ id: z.number().int().positive() }))
     .query(async ({ input }) => {
@@ -135,7 +144,15 @@ export const productsRouter = createRouter({
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在" });
       }
-      await db.delete(products).where(eq(products.id, input.id));
+      // 有訂單／購物車紀錄嘅商品會被外鍵擋住，畀個友善提示（仿 usersRouter.remove）
+      try {
+        await db.delete(products).where(eq(products.id, input.id));
+      } catch {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "呢件商品有訂單或購物車紀錄，唔可以刪除（可以下架代替）",
+        });
+      }
       return { ok: true };
     }),
 });

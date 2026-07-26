@@ -84,6 +84,8 @@ export const orders = pgTable("orders", {
   total: integer("total").notNull(),
   address: text("address"),
   note: text("note"),
+  promoCode: varchar("promoCode", { length: 32 }),
+  discountAmount: integer("discountAmount").notNull().default(0),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   // PostgreSQL 冇 ON UPDATE CURRENT_TIMESTAMP，updatedAt 由應用層更新時一併 set
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
@@ -117,6 +119,19 @@ export const paymentProofs = pgTable("paymentProofs", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
+export const promoCodes = pgTable("promoCodes", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 32 }).notNull().unique(),
+  kind: varchar("kind", { length: 8 }).notNull(), // 'percent' | 'fixed'
+  value: integer("value").notNull(),
+  minSpend: integer("minSpend").notNull().default(0),
+  usageLimit: integer("usageLimit"),
+  usedCount: integer("usedCount").notNull().default(0),
+  expiresAt: timestamp("expiresAt"),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 export const praiseWall = pgTable("praiseWall", {
   id: serial("id").primaryKey(),
   image: varchar("image", { length: 512 }).notNull(),
@@ -131,4 +146,5 @@ export type CartItem = typeof cartItems.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
 export type PaymentProof = typeof paymentProofs.$inferSelect;
+export type PromoCode = typeof promoCodes.$inferSelect;
 export type PraiseWallEntry = typeof praiseWall.$inferSelect;

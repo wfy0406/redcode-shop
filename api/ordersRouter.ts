@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { getDb } from "./queries/connection";
-import { cartItems, orders, orderItems, paymentProofs } from "@db/schema";
+import { cartItems, orders, orderItems, paymentProofs, products, promoCodes } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
+import { resolvePromoDiscount } from "./promoRouter";
 
 const orderStatusEnum = z.enum([
   "pending_payment",
@@ -31,6 +32,7 @@ export const ordersRouter = createRouter({
         .object({
           address: z.string().optional(),
           note: z.string().optional(),
+          promoCode: z.string().optional(),
         })
         .optional(),
     )
@@ -43,7 +45,7 @@ export const ordersRouter = createRouter({
       if (cart.length === 0) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "購物車係空嘅" });
       }
-      const total = cart.reduce(
+      const subtotal = cart.reduce(
         (sum, item) =>
           sum + (item.product.discountPrice ?? item.product.price) * item.quantity,
         0,
@@ -59,8 +61,57 @@ export const ordersRouter = createRouter({
         orderNo = generateOrderNo();
       }
 
-      // PostgreSQL 支援真 transaction：insert order + items + clear cart 一齊 atomic
+      // PostgreSQL 支援真 transaction：扣庫存 + 優惠碼 + insert order + items + clear cart 一齊 atomic
       const orderId = await db.transaction(async (tx) => {
+        // 每件貨驗庫存 + 扣庫存（conditional update 防超賣）
+        for (const item of cart) {
+          const deducted = await tx
+            .update(products)
+            .set({ stock: sql`${products.stock} - ${item.quantity}` })
+            .where(
+              and(
+                eq(products.id, item.productId),
+                gte(products.stock, item.quantity),
+              ),
+            )
+            .returning({ id: products.id });
+          if (deducted.length === 0) {
+            const fresh = await tx.query.products.findFirst({
+              where: eq(products.id, item.productId),
+            });
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `《${item.product.name}》庫存不足（淨返 ${fresh?.stock ?? 0} 件）`,
+            });
+          }
+        }
+
+        // 優惠碼：server 重算折扣 + usedCount 遞增（同事務）
+        let promoCodeValue: string | null = null;
+        let discountAmount = 0;
+        if (input?.promoCode?.trim()) {
+          const resolved = await resolvePromoDiscount(tx, input.promoCode, subtotal);
+          promoCodeValue = resolved.promo.code;
+          discountAmount = Math.min(resolved.discountAmount, subtotal);
+          const bumped = await tx
+            .update(promoCodes)
+            .set({ usedCount: sql`${promoCodes.usedCount} + 1` })
+            .where(
+              and(
+                eq(promoCodes.id, resolved.promo.id),
+                or(
+                  isNull(promoCodes.usageLimit),
+                  lt(promoCodes.usedCount, promoCodes.usageLimit),
+                ),
+              ),
+            )
+            .returning({ id: promoCodes.id });
+          if (bumped.length === 0) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已用完" });
+          }
+        }
+        const total = subtotal - discountAmount;
+
         const [{ id }] = await tx
           .insert(orders)
           .values({
@@ -70,6 +121,8 @@ export const ordersRouter = createRouter({
             total,
             address: input?.address ?? null,
             note: input?.note ?? null,
+            promoCode: promoCodeValue,
+            discountAmount,
           })
           .returning({ id: orders.id });
 
@@ -138,6 +191,17 @@ export const ordersRouter = createRouter({
           message: "呢張訂單而家唔可以上傳付款證明",
         });
       }
+      // 同單未審嘅舊截圖自動作廢，等 staff 淨係見到最新一張
+      await db
+        .update(paymentProofs)
+        .set({
+          status: "rejected",
+          reviewNote: "已被新截圖取代",
+          reviewedAt: new Date(),
+        })
+        .where(
+          and(eq(paymentProofs.orderId, order.id), eq(paymentProofs.status, "pending")),
+        );
       const [{ id }] = await db
         .insert(paymentProofs)
         .values({ orderId: order.id, imagePath: input.imagePath, status: "pending" })
