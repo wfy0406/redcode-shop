@@ -1,22 +1,21 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, NavLink } from 'react-router';
-import { Menu, MessageCircle, ShoppingCart, X } from 'lucide-react';
-import { useCart } from '@/hooks/useCart';
+import { Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 
 /**
- * 全站頂欄（design-system.md §P1 + react-dev.md Navbar positioning contract）
- * - sticky top-0 z-50 放喺 normal flow；頁面唔使自己補 nav 高度
- * - 高 60px（md 72px）＝ --nav-h；logo 左、導航中、icon 右
- * - 右上角：員工內部系統連結（md 起顯示）＋ WhatsApp 按鈕＋購物車 badge
- * - 手機：漢堡掣開全屏玻璃 overlay 選單（createPortal 掛 body，見下面註解）
+ * RedCode 設計系統 §4.2 —— 玻璃導航
+ * sticky top-0 z-50（react-dev.md navbar contract：唔用 fixed，Layout 唔使 offset bookkeeping）
+ * 高度 72px（手機 60px）、glass-bg + blur 16px、底邊 1px glass-border
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
-// 員工內部系統（Render 託管）
-const STAFF_URL = 'https://red-code-wms.onrender.com/';
+
+/** 員工內部系統（倉庫/HR，Render 託管） */
+const STAFF_SYSTEM_URL = 'https://red-code-wms.onrender.com/';
 
 const NAV_LINKS = [
   { to: '/', label: '首頁' },
@@ -27,114 +26,122 @@ const NAV_LINKS = [
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const { totalCount } = useCart();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  // CART-SLOT: 之後接購物車 state 顯示真數量
+  const cartCount = 0;
 
   return (
     <header
-      className="sticky top-0 z-50"
+      className="sticky top-0 z-50 h-[60px] md:h-[72px] border-b"
       style={{
         background: 'var(--glass-bg)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
-        borderBottom: '1px solid var(--glass-border)',
+        borderColor: 'var(--glass-border)',
       }}
     >
-      <nav className="mx-auto flex h-[60px] max-w-[1280px] items-center justify-between gap-4 px-5 md:h-[72px] md:px-8 xl:px-12">
-        {/* 左：logo */}
-        <Link to="/" aria-label="RedCode 首頁" className="shrink-0">
+      <div className="mx-auto flex h-full max-w-[1280px] items-center justify-between px-5 md:px-8 xl:px-12">
+        {/* 左：Logo */}
+        <Link to="/" aria-label="RedCode Fashion Design 首頁" className="flex shrink-0 items-center">
           <img src="/logo.png" alt="RedCode Fashion Design" className="h-10 w-auto md:h-14" />
         </Link>
 
-        {/* 中：桌機導航（hover 無底線；粉紅底線只喺當前頁出現） */}
-        <div className="hidden items-center gap-8 md:flex">
+        {/* 中：連結（desktop） */}
+        <nav className="hidden items-center gap-8 md:flex" aria-label="主導航">
           {NAV_LINKS.map((link) => (
             <NavLink
               key={link.to}
               to={link.to}
               end={link.to === '/'}
-              className="relative py-1 text-[15px] font-medium text-txt-2 transition-colors hover:text-pink-tint"
-              style={({ isActive }) =>
-                isActive
-                  ? {
-                      color: 'var(--pink-tint)',
-                      borderBottom: '1px solid var(--pink)',
-                      paddingBottom: '3px',
-                    }
-                  : undefined
-              }
+              className={({ isActive }) => cn('nav-link', isActive && 'active')}
             >
               {link.label}
             </NavLink>
           ))}
-          {user?.role === 'admin' || user?.role === 'staff' ? (
-            <NavLink
-              to="/admin"
-              className="relative py-1 text-[15px] font-medium text-gold transition-colors hover:text-gold"
-              style={({ isActive }) =>
-                isActive
-                  ? {
-                      borderBottom: '1px solid var(--gold)',
-                      paddingBottom: '3px',
-                    }
-                  : undefined
-              }
-            >
-              員工後台
-            </NavLink>
-          ) : null}
-        </div>
+        </nav>
 
-        {/* 右：員工內部系統＋WhatsApp 按鈕＋購物車 badge＋手機漢堡 */}
-        <div className="flex items-center gap-3 md:gap-4">
-          <a
-            href={STAFF_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden font-mono text-xs tracking-wider text-txt-3 transition-colors hover:text-gold md:inline"
-          >
-            員工內部系統
-          </a>
+        {/* 右：WhatsApp → 願望清單 → 購物車 → 會員 → 員工內部系統 */}
+        <div className="flex items-center gap-2 md:gap-4">
+          {/* WhatsApp 玻璃鈕（品牌命脈，手機都唔收埋） */}
           <a
             href={WHATSAPP_URL}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="WhatsApp 聯絡我哋"
-            className="btn btn-whatsapp !px-4 !py-2 text-sm"
+            className="btn btn-whatsapp !px-4 !py-2 text-sm md:!px-5"
+            aria-label="WhatsApp 聯絡我們"
           >
             <MessageCircle size={16} aria-hidden="true" />
-            <span className="hidden lg:inline">WhatsApp</span>
+            <span className="hidden sm:inline">WhatsApp</span>
           </a>
+
+          {/* 願望清單心心 */}
+          <Link
+            to="/account"
+            className="hidden min-h-11 min-w-11 items-center justify-center rounded-full text-txt-2 transition-colors hover:text-pink-soft md:flex"
+            aria-label="願望清單"
+          >
+            <Heart size={20} aria-hidden="true" />
+          </Link>
+
+          {/* 購物車 + 數字 badge */}
           <Link
             to="/cart"
+            className="relative flex min-h-11 min-w-11 items-center justify-center rounded-full text-txt-2 transition-colors hover:text-txt-1"
             aria-label="購物車"
-            className="relative flex h-9 w-9 items-center justify-center rounded-full text-txt-2 transition-colors hover:text-pink-tint"
           >
-            <ShoppingCart size={20} aria-hidden="true" />
-            {totalCount > 0 && (
-              <span
-                aria-label={`購物車有 ${totalCount} 件商品`}
-                className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-gold px-1 font-mono text-[10px] font-medium text-space-1"
-              >
-                {totalCount > 99 ? '99+' : totalCount}
+            <ShoppingBag size={20} aria-hidden="true" />
+            {cartCount > 0 && (
+              <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-pink px-1 font-mono text-[10px] font-medium text-space-1">
+                <span className="sr-only">購物車有 </span>
+                {cartCount}
+                <span className="sr-only"> 件商品</span>
               </span>
             )}
           </Link>
+
+          {/* AUTH-SLOT: 已接 useAuth（自訂電話+密碼登入） */}
+          {user ? (
+            <span className="hidden items-center gap-3 md:flex">
+              <Link to="/account" className="nav-link">
+                {user.name}
+              </Link>
+              <button
+                type="button"
+                onClick={logout}
+                className="text-[13px] text-txt-3 transition-colors hover:text-pink-soft"
+              >
+                登出
+              </button>
+            </span>
+          ) : (
+            <Link to="/login" className="nav-link hidden md:inline">
+              會員登入
+            </Link>
+          )}
+
+          {/* 員工內部系統：最右、低調但搵得到（連去 Render 倉庫系統） */}
+          <a
+            href={STAFF_SYSTEM_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden items-center gap-2 text-[13px] text-txt-3 transition-colors hover:text-lavender lg:flex"
+          >
+            <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
+            員工內部系統
+          </a>
+
+          {/* 手機 hamburger */}
           <button
             type="button"
-            aria-label={menuOpen ? '關閉選單' : '開啟選單'}
-            aria-expanded={menuOpen}
+            className="flex min-h-11 min-w-11 items-center justify-center text-txt-1 md:hidden"
             onClick={() => setMenuOpen((open) => !open)}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-txt-1 transition-colors hover:text-pink-tint md:hidden"
+            aria-expanded={menuOpen}
+            aria-label={menuOpen ? '關閉選單' : '開啟選單'}
           >
-            {menuOpen ? (
-              <X size={22} aria-hidden="true" />
-            ) : (
-              <Menu size={22} aria-hidden="true" />
-            )}
+            {menuOpen ? <X size={24} aria-hidden="true" /> : <Menu size={24} aria-hidden="true" />}
           </button>
         </div>
-      </nav>
+      </div>
 
       {/* 手機全屏玻璃 overlay 選單 —— 用 createPortal 掛去 document.body，
           因為 header 有 backdrop-filter，會令入面嘅 fixed 元素變成相對 header 定位，
@@ -158,58 +165,39 @@ export default function Navbar() {
             }}
             aria-label="手機導航"
           >
-            {NAV_LINKS.map((link, i) => (
+          {[
+            ...NAV_LINKS,
+            { to: '/cart', label: '購物車' },
+            user
+              ? { to: '/account', label: `會員中心（${user.name}）` }
+              : { to: '/login', label: '會員登入' },
+          ].map(
+            (link, i) => (
               <NavLink
                 key={link.to}
                 to={link.to}
                 end={link.to === '/'}
                 onClick={() => setMenuOpen(false)}
-                className="border-b py-5 font-serif-tc text-2xl font-semibold text-txt-1 transition-colors hover:text-pink-tint"
-                style={({ isActive }) => ({
+                className="border-b py-4 font-serif-tc text-2xl font-semibold text-txt-1"
+                style={{
                   borderColor: 'var(--space-line)',
-                  color: isActive ? 'var(--pink-tint)' : undefined,
-                  animation: `mobile-nav-in 600ms var(--ease-expo) both`,
-                  animationDelay: `${i * 60}ms`,
-                })}
+                  animation: `mobile-nav-in 400ms var(--ease-expo) ${i * 50}ms both`,
+                }}
               >
                 {link.label}
               </NavLink>
-            ))}
-            <NavLink
-              to="/cart"
-              onClick={() => setMenuOpen(false)}
-              className="border-b py-5 font-serif-tc text-2xl font-semibold text-txt-1 transition-colors hover:text-pink-tint"
-              style={({ isActive }) => ({
-                borderColor: 'var(--space-line)',
-                color: isActive ? 'var(--pink-tint)' : undefined,
-                animation: 'mobile-nav-in 600ms var(--ease-expo) both',
-                animationDelay: `${NAV_LINKS.length * 60}ms`,
-              })}
-            >
-              購物車
-            </NavLink>
-            {user?.role === 'admin' || user?.role === 'staff' ? (
-              <NavLink
-                to="/admin"
-                onClick={() => setMenuOpen(false)}
-                className="border-b py-5 font-serif-tc text-2xl font-semibold text-gold"
-                style={{
-                  borderColor: 'var(--space-line)',
-                  animation: 'mobile-nav-in 600ms var(--ease-expo) both',
-                  animationDelay: `${(NAV_LINKS.length + 1) * 60}ms`,
-                }}
-              >
-                員工後台
-              </NavLink>
-            ) : null}
-            <a
-              href={STAFF_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-6 font-mono text-sm tracking-wider text-txt-3 transition-colors hover:text-gold"
-            >
-              員工內部系統 →
-            </a>
+            ),
+          )}
+          <a
+            href={STAFF_SYSTEM_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setMenuOpen(false)}
+            className="mt-6 flex items-center gap-2 text-[13px] text-txt-3"
+          >
+            <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
+            員工內部系統
+          </a>
             <style>{`@keyframes mobile-nav-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
           </nav>,
           document.body,

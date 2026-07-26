@@ -125,8 +125,7 @@ export const praiseWall = pgTable("praiseWall", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
-export type User = typeof users.$inferSelect;
-export type Product = typeof products.$inferSelect;
+export type User = typeof users.$inferSelect;export type Product = typeof products.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
