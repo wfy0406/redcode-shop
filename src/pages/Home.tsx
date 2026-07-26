@@ -39,7 +39,8 @@ function mapDbProduct(p: {
  * 2. 直播預告 Banner（§4.5）
  * 3. 今晚精選：2 大 4 細不對稱格網
  * 4. 新品上架：4 欄商品卡 + scroll reveal stagger
- * 5. Facebook 直播專區（page plugin + 直播回顧 video cards）
+ * 5. Facebook 直播專區（page plugin + CTA panel）
+ * 5.5 公司宣傳影片回顧（promo-1 橫片 + promo-2 直片）
  * 6. 品牌故事條 + Glo Glo 主播介紹
  * 7. 客戶打卡牆（IG 風格横 scroll）
  * 8. WhatsApp CTA 區塊
@@ -159,6 +160,7 @@ export default function Home() {
   const picksRef = useReveal<HTMLDivElement>();
   const newRef = useReveal<HTMLDivElement>();
   const liveRef = useReveal<HTMLDivElement>();
+  const promoRef = useReveal<HTMLDivElement>();
   const storyRef = useReveal<HTMLDivElement>();
   const wallRef = useReveal<HTMLDivElement>();
   const waRef = useReveal<HTMLDivElement>();
@@ -374,13 +376,13 @@ export default function Home() {
           <SectionHeading en="Live Room" zh="Facebook 直播專區" />
           <p className="mt-3 max-w-xl text-[15px] text-txt-2">
             每晚 Glo Glo 都會喺 Facebook 同大家見面。錯過咗直播？
-            下面有回顧片段，或者入專頁重溫晒所有場次。
+            入專頁可以重溫晒所有場次。
           </p>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-5">
             {/* FB Page Plugin 嵌入 */}
             <div
-              className="overflow-hidden rounded-2xl border bg-space-2 lg:col-span-2"
+              className="overflow-hidden rounded-2xl border bg-space-2 lg:col-span-3"
               style={{ borderColor: 'var(--glass-border)' }}
             >
               <iframe
@@ -396,63 +398,98 @@ export default function Home() {
               />
             </div>
 
-            {/* 直播回顧 video cards */}
-            <div className="grid gap-6 sm:grid-cols-2 lg:col-span-3">
-              {[
-                {
-                  src: '/live-clip-1.mp4',
-                  poster: '/video0-mid.jpg',
-                  title: '直播回顧 · 連身裙專場精華',
-                  date: '7月24日',
-                },
-                {
-                  src: '/live-clip-2.mp4',
-                  poster: '/video1-mid.jpg',
-                  title: '直播回顧 · 秒殺價開心share',
-                  date: '7月22日',
-                },
-              ].map((clip) => (
-                <div
-                  key={clip.src}
-                  className="overflow-hidden rounded-2xl border bg-space-2"
-                  style={{ borderColor: 'var(--glass-border)' }}
-                >
-                  <div className="duotone relative aspect-video">
-                    <video
-                      src={clip.src}
-                      poster={clip.poster}
-                      controls
-                      muted
-                      loop
-                      playsInline
-                      preload="metadata"
-                      className="h-full w-full object-cover"
-                    />
-                    <span
-                      className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-pink px-3 py-1 font-mono text-xs font-medium text-space-1"
-                      aria-hidden="true"
-                    >
-                      <Play size={12} aria-hidden="true" />
-                      REPLAY
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 p-4">
-                    <p className="text-[15px] font-bold text-txt-1">{clip.title}</p>
-                    <p className="shrink-0 font-mono text-xs text-txt-3">{clip.date}</p>
-                  </div>
-                </div>
-              ))}
-
-              {/* 去 Facebook 睇直播 CTA */}
+            {/* 直播 CTA panel */}
+            <div
+              className="flex flex-col justify-center gap-4 rounded-2xl border bg-space-2 p-6 lg:col-span-2"
+              style={{ borderColor: 'var(--glass-border)' }}
+            >
+              <p className="font-mono text-xs tracking-[0.2em] text-pink">LIVE ON FACEBOOK</p>
+              <p className="font-serif-tc text-xl font-semibold leading-[1.4] text-txt-1">
+                每晚開播，即場著身、即場講價
+              </p>
+              <p className="text-[14px] leading-[1.75] text-txt-2">
+                留意專頁直播通知，開播即刻入嚟搶心水款。錯過咗都可以喺專頁重溫所有場次。
+              </p>
               <a
                 href={FACEBOOK_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-primary sm:col-span-2"
+                className="btn btn-primary mt-2"
               >
                 <Facebook size={18} aria-hidden="true" />
                 去 Facebook 睇直播
               </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============ 5.5 公司宣傳影片回顧 ============ */}
+      <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
+        <div ref={promoRef} className="reveal">
+          <SectionHeading en="Promo Films" zh="公司宣傳影片回顧" />
+          <p className="mt-3 max-w-xl text-[15px] text-txt-2">
+            Boss 親身上陣，帶住 Glo Glo 同團隊周圍去——由品牌介紹到台灣掃貨團，一次過重溫。
+          </p>
+          <div className="mt-8 grid items-start gap-6 lg:grid-cols-3">
+            {/* 橫片：品牌篇 */}
+            <div
+              className="overflow-hidden rounded-2xl border bg-space-2 lg:col-span-2"
+              style={{ borderColor: 'var(--glass-border)' }}
+            >
+              <div className="relative aspect-video">
+                <video
+                  src="/promo-1.mp4"
+                  poster="/promo-1-poster.jpg"
+                  controls
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  className="h-full w-full object-cover"
+                />
+                <span
+                  className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-gold px-3 py-1 font-mono text-xs font-medium text-space-1"
+                  aria-hidden="true"
+                >
+                  <Play size={12} aria-hidden="true" />
+                  PROMO
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 p-4">
+                <p className="text-[15px] font-bold text-txt-1">公司宣傳影片 · 品牌篇</p>
+                <p className="shrink-0 font-mono text-xs text-txt-3">2026年5月</p>
+              </div>
+            </div>
+
+            {/* 直片：台灣掃貨團 */}
+            <div
+              className="overflow-hidden rounded-2xl border bg-space-2"
+              style={{ borderColor: 'var(--glass-border)' }}
+            >
+              <div className="relative aspect-[9/16] max-h-[520px] w-full">
+                <video
+                  src="/promo-2.mp4"
+                  poster="/promo-2-poster.jpg"
+                  controls
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  className="h-full w-full object-cover"
+                />
+                <span
+                  className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-gold px-3 py-1 font-mono text-xs font-medium text-space-1"
+                  aria-hidden="true"
+                >
+                  <Play size={12} aria-hidden="true" />
+                  PROMO
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 p-4">
+                <p className="text-[15px] font-bold text-txt-1">公司宣傳影片 · 台灣掃貨團</p>
+                <p className="shrink-0 font-mono text-xs text-txt-3">2026年2月</p>
+              </div>
             </div>
           </div>
         </div>
@@ -524,9 +561,9 @@ export default function Home() {
           {[
             { src: '/gloglo-3.jpg', alt: 'Glo Glo 聖誕造型打卡' },
             { src: '/gloglo-4.jpg', alt: 'Glo Glo 同店狗合照一' },
-            { src: '/video0-mid.jpg', alt: '直播截圖打卡一' },
+            { src: '/gloglo-1.jpg', alt: 'Glo Glo 白西裝造型打卡' },
             { src: '/gloglo-5.jpg', alt: 'Glo Glo 生活照打卡' },
-            { src: '/video1-mid.jpg', alt: '直播截圖打卡二' },
+            { src: '/promo-1-poster.jpg', alt: '公司宣傳拍攝打卡' },
             { src: '/gloglo-2.jpg', alt: 'Glo Glo 同店狗合照二' },
           ].map((photo) => (
             <DuotoneImage
