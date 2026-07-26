@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router';
+import { Wallet } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar from '@/components/account/WishingStar';
@@ -101,6 +102,32 @@ export default function Account() {
           <MemberField label="年齡" value={user.age != null ? `${user.age} 歲` : '未填寫'} />
         </div>
       </div>
+
+      {/* 付款方式入口（會員限定） */}
+      <Link
+        to="/payment"
+        className="mt-6 flex items-center justify-between gap-4 rounded-2xl border p-5 transition-colors duration-200 hover:border-gold md:p-6"
+        style={{
+          background: 'var(--glass-bg)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          borderColor: 'var(--glass-border)',
+        }}
+      >
+        <div className="flex items-center gap-4">
+          <span
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border"
+            style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
+          >
+            <Wallet size={20} aria-hidden="true" />
+          </span>
+          <div>
+            <p className="font-serif-tc text-lg font-bold text-txt-1">付款方式</p>
+            <p className="text-sm text-txt-3">中銀／PayMe／Alipay／FPS 轉數快收款資料</p>
+          </div>
+        </div>
+        <span className="font-mono text-lg text-gold" aria-hidden="true">→</span>
+      </Link>
 
       {/* 我的訂單 */}
       <div className="mt-12 flex items-baseline justify-between">
