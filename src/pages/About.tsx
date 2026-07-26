@@ -4,11 +4,11 @@ import { useReveal } from '@/hooks/useReveal';
 
 /**
  * RedCode 關於我們（design-system.md §P4）
- * 1. Hero：左 Boss + Glo Glo 合照（全彩進場）+ 右花體「Hi, I'm Glo Glo ✦」+ 第一人稱介紹
+ * 1. Hero：左 Glo Glo 大像（duotone→全彩進場）+ 右花體「Hi, I'm Glo Glo ✦」+ 第一人稱介紹
  * 2. 品牌故事：時間線直排，節點用金色四角星（資料源自 brief.md 真實品牌事實）
  * 3. Glo Glo 專區：gloglo-1/2/3 duotone 相片 + 寵粉文化
  * 4. 點解揀我哋：大字編號 01–04（DM Mono --purple-text，唔用 icon 卡）
- * 5. 聯絡區：WhatsApp／Facebook 全寬列，hover 整行 --space-2 亮起
+ * 5. 聯絡區：三條全寬列（WhatsApp／Facebook／土瓜灣），hover 整行 --space-2 亮起
  * 6. WhatsApp + Facebook CTA 區塊
  */
 
@@ -98,7 +98,7 @@ export default function About() {
           }}
         />
         <div className="relative z-10 mx-auto grid max-w-[1280px] items-center gap-10 px-5 pb-16 pt-12 md:px-8 md:pt-20 lg:grid-cols-2 xl:px-12">
-          {/* 左：Boss + Glo Glo 合照（全彩顯示） */}
+          {/* 左：Glo Glo 大像（全彩顯示） */}
           <div className="relative">
             <DuotoneImage
               off
@@ -298,7 +298,7 @@ export default function About() {
         </div>
       </section>
 
-      {/* ============ 5. 聯絡區（WhatsApp／Facebook 全寬列，hover 整行亮起） ============ */}
+      {/* ============ 5. 聯絡區（§P4 本頁重點：三條全寬列，hover 整行亮起） ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
         <div ref={contactRef} className="reveal">
           <h2 className="font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
@@ -351,6 +351,7 @@ export default function About() {
               </div>
               <span className="font-mono text-lg text-pink-soft md:text-xl">@redcodexhk</span>
             </a>
+
           </div>
         </div>
       </section>
