@@ -8,6 +8,7 @@ import path from "node:path";
 import { appRouter } from "./router";
 import { createContext } from "./context";
 import { userFromAuthHeader } from "./auth";
+import { exportDaily } from "./exportDaily";
 import { env } from "./lib/env";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
@@ -23,6 +24,10 @@ const ALLOWED_IMAGE_TYPES: Record<string, string> = {
 };
 
 app.use(bodyLimit({ maxSize: 50 * 1024 * 1024 }));
+
+// 每日營運數據導出（xlsx 下載）——註冊喺 tRPC mount 前，確保唔會跌入 SPA fallback
+app.get("/api/export/daily", exportDaily);
+
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({
     endpoint: "/api/trpc",

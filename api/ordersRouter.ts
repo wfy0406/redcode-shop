@@ -279,7 +279,8 @@ export const ordersRouter = createRouter({
     .input(
       z.object({
         orderId: z.number().int().positive(),
-        status: z.enum(["shipped", "completed", "cancelled"]),
+        // 新主流程終態係 shipped（進行出貨＝完成）；completed 只留畀 legacy 數據，唔再接受寫入
+        status: z.enum(["shipped", "cancelled"]),
       }),
     )
     .mutation(async ({ input }) => {
