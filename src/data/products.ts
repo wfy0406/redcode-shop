@@ -1,8 +1,10 @@
 /**
  * 精選商品資料（scaffold 示例數據）
- * 商品欄位跟需求：上架日期、產品圖、產品貨號、價錢、折扣（選填）、尺寸（選填）
+ * 商品欄位跟需求：上架日期、產品圖、產品貨號、價錢、折扣（選填）、尺寸（選填）、類別
  * DATA-SLOT: 之後接真商品 API
  */
+
+import type { ProductCategory } from '@contracts/types';
 
 export interface Product {
   id: string;
@@ -15,6 +17,8 @@ export interface Product {
   discountPrice?: number;
   /** 尺寸（選填） */
   sizes?: string[];
+  /** 商品類別（固定 7 類） */
+  category?: ProductCategory;
   /** 上架日期 ISO */
   listedAt: string;
   image: string;
@@ -32,6 +36,7 @@ export const PRODUCTS: Product[] = [
     price: 328,
     discountPrice: 268,
     sizes: ['S', 'M', 'L'],
+    category: 'dress',
     listedAt: '2025-07-24',
     image: '/product-1.jpg',
     live: true,
@@ -42,6 +47,7 @@ export const PRODUCTS: Product[] = [
     sku: 'RC-1002',
     price: 228,
     sizes: ['Free Size'],
+    category: 'top',
     listedAt: '2025-07-22',
     image: '/product-2.jpg',
   },
@@ -52,6 +58,7 @@ export const PRODUCTS: Product[] = [
     price: 298,
     discountPrice: 248,
     sizes: ['S', 'M', 'L', 'XL'],
+    category: 'pants',
     listedAt: '2025-07-20',
     image: '/product-3.jpg',
   },
@@ -61,6 +68,7 @@ export const PRODUCTS: Product[] = [
     sku: 'RC-1004',
     price: 358,
     sizes: ['M', 'L'],
+    category: 'top',
     listedAt: '2025-07-18',
     image: '/product-4.jpg',
   },
@@ -71,6 +79,7 @@ export const PRODUCTS: Product[] = [
     price: 268,
     discountPrice: 198,
     sizes: ['S', 'M'],
+    category: 'top',
     listedAt: '2025-07-15',
     image: '/product-5.jpg',
     live: true,
@@ -80,6 +89,7 @@ export const PRODUCTS: Product[] = [
     name: '氣質傘擺中長半身裙',
     sku: 'RC-1006',
     price: 248,
+    category: 'dress',
     listedAt: '2025-07-12',
     image: '/product-6.jpg',
     soldOut: true,

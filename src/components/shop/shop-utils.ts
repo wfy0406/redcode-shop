@@ -1,11 +1,12 @@
 import type { Product } from '@/data/products';
 import { PRODUCTS as DEMO_PRODUCTS } from '@/data/products';
+import type { ProductCategory } from '@contracts/types';
 
 /**
  * 商店頁共用輔助 —— 將 tRPC products router 嘅 DB row 映射做 shared <ProductCard> 用嘅 Product 型。
  * DB product（superjson 過咗之後 listedDate 係 Date 物件）：
  *   { id: number, sku, name, description: string|null, image, price, discountPrice: number|null,
- *     sizes: string|null（comma-separated，例如 "S,M,L"）, listedDate: Date, stock, isActive, createdAt }
+ *     sizes: string|null（comma-separated，例如 "S,M,L"）, category, listedDate: Date, stock, isActive, createdAt }
  */
 export interface ShopProduct {
   id: number;
@@ -16,6 +17,7 @@ export interface ShopProduct {
   price: number;
   discountPrice: number | null;
   sizes: string | null;
+  category: ProductCategory;
   listedDate: Date;
   stock: number;
 }
@@ -54,6 +56,7 @@ export function toCardProduct(p: ShopProduct): Product {
     price: p.price,
     discountPrice: p.discountPrice ?? undefined,
     sizes: parseSizes(p.sizes),
+    category: p.category,
     listedAt: new Date(p.listedDate).toISOString(),
     image: p.image,
     soldOut: p.stock <= 0,
@@ -74,6 +77,7 @@ export function demoShopProducts(): ShopProduct[] {
     price: p.price,
     discountPrice: p.discountPrice ?? null,
     sizes: p.sizes ? p.sizes.join(',') : null,
+    category: p.category ?? 'other',
     listedDate: new Date(p.listedAt),
     stock: p.soldOut ? 0 : 10,
   }));

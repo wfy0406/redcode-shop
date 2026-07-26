@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router';
 import { MessageCircle } from 'lucide-react';
 import Starfield from '@/components/Starfield';
+import Meteors from '@/components/Meteors';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 
@@ -19,6 +20,9 @@ export default function Layout() {
     <div className="relative min-h-[100dvh] bg-space-1 text-txt-1">
       {/* §3.2 星空 canvas（fixed, z-index -2） */}
       <Starfield />
+
+      {/* 流星動效層（z-index 0：星空之上、內容之下；reduced-motion 時唔渲染） */}
+      <Meteors />
 
       {/* §3.3 星雲漸變層（z-index -1，星之上內容之下） */}
       <div

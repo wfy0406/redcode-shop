@@ -106,6 +106,11 @@ export default function About() {
               alt="Boss 同主播 Glo Glo 合照"
               wrapperClassName="hero-enter rounded-[20px] border"
               className="aspect-[4/5] w-full object-cover"
+              onError={(e) => {
+                // boss-glo.jpg 未上傳時 fallback 去 Glo Glo 造型相
+                const img = e.currentTarget;
+                if (!img.src.endsWith('/gloglo-2.jpg')) img.src = '/gloglo-2.jpg';
+              }}
             />
             {/* 散佈小浮卡（拍立得樣式，常態旋轉） */}
             <div

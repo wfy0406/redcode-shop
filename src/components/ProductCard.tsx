@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { Heart, ShoppingBag } from 'lucide-react';
 import type { Product } from '@/data/products';
 import { formatListedAt, formatPrice, isNewArrival } from '@/data/products';
+import { productCategoryLabel } from '@contracts/types';
 import { cn } from '@/lib/utils';
 
 /**
@@ -123,6 +124,19 @@ export default function ProductCard({ product, className }: ProductCardProps) {
                 aria-label="已斷貨"
               >
                 斷貨
+              </span>
+            )}
+            {product.category && (
+              <span
+                className="rounded-full border px-2.5 py-0.5 font-mono text-[11px] text-lavender"
+                style={{
+                  borderColor: 'var(--glass-border)',
+                  background: 'var(--glass-bg)',
+                  backdropFilter: 'blur(6px)',
+                  WebkitBackdropFilter: 'blur(6px)',
+                }}
+              >
+                {productCategoryLabel(product.category)}
               </span>
             )}
           </div>
