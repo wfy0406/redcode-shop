@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, NavLink } from 'react-router';
 import { Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/hooks/useAuth';
 
 /**
  * RedCode 設計系統 §4.2 —— 玻璃導航
@@ -21,6 +22,7 @@ const NAV_LINKS = [
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { user, logout } = useAuth();
   // CART-SLOT: 之後接購物車 state 顯示真數量
   const cartCount = 0;
 
@@ -93,10 +95,25 @@ export default function Navbar() {
             )}
           </Link>
 
-          {/* AUTH-SLOT: 之後接 useAuth（自訂電話+密碼登入，非 OAuth） */}
-          <Link to="/login" className="nav-link hidden md:inline">
-            會員登入
-          </Link>
+          {/* AUTH-SLOT: 已接 useAuth（自訂電話+密碼登入） */}
+          {user ? (
+            <span className="hidden items-center gap-3 md:flex">
+              <Link to="/account" className="nav-link">
+                {user.name}
+              </Link>
+              <button
+                type="button"
+                onClick={logout}
+                className="text-[13px] text-txt-3 transition-colors hover:text-pink-soft"
+              >
+                登出
+              </button>
+            </span>
+          ) : (
+            <Link to="/login" className="nav-link hidden md:inline">
+              會員登入
+            </Link>
+          )}
 
           {/* 員工內部系統：最右、低調但搵得到 */}
           <Link
@@ -131,7 +148,13 @@ export default function Navbar() {
           }}
           aria-label="手機導航"
         >
-          {[...NAV_LINKS, { to: '/cart', label: '購物車' }, { to: '/login', label: '會員登入' }].map(
+          {[
+            ...NAV_LINKS,
+            { to: '/cart', label: '購物車' },
+            user
+              ? { to: '/account', label: `會員中心（${user.name}）` }
+              : { to: '/login', label: '會員登入' },
+          ].map(
             (link, i) => (
               <NavLink
                 key={link.to}
