@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import { PRODUCT_CATEGORIES, productCategoryLabel } from '@contracts/types';
 import { fmtDate, fmtHKD } from './format';
 import WishingStar, { LoadingBlock } from './WishingStar';
 import type { ToastKind } from './useToasts';
@@ -20,6 +21,7 @@ const initialForm = {
   price: '',
   discountPrice: '',
   sizes: '',
+  category: 'other',
   listedDate: new Date().toISOString().slice(0, 10),
   image: '/product-1.jpg',
   stock: '0',
@@ -75,6 +77,15 @@ export default function ProductManager({
     onError: (err) => toast(err.message || '刪除失敗', 'error'),
   });
 
+  // 類別即時修改（列表行內 dropdown）
+  const categoryMutation = trpc.products.update.useMutation({
+    onSuccess: (updated) => {
+      toast(`已將「${updated?.name ?? ''}」歸類做${productCategoryLabel(updated?.category)}`, 'success');
+      void utils.products.list.invalidate();
+    },
+    onError: (err) => toast(err.message || '更新類別失敗', 'error'),
+  });
+
   const set = (key: keyof typeof initialForm) => (value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
 
@@ -106,6 +117,7 @@ export default function ProductManager({
       price,
       discountPrice: discount,
       sizes: form.sizes.trim() || undefined,
+      category: form.category,
       listedDate: form.listedDate ? new Date(`${form.listedDate}T00:00:00`) : undefined,
       image: form.image.trim() || '/product-1.jpg',
       stock,
@@ -163,6 +175,23 @@ export default function ProductManager({
               onChange={(e) => set('listedDate')(e.target.value)}
               className={`${inputCls} font-mono`}
             />
+          </div>
+          <div>
+            <label htmlFor="np-category" className="mb-1.5 block text-[14px] text-txt-2">
+              類別 *
+            </label>
+            <select
+              id="np-category"
+              value={form.category}
+              onChange={(e) => set('category')(e.target.value)}
+              className={inputCls}
+            >
+              {PRODUCT_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label htmlFor="np-price" className="mb-1.5 block text-[14px] text-txt-2">
@@ -301,6 +330,35 @@ export default function ProductManager({
                       {p.sku} · 上架 {fmtDate(p.listedDate)}
                       {p.sizes ? ` · ${p.sizes}` : ''}
                     </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      {/* 類別 badge */}
+                      <span
+                        className="rounded-full border px-2.5 py-0.5 font-mono text-[11px] text-lavender"
+                        style={{
+                          borderColor: 'var(--glass-border)',
+                          background: 'var(--glass-bg)',
+                        }}
+                      >
+                        {productCategoryLabel(p.category)}
+                      </span>
+                      {/* 行內改類別（即時 update） */}
+                      <select
+                        value={p.category}
+                        disabled={categoryMutation.isPending}
+                        onChange={(e) =>
+                          categoryMutation.mutate({ id: p.id, category: e.target.value })
+                        }
+                        aria-label={`更改 ${p.name} 類別`}
+                        className="h-7 rounded-lg border bg-space-2 px-2 font-mono text-[11px] text-txt-3 transition-colors focus:border-pink disabled:opacity-60"
+                        style={{ borderColor: 'var(--space-line)' }}
+                      >
+                        {PRODUCT_CATEGORIES.map((c) => (
+                          <option key={c.value} value={c.value}>
+                            改做：{c.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                   <div className="text-right">
                     <p className="font-mono text-[14px] text-pink">
