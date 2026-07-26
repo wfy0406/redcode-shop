@@ -8,6 +8,7 @@ import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/shop/WishingStar';
 import AddedToast from '@/components/shop/AddedToast';
 import {
+  demoShopProducts,
   formatHKD,
   formatListedDate,
   isNewWithin7Days,
@@ -50,7 +51,11 @@ export default function ProductDetail() {
   // 相關商品：同 list 排序（listedDate desc），排除自己，取前 4 件
   const relatedQuery = trpc.products.list.useQuery(undefined, { staleTime: 5 * 60_000 });
 
-  const product = productQuery.data as ShopProduct | undefined;
+  // 靜態示範模式：後端連唔到 → 用內建示範商品
+  const product = (productQuery.data ??
+    (productQuery.isError ? demoShopProducts().find((d) => d.id === productId) : undefined)) as
+    | ShopProduct
+    | undefined;
   const sizes = useMemo(() => parseSizes(product?.sizes), [product?.sizes]);
   const needSize = sizes.length > 0;
 
@@ -70,9 +75,9 @@ export default function ProductDetail() {
   });
 
   const related = useMemo<ShopProduct[]>(() => {
-    const list = (relatedQuery.data ?? []) as ShopProduct[];
+    const list = (relatedQuery.isError ? demoShopProducts() : ((relatedQuery.data ?? []) as ShopProduct[]));
     return list.filter((p) => p.id !== productId).slice(0, 4);
-  }, [relatedQuery.data, productId]);
+  }, [relatedQuery.data, relatedQuery.isError, productId]);
   const relatedRef = useRevealDep<HTMLDivElement>([related.map((p) => p.id).join(',')]);
 
   const onAdd = () => {

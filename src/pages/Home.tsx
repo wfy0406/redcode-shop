@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { Bell, Facebook, MessageCircle, Play } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
+import { PRODUCTS } from '@/data/products';
 import type { Product } from '@/data/products';
 import { useReveal } from '@/hooks/useReveal';
 import { trpc } from '@/providers/trpc';
@@ -147,8 +148,13 @@ function SectionHeading({ en, zh, center }: { en: string; zh: string; center?: b
 
 export default function Home() {
   const countdown = useLiveCountdown();
-  const { data: dbProducts } = trpc.products.list.useQuery({});
-  const allProducts = (dbProducts ?? []).map(mapDbProduct);
+  // 後端連唔到（純前端預覽）時 fallback 用內建示範商品
+  const { data: dbProducts, isError: productsError } = trpc.products.list.useQuery(
+    {},
+    { retry: false },
+  );
+  const allProducts =
+    productsError || !dbProducts ? PRODUCTS : dbProducts.map(mapDbProduct);
   const featured = allProducts.slice(0, 4);
   const picksRef = useReveal<HTMLDivElement>();
   const newRef = useReveal<HTMLDivElement>();

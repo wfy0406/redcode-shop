@@ -4,7 +4,7 @@ import { Search, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/shop/WishingStar';
-import { toCardProduct } from '@/components/shop/shop-utils';
+import { toCardProduct, demoShopProducts } from '@/components/shop/shop-utils';
 import type { ShopProduct } from '@/components/shop/shop-utils';
 import { useRevealDep } from '@/components/shop/useRevealDep';
 import { cn } from '@/lib/utils';
@@ -39,11 +39,25 @@ export default function Products() {
   // 主查詢：server 按 keyword 篩名稱/描述；keepPreviousData 避免打字時格網閃爍重排
   const listQuery = trpc.products.list.useQuery(kw ? { keyword: kw } : undefined, {
     placeholderData: keepPreviousData,
+    retry: false,
   });
   // 全量 cache：補返 sku 貨號搜尋（server list 只 LIKE name/description）
-  const allQuery = trpc.products.list.useQuery(undefined, { staleTime: 5 * 60_000 });
+  const allQuery = trpc.products.list.useQuery(undefined, { staleTime: 5 * 60_000, retry: false });
 
   const products = useMemo<ShopProduct[]>(() => {
+    // 靜態示範模式：後端連唔到（API error）→ 用內建示範商品
+    if (listQuery.isError) {
+      let demo = demoShopProducts();
+      if (kw) {
+        const lower = kw.toLowerCase();
+        demo = demo.filter(
+          (p) => p.name.toLowerCase().includes(lower) || p.sku.toLowerCase().includes(lower),
+        );
+      }
+      if (sort === 'price-asc') demo.sort((a, b) => effectivePrice(a) - effectivePrice(b));
+      else if (sort === 'price-desc') demo.sort((a, b) => effectivePrice(b) - effectivePrice(a));
+      return demo;
+    }
     const merged = new Map<number, ShopProduct>();
     for (const p of (listQuery.data ?? []) as ShopProduct[]) merged.set(p.id, p);
     if (kw) {
