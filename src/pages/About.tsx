@@ -1,14 +1,14 @@
-import { Facebook, MapPin, MessageCircle } from 'lucide-react';
+import { Facebook, MessageCircle } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
 import { useReveal } from '@/hooks/useReveal';
 
 /**
  * RedCode 關於我們（design-system.md §P4）
- * 1. Hero：左 Glo Glo 大像（全彩）+ 右花體「Hi, I'm Glo Glo ✦」+ 第一人稱介紹
+ * 1. Hero：左 Boss + Glo Glo 合照（全彩進場）+ 右花體「Hi, I'm Glo Glo ✦」+ 第一人稱介紹
  * 2. 品牌故事：時間線直排，節點用金色四角星（資料源自 brief.md 真實品牌事實）
- * 3. Glo Glo 專區：gloglo-1/2/3 相片 + 寵粉文化
+ * 3. Glo Glo 專區：gloglo-1/2/3 duotone 相片 + 寵粉文化
  * 4. 點解揀我哋：大字編號 01–04（DM Mono --purple-text，唔用 icon 卡）
- * 5. 聯絡區：三條全寬列（WhatsApp／Facebook／土瓜灣），hover 整行 --space-2 亮起
+ * 5. 聯絡區：WhatsApp／Facebook 全寬列，hover 整行 --space-2 亮起
  * 6. WhatsApp + Facebook CTA 區塊
  */
 
@@ -98,12 +98,12 @@ export default function About() {
           }}
         />
         <div className="relative z-10 mx-auto grid max-w-[1280px] items-center gap-10 px-5 pb-16 pt-12 md:px-8 md:pt-20 lg:grid-cols-2 xl:px-12">
-          {/* 左：Glo Glo 大像（全彩顯示） */}
+          {/* 左：Boss + Glo Glo 合照（全彩顯示） */}
           <div className="relative">
             <DuotoneImage
               off
-              src="/gloglo-2.jpg"
-              alt="主播 Glo Glo 同店狗合照"
+              src="/boss-glo.jpg"
+              alt="Boss 同主播 Glo Glo 合照"
               wrapperClassName="hero-enter rounded-[20px] border"
               className="aspect-[4/5] w-full object-cover"
             />
@@ -214,7 +214,7 @@ export default function About() {
         </div>
       </section>
 
-      {/* ============ 3. Glo Glo 專區（相片 + 寵粉文化） ============ */}
+      {/* ============ 3. Glo Glo 專區（duotone 相片 + 寵粉文化） ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
         <div ref={glogloRef} className="reveal">
           <div className="flex flex-wrap items-end justify-between gap-4">
@@ -293,7 +293,7 @@ export default function About() {
         </div>
       </section>
 
-      {/* ============ 5. 聯絡區（§P4 本頁重點：三條全寬列，hover 整行亮起） ============ */}
+      {/* ============ 5. 聯絡區（WhatsApp／Facebook 全寬列，hover 整行亮起） ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
         <div ref={contactRef} className="reveal">
           <h2 className="font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
@@ -346,26 +346,6 @@ export default function About() {
               </div>
               <span className="font-mono text-lg text-pink-soft md:text-xl">@redcodexhk</span>
             </a>
-
-            {/* 土瓜灣列 */}
-            <div
-              className="flex flex-col gap-4 px-6 py-6 transition-colors duration-200 hover:bg-space-2 md:flex-row md:items-center md:justify-between md:px-10"
-              style={{ borderColor: 'var(--space-line)' }}
-            >
-              <div className="flex items-center gap-4">
-                <span
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border"
-                  style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
-                >
-                  <MapPin size={20} aria-hidden="true" />
-                </span>
-                <div>
-                  <p className="text-lg font-bold text-txt-1">香港 · 土瓜灣</p>
-                  <p className="text-sm text-txt-3">自取或面交安排，請先 WhatsApp 查詢</p>
-                </div>
-              </div>
-              <span className="font-mono text-lg text-gold md:text-xl">TO KWA WAN</span>
-            </div>
           </div>
         </div>
       </section>
