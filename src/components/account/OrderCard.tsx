@@ -1,3 +1,4 @@
+import { Ticket } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import OrderTimeline from './OrderTimeline';
 import PaymentProofDropzone from './PaymentProofDropzone';
@@ -83,8 +84,26 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         ))}
       </ul>
 
-      {/* 總計 */}
-      <div className="mt-4 flex items-baseline justify-between border-t border-space-line pt-4">
+      {/* 優惠碼折扣行（有用碼先顯示，金額帶負號 + code 名） */}
+      {order.discountAmount > 0 && (
+        <div className="mt-4 flex items-center justify-between border-t border-space-line pt-4 text-[13px]">
+          <span className="flex items-center gap-1.5 text-txt-3">
+            <Ticket size={13} aria-hidden="true" className="text-gold" />
+            優惠碼{' '}
+            <span className="font-mono uppercase tracking-wider text-gold">{order.promoCode}</span>
+          </span>
+          <span className="font-mono text-gold">−{formatHKD(order.discountAmount)}</span>
+        </div>
+      )}
+
+      {/* 總計（DB total 已係折後價） */}
+      <div
+        className={
+          order.discountAmount > 0
+            ? 'mt-3 flex items-baseline justify-between'
+            : 'mt-4 flex items-baseline justify-between border-t border-space-line pt-4'
+        }
+      >
         <span className="text-sm text-txt-2">總計</span>
         <span className="font-mono text-xl font-medium text-pink">{formatHKD(order.total)}</span>
       </div>

@@ -5,25 +5,21 @@ import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar from '@/components/account/WishingStar';
 import OrderCard from '@/components/account/OrderCard';
+import ProfileCard from '@/components/account/ProfileCard';
+import PasswordCard from '@/components/account/PasswordCard';
+import AccountToastStack, { useAccountToasts } from '@/components/account/Toast';
 
 /**
  * RedCode 設計系統 §P8 —— 會員中心 /account
  * 未登入 → 玻璃卡「請先登入」+ 登入掣；
- * 頂部會員資料卡（名、電話、地址、年齡、會員編號）+ 登出掣；
+ * 頂部會員資料卡（ProfileCard：稱呼/地址/年齡逐行 inline edit + 登出掣）；
+ * 更改密碼卡（PasswordCard）；
  * 我的訂單：trpc.orders.myOrders，每張訂單一張玻璃卡（OrderCard）。
  */
 
-function MemberField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline gap-3 text-[15px]">
-      <span className="w-20 shrink-0 text-sm text-txt-3">{label}</span>
-      <span className="text-txt-1">{value}</span>
-    </div>
-  );
-}
-
 export default function Account() {
   const { user, isLoading, logout } = useAuth();
+  const { toasts, push: pushToast } = useAccountToasts();
 
   const ordersQuery = trpc.orders.myOrders.useQuery(undefined, { enabled: !!user });
   // orderItems 無商品圖快照，用 products.list 對照 productId 攞縮圖
@@ -77,30 +73,14 @@ export default function Account() {
       <p className="script text-3xl">My little galaxy</p>
       <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">會員中心</h1>
 
-      {/* 會員資料卡 */}
-      <div
-        className="mt-8 rounded-2xl border p-6 md:p-8"
-        style={{
-          background: 'var(--glass-bg)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          borderColor: 'var(--glass-border)',
-        }}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="font-serif-tc text-2xl font-semibold text-txt-1">{user.name}</h2>
-            <p className="mt-1 font-mono text-sm text-txt-3">會員編號 #{user.id}</p>
-          </div>
-          <button type="button" onClick={logout} className="btn btn-secondary !px-6 !py-2.5 text-sm">
-            登出
-          </button>
-        </div>
-        <div className="mt-5 flex flex-col gap-2 border-t border-space-line pt-5">
-          <MemberField label="電話" value={user.phone} />
-          <MemberField label="地址" value={user.address?.trim() ? user.address : '未填寫'} />
-          <MemberField label="年齡" value={user.age != null ? `${user.age} 歲` : '未填寫'} />
-        </div>
+      {/* 會員資料卡（逐行 inline edit） */}
+      <div className="mt-8">
+        <ProfileCard user={user} onLogout={logout} pushToast={pushToast} />
+      </div>
+
+      {/* 更改密碼卡 */}
+      <div className="mt-6">
+        <PasswordCard pushToast={pushToast} />
       </div>
 
       {/* 付款方式入口（會員限定） */}
@@ -160,6 +140,9 @@ export default function Account() {
           ))}
         </div>
       )}
+
+      {/* 全域成功 toast（資料已更新／密碼已更新） */}
+      <AccountToastStack toasts={toasts} />
     </section>
   );
 }
