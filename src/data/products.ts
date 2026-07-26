@@ -87,7 +87,7 @@ export const PRODUCTS: Product[] = [
 ];
 
 export function formatPrice(value: number): string {
-  return `$${value.toLocaleString('zh-HK')}`;
+  return `HK$${value.toLocaleString('zh-HK')}`;
 }
 
 /** 上架 7 日內當新品 */

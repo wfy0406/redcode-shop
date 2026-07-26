@@ -3,8 +3,34 @@ import { Link } from 'react-router';
 import { Bell, Facebook, MessageCircle, Play } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
-import { PRODUCTS } from '@/data/products';
+import type { Product } from '@/data/products';
 import { useReveal } from '@/hooks/useReveal';
+import { trpc } from '@/providers/trpc';
+
+/** DB 商品 row → ProductCard 用嘅 Product 形狀 */
+function mapDbProduct(p: {
+  id: number;
+  name: string;
+  sku: string;
+  price: number;
+  discountPrice: number | null;
+  sizes: string | null;
+  listedDate: Date;
+  image: string;
+  stock: number;
+}): Product {
+  return {
+    id: String(p.id),
+    name: p.name,
+    sku: p.sku,
+    price: p.price,
+    discountPrice: p.discountPrice ?? undefined,
+    sizes: p.sizes ? p.sizes.split(',').map((s) => s.trim()) : undefined,
+    listedAt: p.listedDate.toISOString().slice(0, 10),
+    image: p.image,
+    soldOut: p.stock <= 0,
+  };
+}
 
 /**
  * RedCode 首頁（design-system.md §P1 + §4.3 Hero 構圖）
@@ -24,7 +50,7 @@ const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 const FB_PAGE_PLUGIN =
   'https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2Fredcodexhk&tabs=timeline&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true&locale=zh_HK';
 
-/* ---------- §4.5 直播倒數：每晚 21:30 開播 ---------- */
+/* ---------- §4.5 直播倒數：每晚 22:00 開播 ---------- */
 function useLiveCountdown() {
   const [remain, setRemain] = useState('--:--:--');
 
@@ -32,7 +58,7 @@ function useLiveCountdown() {
     const nextLive = () => {
       const now = new Date();
       const target = new Date(now);
-      target.setHours(21, 30, 0, 0);
+      target.setHours(22, 0, 0, 0);
       if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1);
       return target;
     };
@@ -121,7 +147,9 @@ function SectionHeading({ en, zh, center }: { en: string; zh: string; center?: b
 
 export default function Home() {
   const countdown = useLiveCountdown();
-  const featured = PRODUCTS.slice(0, 4);
+  const { data: dbProducts } = trpc.products.list.useQuery({});
+  const allProducts = (dbProducts ?? []).map(mapDbProduct);
+  const featured = allProducts.slice(0, 4);
   const picksRef = useReveal<HTMLDivElement>();
   const newRef = useReveal<HTMLDivElement>();
   const liveRef = useReveal<HTMLDivElement>();
@@ -321,7 +349,7 @@ export default function Home() {
             </Link>
           </div>
           <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6 xl:grid-cols-4">
-            {PRODUCTS.map((product, i) => (
+            {allProducts.map((product, i) => (
               <div
                 key={product.id}
                 className="reveal"
@@ -339,7 +367,7 @@ export default function Home() {
         <div ref={liveRef} className="reveal">
           <SectionHeading en="Live Room" zh="Facebook 直播專區" />
           <p className="mt-3 max-w-xl text-[15px] text-txt-2">
-            每晚 21:30，Glo Glo 喺 Facebook 同大家見面。錯過咗直播？
+            每晚 22:00，Glo Glo 喺 Facebook 同大家見面。錯過咗直播？
             下面有回顧片段，或者入專頁重溫晒所有場次。
           </p>
 
