@@ -17,21 +17,21 @@ const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 const FB_PAGE_PLUGIN =
   'https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2Fredcodexhk&tabs=timeline&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true';
 
-/* ---------- 直播時間表（brief.md §2 真資料） ---------- */
+/* ---------- 直播場次（唔寫死時間，以 FB 公佈為準） ---------- */
 const SCHEDULE = [
   {
     icon: Moon,
     tag: '#晚上場',
-    time: '22:00',
+    time: '每晚',
     title: '晚上場',
-    body: '每晚十點正開播，新品著身、快閃價、留言下單。單場可以長達 3 小時以上，慢慢揀唔使急。',
+    body: '每晚開播，新品著身、快閃價、留言下單。單場可以長達 3 小時以上，慢慢揀唔使急。',
   },
   {
     icon: Zap,
     tag: '#快閃場',
-    time: '15:30',
+    time: '突襲',
     title: '快閃場',
-    body: '下午三點半突襲開場，快閃價款色手快有手慢冇。部分場次僅限直播下單，不設加單。',
+    body: '不定期突襲開場，快閃價款色手快有手慢冇。部分場次僅限直播下單，不設加單。',
   },
 ];
 
@@ -349,7 +349,7 @@ export default function Live() {
         >
           <p className="font-mono text-xs tracking-[0.2em] text-pink-tint">#不一樣的靚衫</p>
           <h2 className="mx-auto mt-3 max-w-xl font-serif-tc text-2xl font-semibold leading-[1.3] text-starlight md:text-[32px]">
-            今晚 22:00，直播間見
+            今晚，直播間見
           </h2>
           <p className="mx-auto mt-4 max-w-md text-[15px] leading-[1.75] text-txt-2">
             追蹤專頁，開播即刻收到通知；想問款或者確認訂單，WhatsApp 隨時搵我哋。
