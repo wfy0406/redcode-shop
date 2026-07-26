@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router';
-import { Bell, Facebook, MessageCircle, Play } from 'lucide-react';
+import { Facebook, MessageCircle, Play } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
 import { PRODUCTS } from '@/data/products';
@@ -36,7 +36,7 @@ function mapDbProduct(p: {
 /**
  * RedCode 首頁（design-system.md §P1 + §4.3 Hero 構圖）
  * 1. Hero：動態星空 + radial burst + 花體襯字 + 主標 + CTA + 散佈浮卡
- * 2. 直播預告 Banner（§4.5）
+ * 2. WhatsApp 群組 Banner（sticky，加入群組 CTA）
  * 3. 今晚精選：2 大 4 細不對稱格網
  * 4. 新品上架：4 欄商品卡 + scroll reveal stagger
  * 5. Facebook 直播專區（page plugin + CTA panel）
@@ -51,36 +51,6 @@ const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 const FB_PAGE_PLUGIN =
   'https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2Fredcodexhk&tabs=timeline&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true&locale=zh_HK';
-
-/* ---------- §4.5 直播倒數：每晚 22:00 開播 ---------- */
-function useLiveCountdown() {
-  const [remain, setRemain] = useState('--:--:--');
-
-  useEffect(() => {
-    const nextLive = () => {
-      const now = new Date();
-      const target = new Date(now);
-      target.setHours(22, 0, 0, 0);
-      if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1);
-      return target;
-    };
-
-    const tick = () => {
-      const diff = Math.max(0, nextLive().getTime() - Date.now());
-      const h = Math.floor(diff / 3_600_000);
-      const m = Math.floor((diff % 3_600_000) / 60_000);
-      const s = Math.floor((diff % 60_000) / 1000);
-      const pad = (n: number) => String(n).padStart(2, '0');
-      setRemain(`${pad(h)}:${pad(m)}:${pad(s)}`);
-    };
-
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  return remain;
-}
 
 /* ---------- §4.3 Hero 浮卡（拍立得樣式 + scroll 視差） ---------- */
 interface FloatCardProps {
@@ -148,7 +118,6 @@ function SectionHeading({ en, zh, center }: { en: string; zh: string; center?: b
 }
 
 export default function Home() {
-  const countdown = useLiveCountdown();
   // 後端連唔到（純前端預覽）時 fallback 用內建示範商品
   const { data: dbProducts, isError: productsError } = trpc.products.list.useQuery(
     {},
@@ -199,7 +168,7 @@ export default function Home() {
           className="right-[6%] top-[14%] hidden w-52 md:block"
         />
         <FloatCard
-          src="/product-2.jpg"
+          src="/gloglo-4.jpg"
           caption="tonight's pick"
           rotate={3}
           parallax={0.5}
@@ -267,36 +236,34 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ============ 2. 直播預告 Banner（§4.5） ============ */}
+      {/* ============ 2. WhatsApp 群組 Banner ============ */}
       <section
         className="sticky top-[60px] z-30 border-y bg-space-3 md:top-[72px]"
-        style={{ borderColor: 'var(--pink)' }}
-        aria-label="下次直播預告"
+        style={{ borderColor: 'var(--success)' }}
+        aria-label="加入 WhatsApp 群組"
       >
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-x-8 gap-y-3 px-5 py-4 md:px-8 xl:px-12">
           <div className="flex items-center gap-3" aria-live="off">
-            <span className="live-dot" aria-hidden="true" />
-            <span className="text-sm font-medium text-txt-2">下次直播</span>
             <span
-              className="font-mono text-xl font-medium text-starlight"
-              style={{ fontVariantNumeric: 'tabular-nums' }}
-            >
-              {countdown}
-            </span>
+              className="live-dot"
+              style={{ background: 'var(--success)' }}
+              aria-hidden="true"
+            />
+            <span className="text-sm font-medium text-txt-2">REDCODE 寶寶群組</span>
           </div>
           <p className="font-serif-tc text-lg font-semibold text-txt-1">
-            今晚主題：初秋新品 · 顯瘦連身裙專場
+            加入我哋 WhatsApp 群組，最新直播通知、獨家優惠即刻知
           </p>
           <div className="flex items-center gap-4">
-            <span className="script hidden text-xl md:inline">set your wish ✦</span>
+            <span className="script hidden text-xl md:inline">join our family ♡</span>
             <a
-              href={`${WHATSAPP_URL}?text=${encodeURIComponent('Glo Glo 開直播記得提我！')}`}
+              href={`${WHATSAPP_URL}?text=${encodeURIComponent('想加入REDCODE WHATSAPP群組')}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="btn btn-primary !px-6 !py-2.5 text-sm"
+              className="btn btn-whatsapp !px-6 !py-2.5 text-sm"
             >
-              <Bell size={16} aria-hidden="true" />
-              提醒我
+              <MessageCircle size={16} aria-hidden="true" />
+              加入群組
             </a>
           </div>
         </div>
@@ -380,16 +347,22 @@ export default function Home() {
           </p>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-5">
-            {/* FB Page Plugin 嵌入 */}
+            {/* FB Page Plugin 嵌入（plugin 最寬 500px，欄位跟返佢比例） */}
             <div
-              className="overflow-hidden rounded-2xl border bg-space-2 lg:col-span-3"
+              className="flex justify-center overflow-hidden rounded-2xl border bg-space-2 lg:col-span-2"
               style={{ borderColor: 'var(--glass-border)' }}
             >
               <iframe
                 src={FB_PAGE_PLUGIN}
                 width="500"
                 height="600"
-                style={{ border: 'none', overflow: 'hidden', width: '100%', height: '600px' }}
+                style={{
+                  border: 'none',
+                  overflow: 'hidden',
+                  width: '100%',
+                  maxWidth: '500px',
+                  height: '600px',
+                }}
                 scrolling="no"
                 allowFullScreen
                 allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
@@ -400,7 +373,7 @@ export default function Home() {
 
             {/* 直播 CTA panel */}
             <div
-              className="flex flex-col justify-center gap-4 rounded-2xl border bg-space-2 p-6 lg:col-span-2"
+              className="flex flex-col justify-center gap-4 rounded-2xl border bg-space-2 p-6 lg:col-span-3"
               style={{ borderColor: 'var(--glass-border)' }}
             >
               <p className="font-mono text-xs tracking-[0.2em] text-pink">LIVE ON FACEBOOK</p>
@@ -549,7 +522,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ============ 7. 客戶打卡牆（IG 風格横 scroll，duotone→hover 上色） ============ */}
+      {/* ============ 7. 客戶打卡牆（IG 風格横 scroll，全彩顯示） ============ */}
       <section className="mt-16 md:mt-24">
         <div ref={wallRef} className="reveal mx-auto max-w-[1280px] px-5 md:px-8 xl:px-12">
           <SectionHeading en="Star Girls" zh="客戶打卡牆" center />
