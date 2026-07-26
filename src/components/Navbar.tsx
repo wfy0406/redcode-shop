@@ -11,7 +11,7 @@ import { useAuth } from '@/hooks/useAuth';
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
-const WHATSAPP_URL = 'https://wa.me/85200000000';
+const WHATSAPP_URL = 'https://wa.me/85254835368';
 
 /** 員工內部系統（倉庫/HR，Render 託管） */
 const STAFF_SYSTEM_URL = 'https://red-code-wms.onrender.com/';

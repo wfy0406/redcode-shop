@@ -12,7 +12,7 @@ import { useReveal } from '@/hooks/useReveal';
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼（brief：聯絡方法未能確認，用佔位先）
-const WHATSAPP_URL = 'https://wa.me/85200000000';
+const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 const FB_PAGE_PLUGIN =
   'https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2Fredcodexhk&tabs=timeline&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true';

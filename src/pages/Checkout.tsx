@@ -23,7 +23,7 @@ import { getToken } from '@/lib/auth';
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
-const WHATSAPP_URL = 'https://wa.me/85200000000';
+const WHATSAPP_URL = 'https://wa.me/85254835368';
 
 // TODO: 換返 RedCode 真收款資料（而家係佔位，上線前必換）
 const PAYMENT_METHODS = [

@@ -13,8 +13,8 @@ import { useReveal } from '@/hooks/useReveal';
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼（brief：聯絡方法未能確認，用佔位先）
-const WHATSAPP_URL = 'https://wa.me/85200000000';
-const WHATSAPP_DISPLAY = '+852 0000 0000';
+const WHATSAPP_URL = 'https://wa.me/85254835368';
+const WHATSAPP_DISPLAY = '+852 5483 5368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 
 /* ---------- §P4 金色四角星（時間線節點） ---------- */
@@ -223,7 +223,7 @@ export default function About() {
               主播專區
             </h2>
             <p className="max-w-md text-sm leading-[1.6] text-txt-3">
-              直播入面嘅每一個造型，都係 Glo Glo 親自襯出嚟。hover 相片，等佢上返色。
+              直播入面嘅每一個造型，都係 Glo Glo 親自襯出嚟。
             </p>
           </div>
           <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
@@ -238,6 +238,7 @@ export default function About() {
                 style={{ transitionDelay: `${Math.min(i * 80, 400)}ms` }}
               >
                 <DuotoneImage
+                  off
                   src={photo.src}
                   alt={photo.alt}
                   wrapperClassName="rounded-2xl border"

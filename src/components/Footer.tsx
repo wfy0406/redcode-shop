@@ -7,7 +7,7 @@ import { Facebook, Instagram, MessageCircle } from 'lucide-react';
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
-const WHATSAPP_URL = 'https://wa.me/85200000000';
+const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 
 export default function Footer() {
