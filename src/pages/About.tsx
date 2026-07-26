@@ -4,9 +4,9 @@ import { useReveal } from '@/hooks/useReveal';
 
 /**
  * RedCode 關於我們（design-system.md §P4）
- * 1. Hero：左 Glo Glo 大像（duotone→全彩進場）+ 右花體「Hi, I'm Glo Glo ✦」+ 第一人稱介紹
+ * 1. Hero：左 Glo Glo 大像（全彩）+ 右花體「Hi, I'm Glo Glo ✦」+ 第一人稱介紹
  * 2. 品牌故事：時間線直排，節點用金色四角星（資料源自 brief.md 真實品牌事實）
- * 3. Glo Glo 專區：gloglo-1/2/3 duotone 相片 + 寵粉文化
+ * 3. Glo Glo 專區：gloglo-1/2/3 相片 + 寵粉文化
  * 4. 點解揀我哋：大字編號 01–04（DM Mono --purple-text，唔用 icon 卡）
  * 5. 聯絡區：三條全寬列（WhatsApp／Facebook／土瓜灣），hover 整行 --space-2 亮起
  * 6. WhatsApp + Facebook CTA 區塊
@@ -98,12 +98,12 @@ export default function About() {
           }}
         />
         <div className="relative z-10 mx-auto grid max-w-[1280px] items-center gap-10 px-5 pb-16 pt-12 md:px-8 md:pt-20 lg:grid-cols-2 xl:px-12">
-          {/* 左：Glo Glo 大像（video1-mid.jpg 霓虹 RedCode 英雄造型，duotone→全彩進場） */}
+          {/* 左：Glo Glo 大像（全彩顯示） */}
           <div className="relative">
             <DuotoneImage
-              reveal
-              src="/video1-mid.jpg"
-              alt="主播 Glo Glo 霓虹 RedCode 英雄造型"
+              off
+              src="/gloglo-2.jpg"
+              alt="主播 Glo Glo 同店狗合照"
               wrapperClassName="hero-enter rounded-[20px] border"
               className="aspect-[4/5] w-full object-cover"
             />
@@ -214,7 +214,7 @@ export default function About() {
         </div>
       </section>
 
-      {/* ============ 3. Glo Glo 專區（duotone 相片 + 寵粉文化） ============ */}
+      {/* ============ 3. Glo Glo 專區（相片 + 寵粉文化） ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
         <div ref={glogloRef} className="reveal">
           <div className="flex flex-wrap items-end justify-between gap-4">

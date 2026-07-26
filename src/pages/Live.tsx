@@ -1,4 +1,4 @@
-import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Play, Zap } from 'lucide-react';
+import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Zap } from 'lucide-react';
 import { useReveal } from '@/hooks/useReveal';
 
 /**
@@ -6,7 +6,7 @@ import { useReveal } from '@/hooks/useReveal';
  * 1. Hero：live-banner.png 底 + 「直播專區」標題 + LIVE 眨燈 badge（§3.5 steps(2) 眨燈）
  * 2. Facebook 直播嵌入：FB page plugin iframe（玻璃框包住 + fallback 連結）
  * 3. 直播時間表卡（brief.md：晚場 22:00 ／ 快閃場 15:30，單場可逾 3 小時，以 FB 公佈為準）
- * 4. 直播回顧：live-clip-1/2.mp4 video card（controls + poster）
+ * 4. （已移除直播回顧 video cards — 公司宣傳影片移咗去首頁）
  * 5. 「點樣睇直播落單」四步（大字編號 DM Mono）
  * 6. CTA：去 Facebook 睇直播 + WhatsApp
  */
@@ -59,26 +59,9 @@ const STEPS = [
   },
 ];
 
-/* ---------- 直播回顧 ---------- */
-const CLIPS = [
-  {
-    src: '/live-clip-1.mp4',
-    poster: '/video0-mid.jpg',
-    title: '直播回顧 · 精華片段一',
-    note: '即場著身示範',
-  },
-  {
-    src: '/live-clip-2.mp4',
-    poster: '/video1-mid.jpg',
-    title: '直播回顧 · 精華片段二',
-    note: '快閃價開心share',
-  },
-];
-
 export default function Live() {
   const embedRef = useReveal<HTMLDivElement>();
   const scheduleRef = useReveal<HTMLDivElement>();
-  const clipsRef = useReveal<HTMLDivElement>();
   const stepsRef = useReveal<HTMLDivElement>();
   const ctaRef = useReveal<HTMLDivElement>();
 
@@ -142,7 +125,7 @@ export default function Live() {
               style={{ animationDelay: '0.65s' }}
             >
               Glo Glo 每晚喺 Facebook 開直播，即場著身、即場講價、留言落單。
-              錯過咗都唔緊要——呢度有時間表同回顧片段。
+              錯過咗都唔緊要——入專頁可以重溫晒所有場次。
             </p>
             <div
               className="hero-enter mt-8 flex flex-col gap-4 sm:flex-row sm:items-center"
@@ -262,55 +245,6 @@ export default function Live() {
             <Clock size={14} aria-hidden="true" />
             直播時間以 Facebook 專頁公佈為準；單場直播可逾 3 小時。
           </p>
-        </div>
-      </section>
-
-      {/* ============ 4. 直播回顧 video cards ============ */}
-      <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
-        <div ref={clipsRef} className="reveal">
-          <h2 className="font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
-            <span className="font-display-en mr-3 text-purple-text">Replay</span>
-            直播回顧
-          </h2>
-          <p className="mt-3 max-w-xl text-[15px] text-txt-2">
-            錯過咗直播？睇返精華片段，感受下直播間嘅氣氛。
-          </p>
-          <div className="mt-8 grid gap-6 md:grid-cols-2">
-            {CLIPS.map((clip, i) => (
-              <div
-                key={clip.src}
-                className="reveal overflow-hidden rounded-2xl border bg-space-2"
-                style={{
-                  borderColor: 'var(--glass-border)',
-                  transitionDelay: `${Math.min(i * 80, 400)}ms`,
-                }}
-              >
-                <div className="duotone relative aspect-video">
-                  <video
-                    src={clip.src}
-                    poster={clip.poster}
-                    controls
-                    muted
-                    loop
-                    playsInline
-                    preload="metadata"
-                    className="h-full w-full object-cover"
-                  />
-                  <span
-                    className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-pink px-3 py-1 font-mono text-xs font-medium text-space-1"
-                    aria-hidden="true"
-                  >
-                    <Play size={12} aria-hidden="true" />
-                    REPLAY
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3 p-4">
-                  <p className="text-[15px] font-bold text-txt-1">{clip.title}</p>
-                  <p className="shrink-0 text-xs text-txt-3">{clip.note}</p>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 
