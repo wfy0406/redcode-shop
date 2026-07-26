@@ -49,6 +49,7 @@ export const products = pgTable("products", {
   price: integer("price").notNull(),
   discountPrice: integer("discountPrice"),
   sizes: varchar("sizes", { length: 255 }),
+  note: varchar("note", { length: 512 }),
   category: varchar("category", { length: 32 }).notNull().default("other"),
   listedDate: timestamp("listedDate").notNull(),
   stock: integer("stock").notNull().default(0),

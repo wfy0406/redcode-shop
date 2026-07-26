@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS "paymentProofs" (
 );
 
 ALTER TABLE products ADD COLUMN IF NOT EXISTS category varchar(32) NOT NULL DEFAULT 'other';
+ALTER TABLE products ADD COLUMN IF NOT EXISTS note varchar(512);
 
 CREATE TABLE IF NOT EXISTS "praiseWall" (
   id serial PRIMARY KEY,
