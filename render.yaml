@@ -1,0 +1,30 @@
+# Render Blueprint — RedCode 購物網
+# 用法：Render dashboard → New + → Blueprint → 揀呢個 repo，設定會自動帶入
+# 注意：Persistent Disk 只支援付費 plan（Starter 起）；免費 plan 要用嘅話，
+#       將下面 disk: 嗰段同 plan: starter 註解，改用 plan: free（但截圖會喺重啟後流失）
+services:
+  - type: web
+    name: redcode-shop
+    runtime: docker
+    plan: starter
+    region: singapore
+    healthCheckPath: /api/trpc/ping
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: redcode-shop-db
+          property: connectionString
+    disk:
+      name: redcode-uploads
+      mountPath: /app/uploads
+      sizeGB: 1
+
+databases:
+  - name: redcode-shop-db
+    databaseName: redcode_shop
+    region: singapore
+    plan: free

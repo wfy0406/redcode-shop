@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { serveStatic } from "@hono/node-server/serve-static";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { appRouter } from "./router";
 import { createContext } from "./context";
 import { userFromAuthHeader } from "./auth";
@@ -12,7 +12,9 @@ import { env } from "./lib/env";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
-const UPLOAD_DIR = "uploads";
+// 上傳目錄：Render Persistent Disk 會 mount 去 /app/uploads（Docker WORKDIR 係 /app，
+// 預設相對路徑 "uploads" 啱啱好對應；如需其他路徑用 UPLOADS_DIR 環境變數覆寫）
+const UPLOAD_DIR = process.env.UPLOADS_DIR || "uploads";
 const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_IMAGE_TYPES: Record<string, string> = {
   "image/jpeg": ".jpg",
@@ -55,8 +57,29 @@ app.post("/api/upload", async (c) => {
   return c.json({ path: `/uploads/${filename}` });
 });
 
-// Serve uploaded files
-app.use("/uploads/*", serveStatic({ root: "./" }));
+// Serve uploaded files（自訂 route，支援絕對路徑 UPLOAD_DIR，兼擋 path traversal）
+const UPLOAD_CONTENT_TYPES: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+};
+app.get("/uploads/:file", async (c) => {
+  const file = c.req.param("file");
+  if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+    return c.json({ error: "Not Found" }, 404);
+  }
+  const ext = path.extname(file).toLowerCase();
+  const contentType = UPLOAD_CONTENT_TYPES[ext];
+  if (!contentType) {
+    return c.json({ error: "Not Found" }, 404);
+  }
+  try {
+    const data = await readFile(path.join(UPLOAD_DIR, file));
+    return c.body(data, 200, { "Content-Type": contentType, "Cache-Control": "public, max-age=31536000, immutable" });
+  } catch {
+    return c.json({ error: "Not Found" }, 404);
+  }
+});
 
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
