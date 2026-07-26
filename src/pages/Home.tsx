@@ -46,7 +46,7 @@ function mapDbProduct(p: {
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
-const WHATSAPP_URL = 'https://wa.me/85200000000';
+const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 const FB_PAGE_PLUGIN =
   'https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2Fredcodexhk&tabs=timeline&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true&locale=zh_HK';
@@ -305,8 +305,8 @@ export default function Home() {
         <div ref={picksRef} className="reveal">
           <SectionHeading en="Tonight's Picks" zh="今晚精選" />
           <div className="mt-8 grid gap-6 lg:grid-cols-2">
-            {/* 左：2×2 大卡 Glo Glo 著身圖（±旋轉浮卡處理） */}
-            <div className="duotone group relative overflow-hidden rounded-[20px] border" style={{ borderColor: 'var(--glass-border)' }}>
+            {/* 左：2×2 大卡 Glo Glo 著身圖（全彩，人像唔用 duotone） */}
+            <div className="group relative overflow-hidden rounded-[20px] border" style={{ borderColor: 'var(--glass-border)' }}>
               <img
                 src="/gloglo-3.jpg"
                 alt="Glo Glo 著身示範今晚精選款"
@@ -461,17 +461,17 @@ export default function Home() {
       {/* ============ 6. 品牌故事條 + Glo Glo 主播介紹 ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
         <div ref={storyRef} className="reveal grid items-center gap-10 lg:grid-cols-2">
-          {/* 左：Glo Glo 相片（duotone 進場上色） */}
+          {/* 左：Glo Glo 相片（全彩） */}
           <div className="grid grid-cols-2 gap-4">
             <DuotoneImage
-              reveal
+              off
               src="/gloglo-1.jpg"
               alt="主播 Glo Glo 直播造型一"
               wrapperClassName="rounded-2xl border"
               className="aspect-[4/5] w-full object-cover"
             />
             <DuotoneImage
-              reveal
+              off
               src="/gloglo-2.jpg"
               alt="主播 Glo Glo 直播造型二"
               wrapperClassName="mt-10 rounded-2xl border"
@@ -531,6 +531,7 @@ export default function Home() {
           ].map((photo) => (
             <DuotoneImage
               key={photo.src + photo.alt}
+              off
               src={photo.src}
               alt={photo.alt}
               wrapperClassName="w-56 shrink-0 rounded-2xl border md:w-64"
