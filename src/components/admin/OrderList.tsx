@@ -6,6 +6,7 @@ import StatusBadge from './StatusBadge';
 import { STATUS_FILTERS } from './statusMeta';
 import ProofSection from './ProofSection';
 import WishingStar from './WishingStar';
+import ExportCard from './ExportCard';
 
 /**
  * 全部訂單列表 —— status 篩選 tabs + 單號搜尋 + 點入行展開詳情
@@ -208,22 +209,12 @@ export default function OrderList({
 
                         {/* 訂單狀態操作 */}
                         <div className="mt-5 flex flex-wrap gap-3">
+                          {/* F-D：已確認 → 進行出貨（完成終態）；移除舊 shipped→completed 掣 */}
                           {order.status === 'approved' && (
                             <button
                               type="button"
                               disabled={busy}
                               onClick={() => onStatus(order.id, 'shipped')}
-                              className="btn btn-secondary !px-5 !py-2.5 text-[13px] disabled:opacity-60"
-                            >
-                              {busy ? <WishingStar size={14} /> : null}
-                              標記已寄出
-                            </button>
-                          )}
-                          {order.status === 'shipped' && (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => onStatus(order.id, 'completed')}
                               className="btn !px-5 !py-2.5 text-[13px] disabled:opacity-60"
                               style={{
                                 background: 'var(--success)',
@@ -232,7 +223,7 @@ export default function OrderList({
                               }}
                             >
                               {busy ? <WishingStar size={14} /> : null}
-                              標記完成
+                              進行出貨
                             </button>
                           )}
                           {CANCELLABLE.includes(order.status) &&
@@ -298,6 +289,11 @@ export default function OrderList({
           })}
         </ul>
       )}
+
+      {/* 每日數據導出（F-F）：staff 喺訂單頁底都用得 */}
+      <div className="mt-6">
+        <ExportCard />
+      </div>
     </div>
   );
 }
