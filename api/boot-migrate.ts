@@ -91,6 +91,10 @@ CREATE TABLE IF NOT EXISTS "paymentProofs" (
 ALTER TABLE products ADD COLUMN IF NOT EXISTS category varchar(32) NOT NULL DEFAULT 'other';
 ALTER TABLE products ADD COLUMN IF NOT EXISTS note varchar(512);
 
+-- Google 登入：users.email（NULL 唔計重複，舊會員唔受影響）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email varchar(255);
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (email);
+
 CREATE TABLE IF NOT EXISTS "promoCodes" (
   id serial PRIMARY KEY,
   code varchar(32) NOT NULL UNIQUE,
@@ -113,6 +117,12 @@ CREATE TABLE IF NOT EXISTS "praiseWall" (
   "sortOrder" integer NOT NULL DEFAULT 0,
   "isActive" boolean NOT NULL DEFAULT true,
   "createdAt" timestamp NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS "siteSettings" (
+  key varchar(64) PRIMARY KEY,
+  value text NOT NULL,
+  "updatedAt" timestamp NOT NULL DEFAULT now()
 );
 `;
 

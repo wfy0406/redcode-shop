@@ -33,6 +33,8 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
   phone: varchar("phone", { length: 32 }).notNull().unique(),
+  // Google 登入用：唯一但可 NULL（電話註冊嘅舊會員冇 email）
+  email: varchar("email", { length: 255 }).unique(),
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
   address: text("address"),
   age: integer("age"),
@@ -141,6 +143,13 @@ export const praiseWall = pgTable("praiseWall", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
+// 全站 key-value 文案設定（白名單 key 由 api/settingsRouter.ts 把關）
+export const siteSettings = pgTable("siteSettings", {
+  key: varchar("key", { length: 64 }).primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;export type Product = typeof products.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Order = typeof orders.$inferSelect;
@@ -148,3 +157,4 @@ export type OrderItem = typeof orderItems.$inferSelect;
 export type PaymentProof = typeof paymentProofs.$inferSelect;
 export type PromoCode = typeof promoCodes.$inferSelect;
 export type PraiseWallEntry = typeof praiseWall.$inferSelect;
+export type SiteSetting = typeof siteSettings.$inferSelect;
