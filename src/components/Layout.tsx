@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router';
+import { Outlet, useLocation } from 'react-router';
 import { MessageCircle } from 'lucide-react';
 import Starfield from '@/components/Starfield';
 import Meteors from '@/components/Meteors';
@@ -16,24 +16,30 @@ import Footer from '@/components/Footer';
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 
 export default function Layout() {
+  const { pathname } = useLocation();
+  // 管理員工作台係數據密集頁：唔要星空/流星/星雲動效（用戶要求全站有、唯獨 admin 冇）
+  const isAdmin = pathname.startsWith('/admin');
+
   return (
     <div className="relative min-h-[100dvh] bg-space-1 text-txt-1">
       {/* §3.2 星空 canvas（fixed, z-index -2） */}
-      <Starfield />
+      {!isAdmin && <Starfield />}
 
       {/* 流星動效層（z-index 0：星空之上、內容之下；reduced-motion 時唔渲染） */}
-      <Meteors />
+      {!isAdmin && <Meteors />}
 
       {/* §3.3 星雲漸變層（z-index -1，星之上內容之下） */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 overflow-hidden"
-        style={{ zIndex: -1 }}
-      >
-        <div className="nebula nebula-1" style={{ filter: 'blur(80px)' }} />
-        <div className="nebula nebula-2" style={{ filter: 'blur(80px)' }} />
-        <div className="nebula nebula-3" style={{ filter: 'blur(80px)' }} />
-      </div>
+      {!isAdmin && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-0 overflow-hidden"
+          style={{ zIndex: -1 }}
+        >
+          <div className="nebula nebula-1" style={{ filter: 'blur(80px)' }} />
+          <div className="nebula nebula-2" style={{ filter: 'blur(80px)' }} />
+          <div className="nebula nebula-3" style={{ filter: 'blur(80px)' }} />
+        </div>
+      )}
 
       <Navbar />
 
