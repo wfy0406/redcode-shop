@@ -195,9 +195,9 @@ export default function Live() {
                 </a>
               </p>
             </div>
-            {/* 右：FB plugin（最寬 500px，框跟返佢比例置中） */}
+            {/* 右：FB plugin（框跟返 plugin 比例，唔再拉伸） */}
             <div
-              className="flex justify-center overflow-hidden rounded-2xl border lg:col-span-3"
+              className="mx-auto flex w-full max-w-[540px] justify-center self-start overflow-hidden rounded-2xl border lg:col-span-3"
               style={{
                 background: 'var(--glass-bg)',
                 backdropFilter: 'blur(12px)',

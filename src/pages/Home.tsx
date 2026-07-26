@@ -414,9 +414,9 @@ export default function Home() {
           </p>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-5">
-            {/* FB Page Plugin 嵌入（plugin 最寬 500px，欄位跟返佢比例） */}
+            {/* FB Page Plugin 嵌入（框跟返 plugin 比例，唔再拉伸） */}
             <div
-              className="flex justify-center overflow-hidden rounded-2xl border bg-space-2 lg:col-span-2"
+              className="mx-auto flex w-full max-w-[540px] justify-center self-start overflow-hidden rounded-2xl border bg-space-2 lg:col-span-2"
               style={{ borderColor: 'var(--glass-border)' }}
             >
               <iframe
