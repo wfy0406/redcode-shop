@@ -3,7 +3,10 @@ import { TRPCError } from "@trpc/server";
 import { and, eq, like, or, desc } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { products } from "@db/schema";
+import { PRODUCT_CATEGORY_VALUES } from "@contracts/types";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
+
+const categorySchema = z.enum(PRODUCT_CATEGORY_VALUES as [string, ...string[]]);
 
 export const productsRouter = createRouter({
   list: publicQuery
@@ -11,6 +14,7 @@ export const productsRouter = createRouter({
       z
         .object({
           keyword: z.string().optional(),
+          category: categorySchema.optional(),
         })
         .optional(),
     )
@@ -23,6 +27,9 @@ export const productsRouter = createRouter({
         conditions.push(
           or(like(products.name, pattern), like(products.description, pattern))!,
         );
+      }
+      if (input?.category) {
+        conditions.push(eq(products.category, input.category));
       }
       return db
         .select()
@@ -54,6 +61,7 @@ export const productsRouter = createRouter({
         price: z.number().int().nonnegative(),
         discountPrice: z.number().int().nonnegative().optional(),
         sizes: z.string().optional(),
+        category: categorySchema.optional(),
         listedDate: z.coerce.date().optional(),
         stock: z.number().int().nonnegative().optional(),
       }),
@@ -76,6 +84,7 @@ export const productsRouter = createRouter({
           price: input.price,
           discountPrice: input.discountPrice ?? null,
           sizes: input.sizes ?? null,
+          category: input.category ?? "other",
           listedDate: input.listedDate ?? new Date(),
           stock: input.stock ?? 0,
         })
@@ -94,6 +103,7 @@ export const productsRouter = createRouter({
         price: z.number().int().nonnegative().optional(),
         discountPrice: z.number().int().nonnegative().nullable().optional(),
         sizes: z.string().nullable().optional(),
+        category: categorySchema.optional(),
         listedDate: z.coerce.date().optional(),
         stock: z.number().int().nonnegative().optional(),
         isActive: z.boolean().optional(),

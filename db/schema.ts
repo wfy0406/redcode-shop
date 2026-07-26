@@ -49,6 +49,7 @@ export const products = pgTable("products", {
   price: integer("price").notNull(),
   discountPrice: integer("discountPrice"),
   sizes: varchar("sizes", { length: 255 }),
+  category: varchar("category", { length: 32 }).notNull().default("other"),
   listedDate: timestamp("listedDate").notNull(),
   stock: integer("stock").notNull().default(0),
   isActive: boolean("isActive").notNull().default(true),
@@ -115,9 +116,19 @@ export const paymentProofs = pgTable("paymentProofs", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
+export const praiseWall = pgTable("praiseWall", {
+  id: serial("id").primaryKey(),
+  image: varchar("image", { length: 512 }).notNull(),
+  caption: varchar("caption", { length: 255 }),
+  sortOrder: integer("sortOrder").notNull().default(0),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
 export type PaymentProof = typeof paymentProofs.$inferSelect;
+export type PraiseWallEntry = typeof praiseWall.$inferSelect;
