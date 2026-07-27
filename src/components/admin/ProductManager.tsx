@@ -527,12 +527,13 @@ export default function ProductManager({
         ) : (
           <ul className="mt-4 flex flex-col gap-2">
             {products.map((p) => {
-              const lowStock = p.stock < 5;
+              // 存貨 10 件以下都當緊張（直播前提醒補貨）
+              const lowStock = p.stock < 10;
               const removing = removeMutation.isPending && confirmRemoveId === p.id;
               return (
                 <li
                   key={p.id}
-                  className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border px-4 py-3.5"
+                  className="flex flex-wrap items-center gap-x-3 gap-y-2.5 rounded-2xl border px-4 py-3.5"
                   style={{
                     borderColor: 'var(--space-line)',
                     background: 'var(--space-2)',
@@ -546,7 +547,8 @@ export default function ProductManager({
                     style={{ borderColor: 'var(--glass-border)', background: 'var(--space-0)' }}
                     loading="lazy"
                   />
-                  <div className="min-w-0 flex-1">
+                  {/* 手機：資料跟圖片同一行攞晒剩底嘅位；價錢+掣跌落第二行右齊。sm 起返正常一行過 */}
+                  <div className="min-w-0 flex-1 basis-[calc(100%-4rem)] sm:basis-0">
                     <p className="truncate text-[14px] font-bold text-txt-1">{p.name}</p>
                     <p className="mt-0.5 font-mono text-[12px] text-txt-3">
                       {p.sku} · 上架 {fmtDate(p.listedDate)}
@@ -586,84 +588,87 @@ export default function ProductManager({
                       </select>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-mono text-[14px] text-pink">
-                      {p.discountPrice != null ? fmtHKD(p.discountPrice) : fmtHKD(p.price)}
-                      {p.discountPrice != null && (
-                        <span className="ml-2 text-[12px] text-txt-3 line-through">
-                          {fmtHKD(p.price)}
-                        </span>
-                      )}
-                    </p>
-                    <p
-                      className="mt-0.5 font-mono text-[12px]"
-                      style={{ color: lowStock ? 'var(--gold)' : 'var(--text-3)' }}
-                    >
-                      存貨 {p.stock}
-                      {lowStock ? '（緊張）' : ''}
-                    </p>
-                  </div>
-                  {/* 編輯：populate 表單進入編輯模式 */}
-                  <button
-                    type="button"
-                    onClick={() => startEdit(p)}
-                    disabled={editingId === p.id}
-                    aria-label={`編輯 ${p.name}`}
-                    className="btn btn-secondary shrink-0 !h-10 !w-10 !rounded-full !p-0 disabled:opacity-50"
-                  >
-                    <Pencil size={15} aria-hidden="true" />
-                  </button>
-                  {/* isActive toggle */}
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={p.isActive}
-                    aria-label={`${p.name} 上架狀態`}
-                    disabled={toggleMutation.isPending}
-                    onClick={() =>
-                      toggleMutation.mutate({ id: p.id, isActive: !p.isActive })
-                    }
-                    className="relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:opacity-60"
-                    style={{
-                      background: p.isActive ? 'var(--success)' : 'var(--space-4)',
-                      borderColor: p.isActive ? 'var(--success)' : 'var(--space-line)',
-                    }}
-                  >
-                    <span
-                      className="absolute top-0.5 h-[18px] w-[18px] rounded-full transition-transform"
-                      style={{
-                        background: p.isActive ? 'var(--space-1)' : 'var(--text-3)',
-                        transform: p.isActive ? 'translateX(22px)' : 'translateX(2px)',
-                      }}
-                      aria-hidden="true"
-                    />
-                  </button>
-                  {/* 刪除（兩步確認） */}
-                  {confirmRemoveId === p.id ? (
+                  {/* 價錢/存貨 + 操作掣：手機跌落第二行右齊，desktop 同一行 */}
+                  <div className="ml-auto flex items-center gap-3">
+                    <div className="text-right">
+                      <p className="font-mono text-[14px] text-pink">
+                        {p.discountPrice != null ? fmtHKD(p.discountPrice) : fmtHKD(p.price)}
+                        {p.discountPrice != null && (
+                          <span className="ml-2 text-[12px] text-txt-3 line-through">
+                            {fmtHKD(p.price)}
+                          </span>
+                        )}
+                      </p>
+                      <p
+                        className="mt-0.5 font-mono text-[12px]"
+                        style={{ color: lowStock ? 'var(--gold)' : 'var(--text-3)' }}
+                      >
+                        存貨 {p.stock}
+                        {lowStock ? '（緊張）' : ''}
+                      </p>
+                    </div>
+                    {/* 編輯：populate 表單進入編輯模式 */}
                     <button
                       type="button"
-                      disabled={removing}
+                      onClick={() => startEdit(p)}
+                      disabled={editingId === p.id}
+                      aria-label={`編輯 ${p.name}`}
+                      className="btn btn-secondary shrink-0 !h-10 !w-10 !rounded-full !p-0 disabled:opacity-50"
+                    >
+                      <Pencil size={15} aria-hidden="true" />
+                    </button>
+                    {/* isActive toggle */}
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={p.isActive}
+                      aria-label={`${p.name} 上架狀態`}
+                      disabled={toggleMutation.isPending}
                       onClick={() =>
-                        removeMutation.mutate(
-                          { id: p.id },
-                          { onError: () => setConfirmRemoveId(null) },
-                        )
+                        toggleMutation.mutate({ id: p.id, isActive: !p.isActive })
                       }
-                      className="btn btn-primary shrink-0 !px-4 !py-2 text-[12px] disabled:opacity-60"
+                      className="relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:opacity-60"
+                      style={{
+                        background: p.isActive ? 'var(--success)' : 'var(--space-4)',
+                        borderColor: p.isActive ? 'var(--success)' : 'var(--space-line)',
+                      }}
                     >
-                      {removing ? <WishingStar size={13} /> : null}
-                      確認刪除？
+                      <span
+                        className="absolute top-0.5 h-[18px] w-[18px] rounded-full transition-transform"
+                        style={{
+                          background: p.isActive ? 'var(--space-1)' : 'var(--text-3)',
+                          transform: p.isActive ? 'translateX(22px)' : 'translateX(2px)',
+                        }}
+                        aria-hidden="true"
+                      />
                     </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmRemoveId(p.id)}
-                      aria-label={`刪除 ${p.name}`}
-                      className="btn btn-secondary shrink-0 !h-10 !w-10 !rounded-full !p-0"
-                    >
-                      <Trash2 size={15} aria-hidden="true" />
-                    </button>
-                  )}
+                    {/* 刪除（兩步確認） */}
+                    {confirmRemoveId === p.id ? (
+                      <button
+                        type="button"
+                        disabled={removing}
+                        onClick={() =>
+                          removeMutation.mutate(
+                            { id: p.id },
+                            { onError: () => setConfirmRemoveId(null) },
+                          )
+                        }
+                        className="btn btn-primary shrink-0 !px-4 !py-2 text-[12px] disabled:opacity-60"
+                      >
+                        {removing ? <WishingStar size={13} /> : null}
+                        確認刪除？
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRemoveId(p.id)}
+                        aria-label={`刪除 ${p.name}`}
+                        className="btn btn-secondary shrink-0 !h-10 !w-10 !rounded-full !p-0"
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
                 </li>
               );
             })}
