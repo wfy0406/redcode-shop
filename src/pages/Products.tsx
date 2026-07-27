@@ -324,7 +324,7 @@ export default function Products() {
       ) : products.length === 0 ? (
         /* 空結果：empty-cart.png 插畫 */
         <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 py-16 text-center">
-          <img src="/empty-cart.png" alt="" className="w-48 max-w-full opacity-90 md:w-64" />
+          <img src="/empty-cart.svg" alt="" className="w-48 max-w-full opacity-90 md:w-64" />
           <p className="font-serif-tc text-xl font-semibold text-txt-1">
             {kw
               ? `搵唔到同「${kw}」相關嘅商品`

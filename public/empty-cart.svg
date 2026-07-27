@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
+  <defs>
+    <linearGradient id="bag" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff7ab0"/>
+      <stop offset="1" stop-color="#ff4d8d"/>
+    </linearGradient>
+    <linearGradient id="bagTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e83e7f"/>
+      <stop offset="1" stop-color="#d12e6e"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff4d8d" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#ff4d8d" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="120" cy="126" r="98" fill="url(#glow)"/>
+  <path d="M62 34 C64 48 72 56 86 58 C72 60 64 68 62 82 C60 68 52 60 38 58 C52 56 60 48 62 34 Z" fill="#f0c75e"/>
+  <path d="M186 128 C187 136 192 141 200 142 C192 143 187 148 186 156 C185 148 180 143 172 142 C180 141 185 136 186 128 Z" fill="#f0c75e" opacity="0.9"/>
+  <path d="M52 148 C53 153 56 156 61 157 C56 158 53 161 52 166 C51 161 48 158 43 157 C48 156 51 153 52 148 Z" fill="#f0c75e" opacity="0.7"/>
+  <path d="M94 96 v-14 a26 26 0 0 1 52 0 v14" fill="none" stroke="#ffd7e6" stroke-width="9" stroke-linecap="round"/>
+  <path d="M68 96 h104 l-8 88 a16 16 0 0 1 -16 14 h-56 a16 16 0 0 1 -16 -14 z" fill="url(#bag)"/>
+  <path d="M68 96 h104 l-2 20 h-100 z" fill="url(#bagTop)" opacity="0.5"/>
+  <path d="M120 158 C100 143 92 131 92 119 C92 109 100 103 108 103 C114 103 118 106 120 111 C122 106 126 103 132 103 C140 103 148 109 148 119 C148 131 140 143 120 158 Z" fill="#ffffff" opacity="0.94"/>
+</svg>
