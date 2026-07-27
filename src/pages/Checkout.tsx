@@ -238,6 +238,9 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
 
   const [address, setAddress] = useState('');
   const [note, setNote] = useState('');
+  // 取貨方式：address 送貨上門（預設）／sf_station 順豐站／sf_locker 智能櫃；自取可再填站點名稱/編號（選填）
+  const [deliveryMethod, setDeliveryMethod] = useState<'address' | 'sf_station' | 'sf_locker'>('address');
+  const [pickupPoint, setPickupPoint] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   // F5 優惠碼：收起（文字連結）→ 展開 input → 成功後 morph 做 code chip
@@ -299,6 +302,9 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
         note: note.trim() || undefined,
         // 有先用嘅優惠碼先傳；server 會重算折扣
         promoCode: appliedPromo?.code,
+        deliveryMethod,
+        pickupPoint:
+          deliveryMethod === 'address' ? undefined : pickupPoint.trim() || undefined,
       });
       // 後端已清車，invalidate 令購物車頁 / badge 同步
       void utils.cart.list.invalidate();
@@ -493,7 +499,68 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
       >
         <h2 className="font-serif-tc text-xl font-semibold text-txt-1">收貨資料</h2>
 
+        {/* 取貨方式（順豐站／智能櫃自取，站點名稱/編號選填） */}
         <div className="mt-5">
+          <span className="text-sm text-txt-2">取貨方式</span>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {(
+              [
+                ['address', '送貨上門'],
+                ['sf_station', '順豐站'],
+                ['sf_locker', '智能櫃'],
+              ] as const
+            ).map(([value, label]) => {
+              const active = deliveryMethod === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setDeliveryMethod(value)}
+                  aria-pressed={active}
+                  className="h-11 rounded-xl border text-[13px] transition-colors"
+                  style={
+                    active
+                      ? {
+                          borderColor: 'var(--pink)',
+                          background: 'var(--pink-haze)',
+                          color: 'var(--txt-1)',
+                          fontWeight: 600,
+                        }
+                      : {
+                          borderColor: 'var(--space-line)',
+                          background: 'var(--space-2)',
+                          color: 'var(--text-3)',
+                        }
+                  }
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {deliveryMethod !== 'address' && (
+          <div className="mt-4">
+            <label htmlFor="checkout-pickup" className="text-sm text-txt-2">
+              {deliveryMethod === 'sf_station' ? '順豐站名稱／編號（選填）' : '智能櫃名稱／編號（選填）'}
+            </label>
+            <input
+              id="checkout-pickup"
+              value={pickupPoint}
+              onChange={(e) => setPickupPoint(e.target.value)}
+              placeholder={
+                deliveryMethod === 'sf_station'
+                  ? '例如：大埔廣場順豐站'
+                  : '例如：852L110 大埔超級城智能櫃'
+              }
+              className="mt-2 h-12 w-full rounded-xl border bg-space-2 px-4 text-[15px] text-txt-1 placeholder:text-txt-disabled focus:border-pink"
+              style={{ borderColor: 'var(--space-line)' }}
+            />
+          </div>
+        )}
+
+        <div className="mt-4">
           <label htmlFor="checkout-address" className="text-sm text-txt-2">
             收貨地址（選填）
           </label>
