@@ -32,6 +32,7 @@ type AuthContextValue = {
   isStaff: boolean;
   login: (phone: string, password: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
+  loginWithGoogle: (idToken: string) => Promise<void>;
   logout: () => void;
 };
 
@@ -49,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginMutation = trpc.auth.login.useMutation();
   const registerMutation = trpc.auth.register.useMutation();
+  const googleLoginMutation = trpc.auth.googleLogin.useMutation();
 
   const login = useCallback(
     async (phone: string, password: string) => {
@@ -70,6 +72,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [registerMutation, utils],
   );
 
+  const loginWithGoogle = useCallback(
+    async (idToken: string) => {
+      const res = await googleLoginMutation.mutateAsync({ idToken });
+      setToken(res.token);
+      setHasToken(true);
+      await utils.auth.me.invalidate();
+    },
+    [googleLoginMutation, utils],
+  );
+
   const logout = useCallback(() => {
     clearToken();
     setHasToken(false);
@@ -85,9 +97,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isStaff: !!user && (user.role === "staff" || user.role === "admin"),
       login,
       register,
+      loginWithGoogle,
       logout,
     };
-  }, [hasToken, meQuery.data, meQuery.isLoading, login, register, logout]);
+  }, [hasToken, meQuery.data, meQuery.isLoading, login, register, loginWithGoogle, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
