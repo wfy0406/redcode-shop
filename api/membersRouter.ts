@@ -1,11 +1,14 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
+import { z } from "zod";
 import { getDb } from "./queries/connection";
-import { orders, users } from "@db/schema";
+import { cartItems, orderItems, orders, paymentProofs, users, wmsSyncLog } from "@db/schema";
 import { createRouter, adminProcedure } from "./middleware";
 
 /**
  * 會員列表 —— admin only
  * totalSpent 排除 cancelled/rejected；按註冊時間 createdAt desc
+ * remove：刪除會員；有訂單嘅會員要 alsoDeleteOrders=true 先刪得（連訂單一併刪，唔可以復原）
  */
 export const membersRouter = createRouter({
   list: adminProcedure.query(async () => {
@@ -26,4 +29,51 @@ export const membersRouter = createRouter({
       .groupBy(users.id)
       .orderBy(desc(users.createdAt));
   }),
+
+  remove: adminProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        // 會員有訂單時，必須明確授權先可以連訂單一併刪除（預設擋住，保住營業數據）
+        alsoDeleteOrders: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      if (input.id === ctx.user.userId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "唔可以刪除自己嘅帳號" });
+      }
+      const [target] = await db
+        .select({ id: users.id, role: users.role, name: users.name })
+        .from(users)
+        .where(eq(users.id, input.id))
+        .limit(1);
+      if (!target) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      }
+      if (target.role !== "member") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "員工帳號唔可以喺會員管理刪除" });
+      }
+      const orderRows = await db
+        .select({ id: orders.id })
+        .from(orders)
+        .where(eq(orders.userId, input.id));
+      if (orderRows.length > 0 && !input.alsoDeleteOrders) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `「${target.name}」有 ${orderRows.length} 張訂單，刪除會連埋訂單一齊冇晒，請確認先好再撳`,
+        });
+      }
+      if (orderRows.length > 0) {
+        // 先刪晒啲 child rows（FK 冇 cascade），順序：同步記錄 → 截圖 → 明細 → 訂單
+        const ids = orderRows.map((r) => r.id);
+        await db.delete(wmsSyncLog).where(inArray(wmsSyncLog.orderId, ids));
+        await db.delete(paymentProofs).where(inArray(paymentProofs.orderId, ids));
+        await db.delete(orderItems).where(inArray(orderItems.orderId, ids));
+        await db.delete(orders).where(eq(orders.userId, input.id));
+      }
+      await db.delete(cartItems).where(eq(cartItems.userId, input.id));
+      await db.delete(users).where(eq(users.id, input.id));
+      return { ok: true, id: input.id, deletedOrders: orderRows.length };
+    }),
 });

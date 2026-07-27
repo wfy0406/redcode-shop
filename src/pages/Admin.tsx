@@ -190,7 +190,7 @@ function AdminConsole() {
     products: <ProductManager toast={pushToast} />,
     praise: <PraiseManager toast={pushToast} />,
     promo: <PromoManager toast={pushToast} />,
-    members: isAdmin ? <MemberList /> : ADMIN_ONLY_HINT,
+    members: isAdmin ? <MemberList toast={pushToast} /> : ADMIN_ONLY_HINT,
     staff: isAdmin ? <StaffManager toast={pushToast} /> : ADMIN_ONLY_HINT,
   };
 

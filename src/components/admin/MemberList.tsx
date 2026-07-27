@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
-import { Users } from 'lucide-react';
+import { Trash2, Users } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { fmtDate, fmtHKD } from './format';
 import { LoadingBlock } from './WishingStar';
+import type { ToastKind } from './useToasts';
 
 /**
  * 會員列表（F-H，admin only）—— trpc.members.list
  * 表格：名／電話／email／註冊日期／訂單數／累計消費（排除 cancelled/rejected），按註冊日期新至舊。
- * 後端 membersRouter 未 merge 前 tsc 會報 does not exist（預期），本地型別同 spec §B4 契約一致。
+ * 每行有刪除掣：有訂單嘅會員會喺確認對話框講明連訂單一併刪（後端 members.remove 把關）。
  */
 
 /** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
@@ -21,9 +22,37 @@ type MemberRow = {
   totalSpent: number;
 };
 
-export default function MemberList() {
+export default function MemberList({
+  toast,
+}: {
+  toast: (text: string, kind?: ToastKind) => void;
+}) {
+  const utils = trpc.useUtils();
   const listQuery = trpc.members.list.useQuery(undefined);
   const members = useMemo(() => (listQuery.data ?? []) as MemberRow[], [listQuery.data]);
+
+  const removeMutation = trpc.members.remove.useMutation({
+    onSuccess: (result) => {
+      toast(
+        result?.deletedOrders
+          ? `已刪除會員（連埋 ${result.deletedOrders} 張訂單）`
+          : '已刪除會員',
+        'success',
+      );
+      void utils.members.list.invalidate();
+      void utils.analytics.summary.invalidate();
+    },
+    onError: (err) => toast(err.message || '刪除會員失敗', 'error'),
+  });
+
+  const askDelete = (m: MemberRow) => {
+    const withOrders = m.orderCount > 0;
+    const msg = withOrders
+      ? `會員「${m.name}」有 ${m.orderCount} 張訂單。\n\n確定連埋訂單一併刪除？呢個操作唔可以復原。`
+      : `確定刪除會員「${m.name}」？呢個操作唔可以復原。`;
+    if (!window.confirm(msg)) return;
+    removeMutation.mutate(withOrders ? { id: m.id, alsoDeleteOrders: true } : { id: m.id });
+  };
 
   return (
     <section
@@ -59,6 +88,7 @@ export default function MemberList() {
                 <th className="py-2 pr-3 font-normal">註冊日期</th>
                 <th className="w-16 py-2 pr-3 text-right font-normal">訂單數</th>
                 <th className="w-28 py-2 text-right font-normal">累計消費</th>
+                <th className="w-14 py-2 pl-3 text-right font-normal">刪除</th>
               </tr>
             </thead>
             <tbody>
@@ -81,6 +111,17 @@ export default function MemberList() {
                   </td>
                   <td className="py-2.5 text-right font-mono text-[13px] text-pink">
                     {fmtHKD(m.totalSpent)}
+                  </td>
+                  <td className="py-2.5 pl-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => askDelete(m)}
+                      disabled={removeMutation.isPending}
+                      aria-label={`刪除會員 ${m.name}`}
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-50"
+                    >
+                      <Trash2 size={16} aria-hidden="true" />
+                    </button>
                   </td>
                 </tr>
               ))}
