@@ -1,10 +1,10 @@
 import type { Context } from "hono";
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { and, asc, eq, gte, lt, notInArray } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, orderItems, products } from "@db/schema";
 import { userFromAuthHeader, verifyToken } from "./auth";
+import { opsTemplateCandidates } from "./adminAssets";
 import { readZipEntries, writeZipStore } from "./xlsxZip";
 
 /**
@@ -21,13 +21,24 @@ import { readZipEntries, writeZipStore } from "./xlsxZip";
  *   E 金額 = qty × (discountPrice ?? price)｜M 下單批次 = 第一批｜其餘欄留空
  * 排除 cancelled/rejected；冇數據照出（淨表頭模板）。
  */
-const TEMPLATE_PATH = path.resolve(process.cwd(), "api/assets/ops-template.xlsx");
 const SHEET_PATH = "xl/worksheets/sheet9.xml";
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30); // Excel serial day 0
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TEMPLATE_DATA_ROWS = 1274; // 模板預留空行：row 2..1275
 
 type ExportLine = { dateSerial: number; sku: string; amount: number };
+
+/** 讀模板：disk 上傳版（後台「網站資產」上傳）優先，repo 自帶版 fallback */
+async function readTemplate(): Promise<Buffer> {
+  for (const p of opsTemplateCandidates()) {
+    try {
+      return await readFile(p);
+    } catch {
+      // 試下一個候選路徑
+    }
+  }
+  throw new Error("ops-template.xlsx 未搵到（請喺後台「網站資產」上傳 Excel 模板）");
+}
 
 function escapeXml(s: string): string {
   return s
@@ -175,7 +186,7 @@ export async function buildDailyXlsx(date: string): Promise<Buffer> {
     amount: r.quantity * (r.discountPrice ?? r.price),
   }));
 
-  const template = await readFile(TEMPLATE_PATH);
+  const template = await readTemplate();
   const entries = readZipEntries(template);
   stripPivotCaches(entries);
   const sheet = entries.get(SHEET_PATH);

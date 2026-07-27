@@ -10,6 +10,7 @@ import { createContext } from "./context";
 import { userFromAuthHeader } from "./auth";
 import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback } from "./wmsSync";
+import { serveEmptyCartOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
@@ -31,6 +32,13 @@ app.get("/api/export/daily", exportDaily);
 
 // WMS → 官網審批回調（shared secret 驗證；同樣喺 tRPC mount 前註冊）
 app.post("/api/wms/review-callback", wmsReviewCallback);
+
+// 網站資產管理（staff/admin）—— 後台直接上傳 empty-cart.png / ops-template.xlsx
+app.get("/api/admin/site-assets", siteAssetsStatus);
+app.post("/api/admin/upload-asset", uploadSiteAsset);
+
+// /empty-cart.png runtime override：disk 有上傳版就 serve disk 版，冇就跌落 dist 靜態版
+app.get("/empty-cart.png", serveEmptyCartOverride);
 
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({
