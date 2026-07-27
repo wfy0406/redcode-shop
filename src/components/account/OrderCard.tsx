@@ -8,7 +8,7 @@ import type { MyOrder, MyOrderItem } from './types';
 /**
  * 會員中心訂單卡（§P8）
  * 玻璃列：DM Mono 單號 + 日期 + 狀態 badge + 商品明細（圖/名/貨號/size/數量/價）
- * + 總計 + 金星狀態時間線；待付款／被拒絕訂單附付款資料提示卡 + 截圖上傳 dropzone。
+ * + 總計 + 取貨方式（順豐站/智能櫃）+ 金星狀態時間線；待付款／被拒絕訂單附付款資料提示卡 + 截圖上傳 dropzone。
  */
 
 interface OrderCardProps {
@@ -107,6 +107,17 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         <span className="text-sm text-txt-2">總計</span>
         <span className="font-mono text-xl font-medium text-pink">{formatHKD(order.total)}</span>
       </div>
+
+      {/* 取貨方式（順豐站／智能櫃自取；揀咗有填站點就一齊顯示） */}
+      {order.deliveryMethod && order.deliveryMethod !== 'address' && (
+        <p className="mt-3 text-[13px] text-txt-3">
+          取貨方式：
+          <span className="text-txt-2">
+            {order.deliveryMethod === 'sf_station' ? '順豐站自取' : '順豐智能櫃自取'}
+            {order.pickupPoint ? `：${order.pickupPoint}` : ''}
+          </span>
+        </p>
+      )}
 
       {/* 拒絕原因 */}
       {latestRejectedProof?.reviewNote && (
