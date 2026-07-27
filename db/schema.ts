@@ -53,6 +53,9 @@ export const products = pgTable("products", {
   sizes: varchar("sizes", { length: 255 }),
   // 尺寸選項總開關：false = 商品頁唔顯示尺寸、落單唔使揀（袋/飾物呢類冇尺寸嘅貨用）
   sizeEnabled: boolean("sizeEnabled").notNull().default(true),
+  // 定時自動下架（開關＋時間）：delistEnabled=true 兼 delistAt 到咗 → 前台自動消失（唔使 cron，查詢時判斷）
+  delistEnabled: boolean("delistEnabled").notNull().default(false),
+  delistAt: timestamp("delistAt"),
   note: varchar("note", { length: 512 }),
   category: varchar("category", { length: 32 }).notNull().default("other"),
   listedDate: timestamp("listedDate").notNull(),
@@ -90,6 +93,9 @@ export const orders = pgTable("orders", {
   note: text("note"),
   promoCode: varchar("promoCode", { length: 32 }),
   discountAmount: integer("discountAmount").notNull().default(0),
+  // 取貨方式：address（送貨，預設）／sf_station（順豐站）／sf_locker（智能櫃）；自取時 pickupPoint 填站點名稱/編號（選填）
+  deliveryMethod: varchar("deliveryMethod", { length: 16 }).notNull().default("address"),
+  pickupPoint: varchar("pickupPoint", { length: 255 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   // PostgreSQL 冇 ON UPDATE CURRENT_TIMESTAMP，updatedAt 由應用層更新時一併 set
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
