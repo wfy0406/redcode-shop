@@ -99,7 +99,7 @@ function CartLineRow({ line, pending, onQuantityChange, onRemove }: CartLineRowP
 function EmptyCart() {
   return (
     <div className="mt-14 flex flex-col items-center pb-8 text-center">
-      <img src="/empty-cart.jpg" alt="" className="w-52 max-w-full md:w-64" />
+      <img src="/empty-cart.png" alt="" className="w-52 max-w-full md:w-64" />
       <p className="script mt-6 text-3xl md:text-4xl">Your wishlist is still a wish…</p>
       <p className="mt-3 max-w-sm text-[15px] text-txt-2">
         購物車仲係空嘅。今晚直播款唔等人，去揀件啱心水嘅先。
@@ -205,8 +205,8 @@ export default function Cart() {
             </p>
           )}
 
-          {/* 手機預留底部 sticky 結算條嘅位 */}
-          <div className="mt-10 pb-24 lg:grid lg:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:gap-10 lg:pb-0">
+          {/* 手機預留底部 sticky 結算條嘅位（條高 + iPhone home indicator safe-area） */}
+          <div className="mt-10 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] lg:grid lg:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:gap-10 lg:pb-0">
             {/* 左 65%：商品行列 */}
             <ul>
               {items.map((line) => (
@@ -260,7 +260,7 @@ export default function Cart() {
             </aside>
           </div>
 
-          {/* 手機：底部 sticky 結算條（§6.2） */}
+          {/* 手機：底部 sticky 結算條（§6.2）；bar 貼底，home indicator 區域變內墊 */}
           <div
             className="fixed inset-x-0 bottom-0 z-40 border-t lg:hidden"
             style={{
@@ -268,6 +268,7 @@ export default function Cart() {
               backdropFilter: 'blur(16px)',
               WebkitBackdropFilter: 'blur(16px)',
               borderColor: 'var(--glass-border)',
+              paddingBottom: 'max(env(safe-area-inset-bottom), 0px)',
             }}
           >
             <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-4 px-5 py-3">
