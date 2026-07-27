@@ -1,5 +1,7 @@
 /**
- * RedCode 官網 ↔ Red Code WMS 訂單接入（依 RED_CODE_WEBHOOK_API.md v1.0）
+ * RedCode 官網 ↔ Red Code WMS 訂單接入（依 RED_CODE_WEBHOOK_API_v1.1.md v1.1，2026-07-27）
+ * v1.1 對官網方零改動：截圖照舊純 base64 傳（WMS 改咗入 DB 係佢哋內部事）；
+ * 錯誤碼照舊用 error.json.message 解析；新增 paymentMethod: "FPS" 欄位（官網得 FPS 入數一種）。
  *
  * 方向一（官網 → WMS）：客人上傳付款截圖之後，訂單逐件貨 call WMS `order.receiveWebhook`，
  *   WMS 管理員/主管喺「審批中心 → 官網訂單審批」見到（連截圖 base64），批准/拒絕。
@@ -226,6 +228,7 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
       actualPrice: String(item.price),
       orderDate: hktDate(order.createdAt),
       sessionNo: "0",
+      paymentMethod: "FPS",
       remark,
       source: "website",
       sourceRef: order.orderNo,
