@@ -13,7 +13,8 @@
  * 方向一（官網 → WMS）：客人上傳付款截圖之後，訂單逐件貨 call WMS `order.receiveWebhook`，
  *   WMS 管理員/主管喺「審批中心 → 官網訂單審批」見到（連截圖 base64），批准/拒絕。
  * 方向二（WMS → 官網）：WMS 審批完 POST 返我哋 `POST /api/wms/review-callback`（shared secret），
- *   官網訂單自動轉 approved（已確認＝終態）／cancelled（訂單取消）／rejected（待客人重傳截圖）。
+ *   官網訂單自動轉 approved（已確認＝終態）／cancelled（訂單取消）／rejected（待客人重傳截圖），
+ *   兼寫入審計日誌（actorRole=system），後台「日誌」頁可以翻查 WMS 審批結果。
  *
  * 防重複：一單一列 wmsSyncLog，webhookOrderIds 同 orderItems 對位；已成功嘅件 skip；
  *   客人重傳截圖時會先清走嗰列，否則重審件永遠送唔到（v1.3 §2.3）。
@@ -31,6 +32,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { getDb } from "./queries/connection";
 import { orders, paymentProofs, products, wmsSyncLog } from "@db/schema";
+import { logAudit } from "./audit";
 
 const DEFAULT_WMS_BASE_URL = "https://red-code-wms.onrender.com";
 const DEFAULT_PUBLIC_BASE_URL = "https://redcode.red";
@@ -332,6 +334,7 @@ export async function resetWmsSyncLogForReupload(orderId: number): Promise<void>
  *   rejected + rejectType=reupload → 訂單轉 rejected（待客人重傳截圖），note 顯示比客人知點解
  *   rejected（冇 rejectType 舊格式）→ 一律當 cancel 處理（文檔向後兼容指引）
  * Idempotent：已係終態（approved／cancelled）或 rejected 嘅訂單直接回 { ok: true, already: true }。
+ * 每次成功轉態都寫入審計日誌（action: order.wmsApprove / order.wmsReupload / order.wmsCancel）。
  */
 export async function wmsReviewCallback(c: Context) {
   const secret = process.env.WMS_CALLBACK_SECRET;
@@ -414,6 +417,21 @@ export async function wmsReviewCallback(c: Context) {
       })
       .where(eq(paymentProofs.id, pendingProof.id));
   }
+  // 審計日誌：WMS 回傳嘅審批結果（批准／要求重傳／取消）落後台「日誌」頁翻查
+  void logAudit({
+    actorId: null,
+    actorRole: "system",
+    actorNameFallback: "WMS",
+    action:
+      decision === "approved"
+        ? "order.wmsApprove"
+        : rejectType === "reupload"
+          ? "order.wmsReupload"
+          : "order.wmsCancel",
+    targetType: "order",
+    targetId: order.orderNo,
+    detail: `WMS 回傳審批：${decision === "approved" ? "批准" : rejectType === "reupload" ? "要求重傳付款截圖" : "取消訂單"}（訂單 ${order.orderNo} → ${nextStatus}）${noteText ? `，備註：${noteText}` : ""}`,
+  });
   console.log(
     `[wms] callback ${decision}${decision === "rejected" ? ` (${rejectType})` : ""} for ${orderNo} → ${nextStatus}`,
   );
