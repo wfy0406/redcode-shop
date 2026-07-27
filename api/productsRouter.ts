@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, eq, like, or, desc } from "drizzle-orm";
+import { and, eq, gt, isNull, like, or, desc } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES } from "@contracts/types";
@@ -8,6 +8,18 @@ import { createRouter, publicQuery, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 
 const categorySchema = z.enum(PRODUCT_CATEGORY_VALUES as [string, ...string[]]);
+
+/**
+ * 「未下架」條件：冇開定時下架，或者開咗但時間未到。
+ * 人手下架（isActive=false）另外喺查詢度擋。
+ */
+function notAutoDelisted() {
+  return or(
+    eq(products.delistEnabled, false),
+    isNull(products.delistAt),
+    gt(products.delistAt, new Date()),
+  )!;
+}
 
 export const productsRouter = createRouter({
   list: publicQuery
@@ -22,7 +34,7 @@ export const productsRouter = createRouter({
     .query(async ({ input }) => {
       const db = getDb();
       const keyword = input?.keyword?.trim();
-      const conditions = [eq(products.isActive, true)];
+      const conditions = [eq(products.isActive, true), notAutoDelisted()];
       if (keyword) {
         const pattern = `%${keyword}%`;
         conditions.push(
@@ -53,10 +65,10 @@ export const productsRouter = createRouter({
     .query(async ({ input }) => {
       const db = getDb();
       const product = await db.query.products.findFirst({
-        where: and(eq(products.id, input.id), eq(products.isActive, true)),
+        where: and(eq(products.id, input.id), eq(products.isActive, true), notAutoDelisted()),
       });
       if (!product) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在" });
+        throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在或已下架" });
       }
       return product;
     }),
@@ -76,6 +88,9 @@ export const productsRouter = createRouter({
         category: categorySchema.optional(),
         listedDate: z.coerce.date().optional(),
         stock: z.number().int().nonnegative().optional(),
+        // 定時自動下架：開關 + 時間（選填；開關開咗冇時間＝唔會自動落）
+        delistEnabled: z.boolean().optional(),
+        delistAt: z.coerce.date().nullable().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -101,6 +116,8 @@ export const productsRouter = createRouter({
           category: input.category ?? "other",
           listedDate: input.listedDate ?? new Date(),
           stock: input.stock ?? 0,
+          delistEnabled: input.delistEnabled ?? false,
+          delistAt: input.delistAt ?? null,
         })
         .returning({ id: products.id });
       void logAudit({
@@ -131,6 +148,8 @@ export const productsRouter = createRouter({
         listedDate: z.coerce.date().optional(),
         stock: z.number().int().nonnegative().optional(),
         isActive: z.boolean().optional(),
+        delistEnabled: z.boolean().optional(),
+        delistAt: z.coerce.date().nullable().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {

@@ -31,6 +31,14 @@ export const cartRouter = createRouter({
       if (!product) {
         throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在" });
       }
+      // 定時下架時間到咗 → 當下架，唔可以再加入購物車
+      if (
+        product.delistEnabled &&
+        product.delistAt !== null &&
+        product.delistAt.getTime() <= Date.now()
+      ) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "呢件商品已經下架" });
+      }
       const size = input.size ?? null;
       const sizeCond = size === null ? isNull(cartItems.size) : eq(cartItems.size, size);
       const existing = await db.query.cartItems.findFirst({
