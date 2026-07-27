@@ -72,7 +72,7 @@ export default function ProductDetail() {
     const source = relatedQuery.data ?? demoShopProducts();
     const cards = source.map((p) => toCardProduct(p as never));
     return cards
-      .filter((p) => p.id !== productId)
+      .filter((p) => Number(p.id) !== productId)
       .sort((a, b) => {
         // 同類別優先，其餘補位
         const ca = a.category === product?.category ? 0 : 1;
