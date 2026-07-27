@@ -1,332 +1,339 @@
 import { useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, MessageCircle, Minus, Plus, ShoppingBag } from 'lucide-react';
+import { Link, useParams } from 'react-router';
+import { Heart, Minus, Plus, ShoppingBag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
-import DuotoneImage from '@/components/DuotoneImage';
 import ProductCard from '@/components/ProductCard';
-import WishingStar from '@/components/shop/WishingStar';
-import AddedToast from '@/components/shop/AddedToast';
+import WishingStar from '@/components/admin/WishingStar';
 import {
   demoShopProducts,
+  effectivePrice,
   formatHKD,
-  formatListedDate,
-  isNewWithin7Days,
+  hasDiscount,
   parseSizes,
   toCardProduct,
 } from '@/components/shop/shop-utils';
-import type { ShopProduct } from '@/components/shop/shop-utils';
-import { useRevealDep } from '@/components/shop/useRevealDep';
-import { cn } from '@/lib/utils';
+import { useReveal, useRevealDep } from '@/hooks/useReveal';
 
 /**
- * 商品詳情 /products/:id（design-system.md §P3）
- * - trpc.products.byId.useQuery({ id }) 攞真數據
- * - 左 55%：主圖 duotone → 進入視窗上色（DuotoneImage reveal，全站 signature）
- * - 右 45%：品名 Serif TC 32px → 貨號/上架日期 → DM Mono 價錢（詳情尺寸，有折扣刪除線原價）
- *   → 尺寸 pill 選擇（有 sizes 時必填）→ 數量步進器（± 玻璃圓鈕，上限 clamp 庫存）
- *   → Primary「加入購物車」全寬 → WhatsApp 鈕「問 Glo Glo 著身效果」全寬
- * - 加入購物車：未登入 → navigate /login（state.from 記返邊度嚟）；
- *   已登入 → trpc.cart.add.useMutation，成功後細玻璃提示 + 導購物車連結
- * - 底部：商品故事（Serif TC 引文式）+ 相關商品 4 卡（list 前 4 件排除自己）
+ * §P3 商品詳情 /product/:id —— trpc.products.byId
+ * 左圖右資訊（手機上下）：折扣 badge、價錢、尺寸 pill 選擇（必填）、數量 stepper、
+ * 加入購物車（真 mutation + toast）、心心收藏（本地）、描述、相關商品（同類別隨機 4 件）。
+ * 讀取失敗 → demo fallback +「睇緊示範款」橫額；load 唔到 id → 搵唔到頁。
  */
 
-// TODO: 換返 RedCode 真 WhatsApp 號碼
-const WHATSAPP_URL = 'https://wa.me/85254835368';
-
 export default function ProductDetail() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const productId = Number(id);
-  const validId = Number.isInteger(productId) && productId > 0;
-
-  const navigate = useNavigate();
-  const location = useLocation();
   const { user } = useAuth();
   const utils = trpc.useUtils();
 
   const productQuery = trpc.products.byId.useQuery(
     { id: productId },
-    { enabled: validId, retry: false },
+    { enabled: Number.isInteger(productId) && productId > 0, retry: 1 },
   );
-  // 相關商品：同 list 排序（listedDate desc），排除自己，取前 4 件
-  const relatedQuery = trpc.products.list.useQuery(undefined, { staleTime: 5 * 60_000, retry: false });
+  const relatedQuery = trpc.products.list.useQuery(undefined, { retry: 1 });
 
-  // 靜態示範模式：後端連唔到 → 用內建示範商品
-  const product = (productQuery.data ??
-    (productQuery.isError ? demoShopProducts().find((d) => d.id === productId) : undefined)) as
-    | ShopProduct
-    | undefined;
+  // API 失敗 → demo fallback（「睇緊示範款」橫額）
+  const product = useMemo(() => {
+    if (productQuery.data) return productQuery.data;
+    if (productQuery.isError) {
+      return demoShopProducts().find((p) => p.id === productId) ?? null;
+    }
+    return undefined; // loading
+  }, [productQuery.data, productQuery.isError, productId]);
+  const isDemo = productQuery.isError && product !== null;
+
   const sizes = useMemo(() => parseSizes(product?.sizes), [product?.sizes]);
-  const needSize = sizes.length > 0;
+  // 尺寸開關閂咗（冇尺寸嘅貨，例如袋/飾物）→ 唔顯示尺寸、落單唔使揀
+  const sizeEnabled = product?.sizeEnabled ?? true;
+  const needSize = sizeEnabled && sizes.length > 0;
 
   const [size, setSize] = useState<string | null>(null);
-  const [quantity, setQuantity] = useState(1);
-  const [added, setAdded] = useState(false);
-  const [sizeHint, setSizeHint] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [qty, setQty] = useState(1);
+  const [wished, setWished] = useState(false);
+  const [sizeError, setSizeError] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
-  const addMutation = trpc.cart.add.useMutation({
-    onSuccess: async () => {
-      setErrorMsg(null);
-      setAdded(true);
-      await utils.cart.list.invalidate();
+  const addCart = trpc.cart.add.useMutation({
+    onSuccess: () => {
+      void utils.cart.list.invalidate();
+      setToast('已加入購物車 ✓');
+      window.setTimeout(() => setToast(null), 2000);
     },
-    onError: (err) => setErrorMsg(err.message),
+    onError: (err) => {
+      setToast(err.message || '加入失敗，請再試');
+      window.setTimeout(() => setToast(null), 2500);
+    },
   });
 
-  const related = useMemo<ShopProduct[]>(() => {
-    const list = (relatedQuery.isError ? demoShopProducts() : ((relatedQuery.data ?? []) as ShopProduct[]));
-    return list.filter((p) => p.id !== productId).slice(0, 4);
-  }, [relatedQuery.data, relatedQuery.isError, productId]);
-  const relatedRef = useRevealDep<HTMLDivElement>([related.map((p) => p.id).join(',')]);
+  const related = useMemo(() => {
+    const source = relatedQuery.data ?? demoShopProducts();
+    const cards = source.map((p) => toCardProduct(p as never));
+    return cards
+      .filter((p) => p.id !== productId)
+      .sort((a, b) => {
+        // 同類別優先，其餘補位
+        const ca = a.category === product?.category ? 0 : 1;
+        const cb = b.category === product?.category ? 0 : 1;
+        return ca - cb;
+      })
+      .slice(0, 4);
+  }, [relatedQuery.data, productId, product?.category]);
 
-  const onAdd = () => {
+  const infoRef = useReveal<HTMLDivElement>({ variant: 'right', delay: 100 });
+  const gridRef = useRevealDep<HTMLDivElement>([productId]);
+
+  const handleAdd = () => {
     if (!product) return;
     if (needSize && !size) {
-      setSizeHint(true);
+      setSizeError(true);
       return;
     }
     if (!user) {
-      // 未登入：導去登入頁，state 記返邊度嚟
-      navigate('/login', { state: { from: location.pathname } });
+      setToast('請先登入會員先可以加入購物車');
+      window.setTimeout(() => setToast(null), 2500);
       return;
     }
-    addMutation.mutate({
-      productId: product.id,
-      size: size ?? undefined,
-      quantity,
-    });
+    addCart.mutate({ productId: product.id, size: size ?? undefined, quantity: qty });
   };
 
-  /* ---------- Loading：許願星（§3.7） ---------- */
-  if (productQuery.isLoading) {
+  if (product === undefined) {
     return (
-      <section className="flex min-h-[60vh] items-center justify-center">
-        <WishingStar size={48} label="許願星載入中…" />
+      <section className="mx-auto max-w-[1280px] px-5 py-24 md:px-8">
+        <div className="flex flex-col items-center gap-3">
+          <WishingStar size={32} />
+          <p className="text-[14px] text-txt-3">許願星搬緊商品資料…</p>
+        </div>
       </section>
     );
   }
 
-  /* ---------- 搵唔到 / 錯誤（示範模式有 fallback 商品，唔會入嚟） ---------- */
-  if (!validId || !product) {
+  if (product === null) {
     return (
-      <section className="mx-auto flex min-h-[60vh] max-w-[1280px] flex-col items-center justify-center gap-4 px-5 text-center">
-        <p className="script text-3xl">lost in the stars</p>
-        <h1 className="font-serif-tc text-2xl font-bold text-txt-1 md:text-3xl">搵唔到呢件商品</h1>
-        <p className="max-w-sm text-sm text-txt-3">
-          {productQuery.error?.message ?? '商品可能已經下架，去商品頁睇下其他新貨啦。'}
-        </p>
-        <Link to="/products" className="btn btn-secondary mt-2 !py-2.5 text-sm">
-          <ArrowLeft size={16} aria-hidden="true" />
-          返回全部商品
+      <section className="mx-auto max-w-[1280px] px-5 py-24 text-center md:px-8">
+        <p className="script text-4xl">Not found ✦</p>
+        <h1 className="mt-2 font-serif-tc text-2xl font-bold text-txt-1">搵唔到呢件商品</h1>
+        <p className="mt-3 text-[14px] text-txt-3">可能已經賣晒落架啦，去睇吓其他新款啦。</p>
+        <Link to="/products" className="btn btn-primary mt-8">
+          全部商品
         </Link>
       </section>
     );
   }
 
-  const discounted = product.discountPrice !== null && product.discountPrice < product.price;
-  const soldOut = product.stock <= 0;
-  const isNew = isNewWithin7Days(product.listedDate);
-  const waText = encodeURIComponent(`Hi Glo Glo！我想問下 ${product.name}（貨號 ${product.sku}）嘅著身效果 ✦`);
+  const discounted = hasDiscount(product);
+  const effPrice = effectivePrice(product);
+  const outOfStock = product.stock <= 0;
 
   return (
-    <section className="mx-auto max-w-[1280px] px-5 py-10 md:px-8 md:py-16 xl:px-12">
-      {/* 返回連結 */}
-      <Link
-        to="/products"
-        className="inline-flex items-center gap-2 text-sm text-txt-3 transition-colors hover:text-pink-soft"
-      >
-        <ArrowLeft size={16} aria-hidden="true" />
-        返回全部商品
-      </Link>
+    <section className="mx-auto max-w-[1280px] px-5 pb-24 pt-10 md:px-8 xl:px-12">
+      {/* 麵包屑 */}
+      <nav aria-label="麵包屑" className="text-[13px] text-txt-3">
+        <Link to="/" className="transition-colors hover:text-txt-1">
+          首頁
+        </Link>
+        <span aria-hidden="true"> / </span>
+        <Link to="/products" className="transition-colors hover:text-txt-1">
+          商品
+        </Link>
+        <span aria-hidden="true"> / </span>
+        <span className="text-txt-2">{product.name}</span>
+      </nav>
 
-      <div className="mt-6 grid gap-10 lg:grid-cols-[55fr_45fr] lg:gap-12">
-        {/* 左 55%：主圖（duotone → 進入視窗上色） */}
-        <div className="relative">
-          <DuotoneImage
-            reveal
+      {isDemo && (
+        <p className="mt-4 rounded-xl border px-4 py-2.5 text-[13px] text-gold-soft" style={{ borderColor: 'var(--glass-border)' }}>
+          伺服器暫時連唔到，你而家睇緊示範款，落單功能暫停。
+        </p>
+      )}
+
+      <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-14">
+        {/* 左：大圖 */}
+        <div className="relative overflow-hidden rounded-3xl border" style={{ borderColor: 'var(--glass-border)' }}>
+          {discounted && (
+            <span className="absolute left-4 top-4 z-10 rounded-full bg-pink px-3 py-1 text-[12px] font-bold text-space-1">
+              優惠中
+            </span>
+          )}
+          {outOfStock && (
+            <span className="absolute right-4 top-4 z-10 rounded-full border px-3 py-1 text-[12px] text-txt-2 backdrop-blur" style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}>
+              暫時售罄
+            </span>
+          )}
+          <img
             src={product.image}
             alt={product.name}
-            wrapperClassName="rounded-[20px] border"
-            className="aspect-[4/5] w-full object-cover"
+            className="aspect-[3/4] w-full object-cover"
+            style={{ background: 'var(--space-2)' }}
           />
-          {/* Badge 左上（§4.4：New = gold 實心深字；斷貨 = space-4 底 text-3） */}
-          <div className="absolute left-4 top-4 flex flex-col items-start gap-2">
-            {isNew && !soldOut && (
-              <span
-                className="rounded-full bg-gold px-3 py-1 font-mono text-xs font-medium text-space-1"
-                aria-label="新上架商品"
-              >
-                New
-              </span>
-            )}
-            {soldOut && (
-              <span
-                className="rounded-full bg-space-4 px-3 py-1 font-mono text-xs text-txt-3"
-                aria-label="已斷貨"
-              >
-                斷貨
-              </span>
-            )}
-          </div>
         </div>
 
-        {/* 右 45%：資料欄 */}
-        <div>
-          <h1 className="font-serif-tc text-[26px] font-bold leading-[1.2] text-txt-1 md:text-[32px]">
+        {/* 右：資訊 */}
+        <div ref={infoRef} className="reveal">
+          <p className="font-mono text-[12px] uppercase tracking-wider text-txt-3">
+            {product.sku}
+          </p>
+          <h1 className="mt-2 font-serif-tc text-[32px] font-bold leading-[1.25] text-txt-1">
             {product.name}
           </h1>
-          <p className="mt-3 font-mono text-sm text-txt-3">
-            貨號 {product.sku} · {formatListedDate(product.listedDate)} 上架
-          </p>
 
-          {/* 價錢（§2.3 詳情：DM Mono 32px --pink；原價刪除線 --text-3） */}
-          <p className="mt-4 flex items-baseline gap-3 font-mono text-[26px] font-medium leading-[1.2] text-pink md:text-[32px]">
-            {formatHKD(product.discountPrice ?? product.price)}
+          <p className="mt-4 flex items-baseline gap-3">
+            <span className="font-mono text-[30px] font-medium text-pink">
+              {formatHKD(effPrice)}
+            </span>
             {discounted && (
-              <span className="text-lg text-txt-3 line-through">{formatHKD(product.price)}</span>
+              <span className="font-mono text-[16px] text-txt-3 line-through">
+                {formatHKD(product.price)}
+              </span>
             )}
           </p>
 
-          <hr className="my-6 border-0 border-t" style={{ borderColor: 'var(--space-line)' }} />
-
-          {/* 尺寸 pill 選擇（有 sizes 時必填） */}
+          {/* 尺寸 pill 選擇（後台開咗尺寸選項 + 有 sizes 時必填；閂咗就冚呢段） */}
           {needSize && (
-            <fieldset>
-              <legend className="text-sm text-txt-2">
-                尺寸 <span className="text-txt-3">（必填）</span>
+            <fieldset className="mt-7">
+              <legend className="text-[14px] text-txt-2">
+                尺寸
+                <span className="ml-1 text-[12px] text-txt-3">（必填）</span>
               </legend>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {sizes.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => {
-                      setSize(s);
-                      setSizeHint(false);
-                    }}
-                    aria-pressed={size === s}
-                    className={cn(
-                      'min-h-11 rounded-full border px-5 font-mono text-sm transition-colors duration-200',
-                      size === s
-                        ? 'border-pink bg-pink font-medium text-space-1'
-                        : 'text-txt-1 hover:border-pink-soft',
-                    )}
-                    style={size === s ? undefined : { borderColor: 'var(--glass-border)' }}
-                  >
-                    {s}
-                  </button>
-                ))}
+              <div className="mt-3 flex flex-wrap gap-2.5" role="radiogroup" aria-label="選擇尺寸">
+                {sizes.map((s) => {
+                  const active = size === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => {
+                        setSize(s);
+                        setSizeError(false);
+                      }}
+                      className="flex min-h-11 min-w-11 items-center justify-center rounded-full border font-mono text-[14px] transition-all duration-200"
+                      style={{
+                        borderColor: active ? 'var(--pink)' : 'var(--space-line)',
+                        background: active ? 'var(--glass-bg-strong)' : 'transparent',
+                        color: active ? 'var(--pink)' : 'var(--text-2)',
+                        boxShadow: active ? '0 0 12px rgba(255, 77, 141, 0.35)' : 'none',
+                      }}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
               </div>
-              {sizeHint && !size && (
-                <p className="mt-2 text-[13px] text-pink-soft">請先揀尺寸先好加入購物車 ✦</p>
+              {sizeError && (
+                <p className="mt-2.5 flex items-center gap-1.5 text-[13px] text-pink-soft" role="alert">
+                  <span className="inline-block h-2 w-2 rotate-45" style={{ background: 'var(--gold)' }} aria-hidden="true" />
+                  請揀返個尺寸先
+                </p>
               )}
             </fieldset>
           )}
 
-          {/* 數量步進器（± 玻璃圓鈕，＋ 上限 clamp 庫存） */}
-          <div className="mt-6">
-            <p className="text-sm text-txt-2">數量</p>
-            <div className="mt-3 flex items-center gap-3">
+          {/* 數量 stepper */}
+          <div className="mt-7">
+            <p className="text-[14px] text-txt-2">數量</p>
+            <div
+              className="mt-3 inline-flex items-center rounded-full border"
+              style={{ borderColor: 'var(--space-line)' }}
+            >
               <button
                 type="button"
-                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                disabled={quantity <= 1}
+                onClick={() => setQty((q) => Math.max(1, q - 1))}
+                disabled={qty <= 1}
                 aria-label="減少數量"
-                className="btn btn-secondary !h-11 !w-11 !rounded-full !p-0 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex min-h-11 min-w-11 items-center justify-center text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-40"
               >
                 <Minus size={16} aria-hidden="true" />
               </button>
-              <span
-                className="w-10 text-center font-mono text-lg text-txt-1"
-                aria-live="polite"
-                aria-label={`數量 ${quantity}`}
-              >
-                {quantity}
+              <span className="min-w-10 text-center font-mono text-[16px] text-txt-1" aria-live="polite">
+                {qty}
               </span>
               <button
                 type="button"
-                onClick={() => setQuantity((q) => Math.min(q + 1, product.stock))}
+                onClick={() => setQty((q) => Math.min(Math.max(product.stock, 1), q + 1))}
+                disabled={outOfStock || qty >= product.stock}
                 aria-label="增加數量"
-                className="btn btn-secondary !h-11 !w-11 !rounded-full !p-0"
+                className="flex min-h-11 min-w-11 items-center justify-center text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-40"
               >
                 <Plus size={16} aria-hidden="true" />
               </button>
             </div>
+            <span className="ml-3 font-mono text-[12px] text-txt-3">
+              存貨 {product.stock} 件
+            </span>
           </div>
 
-          {/* CTA 列：Primary 加入購物車 + WhatsApp 問款（全寬，同等視覺重量 §P3） */}
-          <div className="mt-8 space-y-3">
+          {/* CTA 行：加入購物車 + 心心 */}
+          <div className="mt-8 flex items-center gap-3">
             <button
               type="button"
-              onClick={onAdd}
-              disabled={soldOut || addMutation.isPending}
-              className="btn btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={handleAdd}
+              disabled={addCart.isPending || outOfStock || isDemo}
+              className="btn btn-primary flex-1 !py-3.5 text-[16px] font-bold disabled:opacity-50"
             >
-              {addMutation.isPending ? (
-                /* §3.7 局部 loading：按鈕文字消失，原位 16px 金色四角星旋轉閃爍 */
-                <WishingStar size={16} />
+              {addCart.isPending ? (
+                <WishingStar size={18} />
               ) : (
-                <>
-                  <ShoppingBag size={18} aria-hidden="true" />
-                  {soldOut ? '已斷貨' : user ? '加入購物車' : '登入後加入購物車'}
-                </>
+                <ShoppingBag size={18} aria-hidden="true" />
               )}
+              {outOfStock ? '暫時售罄' : '加入購物車'}
             </button>
-            <a
-              href={`${WHATSAPP_URL}?text=${waText}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-whatsapp w-full"
+            <button
+              type="button"
+              onClick={() => setWished((w) => !w)}
+              aria-pressed={wished}
+              aria-label={wished ? '移出願望清單' : '加入願望清單'}
+              className="btn btn-secondary !h-[52px] !w-[52px] !rounded-full !p-0"
             >
-              <MessageCircle size={18} aria-hidden="true" />
-              即刻WHATSAPP我地！
-            </a>
-            {errorMsg && (
-              <p role="alert" className="text-[13px] text-pink-soft">
-                {errorMsg}
-              </p>
-            )}
+              <Heart
+                size={20}
+                aria-hidden="true"
+                className="transition-all duration-200"
+                style={{
+                  fill: wished ? 'var(--pink)' : 'transparent',
+                  color: wished ? 'var(--pink)' : 'var(--text-2)',
+                }}
+              />
+            </button>
           </div>
+
+          {/* 描述 */}
+          {product.description && (
+            <div className="mt-9 border-t pt-7" style={{ borderColor: 'var(--space-line)' }}>
+              <h2 className="text-[15px] font-bold text-txt-1">商品描述</h2>
+              <p className="mt-3 whitespace-pre-line text-[14px] leading-[1.9] text-txt-2">
+                {product.description}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* 商品故事（Serif TC 引文式排版 §P3） */}
-      {product.description && (
-        <section className="mt-16 md:mt-24" aria-label="商品故事">
-          <blockquote
-            className="max-w-3xl border-l-2 pl-6 font-serif-tc text-lg leading-relaxed text-txt-2 md:text-xl"
-            style={{ borderColor: 'var(--pink)' }}
-          >
-            {product.description}
-          </blockquote>
-        </section>
-      )}
+      {/* 相關商品 */}
+      <div className="mt-20">
+        <h2 className="font-serif-tc text-[24px] font-bold text-txt-1">你可能都鍾意</h2>
+        <div ref={gridRef} className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4 md:gap-6">
+          {related.map((p) => (
+            <ProductCard key={p.id} product={p} />
+          ))}
+        </div>
+      </div>
 
-      {/* 相關商品：同 list 前 4 件，排除自己 */}
-      {related.length > 0 && (
-        <section className="mt-16 md:mt-24" aria-label="相關商品">
-          <div ref={relatedRef}>
-            <h2 className="reveal font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
-              你可能都會鍾意
-            </h2>
-            <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6 xl:grid-cols-4">
-              {related.map((p, i) => (
-                <div
-                  key={p.id}
-                  className="reveal"
-                  style={{ transitionDelay: `${Math.min(i * 80, 400)}ms` }}
-                >
-                  <ProductCard product={toCardProduct(p)} />
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+      {/* toast */}
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-full border px-6 py-3 text-[14px] text-txt-1 backdrop-blur-xl"
+          style={{
+            borderColor: 'var(--glass-border)',
+            background: 'var(--glass-bg-strong)',
+            animation: 'mobile-nav-in 300ms var(--ease-expo) both',
+          }}
+        >
+          {toast}
+        </div>
       )}
-
-      {/* 加入成功：細玻璃提示 + 導購物車連結 */}
-      <AddedToast show={added} productName={product.name} onClose={() => setAdded(false)} />
     </section>
   );
 }
