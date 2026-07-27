@@ -157,7 +157,7 @@ function allocateActualPrices(
   const result: number[] = [];
   let allocated = 0;
   for (let idx = 0; idx < items.length; idx++) {
-    const item = order.items[idx];
+    const item = items[idx];
     const lineTotal = item.price * item.quantity;
     let unitActual: number;
     if (idx === items.length - 1) {
@@ -323,18 +323,20 @@ export async function resetWmsSyncLogForReupload(orderId: number): Promise<void>
 }
 
 /**
- * WMS 審批回調（v1.2 §九 + v1.3 §2）：POST /api/wms/review-callback
+ * WMS → 官網審批回調：`POST /api/wms/review-callback`（規格跟 RED_CODE_WEBHOOK_API_v1.3.md §二）
  * body: { secret, sourceRef, decision: "approved" | "rejected", rejectType?: "cancel" | "reupload", note? }
- *   approved                  → 訂單轉 approved（已確認＝終態）
+ *
+ * v1.3 分流：
+ *   approved                       → 訂單轉 approved（已確認＝終態），最新 pending 截圖標記 approved
  *   rejected + rejectType=cancel   → 訂單轉 cancelled（訂單取消，終態），note 記入 reviewNote
  *   rejected + rejectType=reupload → 訂單轉 rejected（待客人重傳截圖），note 顯示比客人知點解
  *   rejected（冇 rejectType 舊格式）→ 一律當 cancel 處理（文檔向後兼容指引）
  * Idempotent：已係終態（approved／cancelled）或 rejected 嘅訂單直接回 { ok: true, already: true }。
  */
-export async function wmsReviewCallback(c: Context): Promise<Response> {
+export async function wmsReviewCallback(c: Context) {
   const secret = process.env.WMS_CALLBACK_SECRET;
   if (!secret) {
-    return c.json({ ok: false, error: "WMS_CALLBACK_SECRET 未設定" }, 503);
+    return c.json({ ok: false, error: "官網未設定 WMS_CALLBACK_SECRET" }, 503);
   }
   let body: unknown;
   try {
