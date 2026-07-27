@@ -3,8 +3,9 @@ import { useEffect, useRef } from 'react';
 /**
  * RedCode 設計系統 §3.2 —— 星空粒子 Canvas（全站背景，fixed, z-index: -2）
  *
- * - 每粒星獨立相位閃爍（週期 0.5s–1.5s），唔係統一 animation
- * - 流星每 4–8s 一粒，右上 30% 區域向左下 35° 飛，600ms 生命週期
+ * - 每粒星獨立相位閃爍（週期 2.4s–7.6s，R-A §6：「呼吸」唔係「眨」），唔係統一 animation
+ * - 內建流星預設關閉（shootingStars=false）：全站流星統一由 Meteors.tsx 三層調度，
+ *   避免同 DOM 層角度不一（35° vs 45°）顯亂（R-A §6b）
  * - DPR cap 2、visibilitychange 暫停、手機星數 ×0.4 兼關星芒
  * - prefers-reduced-motion → 畫一幀靜態星空（唔係冇背景）
  */
@@ -61,7 +62,7 @@ function makeStars(width: number, height: number, density: number, isMobile: boo
     const t = 1 - Math.pow(Math.random(), 2.2);
     const r = 0.4 + t * 1.2; // 0.4–1.6
     const baseAlpha = 0.2 + Math.random() * 0.5; // 0.2–0.7
-    const period = 500 + Math.random() * 1000; // 0.5s–1.5s
+    const period = 2400 + Math.random() * 5200; // 2.4s–7.6s（R-A §6：調慢做「呼吸」感）
     stars.push({
       x: Math.random() * width,
       y: Math.random() * height,
@@ -76,7 +77,7 @@ function makeStars(width: number, height: number, density: number, isMobile: boo
   return stars;
 }
 
-export default function Starfield({ density = 1, shootingStars = true, reducedMotion }: StarfieldProps) {
+export default function Starfield({ density = 1, shootingStars = false, reducedMotion }: StarfieldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
