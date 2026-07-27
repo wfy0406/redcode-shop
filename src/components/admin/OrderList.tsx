@@ -8,10 +8,11 @@ import { STATUS_FILTERS } from './statusMeta';
 import ProofSection from './ProofSection';
 import WishingStar from './WishingStar';
 import ExportCard from './ExportCard';
+import OrderEditPanel from './OrderEditPanel';
 
 /**
  * 全部訂單列表 —— status 篩選 tabs + 單號搜尋 + 點入行展開詳情
- * 詳情：items / 優惠碼折扣行 / 取貨方式（順豐站/智能櫃）/ 地址 / 備註 / 付款截圖審批 / 訂單狀態操作 / WMS 同步狀態 / 完整刪除
+ * 詳情：items / 優惠碼折扣行 / 取貨方式（順豐站/智能櫃）/ 地址 / 備註 / 付款截圖審批 / 訂單狀態操作 / WMS 同步狀態 / 完整刪除 / 手動改單
  */
 
 /** orders.wmsSyncStates 回傳嘅一列（同 db wmsSyncLog 對應） */
@@ -91,15 +92,6 @@ function WmsSyncChip({ orderId, syncMap, onResynced }: {
   );
 }
 
-interface OrderListProps {
-  orders: AdminOrder[];
-  onReview: ReviewHandler;
-  reviewingProofId: number | null;
-  onStatus: StatusHandler;
-  statusBusyId: number | null;
-  onOpenLightbox: (src: string) => void;
-}
-
 /** 可以取消嘅狀態（完成/已取消除外） */
 const CANCELLABLE: OrderStatus[] = [
   'pending_payment',
@@ -108,6 +100,18 @@ const CANCELLABLE: OrderStatus[] = [
   'rejected',
   'shipped',
 ];
+
+/** 可以手動改單嘅狀態（未確認＝未收錢先改得；已確認/已取消唔准改） */
+const EDITABLE: OrderStatus[] = ['pending_payment', 'payment_review', 'rejected'];
+
+interface OrderListProps {
+  orders: AdminOrder[];
+  onReview: ReviewHandler;
+  reviewingProofId: number | null;
+  onStatus: StatusHandler;
+  statusBusyId: number | null;
+  onOpenLightbox: (src: string) => void;
+}
 
 export default function OrderList({
   orders,
@@ -124,6 +128,9 @@ export default function OrderList({
   // 完整刪除訂單（兩步確認；未收款單會加返庫存，server 審計留底）
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deleteMsg, setDeleteMsg] = useState<string | null>(null);
+  // 手動改單：邊張單進入編輯模式 + 儲存後嘅 WMS 提示
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editNotice, setEditNotice] = useState<{ id: number; text: string } | null>(null);
   const utils = trpc.useUtils();
   const removeMutation = trpc.orders.remove.useMutation({
     onSuccess: () => {
@@ -255,44 +262,57 @@ export default function OrderList({
                     style={{ borderColor: 'var(--space-line)' }}
                   >
                     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                      {/* 明細 + 地址 + 備註 */}
+                      {/* 明細（檢視模式）/ 手動改單（編輯模式）+ 地址 + 備註 */}
                       <div>
-                        <h4 className="text-[13px] font-bold tracking-[0.08em] text-lavender">
-                          訂單明細
-                        </h4>
-                        <ul className="mt-3 flex flex-col gap-2">
-                          {order.items.map((item) => (
-                            <li
-                              key={item.id}
-                              className="flex items-baseline justify-between gap-3 text-[14px]"
-                            >
-                              <span className="min-w-0 truncate text-txt-1">
-                                {item.productName}
-                                {item.size && (
-                                  <span className="ml-2 font-mono text-[12px] text-txt-3">
-                                    {item.size}
+                        {editingId === order.id ? (
+                          <OrderEditPanel
+                            order={order}
+                            onClose={() => setEditingId(null)}
+                            onSaved={(w) => {
+                              setEditingId(null);
+                              if (w) setEditNotice({ id: order.id, text: w });
+                            }}
+                          />
+                        ) : (
+                          <>
+                            <h4 className="text-[13px] font-bold tracking-[0.08em] text-lavender">
+                              訂單明細
+                            </h4>
+                            <ul className="mt-3 flex flex-col gap-2">
+                              {order.items.map((item) => (
+                                <li
+                                  key={item.id}
+                                  className="flex items-baseline justify-between gap-3 text-[14px]"
+                                >
+                                  <span className="min-w-0 truncate text-txt-1">
+                                    {item.productName}
+                                    {item.size && (
+                                      <span className="ml-2 font-mono text-[12px] text-txt-3">
+                                        {item.size}
+                                      </span>
+                                    )}
+                                    <span className="ml-2 font-mono text-[12px] text-txt-3">
+                                      ×{item.quantity}
+                                    </span>
                                   </span>
-                                )}
-                                <span className="ml-2 font-mono text-[12px] text-txt-3">
-                                  ×{item.quantity}
+                                  <span className="shrink-0 font-mono text-[13px] text-txt-2">
+                                    {fmtHKD(item.price * item.quantity)}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                            {/* 優惠碼折扣行（total 已係折後價） */}
+                            {order.discountAmount > 0 && (
+                              <div className="mt-2 flex items-baseline justify-between gap-3 text-[13px]">
+                                <span className="text-gold">
+                                  優惠碼 <span className="font-mono">{order.promoCode}</span>
                                 </span>
-                              </span>
-                              <span className="shrink-0 font-mono text-[13px] text-txt-2">
-                                {fmtHKD(item.price * item.quantity)}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                        {/* 優惠碼折扣行（total 已係折後價） */}
-                        {order.discountAmount > 0 && (
-                          <div className="mt-2 flex items-baseline justify-between gap-3 text-[13px]">
-                            <span className="text-gold">
-                              優惠碼 <span className="font-mono">{order.promoCode}</span>
-                            </span>
-                            <span className="shrink-0 font-mono text-gold">
-                              −{fmtHKD(order.discountAmount)}
-                            </span>
-                          </div>
+                                <span className="shrink-0 font-mono text-gold">
+                                  −{fmtHKD(order.discountAmount)}
+                                </span>
+                              </div>
+                            )}
+                          </>
                         )}
                         <dl className="mt-4 flex flex-col gap-2 border-t pt-4" style={{ borderColor: 'var(--space-line)' }}>
                           <div className="flex gap-2 text-[14px]">
@@ -330,6 +350,24 @@ export default function OrderList({
 
                         {/* 訂單狀態操作（唔再要出貨步驟：審批完＝已確認＝終態） */}
                         <div className="mt-5 flex flex-wrap gap-3">
+                          {/* 手動改單（未確認嘅單）：加/減貨、調折扣/實收 */}
+                          {EDITABLE.includes(order.status) && editingId !== order.id && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditNotice(null);
+                                setEditingId(order.id);
+                              }}
+                              className="btn !border !px-5 !py-2.5 text-[13px]"
+                              style={{
+                                borderColor: 'var(--gold)',
+                                color: 'var(--gold)',
+                                background: 'transparent',
+                              }}
+                            >
+                              編輯訂單
+                            </button>
+                          )}
                           {CANCELLABLE.includes(order.status) &&
                             (confirmCancelId === order.id ? (
                               <>
@@ -407,6 +445,15 @@ export default function OrderList({
                             </button>
                           )}
                         </div>
+                        {/* 改單後嘅 WMS 跟進提示（如適用） */}
+                        {editNotice && editNotice.id === order.id && (
+                          <p
+                            className="mt-3 rounded-xl border px-4 py-3 text-[13px] text-gold"
+                            style={{ borderColor: 'var(--gold)' }}
+                          >
+                            已儲存改動。{editNotice.text}
+                          </p>
+                        )}
                         {deleteMsg && confirmDeleteId === order.id && (
                           <p role="alert" className="mt-2 text-[13px] text-pink-soft">
                             {deleteMsg}
