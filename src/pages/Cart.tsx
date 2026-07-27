@@ -15,7 +15,7 @@ import { useAuth } from '@/hooks/useAuth';
  * RedCode 購物車（design-system.md §P6）
  * 左 65%：商品行列（圖 96px duotone + 品名 + 貨號 + DM Mono 單價 + 步進器 + 行小計）
  * 右 35%：結算面板（--glass-bg-strong，sticky top 96px）：小計／運費／總計 → Primary「去結帳」
- * 手機：結算面板轉底部 sticky 結算條（§6.2）
+ * 手機：結算面板轉底部 sticky 結算條（§6.2）+ in-flow 訂單摘要保底
  * 空車：empty-cart.png + 花體「Your wishlist is still a wish…」+ Secondary「去逛逛」
  * 未登入：玻璃卡提示（唔好 hard redirect）
  */
@@ -205,8 +205,7 @@ export default function Cart() {
             </p>
           )}
 
-          {/* 手機預留底部 sticky 結算條嘅位（條高 + iPhone home indicator safe-area） */}
-          <div className="mt-10 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] lg:grid lg:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:gap-10 lg:pb-0">
+          <div className="mt-10 lg:grid lg:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:gap-10">
             {/* 左 65%：商品行列 */}
             <ul>
               {items.map((line) => (
@@ -258,6 +257,30 @@ export default function Cart() {
                 </p>
               </div>
             </aside>
+          </div>
+
+          {/* 手機：in-flow 訂單摘要 + 去結帳（保底下一步：個別瀏覽器/WebView 會遮蓋
+              或渲染唔到下面嗰條 fixed 底 bar，呢度實有一粒掣撳到）；
+              pb 預留返 fixed 結算條嘅位，唔好畀佢冚住個掣 */}
+          <div className="mt-6 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] lg:hidden">
+            <div
+              className="rounded-2xl border p-5"
+              style={{
+                background: 'var(--glass-bg-strong)',
+                borderColor: 'var(--glass-border)',
+              }}
+            >
+              <div className="flex items-baseline justify-between">
+                <span className="text-[15px] text-txt-2">總計（運費到付）</span>
+                <span className="font-mono text-2xl text-pink">{formatHKD(subtotal)}</span>
+              </div>
+              <Link to="/checkout" className="btn btn-primary mt-4 w-full">
+                去結帳
+              </Link>
+              <p className="mt-3 text-center text-[13px] text-txt-3">
+                付款方式同截圖上傳喺下一步搞掂
+              </p>
+            </div>
           </div>
 
           {/* 手機：底部 sticky 結算條（§6.2）；bar 貼底，home indicator 區域變內墊 */}
