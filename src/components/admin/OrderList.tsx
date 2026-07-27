@@ -304,25 +304,8 @@ export default function OrderList({
                           onResynced={() => void syncQuery.refetch()}
                         />
 
-                        {/* 訂單狀態操作 */}
+                        {/* 訂單狀態操作（唔再要出貨步驟：審批完＝已確認＝終態） */}
                         <div className="mt-5 flex flex-wrap gap-3">
-                          {/* F-D：已確認 → 進行出貨（完成終態）；移除舊 shipped→completed 掣 */}
-                          {order.status === 'approved' && (
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => onStatus(order.id, 'shipped')}
-                              className="btn !px-5 !py-2.5 text-[13px] disabled:opacity-60"
-                              style={{
-                                background: 'var(--success)',
-                                color: 'var(--space-1)',
-                                boxShadow: '0 8px 24px rgba(94, 224, 160, 0.25)',
-                              }}
-                            >
-                              {busy ? <WishingStar size={14} /> : null}
-                              進行出貨
-                            </button>
-                          )}
                           {CANCELLABLE.includes(order.status) &&
                             (confirmCancelId === order.id ? (
                               <>
