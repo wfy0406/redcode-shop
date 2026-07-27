@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { Clapperboard, Facebook, MessageCircle, Play } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
+import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import { PRODUCTS } from '@/data/products';
 import type { Product } from '@/data/products';
 import { useReveal } from '@/hooks/useReveal';
@@ -49,8 +50,6 @@ function mapDbProduct(p: {
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
-const FB_PAGE_PLUGIN =
-  'https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2Fredcodexhk&tabs=timeline&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true&locale=zh_HK';
 
 /* ---------- §4.3 Hero 浮卡（拍立得樣式 + scroll 視差） ---------- */
 interface FloatCardProps {
@@ -249,13 +248,13 @@ export default function Home() {
           dim
           className="bottom-[8%] right-[4%] hidden w-40 xl:block"
         />
-        {/* 手機版：細卡放主標右側空白位（唔壓花體字），tonight's pick 卡就喺右下 */}
+        {/* 手機版：細卡移去文字段以下左下角（唔再壓主標/介紹段），右下係 tonight's pick 卡 */}
         <FloatCard
           src="/gloglo-5.jpg"
           caption="live ♡"
           rotate={-4}
           parallax={0.8}
-          className="right-4 top-[34%] w-24 md:hidden"
+          className="bottom-6 left-4 w-24 md:hidden"
         />
 
         {/* 文字區：左對齊，佔欄 1–7 */}
@@ -280,7 +279,7 @@ export default function Home() {
               style={{ animationDelay: '0.6s' }}
             >
               RedCode Fashion Design —— 香港女裝直播品牌。主播 Glo Glo 每晚喺 Facebook
-              開直播，即場著身、即場講價。睇啱嘅款，呢度全部搵得返。
+              開直播，即場著身、即場開賣。睇啱嘅款，呢度全部搵得返。
             </p>
             <div
               className="hero-enter mt-10 flex flex-col gap-4 sm:flex-row sm:items-center"
@@ -414,28 +413,9 @@ export default function Home() {
           </p>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-5">
-            {/* FB Page Plugin 嵌入（框跟返 plugin 比例，唔再拉伸） */}
-            <div
-              className="mx-auto flex w-full max-w-[540px] justify-center self-start overflow-hidden rounded-2xl border bg-space-2 lg:col-span-2"
-              style={{ borderColor: 'var(--glass-border)' }}
-            >
-              <iframe
-                src={FB_PAGE_PLUGIN}
-                width="500"
-                height="600"
-                style={{
-                  border: 'none',
-                  overflow: 'hidden',
-                  width: '100%',
-                  maxWidth: '500px',
-                  height: '600px',
-                }}
-                scrolling="no"
-                allowFullScreen
-                allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
-                title="RedCode HK Facebook 專頁"
-                loading="lazy"
-              />
+            {/* FB Page Plugin 嵌入（C4 FacebookPageEmbed 組件，max-width 500px 置中） */}
+            <div className="self-start lg:col-span-2">
+              <FacebookPageEmbed pageUrl={FACEBOOK_URL} height={600} />
             </div>
 
             {/* 直播 CTA panel */}
@@ -445,7 +425,7 @@ export default function Home() {
             >
               <p className="font-mono text-xs tracking-[0.2em] text-pink">LIVE ON FACEBOOK</p>
               <p className="font-serif-tc text-xl font-semibold leading-[1.4] text-txt-1">
-                每晚開播，即場著身、即場講價
+                每晚開播，即場著身、即場開賣
               </p>
               <p className="text-[14px] leading-[1.75] text-txt-2">
                 留意專頁直播通知，開播即刻入嚟搶心水款。錯過咗都可以喺專頁重溫所有場次。
@@ -556,7 +536,7 @@ export default function Home() {
                 有問題即場問，WhatsApp 隨時搵到人。
               </p>
               <p>
-                由揀款、落單到對數發貨，每一步都希望令你觉得：
+                由揀款、落單到對數發貨，每一步都希望令你覺得：
                 呢單唔係交易，係一粒小小嘅願望成真。
               </p>
             </div>
