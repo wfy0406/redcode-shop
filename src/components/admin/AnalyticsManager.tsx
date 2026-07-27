@@ -5,6 +5,7 @@ import { fmtHKD } from './format';
 import { LoadingBlock } from './WishingStar';
 import ExportCard from './ExportCard';
 import SettingsCard from './SettingsCard';
+import SiteAssetsCard from './SiteAssetsCard';
 import type { ToastKind } from './useToasts';
 
 /**
@@ -226,6 +227,9 @@ export default function AnalyticsManager({
 
       {/* 商品頁介紹設定（F-C） */}
       <SettingsCard toast={toast} />
+
+      {/* 網站資產上傳（empty-cart.png / ops-template.xlsx） */}
+      <SiteAssetsCard toast={toast} />
     </div>
   );
 }
