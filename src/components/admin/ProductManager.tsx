@@ -12,6 +12,7 @@ import type { ToastKind } from './useToasts';
  * 商品管理 —— products.adminList（包括下架貨，dim 顯示）/ create / update / remove
  * 編輯模式：撳行內「編輯」→ populate 表單 → submit 分流 products.update；
  * 編輯中表單標題轉「編輯商品」+ 出「取消編輯」掣。
+ * 定時自動下架：開關 + datetime-local；到時前台自動消失（server 查詢時判斷，唔使 cron）。
  */
 
 const inputCls =
@@ -42,6 +43,8 @@ type ProductRow = {
   discountPrice: number | null;
   sizes: string | null;
   sizeEnabled: boolean;
+  delistEnabled: boolean;
+  delistAt: Date | null;
   note: string | null;
   category: string;
   listedDate: Date;
@@ -49,6 +52,18 @@ type ProductRow = {
   isActive: boolean;
   createdAt: Date;
 };
+
+/** Date（superjson 已還原）→ datetime-local 欄位格式（本地時間 YYYY-MM-DDTHH:mm） */
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 列表 chip 用：M月D日 HH:mm */
+function fmtDelist(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 export default function ProductManager({
   toast,
@@ -60,6 +75,9 @@ export default function ProductManager({
   const [form, setForm] = useState(initialForm);
   // 尺寸選項總開關（boolean，唔入 initialForm 嘅 string 結構）：閂咗商品頁唔顯示尺寸、落單唔使揀
   const [sizeEnabled, setSizeEnabled] = useState(true);
+  // 定時自動下架：開關 + 下架時間（到時前台自動消失；開關開咗冇填時間＝唔會自動落）
+  const [delistEnabled, setDelistEnabled] = useState(false);
+  const [delistAt, setDelistAt] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
@@ -94,11 +112,18 @@ export default function ProductManager({
     void utils.products.list.invalidate();
   };
 
+  /** 表單＋開關全部還原（新增成功／取消編輯用） */
+  const resetForm = () => {
+    setForm(initialForm);
+    setSizeEnabled(true);
+    setDelistEnabled(false);
+    setDelistAt('');
+  };
+
   const createMutation = trpc.products.create.useMutation({
     onSuccess: (created) => {
       toast(`已新增商品「${created?.name ?? ''}」`, 'success');
-      setForm(initialForm);
-      setSizeEnabled(true);
+      resetForm();
       setFormError(null);
       invalidateProducts();
     },
@@ -109,8 +134,7 @@ export default function ProductManager({
   const editMutation = trpc.products.update.useMutation({
     onSuccess: (updated) => {
       toast(`已更新商品「${updated?.name ?? ''}」`, 'success');
-      setForm(initialForm);
-      setSizeEnabled(true);
+      resetForm();
       setEditingId(null);
       setFormError(null);
       invalidateProducts();
@@ -164,6 +188,8 @@ export default function ProductManager({
     setEditingId(p.id);
     setFormError(null);
     setSizeEnabled(p.sizeEnabled ?? true);
+    setDelistEnabled(p.delistEnabled ?? false);
+    setDelistAt(p.delistAt ? toLocalInput(new Date(p.delistAt)) : '');
     setForm({
       name: p.name,
       sku: p.sku,
@@ -181,8 +207,7 @@ export default function ProductManager({
 
   const cancelEdit = () => {
     setEditingId(null);
-    setForm(initialForm);
-    setSizeEnabled(true);
+    resetForm();
     setFormError(null);
   };
 
@@ -210,8 +235,14 @@ export default function ProductManager({
       setFormError('庫存要係 0 或以上嘅整數');
       return;
     }
+    if (delistEnabled && !delistAt) {
+      setFormError('開咗定時下架就要揀下架時間（或者閂返個開關）');
+      return;
+    }
     setFormError(null);
     const sizesValue = form.sizes.trim() || null;
+    // datetime-local 值係本地時間；閂咗開關就畀 null 清走舊設定
+    const delistAtValue = delistEnabled && delistAt ? new Date(delistAt) : null;
     if (editingId != null) {
       // 編輯模式：products.update 全欄位（可清空嘅欄用 null 覆寫）
       editMutation.mutate({
@@ -227,6 +258,8 @@ export default function ProductManager({
         stock,
         sizes: sizesValue,
         sizeEnabled,
+        delistEnabled,
+        delistAt: delistAtValue,
         description: form.description.trim() || null,
       });
       return;
@@ -243,6 +276,8 @@ export default function ProductManager({
       stock,
       sizes: sizesValue ?? undefined,
       sizeEnabled,
+      delistEnabled,
+      delistAt: delistAtValue,
       description: form.description.trim() || undefined,
     });
   };
@@ -407,6 +442,51 @@ export default function ProductManager({
               placeholder="S,M,L"
             />
           </div>
+          {/* 定時自動下架：開關 + 時間。到時前台自動消失（server 查詢判斷，唔使 cron） */}
+          <div>
+            <span className="mb-1.5 block text-[14px] text-txt-2">定時自動下架</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={delistEnabled}
+              aria-label="定時自動下架開關"
+              onClick={() => setDelistEnabled((v) => !v)}
+              className="flex h-12 items-center gap-2.5"
+            >
+              <span
+                className="relative h-6 w-11 shrink-0 rounded-full border transition-colors"
+                style={{
+                  background: delistEnabled ? 'var(--gold)' : 'var(--space-4)',
+                  borderColor: delistEnabled ? 'var(--gold)' : 'var(--space-line)',
+                }}
+              >
+                <span
+                  className="absolute top-0.5 h-[18px] w-[18px] rounded-full transition-transform"
+                  style={{
+                    background: delistEnabled ? 'var(--space-1)' : 'var(--text-3)',
+                    transform: delistEnabled ? 'translateX(22px)' : 'translateX(2px)',
+                  }}
+                  aria-hidden="true"
+                />
+              </span>
+              <span className="text-[13px] text-txt-3">
+                {delistEnabled ? '開（到時間自動下架）' : '閂（唔會自動下架）'}
+              </span>
+            </button>
+          </div>
+          <div>
+            <label htmlFor="np-delist" className="mb-1.5 block text-[14px] text-txt-2">
+              下架時間（選填）
+            </label>
+            <input
+              id="np-delist"
+              type="datetime-local"
+              value={delistAt}
+              onChange={(e) => setDelistAt(e.target.value)}
+              disabled={!delistEnabled}
+              className={`${inputCls} font-mono disabled:opacity-50`}
+            />
+          </div>
           <div className="sm:col-span-2">
             <label htmlFor="np-image" className="mb-1.5 block text-[14px] text-txt-2">
               商品圖片
@@ -529,6 +609,9 @@ export default function ProductManager({
             {products.map((p) => {
               // 存貨 10 件以下都當緊張（直播前提醒補貨）
               const lowStock = p.stock < 10;
+              // 定時下架已到時（前台已經見唔到；後台行照顯示但 dim）
+              const autoDelisted =
+                p.delistEnabled && p.delistAt !== null && new Date(p.delistAt).getTime() <= Date.now();
               const removing = removeMutation.isPending && confirmRemoveId === p.id;
               return (
                 <li
@@ -537,7 +620,7 @@ export default function ProductManager({
                   style={{
                     borderColor: 'var(--space-line)',
                     background: 'var(--space-2)',
-                    opacity: p.isActive ? 1 : 0.55,
+                    opacity: p.isActive && !autoDelisted ? 1 : 0.55,
                   }}
                 >
                   <img
@@ -569,6 +652,21 @@ export default function ProductManager({
                       >
                         {productCategoryLabel(p.category)}
                       </span>
+                      {/* 定時下架 badge（有設定先顯示） */}
+                      {p.delistEnabled && p.delistAt && (
+                        <span
+                          className="rounded-full border px-2.5 py-0.5 font-mono text-[11px]"
+                          style={{
+                            borderColor: autoDelisted ? 'var(--pink)' : 'var(--glass-border)',
+                            background: 'var(--glass-bg)',
+                            color: autoDelisted ? 'var(--pink-soft)' : 'var(--gold-soft)',
+                          }}
+                        >
+                          {autoDelisted
+                            ? '已到時自動下架（前台隱藏）'
+                            : `${fmtDelist(new Date(p.delistAt))} 自動下架`}
+                        </span>
+                      )}
                       {/* 行內改類別（即時 update） */}
                       <select
                         value={p.category}
