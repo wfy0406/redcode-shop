@@ -84,7 +84,7 @@ function CopyButton({ text, label = '複製' }: { text: string; label?: string }
     <button
       type="button"
       onClick={onCopy}
-      className="btn btn-secondary !px-4 !py-2 !text-[13px]"
+      className="btn btn-secondary shrink-0 !px-4 !py-2 !text-[13px]"
       aria-label={`${label} ${text}`}
     >
       {copied ? (
@@ -312,7 +312,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   if (items.length === 0) {
     return (
       <div className="mt-14 flex flex-col items-center pb-8 text-center">
-        <img src="/empty-cart.jpg" alt="" className="w-52 max-w-full md:w-64" />
+        <img src="/empty-cart.png" alt="" className="w-52 max-w-full md:w-64" />
         <p className="mt-6 font-serif-tc text-2xl font-semibold text-txt-1">購物車係空嘅</p>
         <p className="mt-2 max-w-sm text-[15px] text-txt-2">
           未有嘢好結帳喎，去揀件衫先啦。
@@ -325,7 +325,8 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   }
 
   return (
-    <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+    /* mobile 單欄要 minmax(0,1fr)：auto track 會用 max-content，長檔名/mono 字串會撐爆 */
+    <div className="mt-10 grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
       {/* 左：訂單項目 */}
       <div>
         <h2 className="font-serif-tc text-xl font-semibold text-txt-1">訂單內容</h2>
@@ -611,7 +612,8 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
   };
 
   return (
-    <div className="mt-10 grid gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+    /* mobile 單欄要 minmax(0,1fr)：auto track 會用 max-content，長檔名/mono 字串會撐爆 */
+    <div className="mt-10 grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
       {/* 左：收款資料卡 */}
       <div
         className="h-fit rounded-2xl border p-6"
@@ -644,7 +646,8 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
             >
               <div className="min-w-0">
                 <p className="font-medium text-txt-1">{method.label}</p>
-                <p className="mt-1 font-mono text-sm text-lavender">{method.account}</p>
+                {/* mono 長帳號字串：break-all 等佢可以斷行，唔會撐爆手機闊度 */}
+                <p className="mt-1 break-all font-mono text-sm text-lavender">{method.account}</p>
                 <p className="mt-0.5 text-[13px] text-txt-3">{method.hint}</p>
               </div>
               <CopyButton text={method.copyValue} />
@@ -677,7 +680,7 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
           />
         </div>
         <p className="mt-3 text-[13px] leading-relaxed text-txt-3">
-          上傳後 Glo Glo 團隊會盡快對數，WhatsApp 通知你 💫
+          上傳後 Glo Glo 團隊會盡快對數，當審核完成，訂單將安排同事出貨 💫
         </p>
 
         {error && (
@@ -723,7 +726,7 @@ function SuccessStep({ order }: { order: CreatedOrder }) {
 
       <p className="mt-5 max-w-md text-[15px] leading-relaxed text-txt-2">
         付款截圖已收到，而家<span className="font-medium text-gold">職員審核中</span>。
-        Glo Glo 團隊對完數會 WhatsApp 通知你，一般一個工作天內搞掂。
+        當審核完成，訂單將安排同事出貨，一般一個工作天內搞掂。
         你可以隨時去會員中心睇訂單狀態。
       </p>
 
