@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { getDb } from "./queries/connection";
 import { cartItems, orders, orderItems, paymentProofs, products, promoCodes, wmsSyncLog } from "@db/schema";
@@ -390,6 +390,171 @@ export const ordersRouter = createRouter({
         where: eq(orders.id, input.orderId),
         with: { items: true, proofs: true },
       });
+    }),
+
+  /**
+   * 後台手動改單：全量替換明細（加/減貨品、改數量）＋ 調折扣／實收金額。
+   * 規則：
+   * - 淨係未確認嘅單可以改（待收款／審核中／被拒）；已確認＝已收錢、已取消＝完結，唔准改
+   * - 庫存按 productId 差額調整：加貨/加量即扣（conditional update 防超賣），減貨/減量/刪行加返
+   * - 原本已喺單度嘅行沿用落單價；新加嘅行用而家有效價（discountPrice ?? price）
+   * - 折扣同實收二揀一：畀 discountAmount 就 total = subtotal − discount；
+   *   畀 total 就 discount = subtotal − total（實收優先；實收唔可以高過貨品合計）
+   * - 改動審計留底；如果張單之前已送咗落 WMS，回應會附提示（WMS dedup 會擋重複 sourceRef，
+   *   要用「WMS 拒絕重傳 → 客人再上截圖」嘅流程先會帶新資料過去）
+   */
+  adminUpdate: staffProcedure
+    .input(
+      z.object({
+        orderId: z.number().int().positive(),
+        items: z
+          .array(
+            z.object({
+              productId: z.number().int().positive(),
+              size: z.string().max(64).nullable().optional(),
+              quantity: z.number().int().positive().max(999),
+            }),
+          )
+          .min(1, "訂單至少要有一件貨"),
+        discountAmount: z.number().int().nonnegative().optional(),
+        total: z.number().int().nonnegative().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.id, input.orderId),
+        with: { items: true },
+      });
+      if (!order) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
+      }
+      if (!["pending_payment", "payment_review", "rejected"].includes(order.status)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "呢張訂單已確認／已取消，唔可以再改（可以取消後叫客人重新落單）",
+        });
+      }
+      const productIds = [...new Set(input.items.map((i) => i.productId))];
+      const productRows = await db
+        .select()
+        .from(products)
+        .where(inArray(products.id, productIds));
+      const productMap = new Map(productRows.map((p) => [p.id, p]));
+      for (const item of input.items) {
+        if (!productMap.has(item.productId)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `搵唔到商品 #${item.productId}`,
+          });
+        }
+      }
+      // 舊件數按 productId 合計（庫存按商品計，尺寸唔分倉）
+      const oldQty = new Map<number, number>();
+      for (const i of order.items) {
+        oldQty.set(i.productId, (oldQty.get(i.productId) ?? 0) + i.quantity);
+      }
+      const newQty = new Map<number, number>();
+      for (const i of input.items) {
+        newQty.set(i.productId, (newQty.get(i.productId) ?? 0) + i.quantity);
+      }
+      // 價錢：原本喺單度嘅行沿用落單價；新行用而家有效價
+      const oldPrice = new Map<string, number>();
+      for (const i of order.items) {
+        oldPrice.set(`${i.productId}|${i.size ?? ""}`, i.price);
+      }
+      const newLines = input.items.map((i) => {
+        const p = productMap.get(i.productId)!;
+        const price =
+          oldPrice.get(`${i.productId}|${i.size ?? ""}`) ?? p.discountPrice ?? p.price;
+        return {
+          productId: i.productId,
+          productName: p.name,
+          sku: p.sku,
+          size: i.size ?? null,
+          price,
+          quantity: i.quantity,
+        };
+      });
+      const subtotal = newLines.reduce((s, l) => s + l.price * l.quantity, 0);
+      let discountAmount: number;
+      if (input.total !== undefined) {
+        if (input.total > subtotal) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `實收唔可以高過貨品合計 HK$${subtotal}`,
+          });
+        }
+        discountAmount = subtotal - input.total;
+      } else {
+        discountAmount = Math.min(input.discountAmount ?? order.discountAmount ?? 0, subtotal);
+      }
+      const total = subtotal - discountAmount;
+
+      await db.transaction(async (tx) => {
+        // 加貨／加量：差額扣庫存（唔夠貨會擋）
+        for (const [pid, qty] of newQty) {
+          const delta = qty - (oldQty.get(pid) ?? 0);
+          if (delta > 0) {
+            const deducted = await tx
+              .update(products)
+              .set({ stock: sql`${products.stock} - ${delta}` })
+              .where(and(eq(products.id, pid), gte(products.stock, delta)))
+              .returning({ id: products.id });
+            if (deducted.length === 0) {
+              const p = productMap.get(pid)!;
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: `《${p.name}》庫存唔夠加（想加 ${delta} 件，淨返 ${p.stock} 件）`,
+              });
+            }
+          }
+        }
+        // 減貨／減量／刪行：差額加返
+        for (const [pid, qty] of oldQty) {
+          const delta = qty - (newQty.get(pid) ?? 0);
+          if (delta > 0) {
+            await tx
+              .update(products)
+              .set({ stock: sql`${products.stock} + ${delta}` })
+              .where(eq(products.id, pid));
+          }
+        }
+        // 明細全量替換 + 金額更新（同事務，唔會得一半）
+        await tx.delete(orderItems).where(eq(orderItems.orderId, order.id));
+        await tx.insert(orderItems).values(
+          newLines.map((l) => ({ orderId: order.id, ...l })),
+        );
+        await tx
+          .update(orders)
+          .set({ discountAmount, total, updatedAt: new Date() })
+          .where(eq(orders.id, order.id));
+      });
+
+      const fmtLines = (lines: { productName: string; size: string | null; quantity: number }[]) =>
+        lines
+          .map((l) => `${l.productName}${l.size ? `-${l.size}` : ""}×${l.quantity}`)
+          .join("、");
+      const sync = await db.query.wmsSyncLog.findFirst({
+        where: eq(wmsSyncLog.orderId, order.id),
+      });
+      const wmsWarning =
+        sync && (sync.status === "sent" || sync.status === "partial")
+          ? "呢張單之前已送落 WMS，改動唔會自動更新嗰邊。想 WMS 用新資料重審：叫 WMS 拒絕（重傳）等客人再上傳截圖；或者先同 WMS 講定再重試同步。"
+          : null;
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.adminUpdate",
+        targetType: "order",
+        targetId: order.orderNo,
+        detail: `後台改單 ${order.orderNo}：貨品「${fmtLines(order.items)}」→「${fmtLines(newLines)}」；折扣 HK$${order.discountAmount} → HK$${discountAmount}；實收 HK$${order.total} → HK$${total}`,
+      });
+      const updated = await db.query.orders.findFirst({
+        where: eq(orders.id, order.id),
+        with: { items: true, proofs: true },
+      });
+      return { order: updated, wmsWarning };
     }),
 
   /**
