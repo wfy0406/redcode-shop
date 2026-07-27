@@ -105,7 +105,7 @@ export default function PaymentProofDropzone({ orderId, reupload = false }: Paym
   };
 
   const onInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    acceptFile(e.dataTransfer?.files?.[0] ?? e.target.files?.[0]);
+    acceptFile(e.target.files?.[0]);
   };
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
