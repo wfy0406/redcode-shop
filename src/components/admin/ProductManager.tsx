@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import { getToken } from '@/lib/auth';
 import { PRODUCT_CATEGORIES, productCategoryLabel } from '@contracts/types';
 import { fmtDate, fmtHKD } from './format';
 import WishingStar, { LoadingBlock } from './WishingStar';
@@ -58,6 +59,30 @@ export default function ProductManager({
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const imageFileRef = useRef<HTMLInputElement | null>(null);
+
+  /** 商品圖片上傳：POST /api/upload（staff JWT），成功後將 /uploads/... 路徑填返入表單 */
+  const uploadImage = async (file: File) => {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${getToken() ?? ''}` },
+        body: fd,
+      });
+      const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string };
+      if (!res.ok || !data.path) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setForm((f) => ({ ...f, image: data.path as string }));
+      toast('圖片已上傳', 'success');
+    } catch (e) {
+      toast(`圖片上傳失敗：${e instanceof Error ? e.message : '未知錯誤'}`, 'error');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   /** 後台同前台 cache 一齊更新（adminList 包下架貨，list 係前台用） */
   const invalidateProducts = () => {
@@ -327,15 +352,45 @@ export default function ProductManager({
           </div>
           <div className="sm:col-span-2">
             <label htmlFor="np-image" className="mb-1.5 block text-[14px] text-txt-2">
-              圖片路徑
+              商品圖片
             </label>
-            <input
-              id="np-image"
-              value={form.image}
-              onChange={(e) => set('image')(e.target.value)}
-              className={`${inputCls} font-mono`}
-              placeholder="/product-1.jpg"
-            />
+            <div className="flex items-center gap-3">
+              {form.image ? (
+                <img
+                  src={form.image}
+                  alt="商品圖片預覽"
+                  className="h-12 w-12 shrink-0 rounded-lg border object-cover"
+                  style={{ borderColor: 'var(--space-line)' }}
+                />
+              ) : null}
+              <input
+                id="np-image"
+                value={form.image}
+                onChange={(e) => set('image')(e.target.value)}
+                className={`${inputCls} font-mono`}
+                placeholder="/product-1.jpg"
+              />
+              <input
+                ref={imageFileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void uploadImage(f);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => imageFileRef.current?.click()}
+                disabled={uploading}
+                className="btn btn-primary shrink-0 !px-4 !py-2.5 text-[13px] disabled:opacity-60"
+              >
+                <Upload size={14} aria-hidden="true" />
+                {uploading ? '上傳中…' : '上傳'}
+              </button>
+            </div>
           </div>
           <div className="sm:col-span-2">
             <label htmlFor="np-note" className="mb-1.5 block text-[14px] text-txt-2">
