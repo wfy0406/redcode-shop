@@ -27,10 +27,10 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { getDb } from "./queries/connection";
-import { orders, paymentProofs, wmsSyncLog } from "@db/schema";
+import { orders, paymentProofs, products, wmsSyncLog } from "@db/schema";
 
 const DEFAULT_WMS_BASE_URL = "https://red-code-wms.onrender.com";
 const DEFAULT_PUBLIC_BASE_URL = "https://redcode.red";
@@ -361,7 +361,7 @@ export async function wmsReviewCallback(c: Context) {
   const db = getDb();
   const order = await db.query.orders.findFirst({
     where: eq(orders.orderNo, orderNo),
-    with: { proofs: true },
+    with: { proofs: true, items: true },
   });
   if (!order) {
     return c.json({ ok: false, error: `搵唔到訂單 ${orderNo}` }, 404);
@@ -379,10 +379,22 @@ export async function wmsReviewCallback(c: Context) {
   // 官網訂單新狀態：approved＝已確認；cancel＝已取消；reupload＝rejected（待重傳）
   const nextStatus =
     decision === "approved" ? "approved" : rejectType === "reupload" ? "rejected" : "cancelled";
-  await db
-    .update(orders)
-    .set({ status: nextStatus, updatedAt: new Date() })
-    .where(eq(orders.id, order.id));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(orders)
+      .set({ status: nextStatus, updatedAt: new Date() })
+      .where(eq(orders.id, order.id));
+    // WMS 取消訂單＝貨唔會出，落單時扣咗嘅庫存要加返
+    // （上面 idempotent 檢查已擋住重複取消，唔會加兩次）
+    if (nextStatus === "cancelled") {
+      for (const item of order.items) {
+        await tx
+          .update(products)
+          .set({ stock: sql`${products.stock} + ${item.quantity}` })
+          .where(eq(products.id, item.productId));
+      }
+    }
+  });
   const pendingProof = order.proofs.find((p) => p.status === "pending");
   if (pendingProof) {
     await db

@@ -358,21 +358,33 @@ export const ordersRouter = createRouter({
       const db = getDb();
       const order = await db.query.orders.findFirst({
         where: eq(orders.id, input.orderId),
+        with: { items: true },
       });
       if (!order) {
         throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
       }
-      await db
-        .update(orders)
-        .set({ status: input.status, updatedAt: new Date() })
-        .where(eq(orders.id, input.orderId));
+      await db.transaction(async (tx) => {
+        await tx
+          .update(orders)
+          .set({ status: input.status, updatedAt: new Date() })
+          .where(eq(orders.id, input.orderId));
+        // 取消訂單＝貨唔會出，落單時扣咗嘅庫存要加返（之前已取消嘅唔會重複加）
+        if (order.status !== "cancelled") {
+          for (const item of order.items) {
+            await tx
+              .update(products)
+              .set({ stock: sql`${products.stock} + ${item.quantity}` })
+              .where(eq(products.id, item.productId));
+          }
+        }
+      });
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
         action: "order.cancel",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `訂單 ${order.orderNo} 轉做已取消`,
+        detail: `訂單 ${order.orderNo} 轉做已取消（庫存已加返）`,
       });
       return db.query.orders.findFirst({
         where: eq(orders.id, input.orderId),
@@ -383,7 +395,7 @@ export const ordersRouter = createRouter({
   /**
    * 完整刪除一張訂單（連截圖記錄／WMS 同步記錄／明細行一齊刪，資料庫唔留痕）。
    * 庫存規則：未收款嘅單（待收款／審核中／被拒）刪除會**加返庫存**（貨根本未出）；
-   * 已確認／已取消／出貨類就唔郁庫存（已確認＝已收錢要留貨、已取消喺取消嗰刻政策不變）。
+   * 已確認／已取消／出貨類就唔郁庫存（已確認＝已收錢要留貨、已取消嘅喺取消嗰刻已經加返咗，唔好加兩次）。
    * 操作會審計留底（action: order.delete，detail 記低單號＋件數＋金額＋庫存有冇加返）。
    */
   remove: staffProcedure
