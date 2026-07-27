@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, Images, LayoutList, LogIn, Package, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, Images, LayoutList, LogIn, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -15,6 +15,7 @@ import PromoManager from '@/components/admin/PromoManager';
 import StaffManager from '@/components/admin/StaffManager';
 import AnalyticsManager from '@/components/admin/AnalyticsManager';
 import MemberList from '@/components/admin/MemberList';
+import AuditLog from '@/components/admin/AuditLog';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
 
@@ -34,7 +35,8 @@ type ViewKey =
   | 'praise'
   | 'promo'
   | 'members'
-  | 'staff';
+  | 'staff'
+  | 'audit';
 
 /** 有待審批付款截圖嘅訂單（舊單優先，FIFO 隊列） */
 function buildQueue(orders: AdminOrder[]): AdminOrder[] {
@@ -158,6 +160,10 @@ function AdminConsole() {
     ...(isAdmin
       ? [{ key: 'staff' as ViewKey, label: '員工帳號', icon: <ShieldCheck size={17} aria-hidden="true" /> }]
       : []),
+    // 操作日誌只限最高管理員（admin）
+    ...(isAdmin
+      ? [{ key: 'audit' as ViewKey, label: '日誌', icon: <ScrollText size={17} aria-hidden="true" /> }]
+      : []),
   ];
 
   const ADMIN_ONLY_HINT = (
@@ -192,6 +198,7 @@ function AdminConsole() {
     promo: <PromoManager toast={pushToast} />,
     members: isAdmin ? <MemberList toast={pushToast} /> : ADMIN_ONLY_HINT,
     staff: isAdmin ? <StaffManager toast={pushToast} /> : ADMIN_ONLY_HINT,
+    audit: isAdmin ? <AuditLog /> : ADMIN_ONLY_HINT,
   };
 
   const STATS: { label: string; value: number; color: string }[] = [
