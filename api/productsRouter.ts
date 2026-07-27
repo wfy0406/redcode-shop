@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, eq, gt, isNull, like, or, desc } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { products } from "@db/schema";
+import { cartItems, orderItems, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES } from "@contracts/types";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
@@ -183,15 +183,21 @@ export const productsRouter = createRouter({
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在" });
       }
-      // 有訂單／購物車紀錄嘅商品會被外鍵擋住，畀個友善提示（仿 usersRouter.remove）
-      try {
-        await db.delete(products).where(eq(products.id, input.id));
-      } catch {
+      // 購物車紀錄係即興嘢（唔係訂單歷史），直接清走，唔做刪除嘅絆腳石
+      await db.delete(cartItems).where(eq(cartItems.productId, input.id));
+      // 有訂單紀錄嘅商品：orderItems 外鍵擋住，硬刪會搞壞歷史訂單，所以擋＋教路
+      const linkedItems = await db.query.orderItems.findMany({
+        where: eq(orderItems.productId, input.id),
+        columns: { orderId: true },
+      });
+      if (linkedItems.length > 0) {
+        const orderCount = new Set(linkedItems.map((i) => i.orderId)).size;
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "呢件商品有訂單或購物車紀錄，唔可以刪除（可以下架代替）",
+          message: `呢件商品有 ${orderCount} 張訂單紀錄，唔可以直接刪除。想徹底刪走：先去「訂單管理」刪埋相關訂單再返嚟刪；想留返訂單紀錄：用「下架」代替（客人即刻睇唔到）。`,
         });
       }
+      await db.delete(products).where(eq(products.id, input.id));
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
