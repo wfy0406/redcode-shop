@@ -6,7 +6,7 @@ import type { Product, ProductCategory } from '@contracts/types';
  * 之前 ProductCard / Home / Products / ProductDetail 各自定義 Product 型別，
  * demo 數據三份唔同步（折扣價 / 上架日期唔一致）。而家統一喺呢度：
  *
- * DB product（superjson 過咗之後 listedDate 係 Date 物件）：
+ * DB product（superjson 過咗之後 listedDate 係 Date 物件；為穩陣起見都兼容 ISO 字串）：
  *   { id: number, sku, name, description: string|null, image, price, discountPrice: number|null,
  *     sizes: string|null（comma-separated，例如 "S,M,L"）, sizeEnabled: boolean,
  *     category, listedDate: Date, stock, isActive, createdAt }
@@ -23,7 +23,7 @@ export interface ShopProduct {
   /** 尺寸選項總開關：false = 商品頁唔顯示尺寸、落單唔使揀（舊數據/示範數據冇呢欄當 true） */
   sizeEnabled: boolean;
   category: ProductCategory;
-  listedDate: Date;
+  listedDate: Date | string;
   stock: number;
 }
 
@@ -47,31 +47,40 @@ export function formatHKD(n: number): string {
   return `HK$${n}`;
 }
 
-/** ProductCard 需要嘅形狀（同 contracts/Product 兼容） */
+/** ProductCard 需要嘅形狀（同 src/data/products 嘅 Product 兼容：listedAt 係 YYYY-MM-DD 字串） */
 export interface CardProduct {
-  id: number;
-  sku: string;
+  id: string;
   name: string;
-  image: string;
+  sku: string;
   price: number;
   discountPrice?: number;
   sizes?: string[];
   category?: ProductCategory;
-  listedDate: Date;
+  listedAt: string;
+  image: string;
+  soldOut: boolean;
   stock: number;
+}
+
+/** listedDate 兼容 Date（superjson）同 ISO 字串；Invalid 就用今日保底，唔好畀 Intl.DateTimeFormat 爆（Invalid time value） */
+function toListedAt(d: Date | string): string {
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  return date.toISOString().slice(0, 10);
 }
 
 export function toCardProduct(p: ShopProduct): CardProduct {
   return {
-    id: p.id,
-    sku: p.sku,
+    id: String(p.id),
     name: p.name,
-    image: p.image,
+    sku: p.sku,
     price: p.price,
     discountPrice: p.discountPrice ?? undefined,
-    sizes: parseSizes(p.sizes),
+    sizes: p.sizes ? parseSizes(p.sizes) : undefined,
     category: p.category,
-    listedDate: p.listedDate,
+    listedAt: toListedAt(p.listedDate),
+    image: p.image,
+    soldOut: p.stock <= 0,
     stock: p.stock,
   };
 }
@@ -86,7 +95,7 @@ export function demoShopProducts(): ShopProduct[] {
     { id: 3, sku: 'RC-DRESS-003', name: '黑色顯瘦連身裙', image: '/product-3.jpg', price: 328, discountPrice: 288, sizes: ['S', 'M', 'L', 'XL'], category: 'dress', stock: 18, listedDaysAgo: 2 },
     { id: 4, sku: 'RC-PANTS-004', name: '高腰闊腳長褲', image: '/product-4.jpg', price: 238, sizes: ['S', 'M', 'L'], category: 'pants', stock: 20, listedDaysAgo: 5 },
     { id: 5, sku: 'RC-SKIRT-005', name: '紫色碎花半身裙', image: '/product-5.jpg', price: 188, sizes: ['S', 'M', 'L'], category: 'dress', stock: 22, listedDaysAgo: 8 },
-    { id: 6, sku: 'RC-SWEAT-006', name: '奶油白 oversize 衛衣', image: '/product-6.jpg', price: 228, category: 'top', stock: 35, listedDaysAgo: 12 },
+    { id: 6, sku: 'RC-SWEAT-006', name: '奶油白 oversize 衛衣', image: '/product-6.jpg', price: 228, sizes: ['S', 'M', 'L'], category: 'top', stock: 35, listedDaysAgo: 12 },
   ];
   return demo.map(({ listedDaysAgo, ...p }) => ({
     id: p.id,
