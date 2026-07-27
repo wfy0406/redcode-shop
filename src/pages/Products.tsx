@@ -2,55 +2,61 @@ import { useMemo, useState } from 'react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
-import ProductCard from '@/components/shop/ProductCard';
-import WishingStar from '@/components/account/WishingStar';
+import ProductCard from '@/components/ProductCard';
+import WishingStar from '@/components/shop/WishingStar';
+import { toCardProduct, demoShopProducts } from '@/components/shop/shop-utils';
+import type { ShopProduct } from '@/components/shop/shop-utils';
 import { useRevealDep } from '@/components/shop/useRevealDep';
-import { demoShopProducts } from '@/lib/demoProducts';
+import { PRODUCT_CATEGORIES } from '@contracts/types';
+import type { ProductCategory } from '@contracts/types';
 import { cn } from '@/lib/utils';
-import type { ShopProduct } from '@/lib/demoProducts';
-import type { CardProduct } from '@/components/shop/ProductCard';
 
 /**
- * 全部商品頁 §4 —— 頁首 H1 + 玻璃工具列（搜尋 + 排序 + 類別 + 上架日期篩選）+ 格網
- * F-C：頁首標題/副題由 siteSettings CMS 讀（後台可改）；冇設定就用返預設文案
+ * 全部商品 /products（design-system.md §P2）
+ * - trpc.products.list.useQuery({ keyword, category }) 攞真數據；server 篩名稱/描述/類別，
+ *   另用全量 cache 補貨號 sku 匹配（list API 唔包 sku 欄位搜尋）
+ * - 頂：H1 + 花體副標「pick your star」；玻璃工具列（搜尋框 §4.6 + DM Mono 排序 dropdown）
+ * - 類別 pill 篩選列（全部 + 7 類）+ 上架日期篩選（全部／今日／近 3 日／近 7 日／較早），可疊加
+ * - 格網 §4.1：desktop 4 欄 / 平板 3 欄 / 手機 2 欄；卡片重用 shared <ProductCard>（§4.4 duotone hover）
+ * - loading 用許願星（§3.7）；空結果用 empty-cart.png 插畫
+ * - 篩選生效時格網 300ms opacity 過渡，唔好閃爍重排
  */
 
 type SortKey = 'latest' | 'price-asc' | 'price-desc';
-
-type CategoryFilter = ShopProduct['category'] | 'all';
-
-type DateFilter = 'all' | '3d' | '7d' | 'older';
+type CategoryFilter = ProductCategory | 'all';
+type DateFilter = 'all' | 'today' | '3d' | '7d' | 'older';
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'latest', label: '最新上架' },
-  { value: 'price-asc', label: '價錢由低至高' },
-  { value: 'price-desc', label: '價錢由高至低' },
-];
-
-const PRODUCT_CATEGORIES: { value: ShopProduct['category']; label: string }[] = [
-  { value: 'top', label: '上衣' },
-  { value: 'pants', label: '褲' },
-  { value: 'dress', label: '裙' },
-  { value: 'shoes', label: '鞋' },
-  { value: 'daily', label: '生活用品' },
-  { value: 'skincare', label: '護膚品' },
-  { value: 'other', label: '其他' },
+  { value: 'price-asc', label: '價錢 低 → 高' },
+  { value: 'price-desc', label: '價錢 高 → 低' },
 ];
 
 const DATE_OPTIONS: { value: DateFilter; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: '3d', label: '3 日內' },
-  { value: '7d', label: '7 日內' },
-  { value: 'older', label: '7 日前' },
+  { value: 'all', label: '全部日期' },
+  { value: 'today', label: '今日上架' },
+  { value: '3d', label: '近 3 日' },
+  { value: '7d', label: '近 7 日' },
+  { value: 'older', label: '較早' },
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function matchDateFilter(listedDate: Date | string, f: DateFilter): boolean {
-  if (f === 'all') return true;
-  const t = listedDate instanceof Date ? listedDate.getTime() : new Date(listedDate).getTime();
-  const age = Date.now() - t;
-  switch (f) {
+/** 今日 00:00（本地時間） */
+function startOfToday(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function matchDateFilter(listedDate: Date | string, filter: DateFilter): boolean {
+  if (filter === 'all') return true;
+  const listed = new Date(listedDate).getTime();
+  const today0 = startOfToday();
+  const age = Date.now() - listed;
+  switch (filter) {
+    case 'today':
+      return listed >= today0;
     case '3d':
       return age < 3 * DAY_MS;
     case '7d':
@@ -274,7 +280,7 @@ export default function Products() {
           <WishingStar size={48} label="許願星載入中…" />
         </div>
       ) : products.length === 0 ? (
-        /* 空結果：empty-cart.png 插畫 */}
+        /* 空結果：empty-cart.png 插畫 */
         <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 py-16 text-center">
           <img src="/empty-cart.png" alt="" className="w-48 max-w-full opacity-90 md:w-64" />
           <p className="font-serif-tc text-xl font-semibold text-txt-1">
