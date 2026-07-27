@@ -5,6 +5,7 @@ import { getDb } from "./queries/connection";
 import { users } from "@db/schema";
 import { hashPassword } from "./auth";
 import { createRouter, adminProcedure } from "./middleware";
+import { logAudit } from "./audit";
 
 /**
  * 員工／會員帳號管理 —— 全部係 admin-only（最高管理員）
@@ -43,7 +44,7 @@ export const usersRouter = createRouter({
         role: roleSchema,
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const dup = await db.query.users.findFirst({
         where: eq(users.phone, input.phone),
@@ -60,6 +61,15 @@ export const usersRouter = createRouter({
           role: input.role,
         })
         .returning({ id: users.id });
+      const roleLabel = { member: "會員", staff: "員工", admin: "管理員" }[input.role];
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "staff.create",
+        targetType: "staff",
+        targetId: id,
+        detail: `開新帳號「${input.name.trim()}」（${input.phone.trim()}，${roleLabel}）`,
+      });
       return { id };
     }),
 
@@ -80,6 +90,15 @@ export const usersRouter = createRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "帳號不存在" });
       }
       await db.update(users).set({ role: input.role }).where(eq(users.id, input.id));
+      const roleLabel = { member: "會員", staff: "員工", admin: "管理員" }[input.role];
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "staff.updateRole",
+        targetType: "staff",
+        targetId: input.id,
+        detail: `將「${existing.name}」嘅權限改做${roleLabel}`,
+      });
       return { ok: true };
     }),
 
@@ -108,6 +127,14 @@ export const usersRouter = createRouter({
           message: "呢個帳號有訂單或購物車紀錄，唔可以刪除（可以改做會員權限代替）",
         });
       }
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "staff.remove",
+        targetType: "staff",
+        targetId: input.id,
+        detail: `刪除帳號「${existing.name}」（${existing.phone}，${existing.role}）`,
+      });
       return { ok: true };
     }),
 });

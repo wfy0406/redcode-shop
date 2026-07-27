@@ -6,6 +6,7 @@ import { getDb } from "./queries/connection";
 import { users } from "@db/schema";
 import { createRouter, publicQuery, authedProcedure } from "./middleware";
 import { hashPassword, verifyPassword, signToken } from "./auth";
+import { logAudit } from "./audit";
 
 const publicUser = (u: typeof users.$inferSelect) => ({
   id: u.id,
@@ -52,6 +53,15 @@ export const authRouter = createRouter({
         .returning({ id: users.id });
       const user = await db.query.users.findFirst({ where: eq(users.id, id) });
       const token = await signToken({ userId: id, role: user!.role });
+      void logAudit({
+        actorId: id,
+        actorRole: "member",
+        actorNameFallback: input.name,
+        action: "member.register",
+        targetType: "member",
+        targetId: id,
+        detail: `新會員註冊「${input.name}」（${input.phone}）`,
+      });
       return { token, user: publicUser(user!) };
     }),
 

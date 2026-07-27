@@ -139,6 +139,19 @@ CREATE TABLE IF NOT EXISTS "wmsSyncLog" (
   "updatedAt" timestamp NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS wmssync_order ON "wmsSyncLog" ("orderId");
+
+CREATE TABLE IF NOT EXISTS "auditLog" (
+  id serial PRIMARY KEY,
+  "actorId" bigint,
+  "actorName" varchar(255) NOT NULL,
+  "actorRole" varchar(16) NOT NULL,
+  action varchar(64) NOT NULL,
+  "targetType" varchar(32),
+  "targetId" varchar(64),
+  detail text,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS auditlog_created ON "auditLog" ("createdAt" DESC);
 `;
 
 export async function ensureDatabase(): Promise<void> {

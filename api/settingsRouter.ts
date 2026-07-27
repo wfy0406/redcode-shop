@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { siteSettings } from "@db/schema";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
+import { logAudit } from "./audit";
 
 /**
  * 全站文案設定（key-value）——
@@ -25,7 +26,7 @@ export const settingsRouter = createRouter({
 
   upsert: staffProcedure
     .input(z.object({ key: keySchema, value: z.string().max(200, "內容最長 200 字") }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       await db
         .insert(siteSettings)
@@ -34,6 +35,14 @@ export const settingsRouter = createRouter({
           target: siteSettings.key,
           set: { value: input.value, updatedAt: new Date() },
         });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "setting.upsert",
+        targetType: "setting",
+        targetId: input.key,
+        detail: `更新設定 ${input.key}：「${input.value.slice(0, 50)}${input.value.length > 50 ? "…" : ""}」`,
+      });
       return { ok: true as const };
     }),
 });

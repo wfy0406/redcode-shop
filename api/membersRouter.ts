@@ -1,9 +1,10 @@
-import { desc, eq, inArray, sql } from "drizzle-orm";
-import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { cartItems, orderItems, orders, paymentProofs, users, wmsSyncLog } from "@db/schema";
 import { createRouter, adminProcedure } from "./middleware";
+import { logAudit } from "./audit";
 
 /**
  * 會員列表 —— admin only
@@ -74,6 +75,14 @@ export const membersRouter = createRouter({
       }
       await db.delete(cartItems).where(eq(cartItems.userId, input.id));
       await db.delete(users).where(eq(users.id, input.id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "member.remove",
+        targetType: "member",
+        targetId: input.id,
+        detail: `刪除會員「${target.name}」${orderRows.length > 0 ? `（連埋 ${orderRows.length} 張訂單）` : ""}`,
+      });
       return { ok: true, id: input.id, deletedOrders: orderRows.length };
     }),
 });
