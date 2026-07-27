@@ -1,12 +1,14 @@
 /**
- * RedCode 官網 ↔ Red Code WMS 訂單接入（依 RED_CODE_WEBHOOK_API_v1.1.md v1.1，2026-07-27）
- * v1.1 對官網方零改動：截圖照舊純 base64 傳（WMS 改咗入 DB 係佢哋內部事）；
- * 錯誤碼照舊用 error.json.message 解析；新增 paymentMethod: "FPS" 欄位（官網得 FPS 入數一種）。
+ * RedCode 官網 ↔ Red Code WMS 訂單接入（依 RED_CODE_WEBHOOK_API_v1.2.md v1.2，2026-07-27）
+ * v1.1：截圖照舊純 base64 傳（WMS 改咗入 DB 係佢哋內部事）；錯誤碼照舊用 error.json.message 解析；
+ *   新增 paymentMethod: "FPS" 欄位（官網得 FPS 入數一種）。
+ * v1.2（§九）：WMS 審批完自動回調 /api/wms/review-callback —— 官網呢邊一早已實裝（下面 wmsReviewCallback），
+ *   規格同文檔一致（secret / sourceRef=orderNo / decision / note、idempotent）；零代碼改動，齋雙方 env 對齊。
  *
  * 方向一（官網 → WMS）：客人上傳付款截圖之後，訂單逐件貨 call WMS `order.receiveWebhook`，
  *   WMS 管理員/主管喺「審批中心 → 官網訂單審批」見到（連截圖 base64），批准/拒絕。
  * 方向二（WMS → 官網）：WMS 審批完 POST 返我哋 `POST /api/wms/review-callback`（shared secret），
- *   官網訂單自動轉 approved/rejected（效果同後台人手審批一樣）。
+ *   官網訂單自動轉 approved/rejected（效果同後台人手審批一樣；approved＝已確認＝終態）。
  *
  * 防重複：一單一列 wmsSyncLog，webhookOrderIds 同 orderItems 對位；已成功嘅件 skip，
  *   因為 WMS 唔會 dedup sourceRef，重複 send 會重複出單。
@@ -256,10 +258,12 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
 }
 
 /**
- * WMS → 官網審批回調：`POST /api/wms/review-callback`
+ * WMS → 官網審批回調：`POST /api/wms/review-callback`（規格跟 RED_CODE_WEBHOOK_API_v1.2.md §九）
  * body: { secret, sourceRef, decision: "approved" | "rejected", note? }
- * 效果同後台人手審批一樣：訂單轉 approved/rejected + 最新 pending 截圖標記已審。
- * Idempotent：已審批過嘅訂單直接回 ok（WMS 重試唔會出事）。
+ * 效果同後台人手審批一樣：訂單轉 approved/rejected（approved＝已確認＝終態）+ 最新 pending 截圖標記已審。
+ * Idempotent：已審批過嘅訂單直接回 { ok: true, already: true }（WMS 重試唔會出事）。
+ * 部分批准（WMS 逐件審，有任一被拒 → decision=rejected）：成張官網單轉 rejected，note 會寫明
+ *   （例如「WMS 部分批准：1/2 件」），staff 喺訂單詳情見到，客人可重新上傳截圖再走流程。
  */
 export async function wmsReviewCallback(c: Context) {
   const secret = process.env.WMS_CALLBACK_SECRET;
