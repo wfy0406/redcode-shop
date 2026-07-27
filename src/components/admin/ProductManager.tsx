@@ -26,6 +26,7 @@ const initialForm = {
   listedDate: new Date().toISOString().slice(0, 10),
   image: '/product-1.jpg',
   stock: '0',
+  sizes: '',
   note: '',
   description: '',
 };
@@ -40,6 +41,7 @@ type ProductRow = {
   price: number;
   discountPrice: number | null;
   sizes: string | null;
+  sizeEnabled: boolean;
   note: string | null;
   category: string;
   listedDate: Date;
@@ -56,6 +58,8 @@ export default function ProductManager({
   const utils = trpc.useUtils();
   const listQuery = trpc.products.adminList.useQuery(undefined);
   const [form, setForm] = useState(initialForm);
+  // 尺寸選項總開關（boolean，唔入 initialForm 嘅 string 結構）：閂咗商品頁唔顯示尺寸、落單唔使揀
+  const [sizeEnabled, setSizeEnabled] = useState(true);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
@@ -94,6 +98,7 @@ export default function ProductManager({
     onSuccess: (created) => {
       toast(`已新增商品「${created?.name ?? ''}」`, 'success');
       setForm(initialForm);
+      setSizeEnabled(true);
       setFormError(null);
       invalidateProducts();
     },
@@ -105,6 +110,7 @@ export default function ProductManager({
     onSuccess: (updated) => {
       toast(`已更新商品「${updated?.name ?? ''}」`, 'success');
       setForm(initialForm);
+      setSizeEnabled(true);
       setEditingId(null);
       setFormError(null);
       invalidateProducts();
@@ -157,6 +163,7 @@ export default function ProductManager({
   const startEdit = (p: ProductRow) => {
     setEditingId(p.id);
     setFormError(null);
+    setSizeEnabled(p.sizeEnabled ?? true);
     setForm({
       name: p.name,
       sku: p.sku,
@@ -166,6 +173,7 @@ export default function ProductManager({
       listedDate: new Date(p.listedDate).toISOString().slice(0, 10),
       image: p.image,
       stock: String(p.stock),
+      sizes: p.sizes ?? '',
       note: p.note ?? '',
       description: p.description ?? '',
     });
@@ -174,6 +182,7 @@ export default function ProductManager({
   const cancelEdit = () => {
     setEditingId(null);
     setForm(initialForm);
+    setSizeEnabled(true);
     setFormError(null);
   };
 
@@ -202,6 +211,7 @@ export default function ProductManager({
       return;
     }
     setFormError(null);
+    const sizesValue = form.sizes.trim() || null;
     if (editingId != null) {
       // 編輯模式：products.update 全欄位（可清空嘅欄用 null 覆寫）
       editMutation.mutate({
@@ -215,6 +225,8 @@ export default function ProductManager({
         listedDate: form.listedDate ? new Date(`${form.listedDate}T00:00:00`) : undefined,
         image: form.image.trim() || '/product-1.jpg',
         stock,
+        sizes: sizesValue,
+        sizeEnabled,
         description: form.description.trim() || null,
       });
       return;
@@ -229,6 +241,8 @@ export default function ProductManager({
       listedDate: form.listedDate ? new Date(`${form.listedDate}T00:00:00`) : undefined,
       image: form.image.trim() || '/product-1.jpg',
       stock,
+      sizes: sizesValue ?? undefined,
+      sizeEnabled,
       description: form.description.trim() || undefined,
     });
   };
@@ -348,6 +362,49 @@ export default function ProductManager({
               onChange={(e) => set('stock')(e.target.value)}
               className={`${inputCls} font-mono`}
               placeholder="10"
+            />
+          </div>
+          {/* 尺寸選項開關：閂咗商品頁唔會顯示尺寸揀選（袋/飾物呢類冇尺寸嘅貨用） */}
+          <div>
+            <span className="mb-1.5 block text-[14px] text-txt-2">尺寸選項</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={sizeEnabled}
+              aria-label="尺寸選項開關"
+              onClick={() => setSizeEnabled((v) => !v)}
+              className="flex h-12 items-center gap-2.5"
+            >
+              <span
+                className="relative h-6 w-11 shrink-0 rounded-full border transition-colors"
+                style={{
+                  background: sizeEnabled ? 'var(--success)' : 'var(--space-4)',
+                  borderColor: sizeEnabled ? 'var(--success)' : 'var(--space-line)',
+                }}
+              >
+                <span
+                  className="absolute top-0.5 h-[18px] w-[18px] rounded-full transition-transform"
+                  style={{
+                    background: sizeEnabled ? 'var(--space-1)' : 'var(--text-3)',
+                    transform: sizeEnabled ? 'translateX(22px)' : 'translateX(2px)',
+                  }}
+                  aria-hidden="true"
+                />
+              </span>
+              <span className="text-[13px] text-txt-3">{sizeEnabled ? '開（商品頁要揀尺寸）' : '閂（冇尺寸，唔使揀）'}</span>
+            </button>
+          </div>
+          <div>
+            <label htmlFor="np-sizes" className="mb-1.5 block text-[14px] text-txt-2">
+              尺寸（選填，逗號分隔）
+            </label>
+            <input
+              id="np-sizes"
+              value={form.sizes}
+              onChange={(e) => set('sizes')(e.target.value)}
+              disabled={!sizeEnabled}
+              className={`${inputCls} font-mono disabled:opacity-50`}
+              placeholder="S,M,L"
             />
           </div>
           <div className="sm:col-span-2">
