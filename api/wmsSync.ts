@@ -3,7 +3,8 @@
  * v1.1：截圖照舊純 base64 傳；錯誤碼用 error.json.message 解析；paymentMethod: "FPS"。
  * v1.2（§九）：WMS 審批完自動回調 /api/wms/review-callback —— 官網一早已實裝。
  * v1.3：webhook payload 調整 + 回調 rejectType 分流：
- *   ① productCode 改送「產品名稱」（有尺寸就 {名稱}-{尺寸}，例如「針織上衣-S」），唔再送 SKU；
+ *   ① productCode 送貨號 sku（有尺寸就 {sku}-{尺寸}，例如「B133-S」）；
+ *     〔2026-07-28 跟 WMS《貨號欄位修正請求》由 v1.3 嘅名稱組裝改為 sku 組裝〕
  *   ② actualPrice 改送扣完優惠碼嘅單件實收（按行金額比例攤分，最後一件食尾數）；
  *   ③ 停送 customerEmail／paymentMethod／sessionNo／color；remark 唔再包「尺寸」段；
  *   ④ 回調 decision=rejected 新增 rejectType：cancel＝訂單取消（終態）／reupload＝付款重傳
@@ -282,8 +283,11 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     const r = await callReceiveWebhook({
       customerName: order.user.name,
       customerPhone: order.user.phone,
-      // v1.3 §1.1：productCode 改送產品名稱，有尺寸就「名稱-尺寸」
-      productCode: item.size ? `${item.productName}-${item.size}` : item.productName,
+      // 2026-07-28 WMS《貨號欄位修正請求》：productCode 改送貨號 sku，
+      // 有尺寸就「貨號-尺寸」（例如 B133-S）；舊單萬一冇 sku 就跟返產品名稱
+      productCode: item.size
+        ? `${item.sku || item.productName}-${item.size}`
+        : item.sku || item.productName,
       amount: String(item.quantity),
       // v1.3 §1.2：actualPrice 改送扣完優惠碼嘅單件實收
       actualPrice: String(actualPrices[i]),
