@@ -173,6 +173,20 @@ export const wmsSyncLog = pgTable(
   (t) => [uniqueIndex("wmssync_order").on(t.orderId)],
 );
 
+// 全站操作日誌（admin 後台「日誌」頁用）：記低管理員／員工／會員嘅關鍵改動。
+// actorId 刻意唔設 FK——人刪咗帳號，條 log 都要留底先可以追查。
+export const auditLog = pgTable("auditLog", {
+  id: serial("id").primaryKey(),
+  actorId: bigint("actorId", { mode: "number" }),
+  actorName: varchar("actorName", { length: 255 }).notNull(),
+  actorRole: varchar("actorRole", { length: 16 }).notNull(), // admin / staff / member / system
+  action: varchar("action", { length: 64 }).notNull(), // 例如 order.create / member.remove
+  targetType: varchar("targetType", { length: 32 }),
+  targetId: varchar("targetId", { length: 64 }),
+  detail: text("detail"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;export type Product = typeof products.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Order = typeof orders.$inferSelect;
@@ -182,3 +196,4 @@ export type PromoCode = typeof promoCodes.$inferSelect;
 export type PraiseWallEntry = typeof praiseWall.$inferSelect;
 export type SiteSetting = typeof siteSettings.$inferSelect;
 export type WmsSyncLog = typeof wmsSyncLog.$inferSelect;
+export type AuditLogEntry = typeof auditLog.$inferSelect;
