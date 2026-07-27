@@ -11,7 +11,7 @@ import ExportCard from './ExportCard';
 
 /**
  * 全部訂單列表 —— status 篩選 tabs + 單號搜尋 + 點入行展開詳情
- * 詳情：items / 優惠碼折扣行 / 地址 / 備註 / 付款截圖審批 / 訂單狀態操作 / WMS 同步狀態
+ * 詳情：items / 優惠碼折扣行 / 取貨方式（順豐站/智能櫃）/ 地址 / 備註 / 付款截圖審批 / 訂單狀態操作 / WMS 同步狀態 / 完整刪除
  */
 
 /** orders.wmsSyncStates 回傳嘅一列（同 db wmsSyncLog 對應） */
@@ -121,6 +121,20 @@ export default function OrderList({
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+  // 完整刪除訂單（兩步確認；未收款單會加返庫存，server 審計留底）
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [deleteMsg, setDeleteMsg] = useState<string | null>(null);
+  const utils = trpc.useUtils();
+  const removeMutation = trpc.orders.remove.useMutation({
+    onSuccess: () => {
+      setConfirmDeleteId(null);
+      setExpandedId(null);
+      setDeleteMsg(null);
+      void utils.orders.adminList.invalidate();
+      void utils.orders.wmsSyncStates.invalidate();
+    },
+    onError: (err) => setDeleteMsg(err.message || '刪除失敗'),
+  });
 
   // WMS 同步狀態（一單一列）；重試後 refetch 更新 chip
   const syncQuery = trpc.orders.wmsSyncStates.useQuery(undefined, {
@@ -282,6 +296,16 @@ export default function OrderList({
                         )}
                         <dl className="mt-4 flex flex-col gap-2 border-t pt-4" style={{ borderColor: 'var(--space-line)' }}>
                           <div className="flex gap-2 text-[14px]">
+                            <dt className="w-16 shrink-0 text-txt-3">取貨方式</dt>
+                            <dd className="text-txt-2">
+                              {order.deliveryMethod === 'sf_station'
+                                ? `順豐站自取${order.pickupPoint ? `：${order.pickupPoint}` : ''}`
+                                : order.deliveryMethod === 'sf_locker'
+                                  ? `順豐智能櫃自取${order.pickupPoint ? `：${order.pickupPoint}` : ''}`
+                                  : '送貨上門'}
+                            </dd>
+                          </div>
+                          <div className="flex gap-2 text-[14px]">
                             <dt className="w-16 shrink-0 text-txt-3">收件地址</dt>
                             <dd className="text-txt-2">{order.address || order.user.address || '—'}</dd>
                           </div>
@@ -344,7 +368,50 @@ export default function OrderList({
                                 取消訂單
                               </button>
                             ))}
+                          {/* 完整刪除訂單（資料庫唔留痕；未收款單會加返庫存；審計日誌有底） */}
+                          {confirmDeleteId === order.id ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={removeMutation.isPending}
+                                onClick={() => removeMutation.mutate({ orderId: order.id })}
+                                className="btn btn-primary !px-5 !py-2.5 text-[13px] disabled:opacity-60"
+                              >
+                                {removeMutation.isPending ? <WishingStar size={14} /> : null}
+                                確認永久刪除？
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="btn btn-secondary !px-5 !py-2.5 text-[13px]"
+                              >
+                                算數
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={removeMutation.isPending}
+                              onClick={() => {
+                                setDeleteMsg(null);
+                                setConfirmDeleteId(order.id);
+                              }}
+                              className="btn !border !px-5 !py-2.5 text-[13px] disabled:opacity-60"
+                              style={{
+                                borderColor: 'var(--space-line)',
+                                color: 'var(--text-3)',
+                                background: 'transparent',
+                              }}
+                            >
+                              刪除訂單
+                            </button>
+                          )}
                         </div>
+                        {deleteMsg && confirmDeleteId === order.id && (
+                          <p role="alert" className="mt-2 text-[13px] text-pink-soft">
+                            {deleteMsg}
+                          </p>
+                        )}
                       </div>
 
                       {/* 付款截圖審批 */}
