@@ -1,262 +1,351 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import {
-  ClipboardCheck,
-  LayoutList,
-  Package,
-  LogOut,
-  Camera,
-  TicketPercent,
-  Users as UsersIcon,
-  BarChart3,
-} from 'lucide-react';
-import { trpc } from '@/providers/trpc';
+import { BarChart3, ClipboardCheck, Images, LayoutList, LogIn, Package, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { clearToken } from '@/lib/auth';
+import { trpc } from '@/providers/trpc';
+import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
+import ToastStack from '@/components/admin/Toast';
+import { useToasts } from '@/components/admin/useToasts';
+import Lightbox from '@/components/admin/Lightbox';
 import ReviewWorkbench from '@/components/admin/ReviewWorkbench';
 import OrderList from '@/components/admin/OrderList';
 import ProductManager from '@/components/admin/ProductManager';
 import PraiseManager from '@/components/admin/PraiseManager';
-import StaffManager from '@/components/admin/StaffManager';
 import PromoManager from '@/components/admin/PromoManager';
+import StaffManager from '@/components/admin/StaffManager';
 import AnalyticsManager from '@/components/admin/AnalyticsManager';
 import MemberList from '@/components/admin/MemberList';
-import ToastStack from '@/components/admin/ToastStack';
-import Lightbox from '@/components/admin/Lightbox';
-import { useToasts } from '@/components/admin/useToasts';
-import type { AdminOrder, ProofStatus } from '@/components/admin/types';
-
-type ViewKey = 'analytics' | 'review' | 'orders' | 'products' | 'praise' | 'promo' | 'members' | 'staff';
+import { isToday } from '@/components/admin/format';
+import type { AdminOrder } from '@/components/admin/types';
 
 /**
- * 後台主頁（§P6-P8；F-D2 render 鏈重構成 Record map，消滅 trailing-else 暗坑）
- * - staff 預設落待審批；admin 預設落業務分析
- * - 左固定側欄：業務分析（admin）／待審批（金 badge）／全部訂單／商品管理／打卡牆／優惠碼／（admin）會員／（admin）員工帳號／返回前台
+ * §P9 員工後台 /admin —— 訂單付款截圖審批工作枱
+ * - 權限守衛：未登入 → 登入卡；member → 冇權限卡；isStaff → 工作枱
+ * - 左固定側欄：待審批（金 badge）／全部訂單／商品管理／打卡牆／優惠碼／（admin）員工帳號／返回前台
+ * - 頂部 stats：待審核數／今日訂單數／總訂單數（由 adminList 計）
+ * - 審批：A 批准、R 拒絕（必填備註）、↑↓ 揀單；截圖大圖 + 燈箱
  */
-export default function Admin() {
-  const { user, isStaff, isAdmin, isLoading } = useAuth();
-  const [view, setView] = useState<ViewKey>(isAdmin ? 'analytics' : 'review');
-  const [lightbox, setLightbox] = useState<string | null>(null);
-  const { toasts, push } = useToasts();
+
+type ViewKey =
+  | 'analytics'
+  | 'review'
+  | 'orders'
+  | 'products'
+  | 'praise'
+  | 'promo'
+  | 'members'
+  | 'staff';
+
+/** 有待審批付款截圖嘅訂單（舊單優先，FIFO 隊列） */
+function buildQueue(orders: AdminOrder[]): AdminOrder[] {
+  return orders
+    .filter((o) => o.proofs.some((p) => p.status === 'pending'))
+    .slice()
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+function GuardCard({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <section className="mx-auto flex max-w-[1280px] justify-center px-5 py-24 md:px-8">
+      <div
+        className="w-full max-w-[420px] rounded-3xl border p-8 text-center backdrop-blur-xl"
+        style={{ background: 'var(--glass-bg-strong)', borderColor: 'var(--glass-border)' }}
+      >
+        <p className="script text-3xl">Staff only ✦</p>
+        <h1 className="mt-2 font-serif-tc text-2xl font-bold leading-[1.3] text-txt-1">{title}</h1>
+        <p className="mt-3 text-[14px] leading-relaxed text-txt-2">{desc}</p>
+        {children && <div className="mt-6">{children}</div>}
+      </div>
+    </section>
+  );
+}
+
+function AdminConsole() {
   const utils = trpc.useUtils();
+  const { user: me } = useAuth();
+  const isAdmin = me?.role === 'admin';
+  const { toasts, push: pushToast } = useToasts();
+  const [view, setView] = useState<ViewKey>('review');
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [reviewingProofId, setReviewingProofId] = useState<number | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<number | null>(null);
+  const [leavingIds, setLeavingIds] = useState<ReadonlySet<number>>(new Set());
 
-  const ordersQuery = trpc.orders.adminList.useQuery(undefined, {
-    enabled: !!isStaff,
-    refetchInterval: 30_000,
+  const listQuery = trpc.orders.adminList.useQuery(undefined, {
+    enabled: true,
+    refetchOnWindowFocus: false,
   });
-  const orders = useMemo(() => ordersQuery.data ?? [], [ordersQuery.data]);
-  const pendingCount = useMemo(
-    () => orders.filter((o) => o.status === 'payment_review').length,
-    [orders],
-  );
+  const orders = useMemo(() => listQuery.data ?? [], [listQuery.data]);
 
-  const reviewMutation = trpc.orders.reviewProof.useMutation({
-    onSuccess: (_data, vars) => {
-      push(vars.approve ? '已確認收款' : '已拒絕截圖', vars.approve ? 'success' : 'info');
-      void utils.orders.adminList.invalidate();
-    },
-    onError: (err) => push(err.message, 'error'),
-  });
-  const statusMutation = trpc.orders.updateStatus.useMutation({
-    onSuccess: (data) => {
-      const label =
-        data?.status === 'shipped'
-          ? '訂單已進行出貨'
-          : '訂單已取消';
-      push(label, 'success');
-      void utils.orders.adminList.invalidate();
-    },
-    onError: (err) => push(err.message, 'error'),
-  });
+  const queue = useMemo(() => buildQueue(orders), [orders]);
+  const todayCount = useMemo(() => orders.filter((o) => isToday(o.createdAt)).length, [orders]);
 
+  const reviewProof = trpc.orders.reviewProof.useMutation();
+  const updateStatus = trpc.orders.updateStatus.useMutation();
+
+  const errMsg = (err: unknown) => (err instanceof Error ? err.message : '操作失敗，請再試');
+
+  /** 審批付款截圖：成功 → toast + 該單向右飛出（300ms）+ invalidate adminList */
   const handleReview = useCallback(
-    (proofId: number, approve: boolean, note: string | undefined, _order: AdminOrder) => {
-      reviewMutation.mutate({ proofId, approve, note });
+    async (proofId: number, approve: boolean, note: string | undefined, order: AdminOrder) => {
+      setReviewingProofId(proofId);
+      try {
+        await reviewProof.mutateAsync({ proofId, approve, note });
+        pushToast(
+          approve ? `已批准 ${order.orderNo}，訂單轉做已確認` : `已拒絕 ${order.orderNo}`,
+          approve ? 'success' : 'info',
+        );
+        setLeavingIds((prev) => new Set(prev).add(order.id));
+        window.setTimeout(() => {
+          setLeavingIds(new Set());
+          void utils.orders.adminList.invalidate();
+        }, 300);
+      } catch (err) {
+        pushToast(errMsg(err), 'error');
+      } finally {
+        setReviewingProofId(null);
+      }
     },
-    [reviewMutation],
+    [reviewProof, pushToast, utils],
   );
 
+  /** 訂單狀態操作（F-D）：已確認 → 進行出貨（完成終態）／取消訂單 */
   const handleStatus = useCallback(
-    (orderId: number, status: 'shipped' | 'cancelled') => {
-      statusMutation.mutate({ orderId, status });
+    async (orderId: number, status: 'shipped' | 'cancelled') => {
+      setStatusBusyId(orderId);
+      try {
+        await updateStatus.mutateAsync({ orderId, status });
+        const label = status === 'shipped' ? '已轉做進行出貨' : '已取消訂單';
+        pushToast(label, status === 'cancelled' ? 'info' : 'success');
+        await utils.orders.adminList.invalidate();
+      } catch (err) {
+        pushToast(errMsg(err), 'error');
+      } finally {
+        setStatusBusyId(null);
+      }
     },
-    [statusMutation],
+    [updateStatus, pushToast, utils],
   );
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-pink border-t-transparent" />
-      </div>
-    );
-  }
-
-  if (!isStaff) {
-    return (
-      <div className="mx-auto max-w-[520px] px-5 py-24 text-center">
-        <div className="glass rounded-3xl p-10">
-          <p className="script text-3xl">staff only</p>
-          <h1 className="mt-2 font-serif-tc text-2xl font-bold text-txt-1">後台要員工帳號先入到</h1>
-          <p className="mt-3 text-sm text-txt-3">
-            {user
-              ? '你而家嘅帳號冇後台權限。'
-              : '請用員工或管理員帳號登入。'}
-          </p>
-          {!user && (
-            <Link to="/login?from=/admin" className="btn btn-primary mt-6 inline-flex">
-              去登入
-            </Link>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  const NAV: { key: ViewKey; label: string; icon: ReactNode; badge?: number; adminOnly?: boolean }[] = [
-    { key: 'analytics', label: '業務分析', icon: <BarChart3 size={17} />, adminOnly: true },
+  const NAV: { key: ViewKey; label: string; icon: React.ReactNode; badge?: number }[] = [
+    // 業務分析只限最高管理員（admin）
+    ...(isAdmin
+      ? [{ key: 'analytics' as ViewKey, label: '業務分析', icon: <BarChart3 size={17} aria-hidden="true" /> }]
+      : []),
     {
       key: 'review',
       label: '待審批',
-      icon: <ClipboardCheck size={17} />,
-      badge: pendingCount,
+      icon: <ClipboardCheck size={17} aria-hidden="true" />,
+      badge: queue.length,
     },
-    { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} /> },
-    { key: 'products', label: '商品管理', icon: <Package size={17} /> },
-    { key: 'praise', label: '打卡牆', icon: <Camera size={17} /> },
-    { key: 'promo', label: '優惠碼', icon: <TicketPercent size={17} /> },
-    { key: 'members', label: '會員', icon: <UsersIcon size={17} />, adminOnly: true },
-    ...(isAdmin ? [{ key: 'staff' as const, label: '員工帳號', icon: <UsersIcon size={17} /> }] : []),
+    { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
+    { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
+    { key: 'praise', label: '客戶打卡牆', icon: <Images size={17} aria-hidden="true" /> },
+    { key: 'promo', label: '優惠碼', icon: <TicketPercent size={17} aria-hidden="true" /> },
+    // 會員列表只限最高管理員（admin）
+    ...(isAdmin
+      ? [{ key: 'members' as ViewKey, label: '會員', icon: <Users size={17} aria-hidden="true" /> }]
+      : []),
+    // 員工帳號管理只限最高管理員（admin）
+    ...(isAdmin
+      ? [{ key: 'staff' as ViewKey, label: '員工帳號', icon: <ShieldCheck size={17} aria-hidden="true" /> }]
+      : []),
   ];
 
-  const VIEWS: Record<ViewKey, ReactNode> = {
-    analytics: <AnalyticsManager toast={push} />,
+  const ADMIN_ONLY_HINT = (
+    <p className="py-14 text-center text-[14px] text-txt-3">需要最高管理員權限。</p>
+  );
+
+  // F-D2：Record map 取代 if-else 鏈 —— 新 view 落 map 先會 render，
+  // 唔會再靜默跌入 trailing else（舊坑：新 view 會 render 咗 PraiseManager）
+  const viewBody: Record<ViewKey, React.ReactNode> = {
+    analytics: isAdmin ? <AnalyticsManager toast={pushToast} /> : ADMIN_ONLY_HINT,
     review: (
       <ReviewWorkbench
-        orders={orders}
-        onReview={handleReview}
-        reviewingProofId={reviewMutation.isPending ? reviewMutation.variables?.proofId ?? null : null}
-        onOpenLightbox={setLightbox}
+        queue={queue}
+        onReview={(pid, approve, note, order) => void handleReview(pid, approve, note, order)}
+        reviewingProofId={reviewingProofId}
+        onOpenLightbox={setLightboxSrc}
+        leavingIds={leavingIds}
       />
     ),
     orders: (
       <OrderList
         orders={orders}
-        onReview={handleReview}
-        reviewingProofId={reviewMutation.isPending ? reviewMutation.variables?.proofId ?? null : null}
-        onStatus={handleStatus}
-        statusBusyId={statusMutation.isPending ? statusMutation.variables?.orderId ?? null : null}
-        onOpenLightbox={setLightbox}
+        onReview={(pid, approve, note, order) => void handleReview(pid, approve, note, order)}
+        reviewingProofId={reviewingProofId}
+        onStatus={(oid, status) => void handleStatus(oid, status)}
+        statusBusyId={statusBusyId}
+        onOpenLightbox={setLightboxSrc}
       />
     ),
-    products: <ProductManager toast={push} />,
-    praise: <PraiseManager toast={push} />,
-    promo: <PromoManager toast={push} />,
-    members: <MemberList />,
-    staff: <StaffManager toast={push} />,
+    products: <ProductManager toast={pushToast} />,
+    praise: <PraiseManager toast={pushToast} />,
+    promo: <PromoManager toast={pushToast} />,
+    members: isAdmin ? <MemberList /> : ADMIN_ONLY_HINT,
+    staff: isAdmin ? <StaffManager toast={pushToast} /> : ADMIN_ONLY_HINT,
   };
 
-  return (
-    <div className="mx-auto flex min-h-[100dvh] max-w-[1440px] gap-6 px-4 py-6 md:px-6">
-      {/* 左固定側欄 */}
-      <aside
-        className="glass sticky top-6 hidden h-fit w-52 shrink-0 rounded-2xl p-3 md:block"
-        aria-label="後台導覽"
-      >
-        <p className="px-3 pb-2 pt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-txt-3">
-          RedCode 後台
-        </p>
-        <nav className="flex flex-col gap-1">
-          {NAV.filter((item) => !item.adminOnly || isAdmin).map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setView(item.key)}
-              aria-current={view === item.key ? 'page' : undefined}
-              className="flex h-11 items-center gap-3 rounded-xl px-3 text-left text-[14px] transition-colors"
-              style={
-                view === item.key
-                  ? { background: 'var(--glass-bg-strong)', color: 'var(--starlight)', border: '1px solid var(--pink)' }
-                  : { color: 'var(--text-2)', border: '1px solid transparent' }
-              }
-            >
-              {item.icon}
-              <span className="flex-1">{item.label}</span>
-              {item.badge != null && item.badge > 0 && (
-                <span
-                  className="rounded-full px-2 py-0.5 font-mono text-[11px] font-bold"
-                  style={{ background: 'var(--gold)', color: 'var(--space-1)' }}
-                >
-                  {item.badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--space-line)' }}>
-          <Link
-            to="/"
-            className="flex h-10 items-center gap-2 rounded-xl px-3 text-[13px] text-txt-3 transition-colors hover:text-txt-1"
-          >
-            <LogOut size={15} />
-            返回前台
-          </Link>
-          <button
-            type="button"
-            onClick={() => {
-              clearToken();
-              window.location.href = '/';
-            }}
-            className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-[13px] text-txt-3 transition-colors hover:text-pink-soft"
-          >
-            <LogOut size={15} />
-            登出（{user?.name}）
-          </button>
-        </div>
-      </aside>
+  const STATS: { label: string; value: number; color: string }[] = [
+    { label: '待審核截圖', value: queue.length, color: 'var(--gold)' },
+    { label: '今日訂單', value: todayCount, color: 'var(--starlight)' },
+    { label: '總訂單數', value: orders.length, color: 'var(--lavender)' },
+  ];
 
-      {/* 手機頂部 tab bar */}
-      <div className="fixed inset-x-0 bottom-0 z-40 flex gap-1 overflow-x-auto border-t px-2 py-2 md:hidden" style={{ background: 'var(--space-1)', borderColor: 'var(--space-line)' }}>
-        {NAV.filter((item) => !item.adminOnly || isAdmin).map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => setView(item.key)}
-            className="flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px]"
-            style={
-              view === item.key
-                ? { background: 'var(--pink)', color: 'var(--space-1)', fontWeight: 700 }
-                : { color: 'var(--text-2)' }
-            }
+  return (
+    <section className="mx-auto max-w-[1280px] px-5 pb-24 pt-10 md:px-8 xl:px-12">
+      <header>
+        <p className="script text-3xl">Staff System</p>
+        <h1 className="mt-1 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[36px]">
+          訂單審批工作枱
+        </h1>
+      </header>
+
+      {/* 頂部 stats 卡 */}
+      <div className="mt-6 grid grid-cols-3 gap-3 md:gap-4">
+        {STATS.map((s) => (
+          <div
+            key={s.label}
+            className="rounded-2xl border px-4 py-4 backdrop-blur-xl md:px-6"
+            style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
           >
-            {item.icon}
-            {item.label}
-            {item.badge != null && item.badge > 0 && (
-              <span className="rounded-full px-1.5 font-mono text-[10px] font-bold" style={{ background: 'var(--gold)', color: 'var(--space-1)' }}>
-                {item.badge}
-              </span>
-            )}
-          </button>
+            <p className="text-[12px] text-txt-3 md:text-[13px]">{s.label}</p>
+            <p
+              className="mt-1 font-mono text-[26px] leading-none md:text-[32px]"
+              style={{ color: s.color }}
+            >
+              {listQuery.isLoading ? '·' : s.value}
+            </p>
+          </div>
         ))}
       </div>
 
-      {/* 主內容 */}
-      <main className="min-w-0 flex-1 pb-20 md:pb-0">
-        {ordersQuery.isLoading && (
-          <div className="flex min-h-[40vh] items-center justify-center">
-            <div className="h-10 w-10 animate-spin rounded-full border-2 border-pink border-t-transparent" />
-          </div>
-        )}
-        {!ordersQuery.isLoading && ordersQuery.isError && (
-          <div className="glass rounded-2xl p-8 text-center">
-            <p className="text-pink-soft">載入訂單失敗：{ordersQuery.error.message}</p>
-          </div>
-        )}
-        {!ordersQuery.isLoading && !ordersQuery.isError && VIEWS[view]}
-      </main>
+      <div className="mt-8 flex flex-col gap-8 lg:flex-row">
+        {/* 左固定側欄（§P9：240px，--space-1）；手機轉頂部橫 scroll chips */}
+        <aside
+          className="shrink-0 rounded-2xl border p-3 lg:sticky lg:top-24 lg:w-60 lg:self-start"
+          style={{ borderColor: 'var(--space-line)', background: 'var(--space-1)' }}
+        >
+          <Link to="/" className="mb-2 hidden items-center gap-2 px-3 pt-2 lg:flex" aria-label="RedCode 首頁">
+            <img src="/logo.png" alt="RedCode Fashion Design" className="h-9 w-auto" />
+          </Link>
+          <nav className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible" aria-label="後台功能">
+            {NAV.map((item) => {
+              const active = view === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setView(item.key)}
+                  aria-current={active}
+                  className="flex shrink-0 items-center gap-2.5 rounded-xl px-4 py-3 text-[14px] transition-colors"
+                  style={{
+                    background: active ? 'var(--space-3)' : 'transparent',
+                    color: active ? 'var(--text-1)' : 'var(--text-2)',
+                    fontWeight: active ? 700 : 400,
+                  }}
+                >
+                  {item.icon}
+                  {item.label}
+                  {item.badge != null && item.badge > 0 && (
+                    <span
+                      className="ml-auto rounded-full px-2 py-0.5 font-mono text-[11px] font-bold leading-none"
+                      style={{ background: 'var(--gold)', color: 'var(--space-1)' }}
+                      aria-label={`${item.badge} 張待審批`}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+            <Link
+              to="/"
+              className="flex shrink-0 items-center gap-2.5 rounded-xl px-4 py-3 text-[14px] text-txt-3 transition-colors hover:text-lavender"
+            >
+              <Store size={17} aria-hidden="true" />
+              返回前台
+            </Link>
+          </nav>
+        </aside>
 
+        {/* 主區 */}
+        <div className="min-w-0 flex-1">
+          {listQuery.isLoading ? (
+            <LoadingBlock text="許願星搬緊訂單…" />
+          ) : listQuery.isError ? (
+            <div
+              className="rounded-2xl border px-6 py-10 text-center"
+              style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
+            >
+              <p className="text-[15px] text-pink-soft">
+                載入訂單失敗：{listQuery.error.message}
+              </p>
+              <button
+                type="button"
+                onClick={() => void listQuery.refetch()}
+                className="btn btn-secondary mt-5 !px-6 !py-2.5 text-[14px]"
+              >
+                重試
+              </button>
+            </div>
+          ) : (
+            viewBody[view]
+          )}
+        </div>
+      </div>
+
+      {lightboxSrc && <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
       <ToastStack toasts={toasts} />
-      {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
-    </div>
+    </section>
   );
+}
+
+export default function Admin() {
+  const { user, isLoading, isStaff } = useAuth();
+
+  if (isLoading) {
+    return (
+      <section className="flex min-h-[60dvh] items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <WishingStar size={32} />
+          <p className="text-[14px] text-txt-3">核實緊員工身份…</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (!user) {
+    return (
+      <GuardCard title="員工請先登入" desc="呢個係 RedCode 內部訂單審批系統，請用員工帳號登入。">
+        <Link to="/login" className="btn btn-primary w-full">
+          <LogIn size={16} aria-hidden="true" />
+          去登入
+        </Link>
+      </GuardCard>
+    );
+  }
+
+  if (!isStaff) {
+    return (
+      <GuardCard
+        title="呢個帳號冇員工權限"
+        desc={`你好 ${user.name}，你嘅帳號係會員身份。如果你係 RedCode 同事，請搵 Glo Glo 開通員工權限。`}
+      >
+        <Link to="/" className="btn btn-secondary w-full">
+          返回前台
+        </Link>
+      </GuardCard>
+    );
+  }
+
+  return <AdminConsole />;
 }
