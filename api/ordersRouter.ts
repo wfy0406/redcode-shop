@@ -3,10 +3,10 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { getDb } from "./queries/connection";
-import { cartItems, orders, orderItems, paymentProofs, products, promoCodes } from "@db/schema";
+import { cartItems, orders, orderItems, paymentProofs, products, promoCodes, wmsSyncLog } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
-import { forwardOrderToWms } from "./wmsSync";
+import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
 import { logAudit } from "./audit";
 
 const orderStatusEnum = z.enum([
@@ -18,6 +18,9 @@ const orderStatusEnum = z.enum([
   "completed",
   "cancelled",
 ]);
+
+// 取貨方式：address＝送到地址（預設）；sf_station＝順豐站自取；sf_locker＝順豐智能櫃自取
+const deliveryMethodEnum = z.enum(["address", "sf_station", "sf_locker"]);
 
 function generateOrderNo(): string {
   const now = new Date();
@@ -31,6 +34,16 @@ function promoCodeDetail(code: string | undefined): string {
   return code?.trim() ? `（用優惠碼 ${code.trim()}）` : "";
 }
 
+/** 商品係咪已（自動）下架：人手下架 isActive=false，或者開咗定時下架兼時間已到 */
+function isDelisted(p: {
+  isActive: boolean;
+  delistEnabled: boolean;
+  delistAt: Date | null;
+}): boolean {
+  if (!p.isActive) return true;
+  return p.delistEnabled && p.delistAt !== null && p.delistAt.getTime() <= Date.now();
+}
+
 export const ordersRouter = createRouter({
   create: authedProcedure
     .input(
@@ -39,6 +52,9 @@ export const ordersRouter = createRouter({
           address: z.string().optional(),
           note: z.string().optional(),
           promoCode: z.string().optional(),
+          // 順豐站／智能櫃（選填）：揀咗自取先需要填 pickupPoint
+          deliveryMethod: deliveryMethodEnum.optional(),
+          pickupPoint: z.string().max(255).optional(),
         })
         .optional(),
     )
@@ -50,6 +66,14 @@ export const ordersRouter = createRouter({
       });
       if (cart.length === 0) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "購物車係空嘅" });
+      }
+      // 下架（人手／定時到咗）嘅貨唔可以落單
+      const delisted = cart.find((item) => isDelisted(item.product));
+      if (delisted) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `《${delisted.product.name}》已經下架，請由購物車移除後再結帳`,
+        });
       }
       const subtotal = cart.reduce(
         (sum, item) =>
@@ -66,6 +90,10 @@ export const ordersRouter = createRouter({
         if (!dup) break;
         orderNo = generateOrderNo();
       }
+
+      const deliveryMethod = input?.deliveryMethod ?? "address";
+      const pickupPoint =
+        deliveryMethod === "address" ? null : (input?.pickupPoint?.trim() || null);
 
       // PostgreSQL 支援真 transaction：扣庫存 + 優惠碼 + insert order + items + clear cart 一齊 atomic
       const orderId = await db.transaction(async (tx) => {
@@ -129,6 +157,8 @@ export const ordersRouter = createRouter({
             note: input?.note ?? null,
             promoCode: promoCodeValue,
             discountAmount,
+            deliveryMethod,
+            pickupPoint,
           })
           .returning({ id: orders.id });
 
@@ -157,7 +187,7 @@ export const ordersRouter = createRouter({
         action: "order.create",
         targetType: "order",
         targetId: orderNo,
-        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}`,
+        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}${deliveryMethod !== "address" ? `，自取（${deliveryMethod === "sf_station" ? "順豐站" : "智能櫃"}${pickupPoint ? `：${pickupPoint}` : ""}）` : ""}`,
       });
       return created;
     }),
@@ -205,6 +235,11 @@ export const ordersRouter = createRouter({
           code: "BAD_REQUEST",
           message: "呢張訂單而家唔可以上傳付款證明",
         });
+      }
+      // v1.3 §2.3：客人重傳（之前被 WMS 拒過）→ 必須清走舊 wmsSyncLog，
+      // 否則已成功送達嘅件會被 skip，WMS 永遠收唔到重審件
+      if (order.status === "rejected") {
+        await resetWmsSyncLogForReupload(order.id);
       }
       // 同單未審嘅舊截圖自動作廢，等 staff 淨係見到最新一張
       await db
@@ -343,6 +378,51 @@ export const ordersRouter = createRouter({
         where: eq(orders.id, input.orderId),
         with: { items: true, proofs: true },
       });
+    }),
+
+  /**
+   * 完整刪除一張訂單（連截圖記錄／WMS 同步記錄／明細行一齊刪，資料庫唔留痕）。
+   * 庫存規則：未收款嘅單（待收款／審核中／被拒）刪除會**加返庫存**（貨根本未出）；
+   * 已確認／已取消／出貨類就唔郁庫存（已確認＝已收錢要留貨、已取消喺取消嗰刻政策不變）。
+   * 操作會審計留底（action: order.delete，detail 記低單號＋件數＋金額＋庫存有冇加返）。
+   */
+  remove: staffProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.id, input.orderId),
+        with: { items: true },
+      });
+      if (!order) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
+      }
+      const restoreStock = ["pending_payment", "payment_review", "rejected"].includes(
+        order.status,
+      );
+      await db.transaction(async (tx) => {
+        if (restoreStock) {
+          for (const item of order.items) {
+            await tx
+              .update(products)
+              .set({ stock: sql`${products.stock} + ${item.quantity}` })
+              .where(eq(products.id, item.productId));
+          }
+        }
+        await tx.delete(paymentProofs).where(eq(paymentProofs.orderId, order.id));
+        await tx.delete(wmsSyncLog).where(eq(wmsSyncLog.orderId, order.id));
+        await tx.delete(orderItems).where(eq(orderItems.orderId, order.id));
+        await tx.delete(orders).where(eq(orders.id, order.id));
+      });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.delete",
+        targetType: "order",
+        targetId: order.orderNo,
+        detail: `完整刪除訂單 ${order.orderNo}（${order.items.length} 件貨，合計 HK$${order.total}，狀態 ${order.status}）${restoreStock ? "，庫存已加返" : "，庫存不變"}`,
+      });
+      return { ok: true, restoredStock: restoreStock };
     }),
 
   /** WMS 同步狀態（後台訂單列表 chip 用）：一單一列，冇列 = 未觸發過同步 */
