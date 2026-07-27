@@ -7,7 +7,7 @@ import { createRouter, adminProcedure } from "./middleware";
 /**
  * 業務分析 —— 全部 admin only
  * 「今日」同每日分組一律用 HKT（UTC+8）；revenue 排除 cancelled/rejected
- * （shipped 係完成終態；completed 係 legacy，doneCount 兩者都計）
+ * （唔再要出貨步驟：approved＝已確認＝終態；confirmedCount 連 legacy shipped/completed 一齊計）
  */
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -44,8 +44,7 @@ export const analyticsRouter = createRouter({
     let todayOrders = 0;
     let todayRevenue = 0;
     let pendingReview = 0;
-    let toShip = 0;
-    let doneCount = 0;
+    let confirmedCount = 0;
     let cancelledCount = 0;
     let rejectedCount = 0;
     for (const row of byStatus) {
@@ -57,9 +56,13 @@ export const analyticsRouter = createRouter({
         totalRevenue += row.revenue;
         todayRevenue += row.todayRevenue;
         if (row.status === "payment_review") pendingReview = row.count;
-        else if (row.status === "approved") toShip = row.count;
-        else if (row.status === "shipped" || row.status === "completed")
-          doneCount += row.count;
+        // approved＝已確認＝終態；legacy shipped/completed 都計埋入已確認
+        else if (
+          row.status === "approved" ||
+          row.status === "shipped" ||
+          row.status === "completed"
+        )
+          confirmedCount += row.count;
       }
     }
 
@@ -80,8 +83,7 @@ export const analyticsRouter = createRouter({
       totalOrders,
       totalRevenue,
       pendingReview,
-      toShip,
-      doneCount,
+      confirmedCount,
       cancelledCount,
       rejectedCount,
       memberCount,

@@ -10,7 +10,7 @@ import type { ToastKind } from './useToasts';
 
 /**
  * 業務分析（F-G，admin only）—— 純 CSS 圖表，零新 dependency
- * - KPI 卡列：今日訂單／今日營業額／累計營業額／待審批／待出貨／已完成／會員數／優惠碼使用
+ * - KPI 卡列：今日訂單／今日營業額／累計營業額／待審批／已確認（終態）／會員數／優惠碼使用
  * - 近 14 日營收 + 訂單雙系列 CSS bar chart（每柱 title 顯示日期+數字）
  * - 熱賣商品 Top 8 表（排名/品名/貨號/件數/金額）
  * - 每日數據導出卡（F-F）+ 商品頁介紹設定卡（F-C）
@@ -24,8 +24,8 @@ type AnalyticsSummary = {
   totalOrders: number;
   totalRevenue: number;
   pendingReview: number;
-  toShip: number;
-  doneCount: number;
+  /** 已確認＝終態（approved + legacy shipped/completed 一齊計） */
+  confirmedCount: number;
   cancelledCount: number;
   rejectedCount: number;
   memberCount: number;
@@ -69,8 +69,7 @@ export default function AnalyticsManager({
         { label: '今日營業額', value: fmtHKD(summary.todayRevenue), color: 'var(--pink)' },
         { label: '累計營業額', value: fmtHKD(summary.totalRevenue), color: 'var(--pink-soft)' },
         { label: '待審批', value: String(summary.pendingReview), color: 'var(--gold)' },
-        { label: '待出貨', value: String(summary.toShip), color: 'var(--lavender)' },
-        { label: '已完成', value: String(summary.doneCount), color: 'var(--success)' },
+        { label: '已確認', value: String(summary.confirmedCount), color: 'var(--success)' },
         { label: '會員數', value: String(summary.memberCount), color: 'var(--starlight)' },
         { label: '優惠碼使用', value: String(summary.promoUsedCount), color: 'var(--gold)' },
       ]
