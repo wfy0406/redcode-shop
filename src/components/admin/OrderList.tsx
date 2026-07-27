@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ChevronDown, Search } from 'lucide-react';
+import { trpc } from '@/providers/trpc';
 import type { AdminOrder, OrderStatus, ReviewHandler, StatusHandler } from './types';
 import { fmtDateTime, fmtHKD } from './format';
 import StatusBadge from './StatusBadge';
@@ -10,8 +11,85 @@ import ExportCard from './ExportCard';
 
 /**
  * 全部訂單列表 —— status 篩選 tabs + 單號搜尋 + 點入行展開詳情
- * 詳情：items / 優惠碼折扣行 / 地址 / 備註 / 付款截圖審批 / 訂單狀態操作
+ * 詳情：items / 優惠碼折扣行 / 地址 / 備註 / 付款截圖審批 / 訂單狀態操作 / WMS 同步狀態
  */
+
+/** orders.wmsSyncStates 回傳嘅一列（同 db wmsSyncLog 對應） */
+interface WmsSyncRow {
+  id: number;
+  orderId: number;
+  status: 'pending' | 'sent' | 'partial' | 'failed' | 'disabled';
+  lineCount: number;
+  okCount: number;
+  attempts: number;
+  lastError: string | null;
+}
+
+/** WMS 同步狀態 chip + 失敗/部分可一掣重試（重試只補未成功嘅件，WMS 唔會重複出單） */
+function WmsSyncChip({ orderId, syncMap, onResynced }: {
+  orderId: number;
+  syncMap: Map<number, WmsSyncRow>;
+  onResynced: () => void;
+}) {
+  const sync = syncMap.get(orderId);
+  const resync = trpc.orders.resyncWms.useMutation();
+  const [msg, setMsg] = useState<string | null>(null);
+  if (!sync) return null;
+
+  const meta = (
+    {
+      sent: { text: '已同步 WMS', color: 'var(--success)' },
+      pending: { text: 'WMS 同步中…', color: 'var(--gold)' },
+      partial: { text: `WMS 部分同步（${sync.okCount}/${sync.lineCount}）`, color: 'var(--gold)' },
+      failed: { text: 'WMS 同步失敗', color: 'var(--pink)' },
+      disabled: { text: 'WMS 未連接', color: 'var(--txt-3)' },
+    } as const
+  )[sync.status] ?? { text: sync.status, color: 'var(--txt-3)' };
+
+  const canRetry = sync.status === 'failed' || sync.status === 'partial' || sync.status === 'disabled';
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-[12px]">
+      <span
+        className="rounded-full border px-2.5 py-1 font-mono"
+        style={{ borderColor: meta.color, color: meta.color }}
+      >
+        {meta.text}
+      </span>
+      {sync.status === 'sent' && <span className="text-txt-3">審批喺 WMS 審批中心進行</span>}
+      {canRetry && (
+        <button
+          type="button"
+          disabled={resync.isPending}
+          onClick={async () => {
+            setMsg(null);
+            try {
+              const r = await resync.mutateAsync({ orderId });
+              setMsg(
+                r.status === 'sent'
+                  ? `已補齊（${r.okCount}/${r.lineCount}）`
+                  : (r.lastError ?? '重試失敗'),
+              );
+            } catch (e) {
+              setMsg(e instanceof Error ? e.message : '重試失敗');
+            } finally {
+              onResynced();
+            }
+          }}
+          className="text-lavender underline underline-offset-4 transition-colors hover:text-txt-1 disabled:opacity-50"
+        >
+          {resync.isPending ? '同步中…' : '重試同步'}
+        </button>
+      )}
+      {msg && <span className="text-txt-3">{msg}</span>}
+      {sync.lastError && canRetry && !msg && (
+        <span className="max-w-full truncate text-txt-3" title={sync.lastError}>
+          {sync.lastError}
+        </span>
+      )}
+    </div>
+  );
+}
 
 interface OrderListProps {
   orders: AdminOrder[];
@@ -43,6 +121,18 @@ export default function OrderList({
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+
+  // WMS 同步狀態（一單一列）；重試後 refetch 更新 chip
+  const syncQuery = trpc.orders.wmsSyncStates.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  });
+  const syncMap = useMemo(
+    () =>
+      new Map<number, WmsSyncRow>(
+        ((syncQuery.data ?? []) as WmsSyncRow[]).map((r) => [r.orderId, r] as [number, WmsSyncRow]),
+      ),
+    [syncQuery.data],
+  );
 
   const counts = useMemo(() => {
     const map = new Map<OrderStatus, number>();
@@ -206,6 +296,13 @@ export default function OrderList({
                             </dd>
                           </div>
                         </dl>
+
+                        {/* WMS 同步狀態（審批已轉去內部系統進行） */}
+                        <WmsSyncChip
+                          orderId={order.id}
+                          syncMap={syncMap}
+                          onResynced={() => void syncQuery.refetch()}
+                        />
 
                         {/* 訂單狀態操作 */}
                         <div className="mt-5 flex flex-wrap gap-3">
