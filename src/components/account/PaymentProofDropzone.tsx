@@ -105,7 +105,7 @@ export default function PaymentProofDropzone({ orderId, reupload = false }: Paym
   };
 
   const onInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    acceptFile(e.target.files?.[0]);
+    acceptFile(e.dataTransfer?.files?.[0] ?? e.target.files?.[0]);
   };
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -193,7 +193,7 @@ export default function PaymentProofDropzone({ orderId, reupload = false }: Paym
         </p>
       )}
 
-      <p className="mt-2 text-[13px] text-txt-3">上傳後 Glo Glo 團隊會盡快對數，WhatsApp 通知你。</p>
+      <p className="mt-2 text-[13px] text-txt-3">上傳後 Glo Glo 團隊會盡快對數，當審核完成，訂單將安排同事出貨。</p>
     </div>
   );
 }

@@ -15,12 +15,22 @@ export function useReveal<T extends HTMLElement>() {
     const el = ref.current;
     if (!el) return;
 
-    // 觀察 ref 元素本身 + 入面所有 .reveal 子元素（列表 stagger 用）
-    const targets = [el, ...Array.from(el.querySelectorAll<HTMLElement>('.reveal'))];
+    // 商品/praise 等 async 數據會遲到：mount 嗰刻 .reveal 子元素可能未存在，
+    // 所以要 MutationObserver 接住之後先出現嘅新卡，唔會永久隱形
+    const seen = new Set<Element>();
 
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      targets.forEach((t) => t.classList.add('revealed'));
-      return;
+      const revealNow = () => {
+        [el, ...Array.from(el.querySelectorAll<HTMLElement>('.reveal'))].forEach((t) => {
+          if (seen.has(t)) return;
+          seen.add(t);
+          t.classList.add('revealed');
+        });
+      };
+      revealNow();
+      const mo = new MutationObserver(revealNow);
+      mo.observe(el, { childList: true, subtree: true });
+      return () => mo.disconnect();
     }
 
     const observer = new IntersectionObserver(
@@ -35,8 +45,22 @@ export function useReveal<T extends HTMLElement>() {
       { threshold: 0.15 },
     );
 
-    targets.forEach((t) => observer.observe(t));
-    return () => observer.disconnect();
+    const scan = () => {
+      [el, ...Array.from(el.querySelectorAll<HTMLElement>('.reveal'))].forEach((t) => {
+        if (seen.has(t)) return;
+        seen.add(t);
+        observer.observe(t);
+      });
+    };
+    scan();
+
+    const mo = new MutationObserver(scan);
+    mo.observe(el, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+      mo.disconnect();
+    };
   }, []);
 
   return ref;

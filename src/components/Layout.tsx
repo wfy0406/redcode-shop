@@ -19,6 +19,8 @@ export default function Layout() {
   const { pathname } = useLocation();
   // 管理員工作台係數據密集頁：唔要星空/流星/星雲動效（用戶要求全站有、唯獨 admin 冇）
   const isAdmin = pathname.startsWith('/admin');
+  // /cart /checkout 手機版有底部 sticky 結帳欄：WA 浮鈕抬高唔好騎住佢
+  const hasBottomBar = pathname === '/cart' || pathname === '/checkout';
 
   return (
     <div className="relative min-h-[100dvh] bg-space-1 text-txt-1">
@@ -54,7 +56,9 @@ export default function Layout() {
         href={WHATSAPP_URL}
         target="_blank"
         rel="noopener noreferrer"
-        className="btn btn-whatsapp fixed bottom-6 right-6 z-50 !h-14 !w-14 !rounded-full !p-0"
+        className={`btn btn-whatsapp fixed right-6 z-50 !h-14 !w-14 !rounded-full !p-0 ${
+          hasBottomBar ? 'bottom-24' : 'bottom-6'
+        }`}
         aria-label="WhatsApp 聯絡 Glo Glo 團隊"
       >
         <MessageCircle size={24} aria-hidden="true" />

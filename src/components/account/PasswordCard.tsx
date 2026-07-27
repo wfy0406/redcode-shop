@@ -58,7 +58,14 @@ export default function PasswordCard({ pushToast }: PasswordCardProps) {
       setErrors({});
       pushToast('密碼已更新');
     } catch (err) {
-      const msg = err instanceof Error && err.message ? err.message : '更改密碼失敗，請稍後再試';
+      const raw = err instanceof Error && err.message ? err.message : '';
+      // 部署窗口收到 HTML error page / parse / 網絡錯誤 → 唔好畀用戶見到 raw dump
+      const isSystemGlitch =
+        raw.includes('<!DOCTYPE') ||
+        raw.includes('Unexpected token') ||
+        raw.includes('Failed to fetch') ||
+        raw.includes('Load failed');
+      const msg = isSystemGlitch ? '系統更新緊，請稍後再試 🙏' : raw || '更改密碼失敗，請稍後再試';
       // server 錯誤 persist 喺欄下；舊密碼相關掛返目前密碼欄
       if (msg.includes('舊密碼')) setErrors({ old: msg });
       else setErrors({ form: msg });
