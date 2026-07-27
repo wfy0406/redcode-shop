@@ -6,11 +6,11 @@ import { useEffect, useRef, useState } from 'react';
  * - 全站唯一流星調度器：Starfield.tsx 內建 shooting stars 已預設關閉（R-A §6b，
  *   兩套並行角度 35° vs 45° 會顯亂）
  * - 三層密度（R-A §1）：far 55%（細/淡/慢）、mid 35%、near 10%（大/亮/快 + glow），
- *   near 同屏最多 1 粒保住稀有度；同屏總上限 5 粒
+ *   near 同屏最多 2 粒保住稀有度；同屏總上限 8 粒
  * - 軌跡多樣化（§2）：以 -45° 為中軸 ±10° 抖動（-55° ~ -35°），行程 24–54vw；
  *   far 層 8% 機率反向（左→右）掠過；near 唔喺中央正文帶生成
- * - 偶發流星群（§3）：每次 spawn 後 6% 機率 burst —— 3–5 粒（far/mid 為主）喺 ~2s 內連發，
- *   之後強制冷靜期 9–15s，靠長平靜襯托「偶發」感
+ * - 偶發流星群（§3）：每次 spawn 後 10% 機率 burst —— 3–5 粒（far/mid 為主）喺 ~2s 內連發，
+ *   之後強制冷靜期 7–12s，靠長平靜襯托「偶發」感
  * - 飛行 easing 用設計 token 級曲線 cubic-bezier(0.16, 1, 0.3, 1)（§5，爆發快出、尾段拖長）；
  *   far 層淡出提前到 50%（一閃即逝），mid/near 維持 65%
  * - 顏色：--pink / --gold / --lavender 低透明度尾跡
@@ -45,13 +45,13 @@ interface Meteor {
   midColor: string;
 }
 
-const MAX_CONCURRENT = 5;
-const MAX_NEAR = 1;
-const SPAWN_MIN = 2500;
-const SPAWN_MAX = 6000;
-const BURST_CHANCE = 0.06;
-const BURST_COOLDOWN_MIN = 9000;
-const BURST_COOLDOWN_MAX = 15000;
+const MAX_CONCURRENT = 8;
+const MAX_NEAR = 2;
+const SPAWN_MIN = 1200;
+const SPAWN_MAX = 3200;
+const BURST_CHANCE = 0.1;
+const BURST_COOLDOWN_MIN = 7000;
+const BURST_COOLDOWN_MAX = 12000;
 
 /** R-A §1 三層參數表 */
 const LAYER_PARAMS = {
@@ -137,7 +137,7 @@ export default function Meteors() {
     const spawnOne = (forcedLayer?: Layer) => {
       if (cancelled || totalRef.current >= MAX_CONCURRENT) return;
       let layer = forcedLayer ?? pickLayer();
-      // near 同屏最多 1 粒——「哇」嘅稀有度先係價值；爆滿就降級做 mid
+      // near 同屏最多 2 粒——「哇」嘅稀有度先係價值；爆滿就降級做 mid
       if (layer === 'near' && nearRef.current >= MAX_NEAR) layer = 'mid';
 
       const meteor = randomMeteor(++idRef.current, layer);
@@ -167,7 +167,7 @@ export default function Meteors() {
     const tick = () => {
       if (cancelled) return;
       spawnOne();
-      // 6% 機率進入 burst：3–5 粒（far/mid 為主）喺 ~2s 內連發，之後 9–15s 冷靜期
+      // 10% 機率進入 burst：3–5 粒（far/mid 為主）喺 ~2s 內連發，之後 7–12s 冷靜期
       if (Math.random() < BURST_CHANCE && totalRef.current <= 1) {
         const n = 3 + Math.floor(Math.random() * 3);
         for (let i = 0; i < n; i++) {

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router';
 import { MessageCircle } from 'lucide-react';
 import Starfield from '@/components/Starfield';
@@ -21,6 +22,12 @@ export default function Layout() {
   const isAdmin = pathname.startsWith('/admin');
   // /cart /checkout 手機版有底部 sticky 結帳欄：WA 浮鈕抬高唔好騎住佢
   const hasBottomBar = pathname === '/cart' || pathname === '/checkout';
+
+  // SPA 路由轉換時捲返去頁頂——React Router 預設保留 scroll 位置，
+  // 客人喺列表撳商品會留喺中段，要人手掃返上去先見到內容
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+  }, [pathname]);
 
   return (
     <div className="relative min-h-[100dvh] bg-space-1 text-txt-1">
