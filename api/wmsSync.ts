@@ -1,17 +1,22 @@
 /**
- * RedCode 官網 ↔ Red Code WMS 訂單接入（依 RED_CODE_WEBHOOK_API_v1.2.md v1.2，2026-07-27）
- * v1.1：截圖照舊純 base64 傳（WMS 改咗入 DB 係佢哋內部事）；錯誤碼照舊用 error.json.message 解析；
- *   新增 paymentMethod: "FPS" 欄位（官網得 FPS 入數一種）。
- * v1.2（§九）：WMS 審批完自動回調 /api/wms/review-callback —— 官網呢邊一早已實裝（下面 wmsReviewCallback），
- *   規格同文檔一致（secret / sourceRef=orderNo / decision / note、idempotent）；零代碼改動，齋雙方 env 對齊。
+ * RedCode 官網 ↔ Red Code WMS 訂單接入（依 RED_CODE_WEBHOOK_API_v1.3.md v1.3，2026-07-27）
+ * v1.1：截圖照舊純 base64 傳；錯誤碼用 error.json.message 解析；paymentMethod: "FPS"。
+ * v1.2（§九）：WMS 審批完自動回調 /api/wms/review-callback —— 官網一早已實裝。
+ * v1.3：webhook payload 調整 + 回調 rejectType 分流：
+ *   ① productCode 改送「產品名稱」（有尺寸就 {名稱}-{尺寸}，例如「針織上衣-S」），唔再送 SKU；
+ *   ② actualPrice 改送扣完優惠碼嘅單件實收（按行金額比例攤分，最後一件食尾數）；
+ *   ③ 停送 customerEmail／paymentMethod／sessionNo／color；remark 唔再包「尺寸」段；
+ *   ④ 回調 decision=rejected 新增 rejectType：cancel＝訂單取消（終態）／reupload＝付款重傳
+ *     （冇 rejectType 嘅舊格式 rejected 一律當 cancel，跟文檔向後兼容指引）；
+ *   ⑤ 客人重傳截圖時 ordersRouter 會先清走 wmsSyncLog，等重審件可以重新送落 WMS。
  *
  * 方向一（官網 → WMS）：客人上傳付款截圖之後，訂單逐件貨 call WMS `order.receiveWebhook`，
  *   WMS 管理員/主管喺「審批中心 → 官網訂單審批」見到（連截圖 base64），批准/拒絕。
  * 方向二（WMS → 官網）：WMS 審批完 POST 返我哋 `POST /api/wms/review-callback`（shared secret），
- *   官網訂單自動轉 approved/rejected（效果同後台人手審批一樣；approved＝已確認＝終態）。
+ *   官網訂單自動轉 approved（已確認＝終態）／cancelled（訂單取消）／rejected（待客人重傳截圖）。
  *
- * 防重複：一單一列 wmsSyncLog，webhookOrderIds 同 orderItems 對位；已成功嘅件 skip，
- *   因為 WMS 唔會 dedup sourceRef，重複 send 會重複出單。
+ * 防重複：一單一列 wmsSyncLog，webhookOrderIds 同 orderItems 對位；已成功嘅件 skip；
+ *   客人重傳截圖時會先清走嗰列，否則重審件永遠送唔到（v1.3 §2.3）。
  *
  * Env：
  *   WMS_API_KEY          WMS 管理員提供嘅 apiKey（未設 → 同步記錄標 disabled，官網照行）
@@ -126,6 +131,47 @@ export interface ForwardResult {
   lastError: string | null;
 }
 
+interface OrderItemRow {
+  productName: string;
+  size: string | null;
+  price: number;
+  quantity: number;
+}
+
+/**
+ * v1.3 §1.2 — 逐件計「扣完優惠碼嘅單件實收金額」：
+ * 按行項目金額比例攤分全單折扣，四捨五入 2 位，最後一件食尾數（令逐件加返埋＝實收總額）。
+ * 冇優惠碼 → 逐件照原價。
+ */
+function allocateActualPrices(
+  items: OrderItemRow[],
+  discountAmount: number,
+  orderTotal: number,
+): number[] {
+  const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
+  if (discountAmount <= 0 || subtotal <= 0) {
+    return items.map((i) => i.price);
+  }
+  const result: number[] = [];
+  let allocated = 0;
+  for (let idx = 0; idx < items.length; idx++) {
+    const item = items[idx];
+    const lineTotal = item.price * item.quantity;
+    let unitActual: number;
+    if (idx === items.length - 1) {
+      // 最後一件食尾數：實收總額減晒之前已攤嘅
+      unitActual = (orderTotal - allocated) / item.quantity;
+    } else {
+      const lineDiscount = discountAmount * (lineTotal / subtotal);
+      unitActual = (lineTotal - lineDiscount) / item.quantity;
+    }
+    unitActual = Math.round(unitActual * 100) / 100;
+    allocated += unitActual * item.quantity;
+    result.push(unitActual);
+  }
+  return result;
+}
+
 /**
  * 將一張官網訂單逐件貨送去 WMS（每 call 一件，sourceRef 全部都係官網單號）。
  * 永遠唔 throw：結果寫落 wmsSyncLog，官網落單流程唔受 WMS 狀態影響。
@@ -179,6 +225,11 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
   }
 
   const screenshot = proof ? await loadScreenshot(proof.imagePath) : null;
+  const actualPrices = allocateActualPrices(
+    order.items,
+    order.discountAmount ?? 0,
+    order.total,
+  );
   const sourcePayload = JSON.stringify({
     orderNo: order.orderNo,
     orderDateHKT: hktDate(order.createdAt),
@@ -187,6 +238,11 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     discountAmount: order.discountAmount,
     promoCode: order.promoCode,
     address: order.address,
+    // v1.3+：順豐站／智能櫃（選填）；普通送貨就 method=address、pickupPoint=null
+    delivery: {
+      method: order.deliveryMethod ?? "address",
+      pickupPoint: order.pickupPoint ?? null,
+    },
     note: order.note,
     customer: {
       name: order.user.name,
@@ -213,7 +269,6 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     const item = order.items[i];
     const remark = [
       `官網訂單 ${order.orderNo}${lineCount > 1 ? `（共 ${lineCount} 件，第 ${i + 1} 件）` : ""}`,
-      item.size ? `尺寸：${item.size}` : null,
       order.promoCode ? `優惠碼 ${order.promoCode}（全單減 HK$${order.discountAmount}）` : null,
       order.note ? `客人備註：${order.note}` : null,
       !screenshot && proof ? `截圖：${publicBaseUrl()}${proof.imagePath}` : null,
@@ -223,14 +278,12 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     const r = await callReceiveWebhook({
       customerName: order.user.name,
       customerPhone: order.user.phone,
-      customerEmail: order.user.email ?? undefined,
-      productCode: item.sku,
-      color: item.size ?? undefined,
+      // v1.3 §1.1：productCode 改送產品名稱，有尺寸就「名稱-尺寸」
+      productCode: item.size ? `${item.productName}-${item.size}` : item.productName,
       amount: String(item.quantity),
-      actualPrice: String(item.price),
+      // v1.3 §1.2：actualPrice 改送扣完優惠碼嘅單件實收
+      actualPrice: String(actualPrices[i]),
       orderDate: hktDate(order.createdAt),
-      sessionNo: "0",
-      paymentMethod: "FPS",
       remark,
       source: "website",
       sourceRef: order.orderNo,
@@ -258,12 +311,25 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
 }
 
 /**
- * WMS → 官網審批回調：`POST /api/wms/review-callback`（規格跟 RED_CODE_WEBHOOK_API_v1.2.md §九）
- * body: { secret, sourceRef, decision: "approved" | "rejected", note? }
- * 效果同後台人手審批一樣：訂單轉 approved/rejected（approved＝已確認＝終態）+ 最新 pending 截圖標記已審。
- * Idempotent：已審批過嘅訂單直接回 { ok: true, already: true }（WMS 重試唔會出事）。
- * 部分批准（WMS 逐件審，有任一被拒 → decision=rejected）：成張官網單轉 rejected，note 會寫明
- *   （例如「WMS 部分批准：1/2 件」），staff 喺訂單詳情見到，客人可重新上傳截圖再走流程。
+ * 客人重傳付款截圖（attachPaymentProof，訂單由 rejected 再入 payment_review）之前必做：
+ * 清走嗰單嘅 wmsSyncLog，等 forwardOrderToWms 唔會 skip 舊成功件（v1.3 §2.3）。
+ * WMS 端保證舊 rejected 紀錄唔會觸發 dedup 阻擋，重送會開新一輪 pending。
+ */
+export async function resetWmsSyncLogForReupload(orderId: number): Promise<void> {
+  const db = getDb();
+  await db.delete(wmsSyncLog).where(eq(wmsSyncLog.orderId, orderId));
+}
+
+/**
+ * WMS → 官網審批回調：`POST /api/wms/review-callback`（規格跟 RED_CODE_WEBHOOK_API_v1.3.md §二）
+ * body: { secret, sourceRef, decision: "approved" | "rejected", rejectType?: "cancel" | "reupload", note? }
+ *
+ * v1.3 分流：
+ *   approved                       → 訂單轉 approved（已確認＝終態），最新 pending 截圖標記 approved
+ *   rejected + rejectType=cancel   → 訂單轉 cancelled（訂單取消，終態），note 記入 reviewNote
+ *   rejected + rejectType=reupload → 訂單轉 rejected（待客人重傳截圖），note 顯示比客人知點解
+ *   rejected（冇 rejectType 舊格式）→ 一律當 cancel 處理（文檔向後兼容指引）
+ * Idempotent：已係終態（approved／cancelled）或 rejected 嘅訂單直接回 { ok: true, already: true }。
  */
 export async function wmsReviewCallback(c: Context) {
   const secret = process.env.WMS_CALLBACK_SECRET;
@@ -288,6 +354,10 @@ export async function wmsReviewCallback(c: Context) {
       400,
     );
   }
+  // v1.3：rejectType 淨係認 "reupload"，其餘（包括冇呢個欄位嘅舊格式）一律當 cancel
+  const rejectType = b.rejectType === "reupload" ? "reupload" : "cancel";
+  const noteText = typeof b.note === "string" ? b.note : "";
+
   const db = getDb();
   const order = await db.query.orders.findFirst({
     where: eq(orders.orderNo, orderNo),
@@ -296,7 +366,7 @@ export async function wmsReviewCallback(c: Context) {
   if (!order) {
     return c.json({ ok: false, error: `搵唔到訂單 ${orderNo}` }, 404);
   }
-  if (order.status === "approved" || order.status === "rejected") {
+  if (order.status === "approved" || order.status === "cancelled" || order.status === "rejected") {
     return c.json({ ok: true, already: true, orderNo: order.orderNo, status: order.status });
   }
   if (order.status !== "payment_review" && order.status !== "pending_payment") {
@@ -305,23 +375,33 @@ export async function wmsReviewCallback(c: Context) {
       409,
     );
   }
+
+  // 官網訂單新狀態：approved＝已確認；cancel＝已取消；reupload＝rejected（待重傳）
+  const nextStatus =
+    decision === "approved" ? "approved" : rejectType === "reupload" ? "rejected" : "cancelled";
   await db
     .update(orders)
-    .set({ status: decision, updatedAt: new Date() })
+    .set({ status: nextStatus, updatedAt: new Date() })
     .where(eq(orders.id, order.id));
   const pendingProof = order.proofs.find((p) => p.status === "pending");
   if (pendingProof) {
     await db
       .update(paymentProofs)
       .set({
-        status: decision,
+        status: decision === "approved" ? "approved" : "rejected",
         reviewNote:
-          (typeof b.note === "string" && b.note) ||
-          (decision === "approved" ? "WMS 審批通過" : "WMS 審批拒絕"),
+          noteText ||
+          (decision === "approved"
+            ? "WMS 審批通過"
+            : rejectType === "reupload"
+              ? "WMS 要求重新上傳付款截圖"
+              : "WMS 取消訂單"),
         reviewedAt: new Date(),
       })
       .where(eq(paymentProofs.id, pendingProof.id));
   }
-  console.log(`[wms] callback ${decision} for ${orderNo}`);
-  return c.json({ ok: true, orderNo: order.orderNo, status: decision });
+  console.log(
+    `[wms] callback ${decision}${decision === "rejected" ? ` (${rejectType})` : ""} for ${orderNo} → ${nextStatus}`,
+  );
+  return c.json({ ok: true, orderNo: order.orderNo, status: nextStatus });
 }
