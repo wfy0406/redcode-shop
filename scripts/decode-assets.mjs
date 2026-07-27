@@ -35,4 +35,18 @@ if (existsSync(binDir)) {
   }
 }
 
+// 3. api/assets/*.b64（大型 binary 經 base64 文字檔經 git 傳輸，例如營運數據 Excel 模板）
+//    → decode 返同一目錄（strip .b64），已存在會跳過
+const apiAssetsDir = path.join(root, 'api', 'assets');
+if (existsSync(apiAssetsDir)) {
+  for (const file of readdirSync(apiAssetsDir)) {
+    if (!file.endsWith('.b64')) continue;
+    const target = path.join(apiAssetsDir, file.slice(0, -4));
+    if (existsSync(target)) { skipped++; continue; }
+    const data = readFileSync(path.join(apiAssetsDir, file), 'utf8');
+    writeFileSync(target, Buffer.from(data.trim(), 'base64'));
+    restored++;
+  }
+}
+
 console.log(`[decode-assets] restored ${restored} files, skipped ${skipped} existing`);
