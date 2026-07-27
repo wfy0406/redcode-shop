@@ -6,6 +6,7 @@ import { getDb } from "./queries/connection";
 import { cartItems, orders, orderItems, paymentProofs, products, promoCodes } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
+import { forwardOrderToWms } from "./wmsSync";
 
 const orderStatusEnum = z.enum([
   "pending_payment",
@@ -210,6 +211,8 @@ export const ordersRouter = createRouter({
         .update(orders)
         .set({ status: "payment_review", updatedAt: new Date() })
         .where(eq(orders.id, order.id));
+      // WMS 同步（唔阻客人回應）：失敗淨係 log + 寫 wmsSyncLog，後台可一掣重試
+      void forwardOrderToWms(order.id).catch((e) => console.error("[wms] forward error:", e));
       return db.query.paymentProofs.findFirst({
         where: eq(paymentProofs.id, id),
       });
@@ -299,5 +302,18 @@ export const ordersRouter = createRouter({
         where: eq(orders.id, input.orderId),
         with: { items: true, proofs: true },
       });
+    }),
+
+  /** WMS 同步狀態（後台訂單列表 chip 用）：一單一列，冇列 = 未觸發過同步 */
+  wmsSyncStates: staffProcedure.query(async () => {
+    const db = getDb();
+    return db.query.wmsSyncLog.findMany();
+  }),
+
+  /** 手動重試 WMS 同步（已成功嘅件會 skip，WMS 唔會重複出單） */
+  resyncWms: staffProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      return forwardOrderToWms(input.orderId);
     }),
 });
