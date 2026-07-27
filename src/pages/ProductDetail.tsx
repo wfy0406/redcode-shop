@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { Heart, Minus, Plus, ShoppingBag } from 'lucide-react';
+import { Check, Heart, Minus, Plus, ShoppingBag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import ProductCard from '@/components/ProductCard';
@@ -55,12 +55,15 @@ export default function ProductDetail() {
   const [wished, setWished] = useState(false);
   const [sizeError, setSizeError] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [added, setAdded] = useState(false);
 
   const addCart = trpc.cart.add.useMutation({
     onSuccess: () => {
       void utils.cart.list.invalidate();
+      setAdded(true);
+      window.setTimeout(() => setAdded(false), 2200);
       setToast('已加入購物車 ✓');
-      window.setTimeout(() => setToast(null), 2000);
+      window.setTimeout(() => setToast(null), 2600);
     },
     onError: (err) => {
       setToast(err.message || '加入失敗，請再試');
@@ -86,7 +89,7 @@ export default function ProductDetail() {
   const gridRef = useRevealDep<HTMLDivElement>([productId]);
 
   const handleAdd = () => {
-    if (!product) return;
+    if (!product || added || addCart.isPending) return;
     if (needSize && !size) {
       setSizeError(true);
       return;
@@ -272,13 +275,24 @@ export default function ProductDetail() {
               onClick={handleAdd}
               disabled={addCart.isPending || outOfStock || isDemo}
               className="btn btn-primary flex-1 !py-3.5 text-[16px] font-bold disabled:opacity-50"
+              style={
+                added
+                  ? {
+                      background: 'var(--gold)',
+                      color: 'var(--space-1)',
+                      boxShadow: '0 0 18px rgba(240, 199, 94, 0.45)',
+                    }
+                  : undefined
+              }
             >
               {addCart.isPending ? (
                 <WishingStar size={18} />
+              ) : added ? (
+                <Check size={18} aria-hidden="true" />
               ) : (
                 <ShoppingBag size={18} aria-hidden="true" />
               )}
-              {outOfStock ? '暫時售罄' : '加入購物車'}
+              {outOfStock ? '暫時售罄' : added ? '已加入購物車 ✓' : '加入購物車'}
             </button>
             <button
               type="button"
@@ -325,13 +339,14 @@ export default function ProductDetail() {
       {toast && (
         <div
           role="status"
-          className="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-full border px-6 py-3 text-[14px] text-txt-1 backdrop-blur-xl"
+          className="fixed bottom-24 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border px-6 py-3 text-[14px] font-bold text-txt-1 backdrop-blur-xl"
           style={{
-            borderColor: 'var(--glass-border)',
-            background: 'var(--glass-bg-strong)',
-            animation: 'mobile-nav-in 300ms var(--ease-expo) both',
+            borderColor: added ? 'var(--gold)' : 'var(--glass-border)',
+            background: 'rgba(20, 16, 28, 0.92)',
+            boxShadow: '0 8px 30px rgba(0, 0, 0, 0.45)',
           }}
         >
+          {added && <Check size={16} aria-hidden="true" style={{ color: 'var(--gold)', flexShrink: 0 }} />}
           {toast}
         </div>
       )}
