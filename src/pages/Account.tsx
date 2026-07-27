@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { Wallet } from 'lucide-react';
+import { Calendar, Wallet } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar from '@/components/account/WishingStar';
@@ -14,12 +14,22 @@ import AccountToastStack, { useAccountToasts } from '@/components/account/Toast'
  * 未登入 → 玻璃卡「請先登入」+ 登入掣；
  * 頂部會員資料卡（ProfileCard：稱呼/地址/年齡逐行 inline edit + 登出掣）；
  * 更改密碼卡（PasswordCard）；
- * 我的訂單：trpc.orders.myOrders，每張訂單一張玻璃卡（OrderCard）。
+ * 我的訂單：trpc.orders.myOrders，每張訂單一張玻璃卡（OrderCard）；
+ * 訂單可以按日期搜尋（本地日子對照 createdAt）。
  */
+
+/** 本地日子（YYYY-MM-DD）對照：createdAt 係咪同一日 */
+function sameLocalDay(d: Date | string, ymd: string): boolean {
+  const date = d instanceof Date ? d : new Date(d);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` === ymd;
+}
 
 export default function Account() {
   const { user, isLoading, logout } = useAuth();
   const { toasts, push: pushToast } = useAccountToasts();
+  // 我的訂單日期搜尋（空字串 = 唔篩）
+  const [orderDate, setOrderDate] = useState('');
 
   const ordersQuery = trpc.orders.myOrders.useQuery(undefined, { enabled: !!user });
   // orderItems 無商品圖快照，用 products.list 對照 productId 攞縮圖
@@ -67,6 +77,9 @@ export default function Account() {
   }
 
   const orders = ordersQuery.data ?? [];
+  const filteredOrders = orderDate
+    ? orders.filter((o) => sameLocalDay(o.createdAt, orderDate))
+    : orders;
 
   return (
     <section className="mx-auto w-full max-w-[1280px] px-5 py-12 md:px-8 md:py-16 xl:px-12">
@@ -115,6 +128,37 @@ export default function Account() {
         {orders.length > 0 && <span className="font-mono text-sm text-txt-3">{orders.length} 張</span>}
       </div>
 
+      {/* 按日期搜尋訂單 */}
+      {orders.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <label
+            className="flex h-11 items-center gap-2 rounded-full border px-4"
+            style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+          >
+            <Calendar size={15} className="shrink-0 text-txt-3" aria-hidden="true" />
+            <input
+              type="date"
+              value={orderDate}
+              onChange={(e) => setOrderDate(e.target.value)}
+              aria-label="按日期搜尋訂單"
+              className="bg-transparent font-mono text-[13px] text-txt-1 focus:outline-none"
+            />
+          </label>
+          {orderDate && (
+            <>
+              <button
+                type="button"
+                onClick={() => setOrderDate('')}
+                className="text-[13px] text-lavender underline underline-offset-4 transition-colors hover:text-txt-1"
+              >
+                清除日期
+              </button>
+              <span className="font-mono text-[12px] text-txt-3">{filteredOrders.length} 張符合</span>
+            </>
+          )}
+        </div>
+      )}
+
       {ordersQuery.isLoading ? (
         <div className="flex justify-center py-20">
           <WishingStar size={28} spinning />
@@ -133,9 +177,13 @@ export default function Account() {
             去揀衫
           </Link>
         </div>
+      ) : filteredOrders.length === 0 ? (
+        <p className="mt-6 rounded-xl border border-space-line bg-space-2 px-4 py-6 text-center text-[14px] text-txt-3">
+          呢一日冇訂單，揀另一日睇睇。
+        </p>
       ) : (
         <div className="mt-6 flex flex-col gap-6">
-          {orders.map((order) => (
+          {filteredOrders.map((order) => (
             <OrderCard key={order.id} order={order} productImages={productImages} />
           ))}
         </div>
