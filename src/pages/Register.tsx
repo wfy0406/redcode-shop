@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router';
 import { useAuth } from '@/hooks/useAuth';
 import FormField from '@/components/account/FormField';
 import WishingStar from '@/components/account/WishingStar';
+import GoogleLoginButton from '@/components/account/GoogleLoginButton';
 
 /**
  * RedCode 設計系統 §P5 —— 會員註冊 /register
@@ -44,7 +45,7 @@ function normalizePhone(raw: string): string {
 }
 
 export default function Register() {
-  const { register } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
@@ -56,6 +57,7 @@ export default function Register() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
 
   const validate = (): FieldErrors => {
     const next: FieldErrors = {};
@@ -202,6 +204,35 @@ export default function Register() {
             {submitting ? <WishingStar size={16} spinning /> : '註冊'}
           </button>
         </form>
+
+        {/* 或：Google 一掣開戶（首次用會自動建立會員帳號，之後一掣登入） */}
+        <div className="mt-6 flex items-center gap-3" aria-hidden="true">
+          <span className="h-px flex-1" style={{ background: 'var(--glass-border)' }} />
+          <span className="text-xs text-txt-3">或</span>
+          <span className="h-px flex-1" style={{ background: 'var(--glass-border)' }} />
+        </div>
+        <div className="mt-4">
+          {googleSubmitting ? (
+            <p className="flex items-center justify-center gap-2 text-sm text-txt-2">
+              <WishingStar size={16} spinning /> Google 登入中…
+            </p>
+          ) : (
+            <GoogleLoginButton
+              onCredential={async (idToken) => {
+                setSubmitError(null);
+                setGoogleSubmitting(true);
+                try {
+                  await loginWithGoogle(idToken);
+                  navigate('/account', { replace: true });
+                } catch (err) {
+                  setSubmitError(backendMessage(err, 'Google 登入失敗，請稍後再試'));
+                  setGoogleSubmitting(false);
+                }
+              }}
+              onError={(msg) => setSubmitError(msg)}
+            />
+          )}
+        </div>
 
         <p className="mt-6 text-center text-sm text-txt-2">
           已有帳號？{' '}
