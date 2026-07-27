@@ -4,6 +4,7 @@ import { asc, eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { praiseWall } from "@db/schema";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
+import { logAudit } from "./audit";
 
 /**
  * 客戶打卡牆（Star Girls）—— 首頁橫 scroll 相片牆
@@ -36,7 +37,7 @@ export const praiseRouter = createRouter({
         sortOrder: z.number().int().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const [{ id }] = await db
         .insert(praiseWall)
@@ -46,6 +47,14 @@ export const praiseRouter = createRouter({
           sortOrder: input.sortOrder ?? 0,
         })
         .returning({ id: praiseWall.id });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "praise.create",
+        targetType: "praise",
+        targetId: id,
+        detail: `新增打卡相${input.caption?.trim() ? `「${input.caption.trim()}」` : ""}`,
+      });
       return db.query.praiseWall.findFirst({ where: eq(praiseWall.id, id) });
     }),
 
@@ -58,7 +67,7 @@ export const praiseRouter = createRouter({
         isActive: z.boolean().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const { id, ...data } = input;
       const existing = await db.query.praiseWall.findFirst({
@@ -77,12 +86,20 @@ export const praiseRouter = createRouter({
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
         })
         .where(eq(praiseWall.id, id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "praise.update",
+        targetType: "praise",
+        targetId: id,
+        detail: `更新打卡相 #${id}：${Object.keys(data).join("、")}${data.isActive !== undefined ? `（${data.isActive ? "上架" : "下架"}）` : ""}`,
+      });
       return db.query.praiseWall.findFirst({ where: eq(praiseWall.id, id) });
     }),
 
   remove: staffProcedure
     .input(z.object({ id: z.number().int().positive() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const existing = await db.query.praiseWall.findFirst({
         where: eq(praiseWall.id, input.id),
@@ -91,6 +108,14 @@ export const praiseRouter = createRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "打卡相不存在" });
       }
       await db.delete(praiseWall).where(eq(praiseWall.id, input.id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "praise.remove",
+        targetType: "praise",
+        targetId: input.id,
+        detail: `刪除打卡相 #${input.id}${existing.caption ? `「${existing.caption}」` : ""}`,
+      });
       return { ok: true };
     }),
 });

@@ -5,6 +5,7 @@ import type { SQL } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { promoCodes, type PromoCode } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
+import { logAudit } from "./audit";
 
 export const PROMO_KIND_VALUES = ["percent", "fixed"] as const;
 const kindSchema = z.enum(PROMO_KIND_VALUES);
@@ -112,7 +113,7 @@ export const promoRouter = createRouter({
 
   create: staffProcedure
     .input(promoFieldsSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       assertKindValue(input.kind, input.value);
       const db = getDb();
       const code = normalizePromoCode(input.code);
@@ -133,6 +134,14 @@ export const promoRouter = createRouter({
           expiresAt: input.expiresAt ?? null,
         })
         .returning({ id: promoCodes.id });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "promo.create",
+        targetType: "promo",
+        targetId: code,
+        detail: `新增優惠碼 ${code}（${input.kind === "percent" ? `${input.value}% 折扣` : `減 HK$${input.value}`}）`,
+      });
       return db.query.promoCodes.findFirst({ where: eq(promoCodes.id, id) });
     }),
 
@@ -149,7 +158,7 @@ export const promoRouter = createRouter({
         isActive: z.boolean().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const { id, ...fields } = input;
       const existing = await db.query.promoCodes.findFirst({
@@ -178,12 +187,20 @@ export const promoRouter = createRouter({
         }
       }
       await db.update(promoCodes).set(data).where(eq(promoCodes.id, id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "promo.update",
+        targetType: "promo",
+        targetId: existing.code,
+        detail: `更新優惠碼 ${existing.code}：${Object.keys(data).join("、")}${fields.isActive !== undefined ? `（${fields.isActive ? "啟用" : "停用"}）` : ""}`,
+      });
       return db.query.promoCodes.findFirst({ where: eq(promoCodes.id, id) });
     }),
 
   remove: staffProcedure
     .input(z.object({ id: z.number().int().positive() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const existing = await db.query.promoCodes.findFirst({
         where: eq(promoCodes.id, input.id),
@@ -193,6 +210,14 @@ export const promoRouter = createRouter({
       }
       // orders.promoCode 係 varchar 快照（唔係 FK），硬刪安全
       await db.delete(promoCodes).where(eq(promoCodes.id, input.id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "promo.remove",
+        targetType: "promo",
+        targetId: existing.code,
+        detail: `刪除優惠碼 ${existing.code}`,
+      });
       return { ok: true };
     }),
 });

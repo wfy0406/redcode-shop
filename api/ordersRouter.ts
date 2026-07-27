@@ -7,6 +7,7 @@ import { cartItems, orders, orderItems, paymentProofs, products, promoCodes } fr
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
 import { forwardOrderToWms } from "./wmsSync";
+import { logAudit } from "./audit";
 
 const orderStatusEnum = z.enum([
   "pending_payment",
@@ -24,6 +25,10 @@ function generateOrderNo(): string {
     now.getDate(),
   ).padStart(2, "0")}`;
   return `RC${ymd}${String(randomInt(0, 10000)).padStart(4, "0")}`;
+}
+
+function promoCodeDetail(code: string | undefined): string {
+  return code?.trim() ? `（用優惠碼 ${code.trim()}）` : "";
 }
 
 export const ordersRouter = createRouter({
@@ -142,10 +147,19 @@ export const ordersRouter = createRouter({
         return id;
       });
 
-      return db.query.orders.findFirst({
+      const created = await db.query.orders.findFirst({
         where: eq(orders.id, orderId),
         with: { items: true, proofs: true },
       });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.create",
+        targetType: "order",
+        targetId: orderNo,
+        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}`,
+      });
+      return created;
     }),
 
   myOrders: authedProcedure.query(async ({ ctx }) => {
@@ -213,6 +227,14 @@ export const ordersRouter = createRouter({
         .where(eq(orders.id, order.id));
       // WMS 同步（唔阻客人回應）：失敗淨係 log + 寫 wmsSyncLog，後台可一掣重試
       void forwardOrderToWms(order.id).catch((e) => console.error("[wms] forward error:", e));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.attachProof",
+        targetType: "order",
+        targetId: order.orderNo,
+        detail: `上傳付款截圖（訂單 ${order.orderNo}）`,
+      });
       return db.query.paymentProofs.findFirst({
         where: eq(paymentProofs.id, id),
       });
@@ -273,6 +295,17 @@ export const ordersRouter = createRouter({
         .update(orders)
         .set({ status: input.approve ? "approved" : "rejected", updatedAt: new Date() })
         .where(eq(orders.id, proof.orderId));
+      const reviewedOrder = await db.query.orders.findFirst({
+        where: eq(orders.id, proof.orderId),
+      });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: input.approve ? "order.approve" : "order.reject",
+        targetType: "order",
+        targetId: reviewedOrder?.orderNo ?? proof.orderId,
+        detail: `${input.approve ? "批准" : "拒絕"}付款截圖（訂單 ${reviewedOrder?.orderNo ?? proof.orderId}）${input.note ? `：${input.note}` : ""}`,
+      });
       return db.query.paymentProofs.findFirst({
         where: eq(paymentProofs.id, proof.id),
       });
@@ -286,7 +319,7 @@ export const ordersRouter = createRouter({
         status: z.enum(["shipped", "cancelled"]),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const order = await db.query.orders.findFirst({
         where: eq(orders.id, input.orderId),
@@ -298,6 +331,14 @@ export const ordersRouter = createRouter({
         .update(orders)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(orders.id, input.orderId));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: input.status === "shipped" ? "order.ship" : "order.cancel",
+        targetType: "order",
+        targetId: order.orderNo,
+        detail: `訂單 ${order.orderNo} 轉做${input.status === "shipped" ? "進行出貨" : "已取消"}`,
+      });
       return db.query.orders.findFirst({
         where: eq(orders.id, input.orderId),
         with: { items: true, proofs: true },
@@ -313,7 +354,16 @@ export const ordersRouter = createRouter({
   /** 手動重試 WMS 同步（已成功嘅件會 skip，WMS 唔會重複出單） */
   resyncWms: staffProcedure
     .input(z.object({ orderId: z.number().int().positive() }))
-    .mutation(async ({ input }) => {
-      return forwardOrderToWms(input.orderId);
+    .mutation(async ({ ctx, input }) => {
+      const result = await forwardOrderToWms(input.orderId);
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.resyncWms",
+        targetType: "order",
+        targetId: input.orderId,
+        detail: `手動重試 WMS 同步（${result.status}，${result.okCount}/${result.lineCount} 件成功）`,
+      });
+      return result;
     }),
 });

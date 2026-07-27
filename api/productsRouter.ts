@@ -5,6 +5,7 @@ import { getDb } from "./queries/connection";
 import { products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES } from "@contracts/types";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
+import { logAudit } from "./audit";
 
 const categorySchema = z.enum(PRODUCT_CATEGORY_VALUES as [string, ...string[]]);
 
@@ -76,7 +77,7 @@ export const productsRouter = createRouter({
         stock: z.number().int().nonnegative().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const dup = await db.query.products.findFirst({
         where: eq(products.sku, input.sku),
@@ -100,6 +101,14 @@ export const productsRouter = createRouter({
           stock: input.stock ?? 0,
         })
         .returning({ id: products.id });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "product.create",
+        targetType: "product",
+        targetId: input.sku,
+        detail: `新增商品「${input.name}」（${input.sku}，HK$${input.discountPrice ?? input.price}）`,
+      });
       return db.query.products.findFirst({ where: eq(products.id, id) });
     }),
 
@@ -121,7 +130,7 @@ export const productsRouter = createRouter({
         isActive: z.boolean().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const { id, ...data } = input;
       const existing = await db.query.products.findFirst({
@@ -131,12 +140,20 @@ export const productsRouter = createRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在" });
       }
       await db.update(products).set(data).where(eq(products.id, id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "product.update",
+        targetType: "product",
+        targetId: existing.sku,
+        detail: `更新商品「${data.name ?? existing.name}」（${existing.sku}）：${Object.keys(data).join("、")}`,
+      });
       return db.query.products.findFirst({ where: eq(products.id, id) });
     }),
 
   remove: staffProcedure
     .input(z.object({ id: z.number().int().positive() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const existing = await db.query.products.findFirst({
         where: eq(products.id, input.id),
@@ -153,6 +170,14 @@ export const productsRouter = createRouter({
           message: "呢件商品有訂單或購物車紀錄，唔可以刪除（可以下架代替）",
         });
       }
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "product.remove",
+        targetType: "product",
+        targetId: existing.sku,
+        detail: `刪除商品「${existing.name}」（${existing.sku}）`,
+      });
       return { ok: true };
     }),
 });
