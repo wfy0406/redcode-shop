@@ -1,10 +1,11 @@
 import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Sun, Sunrise, Zap } from 'lucide-react';
+import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import { useReveal } from '@/hooks/useReveal';
 
 /**
  * RedCode 直播專區（/live）
  * 1. Hero：live-banner.png 底 + 「直播專區」標題 + LIVE 眨燈 badge（§3.5 steps(2) 眨燈）
- * 2. Facebook 直播嵌入：FB page plugin iframe（玻璃框包住 + fallback 連結）
+ * 2. Facebook 直播嵌入：FacebookPageEmbed（SDK 版 page plugin，深色玻璃框 + error fallback 連結）
  * 3. 直播時間表卡（brief.md：晚場 22:00 ／ 快閃場 15:30，單場可逾 3 小時，以 FB 公佈為準）
  * 4. （已移除直播回顧 video cards — 公司宣傳影片移咗去首頁）
  * 5. 「點樣睇直播落單」四步（大字編號 DM Mono）
@@ -14,8 +15,6 @@ import { useReveal } from '@/hooks/useReveal';
 // TODO: 換返 RedCode 真 WhatsApp 號碼（brief：聯絡方法未能確認，用佔位先）
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
-const FB_PAGE_PLUGIN =
-  'https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2Fredcodexhk&tabs=timeline&small_header=false&adapt_container_width=true&hide_cover=false&show_facepile=true';
 
 /* ---------- 直播場次（唔寫死時間，以 FB 公佈為準） ---------- */
 const SCHEDULE = [
@@ -138,7 +137,7 @@ export default function Live() {
               className="hero-enter mt-5 max-w-lg text-[15px] leading-[1.75] text-txt-2 md:text-base"
               style={{ animationDelay: '0.65s' }}
             >
-              Glo Glo 每晚喺 Facebook 開直播，即場著身、即場講價、留言落單。
+              Glo Glo 每晚喺 Facebook 開直播，即場著身、即場開賣、留言落單。
               錯過咗都唔緊要——入專頁可以重溫晒所有場次。
             </p>
             <div
@@ -195,33 +194,9 @@ export default function Live() {
                 </a>
               </p>
             </div>
-            {/* 右：FB plugin（框跟返 plugin 比例，唔再拉伸） */}
-            <div
-              className="mx-auto flex w-full max-w-[540px] justify-center self-start overflow-hidden rounded-2xl border lg:col-span-3"
-              style={{
-                background: 'var(--glass-bg)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
-                borderColor: 'var(--glass-border)',
-              }}
-            >
-              <iframe
-                src={FB_PAGE_PLUGIN}
-                width="500"
-                height="600"
-                style={{
-                  border: 'none',
-                  overflow: 'hidden',
-                  width: '100%',
-                  maxWidth: '500px',
-                  height: '600px',
-                }}
-                scrolling="no"
-                allowFullScreen
-                allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
-                title="Red Code HK直播台 Facebook 專頁"
-                loading="lazy"
-              />
+            {/* 右：FB plugin（SDK 版組件，最寬 500px 置中，深色 loading 底防白格） */}
+            <div className="self-start lg:col-span-3">
+              <FacebookPageEmbed pageUrl={FACEBOOK_URL} height={600} />
             </div>
           </div>
         </div>
