@@ -51,6 +51,8 @@ export const products = pgTable("products", {
   price: integer("price").notNull(),
   discountPrice: integer("discountPrice"),
   sizes: varchar("sizes", { length: 255 }),
+  // 尺寸選項總開關：false = 商品頁唔顯示尺寸、落單唔使揀（袋/飾物呢類冇尺寸嘅貨用）
+  sizeEnabled: boolean("sizeEnabled").notNull().default(true),
   note: varchar("note", { length: 512 }),
   category: varchar("category", { length: 32 }).notNull().default("other"),
   listedDate: timestamp("listedDate").notNull(),

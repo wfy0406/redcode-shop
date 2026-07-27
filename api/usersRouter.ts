@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, ne } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { users } from "@db/schema";
 import { hashPassword } from "./auth";
@@ -8,8 +8,8 @@ import { createRouter, adminProcedure } from "./middleware";
 import { logAudit } from "./audit";
 
 /**
- * 員工／會員帳號管理 —— 全部係 admin-only（最高管理員）
- * list：全部帳號（唔回 passwordHash）
+ * 員工帳號管理 —— 全部係 admin-only（最高管理員）
+ * list：只列員工＋管理員帳號（會員帳號喺「會員」頁管，唔回 passwordHash）
  * create：開新帳號（會員／員工／管理員）
  * updateRole：改權限（唔可以改自己）
  * remove：刪帳號（唔可以刪自己；有訂單嘅會員刪唔到）
@@ -28,6 +28,7 @@ export const usersRouter = createRouter({
         createdAt: users.createdAt,
       })
       .from(users)
+      .where(ne(users.role, "member"))
       .orderBy(asc(users.id));
   }),
 

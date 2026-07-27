@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS "paymentProofs" (
 
 ALTER TABLE products ADD COLUMN IF NOT EXISTS category varchar(32) NOT NULL DEFAULT 'other';
 ALTER TABLE products ADD COLUMN IF NOT EXISTS note varchar(512);
+-- 尺寸選項總開關（冇尺寸嘅貨可以閂埋，商品頁唔會顯示尺寸揀選）
+ALTER TABLE products ADD COLUMN IF NOT EXISTS "sizeEnabled" boolean NOT NULL DEFAULT true;
 
 -- Google 登入：users.email（NULL 唔計重複，舊會員唔受影響）
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email varchar(255);
