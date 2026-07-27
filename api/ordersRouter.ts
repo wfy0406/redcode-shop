@@ -315,8 +315,8 @@ export const ordersRouter = createRouter({
     .input(
       z.object({
         orderId: z.number().int().positive(),
-        // 新主流程終態係 shipped（進行出貨＝完成）；completed 只留畀 legacy 數據，唔再接受寫入
-        status: z.enum(["shipped", "cancelled"]),
+        // 唔再要出貨步驟：審批完＝已確認（終態）；shipped/completed 只留畀 legacy 數據，唔再接受寫入
+        status: z.enum(["cancelled"]),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -334,10 +334,10 @@ export const ordersRouter = createRouter({
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
-        action: input.status === "shipped" ? "order.ship" : "order.cancel",
+        action: "order.cancel",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `訂單 ${order.orderNo} 轉做${input.status === "shipped" ? "進行出貨" : "已取消"}`,
+        detail: `訂單 ${order.orderNo} 轉做已取消`,
       });
       return db.query.orders.findFirst({
         where: eq(orders.id, input.orderId),
