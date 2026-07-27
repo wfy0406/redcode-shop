@@ -124,6 +124,21 @@ CREATE TABLE IF NOT EXISTS "siteSettings" (
   value text NOT NULL,
   "updatedAt" timestamp NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS "wmsSyncLog" (
+  id serial PRIMARY KEY,
+  "orderId" bigint NOT NULL REFERENCES orders(id),
+  "proofId" bigint,
+  "lineCount" integer NOT NULL DEFAULT 0,
+  "okCount" integer NOT NULL DEFAULT 0,
+  status varchar(16) NOT NULL DEFAULT 'pending',
+  "webhookOrderIds" text,
+  "lastError" text,
+  attempts integer NOT NULL DEFAULT 0,
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "updatedAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS wmssync_order ON "wmsSyncLog" ("orderId");
 `;
 
 export async function ensureDatabase(): Promise<void> {

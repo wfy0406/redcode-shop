@@ -150,6 +150,29 @@ export const siteSettings = pgTable("siteSettings", {
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 });
 
+// 官網 → WMS 訂單同步記錄（一單一列；webhookOrderIds 係 JSON array，同 orderItems 對位，
+// null 元素代表嗰件未成功——重試只補未成功嘅件，WMS 唔會重複出單）
+export const wmsSyncLog = pgTable(
+  "wmsSyncLog",
+  {
+    id: serial("id").primaryKey(),
+    orderId: bigint("orderId", { mode: "number" })
+      .notNull()
+      .references(() => orders.id),
+    proofId: bigint("proofId", { mode: "number" }),
+    lineCount: integer("lineCount").notNull().default(0),
+    okCount: integer("okCount").notNull().default(0),
+    // pending / sent / partial / failed / disabled（未設 WMS_API_KEY）
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    webhookOrderIds: text("webhookOrderIds"),
+    lastError: text("lastError"),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("wmssync_order").on(t.orderId)],
+);
+
 export type User = typeof users.$inferSelect;export type Product = typeof products.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Order = typeof orders.$inferSelect;
@@ -158,3 +181,4 @@ export type PaymentProof = typeof paymentProofs.$inferSelect;
 export type PromoCode = typeof promoCodes.$inferSelect;
 export type PraiseWallEntry = typeof praiseWall.$inferSelect;
 export type SiteSetting = typeof siteSettings.$inferSelect;
+export type WmsSyncLog = typeof wmsSyncLog.$inferSelect;
