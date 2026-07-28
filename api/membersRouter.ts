@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { cartItems, orderItems, orders, paymentProofs, users, wmsSyncLog } from "@db/schema";
 import { createRouter, adminProcedure } from "./middleware";
@@ -12,24 +12,90 @@ import { logAudit } from "./audit";
  * remove：刪除會員；有訂單嘅會員要 alsoDeleteOrders=true 先刪得（連訂單一併刪，唔可以復原）
  */
 export const membersRouter = createRouter({
-  list: adminProcedure.query(async () => {
-    const db = getDb();
-    return db
-      .select({
-        id: users.id,
-        name: users.name,
-        phone: users.phone,
-        email: users.email,
-        createdAt: users.createdAt,
-        orderCount: sql<number>`count(${orders.id})::int`,
-        totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,
-      })
-      .from(users)
-      .leftJoin(orders, eq(orders.userId, users.id))
-      .where(eq(users.role, "member"))
-      .groupBy(users.id)
-      .orderBy(desc(users.createdAt));
-  }),
+  // 2026-07-28：加搜尋（q＝名或電話模糊對照）＋地址欄
+  list: adminProcedure
+    .input(z.object({ q: z.string().trim().max(100).optional() }).optional())
+    .query(async ({ input }) => {
+      const db = getDb();
+      const q = input?.q?.trim();
+      // 用家輸入嘅 % / _ / \ 先 escape，唔畀佢哋變通配符
+      const term = q ? `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%` : null;
+      return db
+        .select({
+          id: users.id,
+          name: users.name,
+          phone: users.phone,
+          email: users.email,
+          address: users.address,
+          createdAt: users.createdAt,
+          orderCount: sql<number>`count(${orders.id})::int`,
+          totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,
+        })
+        .from(users)
+        .leftJoin(orders, eq(orders.userId, users.id))
+        .where(
+          term
+            ? and(
+                eq(users.role, "member"),
+                sql`(${users.name} ilike ${term} escape '\\' or ${users.phone} ilike ${term} escape '\\')`,
+              )
+            : eq(users.role, "member"),
+        )
+        .groupBy(users.id)
+        .orderBy(desc(users.createdAt));
+    }),
+
+  /**
+   * 會員詳情（前台撳行彈出）：基本資料（唔回 passwordHash）＋訂單統計＋最近 10 張訂單
+   */
+  detail: adminProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const [user] = await db
+        .select({
+          id: users.id,
+          name: users.name,
+          phone: users.phone,
+          email: users.email,
+          address: users.address,
+          age: users.age,
+          role: users.role,
+          createdAt: users.createdAt,
+        })
+        .from(users)
+        .where(eq(users.id, input.id))
+        .limit(1);
+      if (!user || user.role !== "member") {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      }
+      const [stats] = await db
+        .select({
+          orderCount: sql<number>`count(${orders.id})::int`,
+          totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,
+        })
+        .from(orders)
+        .where(eq(orders.userId, input.id));
+      const recentOrders = await db
+        .select({
+          id: orders.id,
+          orderNo: orders.orderNo,
+          status: orders.status,
+          total: orders.total,
+          deliveryMethod: orders.deliveryMethod,
+          createdAt: orders.createdAt,
+        })
+        .from(orders)
+        .where(eq(orders.userId, input.id))
+        .orderBy(desc(orders.createdAt))
+        .limit(10);
+      return {
+        user,
+        orderCount: stats.orderCount,
+        totalSpent: stats.totalSpent,
+        recentOrders,
+      };
+    }),
 
   remove: adminProcedure
     .input(
