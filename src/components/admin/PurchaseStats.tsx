@@ -6,7 +6,8 @@ import { LoadingBlock } from './WishingStar';
 /**
  * 訂貨統計（採購用）—— 按上架日期分組，數每款貨要訂幾件
  * - 需求＝有效訂單（排除已取消／已拒絕）嘅貨品件數，server 按 產品×尺寸 聚合好
- * - 每款有「−1」「−3」剔選扣減（兩個都剔＝−4），要訂＝需求−扣減（最低 0）
+ * - 每組有「全部−1」「全部−3」剔選（撳一次成組扣、再撳取消；兩個齊剔＝成組 −4），
+ *   要訂＝需求−扣減（最低 0）
  * - 剔選只係呢個畫面嘅工作狀態，refresh 會重設；庫存欄只供參考，唔會自動扣
  * - 每組有「複製清單」掣，撳一下就可以直接貼落 WhatsApp 畀供應商
  */
@@ -36,10 +37,9 @@ interface DateGroup {
   units: number;
 }
 
-/** 扣減值只有 0／1／3／4：剔 −1 ＝加 1，剔 −3 ＝加 3，再剔一次＝取消嗰個扣減 */
-function toggleDeduct(current: number, v: 1 | 3): number {
-  const has = v === 1 ? current === 1 || current === 4 : current === 3 || current === 4;
-  return has ? current - v : current + v;
+/** 扣減值只有 0／1／3／4（−1 同 −3 可以疊加） */
+function hasDeduct(current: number, v: 1 | 3): boolean {
+  return v === 1 ? current === 1 || current === 4 : current === 3 || current === 4;
 }
 
 export default function PurchaseStats() {
@@ -79,6 +79,24 @@ export default function PurchaseStats() {
     (s, g) => s + g.products.reduce((s2, p) => s2 + needOf(g.date, p), 0),
     0,
   );
+
+  // 成組剔選：組內全部款都有嗰個扣減 → 再撳＝成組取消；否則＝成組加上（唔郁另一個扣減嘅狀態）
+  const groupHas = (g: DateGroup, v: 1 | 3) =>
+    g.products.every((p) => hasDeduct(deduct[`${g.date}|${p.productId}`] ?? 0, v));
+  const toggleGroupDeduct = (g: DateGroup, v: 1 | 3) => {
+    const on = groupHas(g, v);
+    setDeduct((m) => {
+      const next = { ...m };
+      for (const p of g.products) {
+        const k = `${g.date}|${p.productId}`;
+        const cur = next[k] ?? 0;
+        const has = hasDeduct(cur, v);
+        if (on && has) next[k] = cur - v;
+        else if (!on && !has) next[k] = cur + v;
+      }
+      return next;
+    });
+  };
 
   const copyGroup = async (g: DateGroup) => {
     const lines = g.products.map((p) => {
@@ -167,6 +185,30 @@ export default function PurchaseStats() {
               <span className="text-[12px] text-txt-3">
                 {g.products.length} 款・需求 {g.units} 件
               </span>
+              {([1, 3] as const).map((v) => {
+                const on = groupHas(g, v);
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleGroupDeduct(g, v)}
+                    className="rounded-full border px-3 py-1.5 font-mono text-[12px] transition-colors"
+                    style={
+                      on
+                        ? {
+                            background: 'var(--pink)',
+                            borderColor: 'var(--pink)',
+                            color: 'var(--space-1)',
+                            fontWeight: 700,
+                          }
+                        : { borderColor: 'var(--space-line)', color: 'var(--text-2)' }
+                    }
+                  >
+                    全部−{v}
+                  </button>
+                );
+              })}
               <button
                 type="button"
                 onClick={() => void copyGroup(g)}
@@ -185,8 +227,6 @@ export default function PurchaseStats() {
               {g.products.map((p, idx) => {
                 const key = `${g.date}|${p.productId}`;
                 const d = deduct[key] ?? 0;
-                const has1 = d === 1 || d === 4;
-                const has3 = d === 3 || d === 4;
                 const need = needOf(g.date, p);
                 return (
                   <li
@@ -217,36 +257,7 @@ export default function PurchaseStats() {
 
                     <span className="font-mono text-[12px] text-txt-3">存 {p.stock}</span>
                     <span className="font-mono text-[13px] text-txt-2">需求 {p.total}</span>
-
-                    {/* 扣減剔選（可兩個都剔） */}
-                    <div className="flex items-center gap-1.5" role="group" aria-label={`${p.name} 扣減`}>
-                      {([1, 3] as const).map((v) => {
-                        const on = v === 1 ? has1 : has3;
-                        return (
-                          <button
-                            key={v}
-                            type="button"
-                            aria-pressed={on}
-                            onClick={() =>
-                              setDeduct((m) => ({ ...m, [key]: toggleDeduct(m[key] ?? 0, v) }))
-                            }
-                            className="rounded-full border px-2.5 py-1 font-mono text-[12px] transition-colors"
-                            style={
-                              on
-                                ? {
-                                    background: 'var(--pink)',
-                                    borderColor: 'var(--pink)',
-                                    color: 'var(--space-1)',
-                                    fontWeight: 700,
-                                  }
-                                : { borderColor: 'var(--space-line)', color: 'var(--text-2)' }
-                            }
-                          >
-                            −{v}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    {d > 0 && <span className="font-mono text-[12px] text-pink-soft">−{d}</span>}
 
                     <span
                       className="font-mono text-[15px] font-bold"
@@ -263,7 +274,7 @@ export default function PurchaseStats() {
       )}
 
       <p className="text-[12px] leading-relaxed text-txt-3">
-        要訂數＝需求−扣減（最低 0）。扣減剔選只係呢個畫面嘅工作狀態，refresh 後會重設；庫存欄只供參考，唔會自動扣。
+        要訂數＝需求−扣減（最低 0）。「全部−1／全部−3」撳一次成組扣、再撳一次取消，兩個可以同時用（＝成組−4）；剔選只係呢個畫面嘅工作狀態，refresh 後會重設。庫存欄只供參考，唔會自動扣。
       </p>
     </div>
   );
