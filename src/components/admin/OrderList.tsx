@@ -368,6 +368,15 @@ export default function OrderList({
                               編輯訂單
                             </button>
                           )}
+                          {/* 單據（新分頁開，可列印／儲存 PDF） */}
+                          <a
+                            href={`/#/receipt/${order.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-secondary !px-5 !py-2.5 text-[13px]"
+                          >
+                            單據
+                          </a>
                           {CANCELLABLE.includes(order.status) &&
                             (confirmCancelId === order.id ? (
                               <>
