@@ -242,7 +242,7 @@ export const ordersRouter = createRouter({
         await resetWmsSyncLogForReupload(order.id);
       }
       // 同單未審嘅舊截圖自動作廢，等 staff 淨係見到最新一張
-       await db
+      await db
         .update(paymentProofs)
         .set({
           status: "rejected",

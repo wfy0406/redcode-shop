@@ -218,7 +218,7 @@ export default function PurchaseStats() {
                     <span className="font-mono text-[12px] text-txt-3">存 {p.stock}</span>
                     <span className="font-mono text-[13px] text-txt-2">需求 {p.total}</span>
 
-                    {/* 扣減剔選（可兩個都剔 */}
+                    {/* 扣減剔選（可兩個都剔） */}
                     <div className="flex items-center gap-1.5" role="group" aria-label={`${p.name} 扣減`}>
                       {([1, 3] as const).map((v) => {
                         const on = v === 1 ? has1 : has3;
