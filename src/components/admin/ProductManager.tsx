@@ -39,6 +39,7 @@ type ProductRow = {
   name: string;
   description: string | null;
   image: string;
+  photos: string[] | null;
   price: number;
   discountPrice: number | null;
   sizes: string | null;
@@ -83,27 +84,53 @@ export default function ProductManager({
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
+  // 商品相簿（多張相）：photos[0]＝封面；空陣列＝用 form.image 路徑做唯一圖
+  const [photos, setPhotos] = useState<string[]>([]);
 
-  /** 商品圖片上傳：POST /api/upload（staff JWT），成功後將 /uploads/... 路徑填返入表單 */
-  const uploadImage = async (file: File) => {
+  /** 商品圖片上傳（一次過可揀多張）：逐張 POST /api/upload（staff JWT），路徑加入相簿 */
+  const uploadImages = async (files: File[]) => {
+    if (files.length === 0) return;
+    if (photos.length + files.length > 12) {
+      toast(`最多 12 張相（而家 ${photos.length} 張），請先刪走啲先`, 'error');
+      return;
+    }
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { authorization: `Bearer ${getToken() ?? ''}` },
-        body: fd,
-      });
-      const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string };
-      if (!res.ok || !data.path) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setForm((f) => ({ ...f, image: data.path as string }));
-      toast('圖片已上傳', 'success');
+      const paths: string[] = [];
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${getToken() ?? ''}` },
+          body: fd,
+        });
+        const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string };
+        if (!res.ok || !data.path) throw new Error(data.error ?? `HTTP ${res.status}`);
+        paths.push(data.path);
+      }
+      setPhotos((p) => [...p, ...paths]);
+      toast(`已上傳 ${paths.length} 張相`, 'success');
     } catch (e) {
       toast(`圖片上傳失敗：${e instanceof Error ? e.message : '未知錯誤'}`, 'error');
     } finally {
       setUploading(false);
     }
+  };
+
+  /** 手動貼嘅路徑加入相簿（重複／爆上限會擋） */
+  const addManualPhoto = () => {
+    const v = form.image.trim();
+    if (!v) return;
+    if (photos.includes(v)) {
+      toast('呢張相已經喺相簿度', 'error');
+      return;
+    }
+    if (photos.length >= 12) {
+      toast('最多 12 張相', 'error');
+      return;
+    }
+    setPhotos((p) => [...p, v]);
   };
 
   /** 後台同前台 cache 一齊更新（adminList 包下架貨，list 係前台用） */
@@ -115,6 +142,7 @@ export default function ProductManager({
   /** 表單＋開關全部還原（新增成功／取消編輯用） */
   const resetForm = () => {
     setForm(initialForm);
+    setPhotos([]);
     setSizeEnabled(true);
     setDelistEnabled(false);
     setDelistAt('');
@@ -203,6 +231,8 @@ export default function ProductManager({
       note: p.note ?? '',
       description: p.description ?? '',
     });
+    // 相簿：有 photos 用 photos；冇（舊貨）就由 image 做唯一一張
+    setPhotos(p.photos?.length ? p.photos : [p.image]);
   };
 
   const cancelEdit = () => {
@@ -255,6 +285,7 @@ export default function ProductManager({
         category: form.category,
         listedDate: form.listedDate ? new Date(`${form.listedDate}T00:00:00`) : undefined,
         image: form.image.trim() || '/product-1.jpg',
+        photos: photos.length ? photos : [form.image.trim() || '/product-1.jpg'],
         stock,
         sizes: sizesValue,
         sizeEnabled,
@@ -273,6 +304,7 @@ export default function ProductManager({
       category: form.category,
       listedDate: form.listedDate ? new Date(`${form.listedDate}T00:00:00`) : undefined,
       image: form.image.trim() || '/product-1.jpg',
+      photos: photos.length ? photos : [form.image.trim() || '/product-1.jpg'],
       stock,
       sizes: sizesValue ?? undefined,
       sizeEnabled,
@@ -489,32 +521,61 @@ export default function ProductManager({
           </div>
           <div className="sm:col-span-2">
             <label htmlFor="np-image" className="mb-1.5 block text-[14px] text-txt-2">
-              商品圖片
+              商品圖片（可以好多張；第一張＝封面，最多 12 張）
             </label>
-            <div className="flex items-center gap-3">
-              {form.image ? (
-                <img
-                  src={form.image}
-                  alt="商品圖片預覽"
-                  className="h-12 w-12 shrink-0 rounded-lg border object-cover"
-                  style={{ borderColor: 'var(--space-line)' }}
-                />
-              ) : null}
+            {/* 相簿縮圖：✕ 刪除；第一張係封面 */}
+            {photos.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2.5">
+                {photos.map((src, i) => (
+                  <span key={`${src}-${i}`} className="relative inline-block">
+                    <img
+                      src={src}
+                      alt={`商品圖片 ${i + 1}`}
+                      className="h-14 w-14 rounded-lg border object-cover"
+                      style={{ borderColor: i === 0 ? 'var(--pink)' : 'var(--space-line)' }}
+                    />
+                    {i === 0 && (
+                      <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 rounded-full bg-pink px-1.5 text-[10px] font-bold leading-4 text-space-1">
+                        封面
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      aria-label={`刪除第 ${i + 1} 張相`}
+                      onClick={() => setPhotos((p) => p.filter((_, idx) => idx !== i))}
+                      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border bg-space-1 text-txt-3 transition-colors hover:text-pink-soft"
+                      style={{ borderColor: 'var(--space-line)' }}
+                    >
+                      <X size={11} aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
               <input
                 id="np-image"
                 value={form.image}
                 onChange={(e) => set('image')(e.target.value)}
                 className={`${inputCls} font-mono`}
-                placeholder="/product-1.jpg"
+                placeholder="手動貼路徑，例如 /product-1.jpg"
               />
+              <button
+                type="button"
+                onClick={addManualPhoto}
+                className="btn btn-secondary shrink-0 !px-3 !py-2.5 text-[13px]"
+              >
+                加入
+              </button>
               <input
                 ref={imageFileRef}
                 type="file"
+                multiple
                 accept="image/jpeg,image/png,image/webp"
                 className="hidden"
                 onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void uploadImage(f);
+                  const fs = e.target.files ? [...e.target.files] : [];
+                  if (fs.length > 0) void uploadImages(fs);
                   e.target.value = '';
                 }}
               />
@@ -525,9 +586,14 @@ export default function ProductManager({
                 className="btn btn-primary shrink-0 !px-4 !py-2.5 text-[13px] disabled:opacity-60"
               >
                 <Upload size={14} aria-hidden="true" />
-                {uploading ? '上傳中…' : '上傳'}
+                {uploading ? '上傳中…' : '上傳（可揀多張）'}
               </button>
             </div>
+            {photos.length === 0 && (
+              <p className="mt-1.5 text-[12px] text-txt-3">
+                相簿而家係空：會用上面路徑嗰張做唯一商品圖。
+              </p>
+            )}
           </div>
           <div className="sm:col-span-2">
             <label htmlFor="np-note" className="mb-1.5 block text-[14px] text-txt-2">
