@@ -215,6 +215,28 @@ export const ordersRouter = createRouter({
       return order;
     }),
 
+  /**
+   * 單據（receipt）：前台 /#/receipt/:orderId 用——白紙黑字可列印嘅正式單據。
+   * 員工／admin 可以攞任何單；會員只可以攞自己嘅單（唔畀睇人哋嘅單）。
+   */
+  receipt: authedProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.id, input.orderId),
+        with: { items: true, user: { columns: { name: true, phone: true } } },
+      });
+      if (!order) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
+      }
+      const isStaff = ctx.user.role === "staff" || ctx.user.role === "admin";
+      if (!isStaff && order.userId !== ctx.user.userId) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "呢張唔係你嘅訂單" });
+      }
+      return order;
+    }),
+
   attachPaymentProof: authedProcedure
     .input(
       z.object({
