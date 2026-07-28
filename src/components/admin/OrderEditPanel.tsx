@@ -117,6 +117,16 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
       <h4 className="text-[13px] font-bold tracking-[0.08em] text-gold">
         編輯訂單（{order.orderNo}）
       </h4>
+      {order.status === 'cancelled' && (
+        <p className="mt-2 text-[12px] text-gold">
+          呢張訂單已取消：改動只更新記錄，唔會郁庫存。
+        </p>
+      )}
+      {order.status === 'approved' && (
+        <p className="mt-2 text-[12px] text-gold">
+          呢張訂單已確認：如果已送 WMS／已執貨，改動後請同倉務跟進。
+        </p>
+      )}
 
       {/* 貨品行：數量 stepper + 移除 */}
       <ul className="mt-3 flex flex-col gap-2">
