@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, Images, LayoutList, LogIn, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Images, LayoutList, LogIn, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -9,6 +9,7 @@ import { useToasts } from '@/components/admin/useToasts';
 import Lightbox from '@/components/admin/Lightbox';
 import ReviewWorkbench from '@/components/admin/ReviewWorkbench';
 import OrderList from '@/components/admin/OrderList';
+import PurchaseStats from '@/components/admin/PurchaseStats';
 import ProductManager from '@/components/admin/ProductManager';
 import PraiseManager from '@/components/admin/PraiseManager';
 import PromoManager from '@/components/admin/PromoManager';
@@ -31,6 +32,7 @@ type ViewKey =
   | 'analytics'
   | 'review'
   | 'orders'
+  | 'purchase'
   | 'products'
   | 'praise'
   | 'promo'
@@ -149,6 +151,7 @@ function AdminConsole() {
       badge: queue.length,
     },
     { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
+    { key: 'purchase', label: '訂貨統計', icon: <ClipboardList size={17} aria-hidden="true" /> },
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
     { key: 'praise', label: '客戶打卡牆', icon: <Images size={17} aria-hidden="true" /> },
     { key: 'promo', label: '優惠碼', icon: <TicketPercent size={17} aria-hidden="true" /> },
@@ -193,6 +196,7 @@ function AdminConsole() {
         onOpenLightbox={setLightboxSrc}
       />
     ),
+    purchase: <PurchaseStats />,
     products: <ProductManager toast={pushToast} />,
     praise: <PraiseManager toast={pushToast} />,
     promo: <PromoManager toast={pushToast} />,
