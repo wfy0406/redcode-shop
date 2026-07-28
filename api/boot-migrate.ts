@@ -115,6 +115,9 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS "discountAmount" integer NOT NULL DE
 -- 優惠碼每人限用次數（每個帳號限用 N 次；NULL＝唔限）——2026-07-28
 ALTER TABLE "promoCodes" ADD COLUMN IF NOT EXISTS "perUserLimit" integer;
 
+-- 商品相簿（多張相；photos[0]＝封面）——2026-07-28
+ALTER TABLE products ADD COLUMN IF NOT EXISTS "photos" text[];
+
 -- 商品定時自動下架（開關＋時間；到時前台自動消失，唔使 cron）
 ALTER TABLE products ADD COLUMN IF NOT EXISTS "delistEnabled" boolean NOT NULL DEFAULT false;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS "delistAt" timestamp;

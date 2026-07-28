@@ -80,6 +80,8 @@ export const productsRouter = createRouter({
         name: z.string().min(1),
         description: z.string().optional(),
         image: z.string().min(1),
+        // 多相相簿（最多 12 張）：photos[0]＝封面，server 同步寫入 image 欄
+        photos: z.array(z.string().min(1).max(512)).max(12).optional(),
         price: z.number().int().nonnegative(),
         discountPrice: z.number().int().nonnegative().optional(),
         sizes: z.string().optional(),
@@ -101,13 +103,16 @@ export const productsRouter = createRouter({
       if (dup) {
         throw new TRPCError({ code: "CONFLICT", message: "貨號已存在" });
       }
+      // 多相：畀咗 photos 就用佢（第一張＝封面同步落 image 欄）；冇就由 image 欄做唯一一張
+      const gallery = input.photos?.length ? input.photos : [input.image];
       const [{ id }] = await db
         .insert(products)
         .values({
           sku: input.sku,
           name: input.name,
           description: input.description ?? null,
-          image: input.image,
+          image: gallery[0],
+          photos: gallery,
           price: input.price,
           discountPrice: input.discountPrice ?? null,
           sizes: input.sizes ?? null,
@@ -139,6 +144,7 @@ export const productsRouter = createRouter({
         name: z.string().min(1).optional(),
         description: z.string().nullable().optional(),
         image: z.string().min(1).optional(),
+        photos: z.array(z.string().min(1).max(512)).max(12).optional(),
         price: z.number().int().nonnegative().optional(),
         discountPrice: z.number().int().nonnegative().nullable().optional(),
         sizes: z.string().nullable().optional(),
@@ -160,6 +166,13 @@ export const productsRouter = createRouter({
       });
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在" });
+      }
+      // 多相：畀咗 photos 就同步封面 image＝photos[0]（唔准空相簿）；冇畀就唔郁舊相
+      if (data.photos !== undefined) {
+        if (data.photos.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "商品至少要有一張相" });
+        }
+        data.image = data.photos[0];
       }
       await db.update(products).set(data).where(eq(products.id, id));
       void logAudit({

@@ -48,6 +48,8 @@ export const products = pgTable("products", {
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
   image: varchar("image", { length: 512 }).notNull(),
+  // 商品相簿（多張相）：photos[0]＝封面（同 image 欄同步）；NULL/空＝得 image 一張（2026-07-28）
+  photos: text("photos").array(),
   price: integer("price").notNull(),
   discountPrice: integer("discountPrice"),
   sizes: varchar("sizes", { length: 255 }),
