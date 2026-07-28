@@ -101,8 +101,8 @@ const CANCELLABLE: OrderStatus[] = [
   'shipped',
 ];
 
-/** 可以手動改單嘅狀態（未確認＝未收錢先改得；已確認/已取消唔准改） */
-const EDITABLE: OrderStatus[] = ['pending_payment', 'payment_review', 'rejected'];
+/** 可以手動改單嘅狀態：已出貨／已完成以外都改得（已取消嘅單改動只更新記錄，唔郁庫存） */
+const EDITABLE: OrderStatus[] = ['pending_payment', 'payment_review', 'rejected', 'approved', 'cancelled'];
 
 interface OrderListProps {
   orders: AdminOrder[];
