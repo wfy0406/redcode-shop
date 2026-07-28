@@ -5,6 +5,8 @@
  * v1.3：webhook payload 調整 + 回調 rejectType 分流：
  *   ① productCode 送貨號 sku（有尺寸就 {sku}-{尺寸}，例如「B133-S」）；
  *     〔2026-07-28 跟 WMS《貨號欄位修正請求》由 v1.3 嘅名稱組裝改為 sku 組裝〕
+ *   ② sourcePayload.items 每件加 listedDate（YYYY-MM-DD）——WMS v1.3.7 起
+ *     訂單日期用貨品上架日期（對唔到貨號／冇欄位就繼續用落單日期，向後相容）；
  *   ② actualPrice 改送扣完優惠碼嘅單件實收（按行金額比例攤分，最後一件食尾數）；
  *   ③ 停送 customerEmail／paymentMethod／sessionNo／color；remark 唔再包「尺寸」段；
  *   ④ 回調 decision=rejected 新增 rejectType：cancel＝訂單取消（終態）／reupload＝付款重傳
@@ -29,7 +31,7 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { getDb } from "./queries/connection";
 import { orders, paymentProofs, products, wmsSyncLog } from "@db/schema";
@@ -235,6 +237,15 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     order.discountAmount ?? 0,
     order.total,
   );
+  // 2026-07-28 WMS 更新：sourcePayload items 每件加 listedDate（YYYY-MM-DD），
+  // WMS 用貨品上架日期做訂單日期，等倉管對返邊批貨
+  const productIds = [...new Set(order.items.map((i) => i.productId))];
+  const productRows = await db
+    .select({ id: products.id, listedDate: products.listedDate })
+    .from(products)
+    .where(inArray(products.id, productIds));
+  const listedDateMap = new Map(productRows.map((p) => [p.id, hktDate(p.listedDate)]));
+
   const sourcePayload = JSON.stringify({
     orderNo: order.orderNo,
     orderDateHKT: hktDate(order.createdAt),
@@ -260,6 +271,7 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
       size: i.size,
       quantity: i.quantity,
       price: i.price,
+      listedDate: listedDateMap.get(i.productId) ?? null,
     })),
     screenshotUrl: proof ? `${publicBaseUrl()}${proof.imagePath}` : null,
   });
