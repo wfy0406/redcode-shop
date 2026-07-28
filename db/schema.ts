@@ -136,6 +136,8 @@ export const promoCodes = pgTable("promoCodes", {
   value: integer("value").notNull(),
   minSpend: integer("minSpend").notNull().default(0),
   usageLimit: integer("usageLimit"),
+  // 每人限用次數（每個帳號限用 N 次；NULL＝唔限）——2026-07-28 新增
+  perUserLimit: integer("perUserLimit"),
   usedCount: integer("usedCount").notNull().default(0),
   expiresAt: timestamp("expiresAt"),
   isActive: boolean("isActive").notNull().default(true),
