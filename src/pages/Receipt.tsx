@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, Printer } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import { useAuth } from '@/hooks/useAuth';
 import { LoadingBlock } from '@/components/admin/WishingStar';
 
 /**
@@ -37,7 +38,18 @@ const line = '#e6e0d5';
 export default function Receipt() {
   const { orderId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const id = Number(orderId);
+
+  // 後台「單據」係新分頁開——分頁冇瀏覽歷史，navigate(-1) 會冇反應；
+  // 冇歷史就按身份返去所屬頁（員工 → 後台，會員 → 會員中心）
+  const goBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate(user?.role === 'staff' || user?.role === 'admin' ? '/admin' : '/account');
+    }
+  };
   const q = trpc.orders.receipt.useQuery(
     { orderId: id },
     { enabled: Number.isInteger(id) && id > 0, retry: false, refetchOnWindowFocus: false },
@@ -59,7 +71,7 @@ export default function Receipt() {
         </p>
         <button
           type="button"
-          onClick={() => navigate(-1)}
+          onClick={goBack}
           className="btn btn-secondary !px-6 !py-2.5 text-[14px]"
         >
           返回
@@ -83,7 +95,7 @@ export default function Receipt() {
       <div className="receipt-no-print mb-6 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={() => navigate(-1)}
+          onClick={goBack}
           className="btn btn-secondary !px-4 !py-2 text-[13px]"
         >
           <ArrowLeft size={14} aria-hidden="true" />
