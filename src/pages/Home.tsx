@@ -507,14 +507,14 @@ export default function Home() {
               src="/gloglo-1.jpg"
               alt="主播 Glo Glo 直播造型一"
               wrapperClassName="rounded-2xl border"
-              className="aspect-[4/5] w-full object-cover"
+              className="aspect-[4/5] h-full w-full object-cover"
             />
             <DuotoneImage
               off
               src="/gloglo-2.jpg"
               alt="主播 Glo Glo 直播造型二"
               wrapperClassName="mt-10 rounded-2xl border"
-              className="aspect-[4/5] w-full object-cover"
+              className="aspect-[4/5] h-full w-full object-cover"
             />
           </div>
 
