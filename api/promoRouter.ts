@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { desc, eq, ne, and } from "drizzle-orm";
+import { desc, eq, ne, and, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { promoCodes, type PromoCode } from "@db/schema";
+import { orders, promoCodes, type PromoCode } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 
@@ -31,6 +31,7 @@ export async function resolvePromoDiscount(
   db: PromoDb,
   rawCode: string,
   subtotal: number,
+  usageByUser?: number,
 ): Promise<{ promo: PromoCode; discountAmount: number }> {
   const code = normalizePromoCode(rawCode);
   const promo = await db.query.promoCodes.findFirst({
@@ -54,6 +55,18 @@ export async function resolvePromoDiscount(
   if (promo.usageLimit !== null && promo.usedCount >= promo.usageLimit) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已用完" });
   }
+  // 每人限用：caller 先數好呢個帳號用過呢個碼幾多次
+  // （口徑同 usedCount 一樣——計已建立嘅訂單，取消唔扣返）
+  if (
+    promo.perUserLimit !== null &&
+    usageByUser !== undefined &&
+    usageByUser >= promo.perUserLimit
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `每人限用 ${promo.perUserLimit} 次，你呢個帳號已經用晒`,
+    });
+  }
   const discountAmount =
     promo.kind === "percent"
       ? Math.floor((subtotal * promo.value) / 100)
@@ -67,6 +80,7 @@ const promoFieldsSchema = z.object({
   value: z.number().int().positive(),
   minSpend: z.number().int().nonnegative().optional(),
   usageLimit: z.number().int().positive().optional(),
+  perUserLimit: z.number().int().positive().optional(),
   expiresAt: z.coerce.date().optional(),
 });
 
@@ -87,12 +101,23 @@ export const promoRouter = createRouter({
         subtotal: z.number().int().positive(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
+      // 每人限用檢查用：數呢個帳號之前用過呢個碼幾多次
+      const [{ n: myUses }] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.promoCode, normalizePromoCode(input.code)),
+            eq(orders.userId, ctx.user.userId),
+          ),
+        );
       const { promo, discountAmount } = await resolvePromoDiscount(
         db,
         input.code,
         input.subtotal,
+        myUses,
       );
       return {
         code: promo.code,
@@ -131,6 +156,7 @@ export const promoRouter = createRouter({
           value: input.value,
           minSpend: input.minSpend ?? 0,
           usageLimit: input.usageLimit ?? null,
+          perUserLimit: input.perUserLimit ?? null,
           expiresAt: input.expiresAt ?? null,
         })
         .returning({ id: promoCodes.id });
@@ -154,6 +180,7 @@ export const promoRouter = createRouter({
         value: z.number().int().positive().optional(),
         minSpend: z.number().int().nonnegative().optional(),
         usageLimit: z.number().int().positive().nullable().optional(),
+        perUserLimit: z.number().int().positive().nullable().optional(),
         expiresAt: z.coerce.date().nullable().optional(),
         isActive: z.boolean().optional(),
       }),
@@ -173,6 +200,7 @@ export const promoRouter = createRouter({
       if (fields.value !== undefined) data.value = fields.value;
       if (fields.minSpend !== undefined) data.minSpend = fields.minSpend;
       if (fields.usageLimit !== undefined) data.usageLimit = fields.usageLimit;
+      if (fields.perUserLimit !== undefined) data.perUserLimit = fields.perUserLimit;
       if (fields.expiresAt !== undefined) data.expiresAt = fields.expiresAt;
       if (fields.isActive !== undefined) data.isActive = fields.isActive;
       const kind = (data.kind ?? existing.kind) as "percent" | "fixed";
