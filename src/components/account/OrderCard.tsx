@@ -1,4 +1,5 @@
-import { Ticket } from 'lucide-react';
+import { Link } from 'react-router';
+import { Receipt, Ticket } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import OrderTimeline from './OrderTimeline';
 import PaymentProofDropzone from './PaymentProofDropzone';
@@ -72,7 +73,14 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="font-mono text-sm text-txt-2">{order.orderNo}</span>
         <span className="text-[13px] text-txt-3">{formatOrderDate(order.createdAt)}</span>
-        <span className="ml-auto">
+        <span className="ml-auto flex items-center gap-3">
+          <Link
+            to={`/receipt/${order.id}`}
+            className="flex items-center gap-1 text-[12px] text-lavender underline underline-offset-4 transition-colors hover:text-txt-1"
+          >
+            <Receipt size={13} aria-hidden="true" />
+            單據
+          </Link>
           <StatusBadge status={order.status} />
         </span>
       </div>
