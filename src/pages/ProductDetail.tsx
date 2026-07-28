@@ -56,6 +56,13 @@ export default function ProductDetail() {
   const [sizeError, setSizeError] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
+  // 相簿：有 photos 用 photos；冇（舊貨／示範款）就由 image 做唯一一張
+  const [activePhoto, setActivePhoto] = useState(0);
+  const gallery = useMemo(() => {
+    const list = product?.photos?.length ? product.photos : [product?.image];
+    return list.filter((s): s is string => Boolean(s));
+  }, [product?.photos, product?.image]);
+  const shownPhoto = gallery[activePhoto] ?? gallery[0];
 
   const addCart = trpc.cart.add.useMutation({
     onSuccess: () => {
@@ -152,24 +159,46 @@ export default function ProductDetail() {
       )}
 
       <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-14">
-        {/* 左：大圖 */}
-        <div className="relative overflow-hidden rounded-3xl border" style={{ borderColor: 'var(--glass-border)' }}>
-          {discounted && (
-            <span className="absolute left-4 top-4 z-10 rounded-full bg-pink px-3 py-1 text-[12px] font-bold text-space-1">
-              優惠中
-            </span>
+        {/* 左：相簿（主圖＋縮圖列；多過一張先出縮圖） */}
+        <div>
+          <div className="relative overflow-hidden rounded-3xl border" style={{ borderColor: 'var(--glass-border)' }}>
+            {discounted && (
+              <span className="absolute left-4 top-4 z-10 rounded-full bg-pink px-3 py-1 text-[12px] font-bold text-space-1">
+                優惠中
+              </span>
+            )}
+            {outOfStock && (
+              <span className="absolute right-4 top-4 z-10 rounded-full border px-3 py-1 text-[12px] text-txt-2 backdrop-blur" style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}>
+                暫時售罄
+              </span>
+            )}
+            <img
+              src={shownPhoto}
+              alt={product.name}
+              className="aspect-[3/4] w-full object-cover"
+              style={{ background: 'var(--space-2)' }}
+            />
+          </div>
+          {gallery.length > 1 && (
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+              {gallery.map((src, i) => (
+                <button
+                  key={`${src}-${i}`}
+                  type="button"
+                  onClick={() => setActivePhoto(i)}
+                  aria-label={`睇第 ${i + 1} 張相`}
+                  aria-pressed={i === activePhoto}
+                  className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border transition-opacity"
+                  style={{
+                    borderColor: i === activePhoto ? 'var(--pink)' : 'var(--glass-border)',
+                    opacity: i === activePhoto ? 1 : 0.6,
+                  }}
+                >
+                  <img src={src} alt="" className="h-full w-full object-cover" />
+                </button>
+              ))}
+            </div>
           )}
-          {outOfStock && (
-            <span className="absolute right-4 top-4 z-10 rounded-full border px-3 py-1 text-[12px] text-txt-2 backdrop-blur" style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}>
-              暫時售罄
-            </span>
-          )}
-          <img
-            src={product.image}
-            alt={product.name}
-            className="aspect-[3/4] w-full object-cover"
-            style={{ background: 'var(--space-2)' }}
-          />
         </div>
 
         {/* 右：資訊 */}
