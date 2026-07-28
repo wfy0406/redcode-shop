@@ -242,7 +242,7 @@ export const ordersRouter = createRouter({
         await resetWmsSyncLogForReupload(order.id);
       }
       // 同單未審嘅舊截圖自動作廢，等 staff 淨係見到最新一張
-      await db
+       await db
         .update(paymentProofs)
         .set({
           status: "rejected",
@@ -429,12 +429,15 @@ export const ordersRouter = createRouter({
       if (!order) {
         throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
       }
-      if (!["pending_payment", "payment_review", "rejected"].includes(order.status)) {
+      // 2026-07-28 放寬：管理員可以直接改已確認／已取消嘅單；只剩已出貨／已完成唔改得
+      if (order.status === "shipped" || order.status === "completed") {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "呢張訂單已確認／已取消，唔可以再改（可以取消後叫客人重新落單）",
+          message: "已出貨／已完成嘅訂單唔可以再改",
         });
       }
+      // 已取消嘅單：取消嗰刻已經加返晒庫存，改單只更新記錄，唔好再郁庫存（否則雙重返倉）
+      const skipStock = order.status === "cancelled";
       const productIds = [...new Set(input.items.map((i) => i.productId))];
       const productRows = await db
         .select()
@@ -492,32 +495,34 @@ export const ordersRouter = createRouter({
       const total = subtotal - discountAmount;
 
       await db.transaction(async (tx) => {
-        // 加貨／加量：差額扣庫存（唔夠貨會擋）
-        for (const [pid, qty] of newQty) {
-          const delta = qty - (oldQty.get(pid) ?? 0);
-          if (delta > 0) {
-            const deducted = await tx
-              .update(products)
-              .set({ stock: sql`${products.stock} - ${delta}` })
-              .where(and(eq(products.id, pid), gte(products.stock, delta)))
-              .returning({ id: products.id });
-            if (deducted.length === 0) {
-              const p = productMap.get(pid)!;
-              throw new TRPCError({
-                code: "BAD_REQUEST",
-                message: `《${p.name}》庫存唔夠加（想加 ${delta} 件，淨返 ${p.stock} 件）`,
-              });
+        if (!skipStock) {
+          // 加貨／加量：差額扣庫存（唔夠貨會擋）
+          for (const [pid, qty] of newQty) {
+            const delta = qty - (oldQty.get(pid) ?? 0);
+            if (delta > 0) {
+              const deducted = await tx
+                .update(products)
+                .set({ stock: sql`${products.stock} - ${delta}` })
+                .where(and(eq(products.id, pid), gte(products.stock, delta)))
+                .returning({ id: products.id });
+              if (deducted.length === 0) {
+                const p = productMap.get(pid)!;
+                throw new TRPCError({
+                  code: "BAD_REQUEST",
+                  message: `《${p.name}》庫存唔夠加（想加 ${delta} 件，淨返 ${p.stock} 件）`,
+                });
+              }
             }
           }
-        }
-        // 減貨／減量／刪行：差額加返
-        for (const [pid, qty] of oldQty) {
-          const delta = qty - (newQty.get(pid) ?? 0);
-          if (delta > 0) {
-            await tx
-              .update(products)
-              .set({ stock: sql`${products.stock} + ${delta}` })
-              .where(eq(products.id, pid));
+          // 減貨／減量／刪行：差額加返
+          for (const [pid, qty] of oldQty) {
+            const delta = qty - (newQty.get(pid) ?? 0);
+            if (delta > 0) {
+              await tx
+                .update(products)
+                .set({ stock: sql`${products.stock} + ${delta}` })
+                .where(eq(products.id, pid));
+            }
           }
         }
         // 明細全量替換 + 金額更新（同事務，唔會得一半）
@@ -548,7 +553,7 @@ export const ordersRouter = createRouter({
         action: "order.adminUpdate",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `後台改單 ${order.orderNo}：貨品「${fmtLines(order.items)}」→「${fmtLines(newLines)}」；折扣 HK$${order.discountAmount} → HK$${discountAmount}；實收 HK$${order.total} → HK$${total}`,
+        detail: `後台改單 ${order.orderNo}：貨品「${fmtLines(order.items)}」→「${fmtLines(newLines)}」；折扣 HK$${order.discountAmount} → HK$${discountAmount}；實收 HK$${order.total} → HK$${total}${skipStock ? "（已取消訂單：只更新記錄，庫存無變）" : ""}`,
       });
       const updated = await db.query.orders.findFirst({
         where: eq(orders.id, order.id),
@@ -556,6 +561,32 @@ export const ordersRouter = createRouter({
       });
       return { order: updated, wmsWarning };
     }),
+
+  /**
+   * 訂貨統計（採購用）：按 產品×尺寸 聚合「有效訂單」件數，附上架日期同現貨庫存。
+   * 有效＝排除 cancelled／rejected（同 analytics 慣例一致；被拒單客人重傳截圖通過後會計返）。
+   * 上架日期＝products.listedDate（商品管理可填）；產品改過名都唔會拆開兩行（max 攞最新名）。
+   * 每個 size 一列；冇尺寸嘅貨 size=null。前台再按 HKT 上架日期分組顯示。
+   */
+  purchaseStats: staffProcedure.query(async () => {
+    const db = getDb();
+    return db
+      .select({
+        productId: orderItems.productId,
+        name: sql<string>`max(${orderItems.productName})`,
+        sku: sql<string>`max(${orderItems.sku})`,
+        size: orderItems.size,
+        units: sql<number>`sum(${orderItems.quantity})::int`,
+        listedDate: products.listedDate,
+        stock: products.stock,
+      })
+      .from(orderItems)
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .innerJoin(products, eq(orderItems.productId, products.id))
+      .where(sql`${orders.status} not in ('cancelled', 'rejected')`)
+      .groupBy(orderItems.productId, orderItems.size, products.listedDate, products.stock)
+      .orderBy(desc(products.listedDate), desc(sql`sum(${orderItems.quantity})`));
+  }),
 
   /**
    * 完整刪除一張訂單（連截圖記錄／WMS 同步記錄／明細行一齊刪，資料庫唔留痕）。
