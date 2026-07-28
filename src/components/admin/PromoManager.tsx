@@ -23,6 +23,7 @@ type PromoRow = {
   value: number;
   minSpend: number;
   usageLimit: number | null;
+  perUserLimit: number | null;
   usedCount: number;
   expiresAt: Date | string | null;
   isActive: boolean;
@@ -35,6 +36,7 @@ const initialForm = {
   value: '',
   minSpend: '',
   usageLimit: '',
+  perUserLimit: '',
   expiresAt: '',
 };
 
@@ -111,7 +113,14 @@ export default function PromoManager({
     }
     const usageLimit = form.usageLimit.trim() ? Number.parseInt(form.usageLimit, 10) : undefined;
     if (usageLimit !== undefined && (!Number.isInteger(usageLimit) || usageLimit <= 0)) {
-      setFormError('限用次數要係正整數');
+      setFormError('總限用次數要係正整數');
+      return;
+    }
+    const perUserLimit = form.perUserLimit.trim()
+      ? Number.parseInt(form.perUserLimit, 10)
+      : undefined;
+    if (perUserLimit !== undefined && (!Number.isInteger(perUserLimit) || perUserLimit <= 0)) {
+      setFormError('每人限用次數要係正整數');
       return;
     }
     setFormError(null);
@@ -121,6 +130,7 @@ export default function PromoManager({
       value,
       minSpend,
       usageLimit,
+      perUserLimit,
       expiresAt: form.expiresAt ? new Date(`${form.expiresAt}T00:00:00`) : undefined,
     });
   };
@@ -195,7 +205,7 @@ export default function PromoManager({
           </div>
           <div>
             <label htmlFor="np-usagelimit" className="mb-1.5 block text-[14px] text-txt-2">
-              限用次數（選填）
+              總限用次數（選填）
             </label>
             <input
               id="np-usagelimit"
@@ -204,6 +214,19 @@ export default function PromoManager({
               onChange={(e) => set('usageLimit')(e.target.value)}
               className={`${inputCls} font-mono`}
               placeholder="留空即不限次數"
+            />
+          </div>
+          <div>
+            <label htmlFor="np-peruser" className="mb-1.5 block text-[14px] text-txt-2">
+              每人限用次數（選填）
+            </label>
+            <input
+              id="np-peruser"
+              inputMode="numeric"
+              value={form.perUserLimit}
+              onChange={(e) => set('perUserLimit')(e.target.value)}
+              className={`${inputCls} font-mono`}
+              placeholder="留空即每人不限"
             />
           </div>
           <div>
@@ -285,7 +308,8 @@ export default function PromoManager({
                     </p>
                     <p className="mt-0.5 font-mono text-[12px] text-txt-3">
                       已用 {p.usedCount}
-                      {p.usageLimit != null ? `/${p.usageLimit}` : ''} 次 ·{' '}
+                      {p.usageLimit != null ? `/${p.usageLimit}` : ''} 次
+                      {p.perUserLimit != null ? ` · 每人限 ${p.perUserLimit} 次` : ''} ·{' '}
                       {p.expiresAt ? `${fmtDate(p.expiresAt)} 到期` : '無限期'}
                     </p>
                   </div>
