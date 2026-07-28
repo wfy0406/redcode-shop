@@ -124,7 +124,17 @@ export const ordersRouter = createRouter({
         let promoCodeValue: string | null = null;
         let discountAmount = 0;
         if (input?.promoCode?.trim()) {
-          const resolved = await resolvePromoDiscount(tx, input.promoCode, subtotal);
+          // 每人限用檢查用：先數呢個帳號之前用過呢個碼幾多次（口徑同 usedCount：計已建立訂單）
+          const [{ n: myUses }] = await tx
+            .select({ n: sql<number>`count(*)::int` })
+            .from(orders)
+            .where(
+              and(
+                eq(orders.promoCode, input.promoCode.toUpperCase().trim()),
+                eq(orders.userId, ctx.user.userId),
+              ),
+            );
+          const resolved = await resolvePromoDiscount(tx, input.promoCode, subtotal, myUses);
           promoCodeValue = resolved.promo.code;
           discountAmount = Math.min(resolved.discountAmount, subtotal);
           const bumped = await tx
