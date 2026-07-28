@@ -1,7 +1,7 @@
 export * from "./errors";
 
 /**
- * 商品分類（固定 7 類）—— 前後台共用
+ * 商品分類（固定 8 類）—— 前後台共用
  * value 係 DB 儲存值（products.category varchar(32)），label 係界面顯示
  */
 export const PRODUCT_CATEGORIES = [
@@ -9,6 +9,7 @@ export const PRODUCT_CATEGORIES = [
   { value: "pants", label: "褲" },
   { value: "dress", label: "裙" },
   { value: "shoes", label: "鞋" },
+  { value: "accessory", label: "飾物" },
   { value: "lifestyle", label: "生活用品" },
   { value: "skincare", label: "護膚品" },
   { value: "other", label: "其他" },
