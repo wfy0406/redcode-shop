@@ -12,7 +12,7 @@ import type { ToastKind } from './useToasts';
  * 2026-07-28 更新：
  * - 搜尋框：輸入名或電話即時篩（300ms debounce，server ilike 模糊對照）
  * - 表格加「地址」欄
- * - 撳任何一行彈出詳情：會員資料（名/電話/email/年齡/地址/註冊日）＋訂單統計＋最近 10 張訂單
+ * - 撳任何一行彈出詳情：會員資料（名/電話/email/年齡/生日月份/地址/註冊日）＋訂單統計＋最近 10 張訂單
  * - 每行有刪除掣：有訂單嘅會員會喺確認對話框講明連訂單一併刪（後端 members.remove 把關）
  */
 
@@ -36,6 +36,7 @@ type MemberDetail = {
     email: string | null;
     address: string | null;
     age: number | null;
+    birthMonth: number | null;
     role: string;
     createdAt: Date | string;
   };
@@ -174,8 +175,9 @@ export default function MemberList({
         </p>
       ) : (
         <>
-          {/* 手機版：卡片式列表（2026-07-29 修復——舊表格喺手機四欄逼埋，名淨係睇到一個字） */}
-          <ul className="mt-4 flex flex-col gap-2 sm:hidden">
+          {/* 手機/平板版：卡片式列表（2026-07-29 修復——舊表格喺手機四欄逼埋，名淨係睇到一個字；
+              同日起用 lg 分界：1024px 以下都用卡片，平板/窄電腦唔再逼表格） */}
+          <ul className="mt-4 flex flex-col gap-2 lg:hidden">
             {members.map((m) => (
               <li
                 key={m.id}
@@ -233,6 +235,12 @@ export default function MemberList({
                         <p className="text-[12px] text-txt-3">
                           年齡：<span className="text-txt-2">{detail.user.age ?? '—'}</span>
                         </p>
+                        <p className="mt-1 text-[12px] text-txt-3">
+                          生日月份：
+                          <span className="text-txt-2">
+                            {detail.user.birthMonth ? `${detail.user.birthMonth} 月` : '—'}
+                          </span>
+                        </p>
                         <h5 className="mt-3 text-[11px] font-bold tracking-[0.08em] text-gold">
                           最近訂單（最多 10 張）
                         </h5>
@@ -266,10 +274,10 @@ export default function MemberList({
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-[12px] text-txt-3 sm:hidden">撳任何一個會員，詳情即場喺嗰張卡下面展開。</p>
+          <p className="mt-2 text-[12px] text-txt-3 lg:hidden">撳任何一個會員，詳情即場喺嗰張卡下面展開。</p>
 
-          {/* 桌面版：原表格（位夠闊，唔使改） */}
-          <div className="mt-4 hidden overflow-x-auto sm:block">
+          {/* 桌面版（lg+）：表格。名欄唔截斷（whitespace-nowrap），太窄可以左右碌 */}
+          <div className="mt-4 hidden overflow-x-auto lg:block">
             <table className="w-full min-w-[780px] border-collapse text-[14px]">
             <thead>
               <tr
@@ -294,7 +302,7 @@ export default function MemberList({
                   className="cursor-pointer border-b transition-colors last:border-0 hover:bg-white/5"
                   style={{ borderColor: 'var(--space-line)' }}
                 >
-                  <td className="max-w-0 truncate py-2.5 pr-3 text-txt-1">{m.name}</td>
+                  <td className="whitespace-nowrap py-2.5 pr-4 font-medium text-txt-1">{m.name}</td>
                   <td className="py-2.5 pr-3 font-mono text-[13px] text-txt-2">{m.phone}</td>
                   <td className="max-w-0 truncate py-2.5 pr-3 font-mono text-[13px] text-txt-3">
                     {m.email || '—'}
@@ -334,10 +342,10 @@ export default function MemberList({
         </>
       )}
 
-      {/* 會員詳情彈窗（只限電腦版 sm+；手機用卡片即場展開，詳情出喺你撳嘅位置） */}
+      {/* 會員詳情彈窗（只限電腦版 lg+；手機/平板用卡片即場展開，詳情出喺你撳嘅位置） */}
       {selectedId !== null && (
         <div
-          className="fixed inset-0 z-50 hidden h-dvh items-center justify-center bg-black/60 p-4 backdrop-blur-sm sm:flex"
+          className="fixed inset-0 z-50 hidden h-dvh items-center justify-center bg-black/60 p-4 backdrop-blur-sm lg:flex"
           onClick={() => setSelectedId(null)}
           role="dialog"
           aria-modal="true"
@@ -381,6 +389,12 @@ export default function MemberList({
                   </p>
                   <p className="text-txt-3">
                     年齡：<span className="text-txt-2">{detail.user.age ?? '—'}</span>
+                  </p>
+                  <p className="text-txt-3">
+                    生日月份：
+                    <span className="text-txt-2">
+                      {detail.user.birthMonth ? `${detail.user.birthMonth} 月` : '—'}
+                    </span>
                   </p>
                   <p className="text-txt-3">
                     註冊：

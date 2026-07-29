@@ -60,6 +60,7 @@ export const membersRouter = createRouter({
           email: users.email,
           address: users.address,
           age: users.age,
+          birthMonth: users.birthMonth,
           role: users.role,
           createdAt: users.createdAt,
         })

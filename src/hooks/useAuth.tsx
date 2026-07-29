@@ -16,6 +16,7 @@ type AuthUser = {
   role: "member" | "staff" | "admin";
   address?: string | null;
   age?: number | null;
+  birthMonth?: number | null;
 };
 
 type RegisterInput = {
@@ -24,6 +25,7 @@ type RegisterInput = {
   password: string;
   address?: string;
   age?: number;
+  birthMonth?: number;
 };
 
 type AuthContextValue = {

@@ -9,7 +9,7 @@ import GoogleLoginButton from '@/components/account/GoogleLoginButton';
 /**
  * RedCode 設計系統 §P5 —— 會員註冊 /register
  * 玻璃卡表單：寶寶（買家）姓名、電話（登入帳號，亦係 WhatsApp 通知渠道）、
- * 密碼、確認密碼、地址（選填）、年齡（選填）。
+ * 密碼、確認密碼、地址（選填）、年齡（選填）、生日月份（選填，2026-07-29 加）。
  * 前端驗證：必填 / 電話 8 位數字起 / 密碼 ≥6 位 / 兩次密碼一致；
  * 後端 CONFLICT（電話已註冊）友善顯示。成功自動登入 → /account。
  */
@@ -54,6 +54,7 @@ export default function Register() {
   const [confirm, setConfirm] = useState('');
   const [address, setAddress] = useState('');
   const [age, setAge] = useState('');
+  const [birthMonth, setBirthMonth] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -90,6 +91,7 @@ export default function Register() {
         password,
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(age.trim() ? { age: Number(age) } : {}),
+        ...(birthMonth ? { birthMonth: Number(birthMonth) } : {}),
       });
       navigate('/account', { replace: true });
     } catch (err) {
@@ -184,6 +186,34 @@ export default function Register() {
             error={errors.age}
             onChange={(e) => setAge(e.target.value)}
           />
+          {/* 生日月份（選填）：下拉揀 1–12 月；舊會員留空都得，之後可以補 */}
+          <div className="w-full">
+            <label
+              htmlFor="reg-birth-month"
+              className="mb-2 flex items-baseline justify-between gap-2 text-sm text-txt-2"
+            >
+              <span>
+                生日月份
+                <span className="ml-2 text-[13px] text-txt-3">（選填）</span>
+              </span>
+              <span className="text-[13px] text-txt-3">Glo Glo 想記住你嘅大日子</span>
+            </label>
+            <select
+              id="reg-birth-month"
+              value={birthMonth}
+              onChange={(e) => setBirthMonth(e.target.value)}
+              className={`h-12 w-full rounded-xl border border-space-line bg-space-2 px-4 text-[15px] transition-[border-color,box-shadow] duration-200 focus:border-pink focus:shadow-[0_0_0_3px_rgba(255,0,84,0.15)] focus:outline-none ${
+                birthMonth ? 'text-txt-1' : 'text-txt-3'
+              }`}
+            >
+              <option value="">揀月份…</option>
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={String(i + 1)}>
+                  {i + 1} 月
+                </option>
+              ))}
+            </select>
+          </div>
 
           {submitError && (
             <p

@@ -97,6 +97,9 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS "sizeEnabled" boolean NOT NULL DEF
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email varchar(255);
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (email);
 
+-- 2026-07-29：會員生日月份（選填，1–12；舊會員留空＝NULL）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "birthMonth" integer;
+
 CREATE TABLE IF NOT EXISTS "promoCodes" (
   id serial PRIMARY KEY,
   code varchar(32) NOT NULL UNIQUE,

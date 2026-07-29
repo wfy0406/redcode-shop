@@ -38,6 +38,8 @@ export const users = pgTable("users", {
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
   address: text("address"),
   age: integer("age"),
+  // 生日月份（1–12，選填；2026-07-29 加。舊會員留空＝NULL，之後可以補填）
+  birthMonth: integer("birthMonth"),
   role: roleEnum("role").notNull().default("member"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });

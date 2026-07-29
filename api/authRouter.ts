@@ -15,6 +15,7 @@ const publicUser = (u: typeof users.$inferSelect) => ({
   email: u.email,
   address: u.address,
   age: u.age,
+  birthMonth: u.birthMonth,
   role: u.role,
   createdAt: u.createdAt,
 });
@@ -28,6 +29,8 @@ export const authRouter = createRouter({
         password: z.string().min(6),
         address: z.string().optional(),
         age: z.number().int().min(0).max(150).optional(),
+        // 生日月份（選填，1–12；舊會員留空）
+        birthMonth: z.number().int().min(1).max(12).optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -49,6 +52,7 @@ export const authRouter = createRouter({
           passwordHash: hashPassword(input.password),
           address: input.address ?? null,
           age: input.age ?? null,
+          birthMonth: input.birthMonth ?? null,
         })
         .returning({ id: users.id });
       const user = await db.query.users.findFirst({ where: eq(users.id, id) });
