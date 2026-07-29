@@ -282,10 +282,10 @@ export default function MemberList({
         </>
       )}
 
-      {/* 會員詳情彈窗 */}
+      {/* 會員詳情彈窗（2026-07-29 修復：置中＋h-dvh 跟實螢幕可見高度，唔再拉落底吊半空） */}
       {selectedId !== null && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center"
+          className="fixed inset-0 z-50 flex h-dvh items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
           onClick={() => setSelectedId(null)}
           role="dialog"
           aria-modal="true"
@@ -321,11 +321,11 @@ export default function MemberList({
                   </button>
                 </div>
 
-                {/* 基本資料 */}
-                <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-[13px]">
+                {/* 基本資料（手機一行一項，唔再兩欄逼到「累計 HK$」斷行） */}
+                <div className="mt-4 grid grid-cols-1 gap-y-2.5 text-[13px] sm:grid-cols-2 sm:gap-x-4">
                   <p className="text-txt-3">
                     Email：
-                    <span className="font-mono text-txt-2">{detail.user.email || '—'}</span>
+                    <span className="break-all font-mono text-txt-2">{detail.user.email || '—'}</span>
                   </p>
                   <p className="text-txt-3">
                     年齡：<span className="text-txt-2">{detail.user.age ?? '—'}</span>
@@ -334,13 +334,15 @@ export default function MemberList({
                     註冊：
                     <span className="font-mono text-txt-2">{fmtDate(detail.user.createdAt)}</span>
                   </p>
-                  <p className="text-txt-3">
+                  <p className="col-span-full text-txt-3">
                     訂單數：
                     <span className="font-mono text-txt-2">{detail.orderCount}</span>
                     <span className="ml-3">累計：</span>
-                    <span className="font-mono text-pink">{fmtHKD(detail.totalSpent)}</span>
+                    <span className="whitespace-nowrap font-mono text-pink">
+                      {fmtHKD(detail.totalSpent)}
+                    </span>
                   </p>
-                  <p className="col-span-2 text-txt-3">
+                  <p className="col-span-full text-txt-3">
                     地址：
                     <span className="whitespace-pre-wrap text-txt-1">
                       {detail.user.address || '—'}
