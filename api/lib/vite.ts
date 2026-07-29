@@ -27,11 +27,19 @@ export function serveStaticFiles(app: App) {
 
   app.notFound(async (c) => {
     const accept = c.req.header("accept") ?? "";
-    if (!accept.includes("text/html")) {
+    // 2026-07-29 FB 分享灰盒根因：Facebook/WhatsApp 等 crawler 送嘅 Accept 係 */*
+    // （唔係 text/html），舊檢查會回 404 JSON → FB 讀唔到 OG，淨係顯示域名。
+    // 而家 */* 同冇 Accept 都照出 HTML；淨係明確非 HTML 嘅請求先回 JSON 404。
+    if (accept && !accept.includes("text/html") && !accept.includes("*/*")) {
       return c.json({ error: "Not Found" }, 404);
     }
     const indexPath = path.resolve(distPath, "index.html");
     let content = fs.readFileSync(indexPath, "utf-8");
+    // 2026-07-29 白頁根因：build 出嚟嘅 HTML 用相對路徑（./assets/...，為 static
+    // preview 而設），喺兩段以上路徑（如 /products/24）會解錯做 /products/assets
+    // → JS/CSS 404 → 全白頁。加 <base href="/"> 令相對路徑由根目錄起計；
+    // 淨係改 server 出嘅 HTML，source index.html 唔郁，static preview 唔受影響。
+    content = content.replace("<head>", `<head>\n    <base href="/" />`);
     // 2026-07-29 商品分享 OG：App 係 HashRouter（#/products/123），但 Facebook 等
     // crawler 收唔到 hash 後面嘅嘢，所以分享連結用正式路徑 /products/123。
     // 喺度見到呢條 path 就注入該商品嘅 OG meta；人類訪客入到嚟，
