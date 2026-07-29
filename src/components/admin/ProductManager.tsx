@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
@@ -66,6 +66,13 @@ function fmtDelist(d: Date): string {
   return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 上載日期 key（本地日曆日 YYYY-MM-DD）：每日新增款式分組＋篩選用 */
+function dayKeyOf(d: Date | string): string {
+  const date = d instanceof Date ? d : new Date(d);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 export default function ProductManager({
   toast,
 }: {
@@ -84,8 +91,12 @@ export default function ProductManager({
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
+  // 編輯表格 ref：撳支筆時自動碌返去表格（手機表格喺最頂，唔跳會以為支筆冇反應）
+  const formRef = useRef<HTMLFormElement | null>(null);
   // 商品相簿（多張相）：photos[0]＝封面；空陣列＝用 form.image 路徑做唯一圖
   const [photos, setPhotos] = useState<string[]>([]);
+  // 每日新增篩選：dayKeyOf(createdAt) 嘅 key；null＝全部
+  const [dayFilter, setDayFilter] = useState<string | null>(null);
 
   /** 商品圖片上傳（一次過可揀多張）：逐張 POST /api/upload（staff JWT），路徑加入相簿 */
   const uploadImages = async (files: File[]) => {
@@ -233,6 +244,8 @@ export default function ProductManager({
     });
     // 相簿：有 photos 用 photos；冇（舊貨）就由 image 做唯一一張
     setPhotos(p.photos?.length ? p.photos : [p.image]);
+    // 自動碌去編輯表格（等 React 先 render 新狀態先郁）
+    window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
 
   const cancelEdit = () => {
@@ -317,12 +330,33 @@ export default function ProductManager({
   const products = (listQuery.data ?? []) as ProductRow[];
   const submitting = createMutation.isPending || editMutation.isPending;
 
+  // 每日新增款式統計：按「上載日期」（createdAt 產生當日）分組數款數，最新一日排最前
+  const dailyCounts = useMemo(() => {
+    const map = new Map<string, { label: string; count: number }>();
+    for (const p of products) {
+      const d = new Date(p.createdAt);
+      const key = dayKeyOf(d);
+      const label = `${d.getMonth() + 1}月${d.getDate()}日`;
+      const cur = map.get(key);
+      if (cur) cur.count += 1;
+      else map.set(key, { label, count: 1 });
+    }
+    return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [products]);
+
+  const todayKey = dayKeyOf(new Date());
+  // 篩選中：只顯示嗰日上載嘅款；否則全部
+  const visibleProducts = dayFilter
+    ? products.filter((p) => dayKeyOf(p.createdAt) === dayFilter)
+    : products;
+
   return (
     <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
       {/* 左：新增／編輯商品表單（5） */}
       <form
+        ref={formRef}
         onSubmit={submit}
-        className="rounded-2xl border p-5 backdrop-blur-xl md:p-6 xl:col-span-5"
+        className="scroll-mt-24 rounded-2xl border p-5 backdrop-blur-xl md:p-6 xl:col-span-5"
         style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
       >
         <h3 className="flex items-center gap-2 text-[16px] font-bold text-txt-1">
@@ -664,15 +698,53 @@ export default function ProductManager({
           現有商品
           <span className="ml-2 font-mono text-[13px] font-normal text-txt-3">
             {products.length} 款
+            {dayFilter != null ? `（篩緊 ${visibleProducts.length} 款）` : ''}
           </span>
         </h3>
+        {/* 每日新增款式：按上載日期（產生當日）分組；撳 chip 篩出嗰日嘅款，再撳一次取消 */}
+        {dailyCounts.length > 0 && (
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-1.5">
+            <button
+              type="button"
+              onClick={() => setDayFilter(null)}
+              aria-pressed={dayFilter === null}
+              className="shrink-0 rounded-full border px-3 py-1.5 font-mono text-[12px] transition-colors"
+              style={{
+                borderColor: dayFilter === null ? 'var(--pink)' : 'var(--glass-border)',
+                background: dayFilter === null ? 'var(--glass-bg-strong)' : 'var(--glass-bg)',
+                color: dayFilter === null ? 'var(--pink)' : 'var(--text-3)',
+              }}
+            >
+              全部
+            </button>
+            {dailyCounts.map(([key, info]) => {
+              const active = dayFilter === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setDayFilter((cur) => (cur === key ? null : key))}
+                  aria-pressed={active}
+                  className="shrink-0 rounded-full border px-3 py-1.5 font-mono text-[12px] transition-colors"
+                  style={{
+                    borderColor: active ? 'var(--pink)' : 'var(--glass-border)',
+                    background: active ? 'var(--glass-bg-strong)' : 'var(--glass-bg)',
+                    color: active ? 'var(--pink)' : 'var(--text-2)',
+                  }}
+                >
+                  {info.label} ＋{info.count}款{key === todayKey ? '（今日）' : ''}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {listQuery.isLoading ? (
           <LoadingBlock text="許願星搬緊貨…" />
         ) : products.length === 0 ? (
           <p className="py-14 text-center text-[14px] text-txt-3">未有商品，左手邊新增第一款啦。</p>
         ) : (
           <ul className="mt-4 flex flex-col gap-2">
-            {products.map((p) => {
+            {visibleProducts.map((p) => {
               // 存貨 10 件以下都當緊張（直播前提醒補貨）
               const lowStock = p.stock < 10;
               // 定時下架已到時（前台已經見唔到；後台行照顯示但 dim）
@@ -718,6 +790,18 @@ export default function ProductManager({
                       >
                         {productCategoryLabel(p.category)}
                       </span>
+                      {/* 尺寸 badge（開咗尺寸選項＋有填尺寸先顯示） */}
+                      {p.sizeEnabled && p.sizes && (
+                        <span
+                          className="rounded-full border px-2.5 py-0.5 font-mono text-[11px] text-txt-2"
+                          style={{
+                            borderColor: 'var(--glass-border)',
+                            background: 'var(--glass-bg)',
+                          }}
+                        >
+                          尺寸 {p.sizes.split(',').map((s) => s.trim()).filter(Boolean).join(' / ')}
+                        </span>
+                      )}
                       {/* 定時下架 badge（有設定先顯示） */}
                       {p.delistEnabled && p.delistAt && (
                         <span
