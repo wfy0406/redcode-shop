@@ -179,9 +179,12 @@ export default function MemberList({
             {members.map((m) => (
               <li
                 key={m.id}
-                onClick={() => setSelectedId(m.id)}
+                onClick={() => setSelectedId((cur) => (cur === m.id ? null : m.id))}
                 className="cursor-pointer rounded-xl border px-4 py-3 transition-colors hover:bg-white/5"
-                style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                style={{
+                  borderColor: selectedId === m.id ? 'var(--gold)' : 'var(--space-line)',
+                  background: 'var(--space-2)',
+                }}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -211,10 +214,59 @@ export default function MemberList({
                   註冊 {fmtDate(m.createdAt)} · 訂單 {m.orderCount} · 累計{' '}
                   <span className="text-pink">{fmtHKD(m.totalSpent)}</span>
                 </p>
+
+                {/* 撳邊張卡，詳情即場喺嗰張卡下面展開（2026-07-29：取代彈窗，唔再「彈去第二度」） */}
+                {selectedId === m.id && (
+                  <div
+                    className="mt-3 border-t pt-3"
+                    style={{ borderColor: 'var(--space-line)' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {detailQuery.isLoading ? (
+                      <LoadingBlock text="許願星搬緊會員資料…" />
+                    ) : detailQuery.isError ? (
+                      <p className="text-[12px] text-pink-soft">
+                        載入失敗：{detailQuery.error.message}
+                      </p>
+                    ) : detail ? (
+                      <>
+                        <p className="text-[12px] text-txt-3">
+                          年齡：<span className="text-txt-2">{detail.user.age ?? '—'}</span>
+                        </p>
+                        <h5 className="mt-3 text-[11px] font-bold tracking-[0.08em] text-gold">
+                          最近訂單（最多 10 張）
+                        </h5>
+                        {detail.recentOrders.length === 0 ? (
+                          <p className="mt-1.5 text-[12px] text-txt-3">暫時冇訂單。</p>
+                        ) : (
+                          <ul className="mt-1 flex flex-col">
+                            {detail.recentOrders.map((o) => (
+                              <li
+                                key={o.id}
+                                className="flex items-center gap-2 border-t py-2 text-[12px]"
+                                style={{ borderColor: 'var(--space-line)' }}
+                              >
+                                <span className="font-mono text-txt-1">{o.orderNo}</span>
+                                <span className="text-[11px] text-txt-3">
+                                  {DELIVERY_TEXT[o.deliveryMethod] ?? o.deliveryMethod}
+                                </span>
+                                <span className="ml-auto flex items-center gap-1.5">
+                                  <StatusBadge status={o.status} />
+                                  <span className="font-mono text-pink">{fmtHKD(o.total)}</span>
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="mt-2 text-[11px] text-txt-3">再撳一下呢張卡收起詳情。</p>
+                      </>
+                    ) : null}
+                  </div>
+                )}
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-[12px] text-txt-3 sm:hidden">撳任何一個會員睇詳細資料。</p>
+          <p className="mt-2 text-[12px] text-txt-3 sm:hidden">撳任何一個會員，詳情即場喺嗰張卡下面展開。</p>
 
           {/* 桌面版：原表格（位夠闊，唔使改） */}
           <div className="mt-4 hidden overflow-x-auto sm:block">
@@ -282,10 +334,10 @@ export default function MemberList({
         </>
       )}
 
-      {/* 會員詳情彈窗（2026-07-29 修復：置中＋h-dvh 跟實螢幕可見高度，唔再拉落底吊半空） */}
+      {/* 會員詳情彈窗（只限電腦版 sm+；手機用卡片即場展開，詳情出喺你撳嘅位置） */}
       {selectedId !== null && (
         <div
-          className="fixed inset-0 z-50 flex h-dvh items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 hidden h-dvh items-center justify-center bg-black/60 p-4 backdrop-blur-sm sm:flex"
           onClick={() => setSelectedId(null)}
           role="dialog"
           aria-modal="true"
