@@ -6,6 +6,7 @@ import { fmtDateTime, fmtHKD } from './format';
 import StatusBadge from './StatusBadge';
 import { STATUS_FILTERS } from './statusMeta';
 import ProofSection from './ProofSection';
+import ProofUpload from './ProofUpload';
 import WishingStar from './WishingStar';
 import ExportCard from './ExportCard';
 import OrderEditPanel from './OrderEditPanel';
@@ -483,6 +484,10 @@ export default function OrderList({
                             onOpenLightbox={onOpenLightbox}
                           />
                         </div>
+                        {/* 待付款／被退回：員工代客上傳截圖（客人 WhatsApp 傳嚟）→ 轉審核中 → 同步 WMS */}
+                        {(order.status === 'pending_payment' || order.status === 'rejected') && (
+                          <ProofUpload orderId={order.id} />
+                        )}
                       </div>
                     </div>
                   </div>
