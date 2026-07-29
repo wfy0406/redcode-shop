@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { TouchEvent } from 'react';
 import { Link, useParams } from 'react-router';
-import { Check, Heart, Minus, Plus, ShoppingBag } from 'lucide-react';
+import { Check, Heart, Minus, Plus, Share2, ShoppingBag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import ProductCard from '@/components/ProductCard';
@@ -152,6 +152,30 @@ export default function ProductDetail() {
   const discounted = hasDiscount(product);
   const effPrice = effectivePrice(product);
   const outOfStock = product.stock <= 0;
+
+  // 分享用正式路徑（/products/123，唔用 #/）：Facebook/WhatsApp crawler 讀唔到
+  // hash 後面嘅嘢，一定要 server 見到條 path 先會出到商品 OG 預覽圖。
+  // 人類訪客撳入嚟，main.tsx 會即刻轉返 hash 路由，照常顯示商品頁。
+  const handleShare = async () => {
+    const url = `${window.location.origin}/products/${product.id}`;
+    const title = `${product.name}｜RedCode`;
+    const text = `${product.name} ${formatHKD(effPrice)}｜RedCode 香港女裝直播`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, text, url });
+      } catch {
+        /* 用戶自己取消分享，唔使提示 */
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(`${text}\n${url}`);
+      setToast('已複製商品連結，貼去 Facebook / WhatsApp 都得 ✓');
+    } catch {
+      window.prompt('複製呢條商品連結：', url);
+    }
+    window.setTimeout(() => setToast(null), 2600);
+  };
 
   return (
     <section className="mx-auto max-w-[1280px] px-5 pb-24 pt-10 md:px-8 xl:px-12">
@@ -325,7 +349,7 @@ export default function ProductDetail() {
             </span>
           </div>
 
-          {/* CTA 行：加入購物車 + 心心 */}
+          {/* CTA 行：加入購物車 + 心心 + 分享 */}
           <div className="mt-8 flex items-center gap-3">
             <button
               type="button"
@@ -367,6 +391,14 @@ export default function ProductDetail() {
                   color: wished ? 'var(--pink)' : 'var(--text-2)',
                 }}
               />
+            </button>
+            <button
+              type="button"
+              onClick={handleShare}
+              aria-label="分享呢件商品"
+              className="btn btn-secondary !h-[52px] !w-[52px] !rounded-full !p-0"
+            >
+              <Share2 size={20} aria-hidden="true" />
             </button>
           </div>
 

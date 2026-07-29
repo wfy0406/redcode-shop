@@ -25,13 +25,22 @@ export function serveStaticFiles(app: App) {
 
   app.use("*", serveStatic({ root: "./dist/public" }));
 
-  app.notFound((c) => {
+  app.notFound(async (c) => {
     const accept = c.req.header("accept") ?? "";
     if (!accept.includes("text/html")) {
       return c.json({ error: "Not Found" }, 404);
     }
     const indexPath = path.resolve(distPath, "index.html");
-    const content = fs.readFileSync(indexPath, "utf-8");
+    let content = fs.readFileSync(indexPath, "utf-8");
+    // 2026-07-29 商品分享 OG：App 係 HashRouter（#/products/123），但 Facebook 等
+    // crawler 收唔到 hash 後面嘅嘢，所以分享連結用正式路徑 /products/123。
+    // 喺度見到呢條 path 就注入該商品嘅 OG meta；人類訪客入到嚟，
+    // main.tsx 會即刻轉返 hash 路由，照常顯示商品頁。
+    const productMatch = c.req.path.match(/^\/products\/(\d+)\/?$/);
+    if (productMatch) {
+      const { injectProductOg } = await import("./og");
+      content = await injectProductOg(content, Number(productMatch[1]), new URL(c.req.url).origin);
+    }
     return c.html(content);
   });
 }
