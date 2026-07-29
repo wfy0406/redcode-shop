@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { Check, Copy, MessageCircle, TicketPercent, X } from 'lucide-react';
+import { Check, Copy, MapPin, MessageCircle, TicketPercent, X } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
 import LoginPrompt from '@/components/cart/LoginPrompt';
 import PaymentDropzone from '@/components/cart/PaymentDropzone';
@@ -259,6 +259,9 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
     const saved = user?.address;
     if (saved) setAddress((prev) => (prev.trim() ? prev : saved));
   }, [user?.address]);
+
+  // 會員已填嘅地址（註冊或會員中心填嘅）：埋單時可以一撳用返
+  const savedAddress = user?.address?.trim() ?? '';
 
   const subtotal = cartSubtotal(items);
   // 客戶端折扣只係顯示用途；落單時 server 會用 promoCode 重算，以 server 為準
@@ -557,6 +560,33 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
               className="mt-2 h-12 w-full rounded-xl border bg-space-2 px-4 text-[15px] text-txt-1 placeholder:text-txt-disabled focus:border-pink"
               style={{ borderColor: 'var(--space-line)' }}
             />
+          </div>
+        )}
+
+        {deliveryMethod === 'address' && savedAddress && (
+          <div className="mt-4">
+            <span className="text-sm text-txt-2">會員地址</span>
+            <button
+              type="button"
+              onClick={() => setAddress(savedAddress)}
+              aria-pressed={address.trim() === savedAddress}
+              className="mt-2 flex w-full items-start gap-2.5 rounded-xl border p-3.5 text-left transition-colors"
+              style={
+                address.trim() === savedAddress
+                  ? { borderColor: 'var(--pink)', background: 'var(--pink-haze)' }
+                  : { borderColor: 'var(--space-line)', background: 'var(--space-2)' }
+              }
+            >
+              <MapPin size={16} className="mt-0.5 shrink-0 text-pink" aria-hidden="true" />
+              <span>
+                <span className="block text-[13px] font-bold text-txt-1">
+                  {address.trim() === savedAddress ? '已用會員地址 ✓' : '一撳用返會員地址'}
+                </span>
+                <span className="mt-0.5 block whitespace-pre-wrap text-[13px] leading-relaxed text-txt-3">
+                  {savedAddress}
+                </span>
+              </span>
+            </button>
           </div>
         )}
 

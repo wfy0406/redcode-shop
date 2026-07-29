@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Trash2, Users, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Pencil, Search, Trash2, Users, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import { useAuth } from '@/hooks/useAuth';
 import { fmtDate, fmtDateTime, fmtHKD } from './format';
 import { LoadingBlock } from './WishingStar';
 import StatusBadge from './StatusBadge';
@@ -58,15 +60,192 @@ const DELIVERY_TEXT: Record<string, string> = {
   sf_locker: '順豐智能櫃',
 };
 
+/** members.update 契約（2026-07-29）：淨係傳有改嘅欄；null＝清除 */
+type MemberUpdateInput = {
+  id: number;
+  name?: string;
+  phone?: string;
+  email?: string | null;
+  address?: string | null;
+  age?: number | null;
+  birthMonth?: number | null;
+};
+
+/**
+ * 修改會員資料表單（員工＋管理員用）——名/電話/Email/地址/年齡/生日月份
+ * 留空嘅 Email/地址/年齡/生日月份會當清除（傳 null）
+ */
+function MemberEditForm({
+  user,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  user: MemberDetail['user'];
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (input: MemberUpdateInput) => void;
+}) {
+  const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone);
+  const [email, setEmail] = useState(user.email ?? '');
+  const [address, setAddress] = useState(user.address ?? '');
+  const [age, setAge] = useState(user.age != null ? String(user.age) : '');
+  const [birthMonth, setBirthMonth] = useState(
+    user.birthMonth != null ? String(user.birthMonth) : '',
+  );
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const inputCls =
+    'h-10 w-full rounded-lg border border-space-line bg-space-1 px-3 text-[13px] text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none';
+  const labelCls = 'mb-1 block text-[11px] text-txt-3';
+
+  const submit = () => {
+    if (!name.trim()) return setFormError('名稱必填');
+    const phoneDigits = phone.replace(/[\s-]/g, '');
+    if (!/^\d{8,}$/.test(phoneDigits)) return setFormError('電話要至少 8 位數字');
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      return setFormError('Email 格式唔啱');
+    let ageNum: number | null = null;
+    if (age.trim()) {
+      const n = Number(age);
+      if (!Number.isInteger(n) || n < 0 || n > 150)
+        return setFormError('年齡要係 0–150 嘅整數');
+      ageNum = n;
+    }
+    setFormError(null);
+    onSave({
+      id: user.id,
+      name: name.trim(),
+      phone: phoneDigits,
+      email: email.trim() || null,
+      address: address.trim() || null,
+      age: ageNum,
+      birthMonth: birthMonth ? Number(birthMonth) : null,
+    });
+  };
+
+  return (
+    <div
+      className="mt-2 rounded-xl border p-3"
+      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+    >
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div>
+          <label className={labelCls} htmlFor={`me-name-${user.id}`}>
+            名稱
+          </label>
+          <input
+            id={`me-name-${user.id}`}
+            className={inputCls}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor={`me-phone-${user.id}`}>
+            電話（登入帳號）
+          </label>
+          <input
+            id={`me-phone-${user.id}`}
+            className={inputCls}
+            value={phone}
+            inputMode="tel"
+            onChange={(e) => setPhone(e.target.value)}
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <label className={labelCls} htmlFor={`me-email-${user.id}`}>
+            Email（留空＝清除）
+          </label>
+          <input
+            id={`me-email-${user.id}`}
+            className={inputCls}
+            value={email}
+            inputMode="email"
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <label className={labelCls} htmlFor={`me-address-${user.id}`}>
+            地址（留空＝清除）
+          </label>
+          <textarea
+            id={`me-address-${user.id}`}
+            rows={2}
+            className="w-full rounded-lg border border-space-line bg-space-1 px-3 py-2 text-[13px] leading-relaxed text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor={`me-age-${user.id}`}>
+            年齡（留空＝清除）
+          </label>
+          <input
+            id={`me-age-${user.id}`}
+            className={inputCls}
+            value={age}
+            inputMode="numeric"
+            onChange={(e) => setAge(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor={`me-bm-${user.id}`}>
+            生日月份
+          </label>
+          <select
+            id={`me-bm-${user.id}`}
+            className={inputCls}
+            value={birthMonth}
+            onChange={(e) => setBirthMonth(e.target.value)}
+          >
+            <option value="">留空</option>
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i + 1} value={String(i + 1)}>
+                {i + 1} 月
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {formError && <p className="mt-2 text-[12px] text-pink-soft">{formError}</p>}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy}
+          className="btn btn-primary !px-4 !py-2 text-[13px] disabled:opacity-50"
+        >
+          {busy ? '儲存緊…' : '儲存'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="btn btn-secondary !px-4 !py-2 text-[13px]"
+        >
+          取消
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MemberList({
   toast,
 }: {
   toast: (text: string, kind?: ToastKind) => void;
 }) {
   const utils = trpc.useUtils();
+  const { user: me } = useAuth();
+  // 刪除會員仍然係最高管理員專用（後端 members.remove 係 adminProcedure）；
+  // 員工可以睇同改，唔可以刪
+  const canDelete = me?.role === 'admin';
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   // 打字停 300ms 先出搜尋請求，唔會每個字打一次
   useEffect(() => {
@@ -108,6 +287,21 @@ export default function MemberList({
     },
     onError: (err) => toast(err.message || '刪除會員失敗', 'error'),
   });
+
+  const updateMutation = trpc.members.update.useMutation({
+    onSuccess: () => {
+      toast('已儲存會員資料 ✓', 'success');
+      setEditingId(null);
+      void utils.members.list.invalidate();
+      void utils.members.detail.invalidate();
+    },
+    onError: (err) => toast(err.message || '儲存失敗，請再試', 'error'),
+  });
+
+  // 換咗第二個會員，順手閂返個編輯表單
+  useEffect(() => {
+    setEditingId(null);
+  }, [selectedId]);
 
   const askDelete = (m: MemberRow) => {
     const withOrders = m.orderCount > 0;
@@ -193,18 +387,20 @@ export default function MemberList({
                     <p className="text-[15px] font-bold leading-[1.4] text-txt-1">{m.name}</p>
                     <p className="mt-0.5 font-mono text-[13px] text-txt-2">{m.phone}</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      askDelete(m);
-                    }}
-                    disabled={removeMutation.isPending}
-                    aria-label={`刪除會員 ${m.name}`}
-                    className="-mr-1.5 -mt-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-50"
-                  >
-                    <Trash2 size={16} aria-hidden="true" />
-                  </button>
+                  {canDelete && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        askDelete(m);
+                      }}
+                      disabled={removeMutation.isPending}
+                      aria-label={`刪除會員 ${m.name}`}
+                      className="-mr-1.5 -mt-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-50"
+                    >
+                      <Trash2 size={16} aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
                 {m.email && (
                   <p className="mt-1 break-all font-mono text-[12px] text-txt-3">{m.email}</p>
@@ -241,6 +437,24 @@ export default function MemberList({
                             {detail.user.birthMonth ? `${detail.user.birthMonth} 月` : '—'}
                           </span>
                         </p>
+                        {/* 修改資料（員工＋管理員） */}
+                        {editingId === m.id ? (
+                          <MemberEditForm
+                            user={detail.user}
+                            busy={updateMutation.isPending}
+                            onCancel={() => setEditingId(null)}
+                            onSave={(input) => updateMutation.mutate(input)}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setEditingId(m.id)}
+                            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                            style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                          >
+                            <Pencil size={13} aria-hidden="true" /> 修改資料
+                          </button>
+                        )}
                         <h5 className="mt-3 text-[11px] font-bold tracking-[0.08em] text-gold">
                           最近訂單（最多 10 張）
                         </h5>
@@ -291,7 +505,7 @@ export default function MemberList({
                 <th className="py-2 pr-3 font-normal">註冊日期</th>
                 <th className="w-16 py-2 pr-3 text-right font-normal">訂單數</th>
                 <th className="w-28 py-2 text-right font-normal">累計消費</th>
-                <th className="w-14 py-2 pl-3 text-right font-normal">刪除</th>
+                {canDelete && <th className="w-14 py-2 pl-3 text-right font-normal">刪除</th>}
               </tr>
             </thead>
             <tbody>
@@ -342,10 +556,14 @@ export default function MemberList({
         </>
       )}
 
-      {/* 會員詳情彈窗（只限電腦版 lg+；手機/平板用卡片即場展開，詳情出喺你撳嘅位置） */}
-      {selectedId !== null && (
-        <div
-          className="fixed inset-0 z-50 hidden h-dvh items-center justify-center bg-black/60 p-4 backdrop-blur-sm lg:flex"
+      {/* 會員詳情彈窗（只限電腦版 lg+；手機/平板用卡片即場展開，詳情出喺你撳嘅位置）
+          2026-07-29 走位修復：MemberList 嘅 <section> 有 backdrop-blur，會令 position:fixed
+          以佢做定位基準 → 碌落下面撳會員，彈窗「彈咗去上面」。用 createPortal 直掛
+          document.body，fixed 就實以瀏覽器視窗置中，撳邊行都喺你眼前出現。 */}
+      {selectedId !== null &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 hidden h-dvh items-center justify-center bg-black/60 p-4 backdrop-blur-sm lg:flex"
           onClick={() => setSelectedId(null)}
           role="dialog"
           aria-modal="true"
@@ -416,6 +634,25 @@ export default function MemberList({
                   </p>
                 </div>
 
+                {/* 修改資料（員工＋管理員） */}
+                {editingId === detail.user.id ? (
+                  <MemberEditForm
+                    user={detail.user}
+                    busy={updateMutation.isPending}
+                    onCancel={() => setEditingId(null)}
+                    onSave={(input) => updateMutation.mutate(input)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(detail.user.id)}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                    style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                  >
+                    <Pencil size={13} aria-hidden="true" /> 修改資料
+                  </button>
+                )}
+
                 {/* 最近訂單 */}
                 <h5 className="mt-5 text-[12px] font-bold tracking-[0.08em] text-gold">
                   最近訂單（最多 10 張）
@@ -448,8 +685,9 @@ export default function MemberList({
               </>
             ) : null}
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </section>
   );
 }

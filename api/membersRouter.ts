@@ -3,17 +3,18 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { cartItems, orderItems, orders, paymentProofs, users, wmsSyncLog } from "@db/schema";
-import { createRouter, adminProcedure } from "./middleware";
+import { createRouter, adminProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 
 /**
- * 會員列表 —— admin only
+ * 會員列表 —— staff（員工）＋ admin 可用（2026-07-29 起：員工都可以睇同改會員資料）
  * totalSpent 排除 cancelled/rejected；按註冊時間 createdAt desc
- * remove：刪除會員；有訂單嘅會員要 alsoDeleteOrders=true 先刪得（連訂單一併刪，唔可以復原）
+ * update：修改會員基本資料（名/電話/email/地址/年齡/生日月份），電話撞號會 CONFLICT
+ * remove：刪除會員（仍係 admin only）；有訂單嘅會員要 alsoDeleteOrders=true 先刪得（連訂單一併刪，唔可以復原）
  */
 export const membersRouter = createRouter({
   // 2026-07-28：加搜尋（q＝名或電話模糊對照）＋地址欄
-  list: adminProcedure
+  list: staffProcedure
     .input(z.object({ q: z.string().trim().max(100).optional() }).optional())
     .query(async ({ input }) => {
       const db = getDb();
@@ -48,7 +49,7 @@ export const membersRouter = createRouter({
   /**
    * 會員詳情（前台撳行彈出）：基本資料（唔回 passwordHash）＋訂單統計＋最近 10 張訂單
    */
-  detail: adminProcedure
+  detail: staffProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -96,6 +97,68 @@ export const membersRouter = createRouter({
         totalSpent: stats.totalSpent,
         recentOrders,
       };
+    }),
+
+  /**
+   * 修改會員資料（員工＋管理員，2026-07-29）：名/電話/email/地址/年齡/生日月份
+   * 淨係改有傳嘅欄；email/地址/年齡/生日月份傳 null＝清空；電話撞咗人哋嘅號會 CONFLICT
+   */
+  update: staffProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        name: z.string().trim().min(1, "名稱必填").max(255).optional(),
+        phone: z
+          .string()
+          .trim()
+          .min(8, "電話至少 8 位")
+          .max(32)
+          .regex(/^[0-9+\-\s]+$/, "電話格式唔啱")
+          .optional(),
+        email: z.string().trim().email("Email 格式唔啱").max(255).nullable().optional(),
+        address: z.string().nullable().optional(),
+        age: z.number().int().min(0).max(150).nullable().optional(),
+        birthMonth: z.number().int().min(1).max(12).nullable().optional(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const [target] = await db
+        .select({ id: users.id, role: users.role, name: users.name })
+        .from(users)
+        .where(eq(users.id, input.id))
+        .limit(1);
+      if (!target) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      }
+      if (target.role !== "member") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "員工帳號請去「員工帳號」頁修改" });
+      }
+      if (input.phone) {
+        const dup = await db.query.users.findFirst({ where: eq(users.phone, input.phone) });
+        if (dup && dup.id !== input.id) {
+          throw new TRPCError({ code: "CONFLICT", message: "呢個電話號碼已經註冊咗" });
+        }
+      }
+      const data: Partial<typeof users.$inferInsert> = {};
+      if (input.name !== undefined) data.name = input.name;
+      if (input.phone !== undefined) data.phone = input.phone;
+      if (input.email !== undefined) data.email = input.email;
+      if (input.address !== undefined) data.address = input.address;
+      if (input.age !== undefined) data.age = input.age;
+      if (input.birthMonth !== undefined) data.birthMonth = input.birthMonth;
+      if (Object.keys(data).length > 0) {
+        await db.update(users).set(data).where(eq(users.id, input.id));
+      }
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "member.update",
+        targetType: "member",
+        targetId: input.id,
+        detail: `修改會員「${input.name ?? target.name}」資料（${Object.keys(data).join("、") || "冇改動"}）`,
+      });
+      return { ok: true };
     }),
 
   remove: adminProcedure

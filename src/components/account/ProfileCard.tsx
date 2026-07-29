@@ -16,6 +16,7 @@ interface ProfileUser {
   phone: string;
   address?: string | null;
   age?: number | null;
+  birthMonth?: number | null;
 }
 
 interface ProfileCardProps {
@@ -213,6 +214,11 @@ export default function ProfileCard({ user, onLogout, pushToast }: ProfileCardPr
         <DisplayRow label="電話" value={user.phone} />
         {renderRow('address', user.address?.trim() ? user.address : '未填寫')}
         {renderRow('age', user.age != null ? `${user.age} 歲` : '未填寫')}
+        {/* 生日月份：唯讀（2026-07-29 起只顯示；要改請聯絡 Glo Glo 後台改） */}
+        <DisplayRow
+          label="生日月份"
+          value={user.birthMonth != null ? `${user.birthMonth} 月` : '未填寫'}
+        />
       </div>
     </div>
   );
