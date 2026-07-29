@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import type { TouchEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { Check, Heart, Minus, Plus, ShoppingBag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
@@ -63,6 +64,21 @@ export default function ProductDetail() {
     return list.filter((s): s is string => Boolean(s));
   }, [product?.photos, product?.image]);
   const shownPhoto = gallery[activePhoto] ?? gallery[0];
+
+  // 多相左右滑動（手機）：記低起手位，放手計位移，超過 40px 就換相
+  // 左撥（dx<0）＝下一張；右撥＝上一張。到頭到尾就停（縮圖可以撳住跳）。
+  const touchStartX = useRef<number | null>(null);
+  const onPhotoTouchStart = (e: TouchEvent<HTMLDivElement>) => {
+    touchStartX.current = e.touches[0]?.clientX ?? null;
+  };
+  const onPhotoTouchEnd = (e: TouchEvent<HTMLDivElement>) => {
+    if (touchStartX.current === null || gallery.length < 2) return;
+    const dx = (e.changedTouches[0]?.clientX ?? touchStartX.current) - touchStartX.current;
+    touchStartX.current = null;
+    if (Math.abs(dx) < 40) return;
+    if (dx < 0) setActivePhoto((i) => Math.min(gallery.length - 1, i + 1));
+    else setActivePhoto((i) => Math.max(0, i - 1));
+  };
 
   const addCart = trpc.cart.add.useMutation({
     onSuccess: () => {
@@ -161,7 +177,13 @@ export default function ProductDetail() {
       <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-14">
         {/* 左：相簿（主圖＋縮圖列；多過一張先出縮圖） */}
         <div>
-          <div className="relative overflow-hidden rounded-3xl border" style={{ borderColor: 'var(--glass-border)' }}>
+          {/* touch-pan-y：垂直照捱頁，水平滑動留俾換相手勢 */}
+          <div
+            className="relative touch-pan-y overflow-hidden rounded-3xl border"
+            style={{ borderColor: 'var(--glass-border)' }}
+            onTouchStart={onPhotoTouchStart}
+            onTouchEnd={onPhotoTouchEnd}
+          >
             {discounted && (
               <span className="absolute left-4 top-4 z-10 rounded-full bg-pink px-3 py-1 text-[12px] font-bold text-space-1">
                 優惠中
@@ -170,6 +192,12 @@ export default function ProductDetail() {
             {outOfStock && (
               <span className="absolute right-4 top-4 z-10 rounded-full border px-3 py-1 text-[12px] text-txt-2 backdrop-blur" style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}>
                 暫時售罄
+              </span>
+            )}
+            {/* 多相計數器：提示可以左右滑動 */}
+            {gallery.length > 1 && (
+              <span className="absolute bottom-4 right-4 z-10 rounded-full border px-2.5 py-1 font-mono text-[12px] text-txt-2 backdrop-blur" style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}>
+                {activePhoto + 1} / {gallery.length}
               </span>
             )}
             <img
