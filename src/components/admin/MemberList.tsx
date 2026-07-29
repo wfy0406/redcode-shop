@@ -173,8 +173,52 @@ export default function MemberList({
           {debouncedQ ? `搵唔到名或電話有「${debouncedQ}」嘅會員。` : '暫時冇會員。'}
         </p>
       ) : (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[780px] border-collapse text-[14px]">
+        <>
+          {/* 手機版：卡片式列表（2026-07-29 修復——舊表格喺手機四欄逼埋，名淨係睇到一個字） */}
+          <ul className="mt-4 flex flex-col gap-2 sm:hidden">
+            {members.map((m) => (
+              <li
+                key={m.id}
+                onClick={() => setSelectedId(m.id)}
+                className="cursor-pointer rounded-xl border px-4 py-3 transition-colors hover:bg-white/5"
+                style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[15px] font-bold leading-[1.4] text-txt-1">{m.name}</p>
+                    <p className="mt-0.5 font-mono text-[13px] text-txt-2">{m.phone}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      askDelete(m);
+                    }}
+                    disabled={removeMutation.isPending}
+                    aria-label={`刪除會員 ${m.name}`}
+                    className="-mr-1.5 -mt-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-50"
+                  >
+                    <Trash2 size={16} aria-hidden="true" />
+                  </button>
+                </div>
+                {m.email && (
+                  <p className="mt-1 break-all font-mono text-[12px] text-txt-3">{m.email}</p>
+                )}
+                {m.address && (
+                  <p className="mt-1 text-[12px] leading-[1.5] text-txt-3">地址：{m.address}</p>
+                )}
+                <p className="mt-1.5 font-mono text-[12px] text-txt-3">
+                  註冊 {fmtDate(m.createdAt)} · 訂單 {m.orderCount} · 累計{' '}
+                  <span className="text-pink">{fmtHKD(m.totalSpent)}</span>
+                </p>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[12px] text-txt-3 sm:hidden">撳任何一個會員睇詳細資料。</p>
+
+          {/* 桌面版：原表格（位夠闊，唔使改） */}
+          <div className="mt-4 hidden overflow-x-auto sm:block">
+            <table className="w-full min-w-[780px] border-collapse text-[14px]">
             <thead>
               <tr
                 className="border-b text-left text-[12px] text-txt-3"
@@ -234,7 +278,8 @@ export default function MemberList({
             </tbody>
           </table>
           <p className="mt-2 text-[12px] text-txt-3">撳任何一行睇詳細資料。</p>
-        </div>
+          </div>
+        </>
       )}
 
       {/* 會員詳情彈窗 */}
