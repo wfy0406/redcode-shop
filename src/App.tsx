@@ -10,6 +10,7 @@ import Register from '@/pages/Register';
 import Cart from '@/pages/Cart';
 import Checkout from '@/pages/Checkout';
 import Account from '@/pages/Account';
+import MyOrders from '@/pages/MyOrders';
 import Payment from '@/pages/Payment';
 import Receipt from '@/pages/Receipt';
 import Admin from '@/pages/Admin';
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="cart" element={<Cart />} />
         <Route path="checkout" element={<Checkout />} />
         <Route path="account" element={<Account />} />
+        <Route path="orders" element={<MyOrders />} />
         <Route path="payment" element={<Payment />} />
         <Route path="receipt/:orderId" element={<Receipt />} />
         <Route path="admin" element={<Admin />} />

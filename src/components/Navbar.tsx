@@ -24,6 +24,9 @@ const NAV_LINKS = [
   { to: '/products', label: '商品' },
   { to: '/live', label: '直播' },
   { to: '/about', label: '關於我們' },
+  // 2026-07-30：有客人唔識入會員中心搵訂單 → 主選單直接放「我的訂單」；
+  // 未登入撳入去會見到「請先登入」提示，登入後自動返訂單頁
+  { to: '/orders', label: '我的訂單' },
 ];
 
 export default function Navbar() {
