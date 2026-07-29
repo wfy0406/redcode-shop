@@ -44,6 +44,43 @@ function isDelisted(p: {
   return p.delistEnabled && p.delistAt !== null && p.delistAt.getTime() <= Date.now();
 }
 
+/**
+ * 附付款截圖核心流程（2026-07-30 抽出：客人 attachPaymentProof 同員工 staffAttachProof 共用）：
+ *  rejected 單先清舊 wmsSyncLog（唔清嘅話已成功送達嘅件會被 skip，WMS 永遠收唔到重審件）→
+ *  同單未審嘅舊截圖自動作廢，等 staff 淨係見到最新一張 →
+ *  插入新 pending 截圖 → 訂單轉 payment_review →
+ *  背景同步 WMS（唔阻回應；失敗淨係 log + 寫 wmsSyncLog，後台可一掣重試）。
+ * 回傳新 proof id。
+ */
+async function attachProofCore(
+  orderId: number,
+  orderStatus: string,
+  imagePath: string,
+): Promise<number> {
+  const db = getDb();
+  if (orderStatus === "rejected") {
+    await resetWmsSyncLogForReupload(orderId);
+  }
+  await db
+    .update(paymentProofs)
+    .set({
+      status: "rejected",
+      reviewNote: "已被新截圖取代",
+      reviewedAt: new Date(),
+    })
+    .where(and(eq(paymentProofs.orderId, orderId), eq(paymentProofs.status, "pending")));
+  const [{ id }] = await db
+    .insert(paymentProofs)
+    .values({ orderId, imagePath, status: "pending" })
+    .returning({ id: paymentProofs.id });
+  await db
+    .update(orders)
+    .set({ status: "payment_review", updatedAt: new Date() })
+    .where(eq(orders.id, orderId));
+  void forwardOrderToWms(orderId).catch((e) => console.error("[wms] forward error:", e));
+  return id;
+}
+
 export const ordersRouter = createRouter({
   create: authedProcedure
     .input(
@@ -268,32 +305,8 @@ export const ordersRouter = createRouter({
           message: "呢張訂單而家唔可以上傳付款證明",
         });
       }
-      // v1.3 §2.3：客人重傳（之前被 WMS 拒過）→ 必須清走舊 wmsSyncLog，
-      // 否則已成功送達嘅件會被 skip，WMS 永遠收唔到重審件
-      if (order.status === "rejected") {
-        await resetWmsSyncLogForReupload(order.id);
-      }
-      // 同單未審嘅舊截圖自動作廢，等 staff 淨係見到最新一張
-      await db
-        .update(paymentProofs)
-        .set({
-          status: "rejected",
-          reviewNote: "已被新截圖取代",
-          reviewedAt: new Date(),
-        })
-        .where(
-          and(eq(paymentProofs.orderId, order.id), eq(paymentProofs.status, "pending")),
-        );
-      const [{ id }] = await db
-        .insert(paymentProofs)
-        .values({ orderId: order.id, imagePath: input.imagePath, status: "pending" })
-        .returning({ id: paymentProofs.id });
-      await db
-        .update(orders)
-        .set({ status: "payment_review", updatedAt: new Date() })
-        .where(eq(orders.id, order.id));
-      // WMS 同步（唔阻客人回應）：失敗淨係 log + 寫 wmsSyncLog，後台可一掣重試
-      void forwardOrderToWms(order.id).catch((e) => console.error("[wms] forward error:", e));
+      // 核心流程（rejected 清舊 sync log／作廢舊截圖／插新 proof／轉 payment_review／同步 WMS）同員工版共用
+      const id = await attachProofCore(order.id, order.status, input.imagePath);
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
@@ -301,6 +314,43 @@ export const ordersRouter = createRouter({
         targetType: "order",
         targetId: order.orderNo,
         detail: `上傳付款截圖（訂單 ${order.orderNo}）`,
+      });
+      return db.query.paymentProofs.findFirst({
+        where: eq(paymentProofs.id, id),
+      });
+    }),
+
+  // 2026-07-30：員工／管理員代客上傳付款截圖（客人唔識傳，WhatsApp 將截圖傳畀員工嘅情況）——
+  // 同客人版同一条流程：附截圖 → 訂單轉 payment_review → 背景同步 WMS 等回傳
+  staffAttachProof: staffProcedure
+    .input(
+      z.object({
+        orderId: z.number().int().positive(),
+        imagePath: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.id, input.orderId),
+      });
+      if (!order) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
+      }
+      if (!["pending_payment", "rejected"].includes(order.status)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "呢張訂單而家唔可以上傳付款證明",
+        });
+      }
+      const id = await attachProofCore(order.id, order.status, input.imagePath);
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.staffAttachProof",
+        targetType: "order",
+        targetId: order.orderNo,
+        detail: `員工代客上傳付款截圖（訂單 ${order.orderNo}）`,
       });
       return db.query.paymentProofs.findFirst({
         where: eq(paymentProofs.id, id),
