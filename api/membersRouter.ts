@@ -28,6 +28,7 @@ export const membersRouter = createRouter({
           phone: users.phone,
           email: users.email,
           address: users.address,
+          birthMonth: users.birthMonth,
           createdAt: users.createdAt,
           orderCount: sql<number>`count(${orders.id})::int`,
           totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,

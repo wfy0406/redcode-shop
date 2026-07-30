@@ -25,6 +25,7 @@ type MemberRow = {
   phone: string;
   email: string | null;
   address: string | null;
+  birthMonth: number | null;
   createdAt: Date | string;
   orderCount: number;
   totalSpent: number;
@@ -409,6 +410,7 @@ export default function MemberList({
                   <p className="mt-1 text-[12px] leading-[1.5] text-txt-3">地址：{m.address}</p>
                 )}
                 <p className="mt-1.5 font-mono text-[12px] text-txt-3">
+                  {m.birthMonth != null && <>生日 {m.birthMonth} 月 · </>}
                   註冊 {fmtDate(m.createdAt)} · 訂單 {m.orderCount} · 累計{' '}
                   <span className="text-pink">{fmtHKD(m.totalSpent)}</span>
                 </p>
@@ -502,6 +504,7 @@ export default function MemberList({
                 <th className="py-2 pr-3 font-normal">電話</th>
                 <th className="py-2 pr-3 font-normal">Email</th>
                 <th className="py-2 pr-3 font-normal">地址</th>
+                <th className="py-2 pr-3 font-normal">生日月份</th>
                 <th className="py-2 pr-3 font-normal">註冊日期</th>
                 <th className="w-16 py-2 pr-3 text-right font-normal">訂單數</th>
                 <th className="w-28 py-2 text-right font-normal">累計消費</th>
@@ -523,6 +526,9 @@ export default function MemberList({
                   </td>
                   <td className="max-w-[140px] truncate py-2.5 pr-3 text-[13px] text-txt-3">
                     {m.address || '—'}
+                  </td>
+                  <td className="whitespace-nowrap py-2.5 pr-3 font-mono text-[13px] text-txt-2">
+                    {m.birthMonth != null ? `${m.birthMonth} 月` : '—'}
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-[13px] text-txt-3">
                     {fmtDate(m.createdAt)}

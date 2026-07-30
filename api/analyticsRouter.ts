@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, orderItems, promoCodes, users } from "@db/schema";
 import { createRouter, adminProcedure } from "./middleware";
@@ -13,6 +13,8 @@ import { createRouter, adminProcedure } from "./middleware";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DEAD_STATUSES = ["pending_payment", "cancelled", "rejected"] as const;
+// 已審批＝approved（連 legacy shipped/completed 一齊計；2026-07-30 Glo 要求嘅「已審批訂單數」用）
+const APPROVED_STATUSES = ["approved", "shipped", "completed"];
 
 /** HKT 今日 00:00 對應嘅 UTC Date */
 function hktTodayStartUtc(): Date {
@@ -131,6 +133,83 @@ export const analyticsRouter = createRouter({
         orders: b.orders,
         revenue: b.revenue,
       }));
+    }),
+
+  /**
+   * 已審批訂單數（2026-07-30 Glo 要求）：逐日聚合 approved（連 legacy shipped/completed）嘅單。
+   * 兩種模式：
+   * - days 模式：近 N 日（7/14/30），HKT 今日做最後一日
+   * - month 模式：指定月份（YYYY-MM），HKT 該月 1 號至月尾，逐日列出
+   * 回傳逐日 { date, orders, revenue }（零嘅日子都會補 0）＋期間總數，前台畫 bar chart。
+   */
+  approvedDaily: adminProcedure
+    .input(
+      z
+        .object({
+          days: z.number().int().min(7).max(30).optional(),
+          month: z
+            .string()
+            .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+            .optional(),
+        })
+        .optional(),
+    )
+    .query(async ({ input }) => {
+      const db = getDb();
+      let rangeStart: Date;
+      let rangeEnd: Date | null = null;
+      let dayCount: number;
+      if (input?.month) {
+        // 月份模式：HKT 該月 1 號 00:00 → 下個月 1 號 00:00（唔包）
+        const [y, m] = input.month.split("-").map(Number);
+        rangeStart = new Date(Date.UTC(y, m - 1, 1) - HKT_OFFSET_MS);
+        rangeEnd = new Date(Date.UTC(y, m, 1) - HKT_OFFSET_MS);
+        dayCount = Math.round((rangeEnd.getTime() - rangeStart.getTime()) / DAY_MS);
+      } else {
+        const days = input?.days ?? 7;
+        const todayStart = hktTodayStartUtc();
+        rangeStart = new Date(todayStart.getTime() - (days - 1) * DAY_MS);
+        dayCount = days;
+      }
+
+      const rows = await db
+        .select({ createdAt: orders.createdAt, total: orders.total })
+        .from(orders)
+        .where(
+          and(
+            gte(orders.createdAt, rangeStart),
+            ...(rangeEnd ? [lt(orders.createdAt, rangeEnd)] : []),
+            inArray(orders.status, APPROVED_STATUSES),
+          ),
+        );
+
+      const bucket = new Map<string, { orders: number; revenue: number }>();
+      for (let i = dayCount - 1; i >= 0; i--) {
+        bucket.set(hktDateString(new Date(rangeStart.getTime() + i * DAY_MS)), {
+          orders: 0,
+          revenue: 0,
+        });
+      }
+      let totalOrders = 0;
+      let totalRevenue = 0;
+      for (const row of rows) {
+        const key = hktDateString(row.createdAt);
+        const b = bucket.get(key);
+        if (!b) continue; // HKT 換日邊緣情況
+        b.orders += 1;
+        b.revenue += row.total;
+        totalOrders += 1;
+        totalRevenue += row.total;
+      }
+      return {
+        days: [...bucket.entries()].map(([date, b]) => ({
+          date,
+          orders: b.orders,
+          revenue: b.revenue,
+        })),
+        totalOrders,
+        totalRevenue,
+      };
     }),
 
   // 實際 schema 係 orderItems 表（唔係 orders.items jsonb）——逐 line item 展開統計

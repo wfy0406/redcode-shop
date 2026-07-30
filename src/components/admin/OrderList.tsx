@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, Search } from 'lucide-react';
+import { Calendar, ChevronDown, Search } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import type { AdminOrder, OrderStatus, ReviewHandler, StatusHandler } from './types';
 import { fmtDateTime, fmtHKD } from './format';
@@ -102,6 +102,13 @@ const CANCELLABLE: OrderStatus[] = [
   'shipped',
 ];
 
+/** 本地日子（YYYY-MM-DD）對照：createdAt 係咪同一日（開單日期篩選用） */
+function sameLocalDay(d: Date | string, ymd: string): boolean {
+  const date = d instanceof Date ? d : new Date(d);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` === ymd;
+}
+
 /** 可以手動改單嘅狀態：已出貨／已完成以外都改得（已取消嘅單改動只更新記錄，唔郁庫存） */
 const EDITABLE: OrderStatus[] = ['pending_payment', 'payment_review', 'rejected', 'approved', 'cancelled'];
 
@@ -124,6 +131,8 @@ export default function OrderList({
 }: OrderListProps) {
   const [tab, setTab] = useState<OrderStatus | 'all'>('all');
   const [search, setSearch] = useState('');
+  // 開單日期篩選（2026-07-30 加；空字串＝唔篩）
+  const [orderDate, setOrderDate] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   // 完整刪除訂單（兩步確認；未收款單會加返庫存，server 審計留底）
@@ -166,10 +175,18 @@ export default function OrderList({
     const kw = search.trim().toLowerCase();
     return orders.filter((o) => {
       if (tab !== 'all' && o.status !== tab) return false;
-      if (kw && !o.orderNo.toLowerCase().includes(kw)) return false;
+      // 2026-07-30：搜尋擴展做 單號／客戶名／電話 三合一模糊對照
+      if (
+        kw &&
+        !o.orderNo.toLowerCase().includes(kw) &&
+        !o.user.name.toLowerCase().includes(kw) &&
+        !o.user.phone.toLowerCase().includes(kw)
+      )
+        return false;
+      if (orderDate && !sameLocalDay(o.createdAt, orderDate)) return false;
       return true;
     });
-  }, [orders, tab, search]);
+  }, [orders, tab, search, orderDate]);
 
   return (
     <div>
@@ -202,17 +219,36 @@ export default function OrderList({
           className="ml-auto flex h-10 items-center gap-2 rounded-full border px-4"
           style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
         >
+          <Calendar size={15} className="shrink-0 text-txt-3" aria-hidden="true" />
+          <input
+            type="date"
+            value={orderDate}
+            onChange={(e) => setOrderDate(e.target.value)}
+            aria-label="按開單日期篩選"
+            className="bg-transparent font-mono text-[13px] text-txt-1 focus:outline-none"
+          />
+        </label>
+        <label
+          className="flex h-10 items-center gap-2 rounded-full border px-4"
+          style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+        >
           <Search size={15} className="shrink-0 text-txt-3" aria-hidden="true" />
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜尋單號"
-            aria-label="搜尋訂單編號"
+            placeholder="單號／名／電話"
+            aria-label="按單號、客戶名稱或電話搜尋訂單"
             className="w-36 bg-transparent font-mono text-[13px] text-txt-1 placeholder:text-txt-disabled focus:outline-none"
           />
         </label>
       </div>
+
+      {/* 結果數量（2026-07-30 Glo 要求顯示訂單數量） */}
+      <p className="mt-3 font-mono text-[12px] text-txt-3" aria-live="polite">
+        顯示 {filtered.length} 張訂單
+        {(tab !== 'all' || search.trim() || orderDate) && `（全部共 ${orders.length} 張）`}
+      </p>
 
       {/* 訂單行 */}
       {filtered.length === 0 ? (
