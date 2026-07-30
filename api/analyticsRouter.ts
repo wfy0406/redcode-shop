@@ -6,12 +6,13 @@ import { createRouter, adminProcedure } from "./middleware";
 
 /**
  * 業務分析 —— 全部 admin only
- * 「今日」同每日分組一律用 HKT（UTC+8）；revenue 排除 cancelled/rejected
- * （唔再要出貨步驟：approved＝已確認＝終態；confirmedCount 連 legacy shipped/completed 一齊計）
+ * 「今日」同每日分組一律用 HKT（UTC+8）；訂單數同 revenue 排除 pending_payment／cancelled／rejected
+ * （2026-07-30 Glo 規則：未傳截圖嘅待付款單唔係實單，唔計入分析；
+ * 唔再要出貨步驟：approved＝已確認＝終態；confirmedCount 連 legacy shipped/completed 一齊計）
  */
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
-const DEAD_STATUSES = ["cancelled", "rejected"] as const;
+const DEAD_STATUSES = ["pending_payment", "cancelled", "rejected"] as const;
 
 /** HKT 今日 00:00 對應嘅 UTC Date */
 function hktTodayStartUtc(): Date {
@@ -48,6 +49,8 @@ export const analyticsRouter = createRouter({
     let cancelledCount = 0;
     let rejectedCount = 0;
     for (const row of byStatus) {
+      // 2026-07-30 Glo 規則：待付款（未傳截圖）嘅單唔計入訂單數同營業額
+      if (row.status === "pending_payment") continue;
       totalOrders += row.count;
       todayOrders += row.todayCount;
       if (row.status === "cancelled") cancelledCount = row.count;
@@ -150,7 +153,7 @@ export const analyticsRouter = createRouter({
         })
         .from(orderItems)
         .innerJoin(orders, eq(orderItems.orderId, orders.id))
-        .where(sql`${orders.status} not in ('cancelled', 'rejected')`)
+        .where(sql`${orders.status} not in ('pending_payment', 'cancelled', 'rejected')`)
         .groupBy(orderItems.productId, orderItems.productName, orderItems.sku)
         .orderBy(desc(sql`sum(${orderItems.quantity})`))
         .limit(limit);

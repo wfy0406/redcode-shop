@@ -646,7 +646,8 @@ export const ordersRouter = createRouter({
 
   /**
    * 訂貨統計（採購用）：按 產品×尺寸 聚合「有效訂單」件數，附上架日期同現貨庫存。
-   * 有效＝排除 cancelled／rejected（同 analytics 慣例一致；被拒單客人重傳截圖通過後會計返）。
+   * 有效＝排除 pending_payment／cancelled／rejected（2026-07-30 Glo 規則：未傳截圖嘅待付款單唔計；
+   * 被拒單客人重傳截圖通過後會計返）。
    * 上架日期＝products.listedDate（商品管理可填）；產品改過名都唔會拆開兩行（max 攞最新名）。
    * 每個 size 一列；冇尺寸嘅貨 size=null。前台再按 HKT 上架日期分組顯示。
    */
@@ -665,7 +666,7 @@ export const ordersRouter = createRouter({
       .from(orderItems)
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
       .innerJoin(products, eq(orderItems.productId, products.id))
-      .where(sql`${orders.status} not in ('cancelled', 'rejected')`)
+      .where(sql`${orders.status} not in ('pending_payment', 'cancelled', 'rejected')`)
       .groupBy(orderItems.productId, orderItems.size, products.listedDate, products.stock)
       .orderBy(desc(products.listedDate), desc(sql`sum(${orderItems.quantity})`));
   }),
