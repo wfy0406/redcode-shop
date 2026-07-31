@@ -1,11 +1,13 @@
-import { inflateRawSync } from "node:zlib";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 
 /**
  * 手寫 ZIP 讀寫（零 dependency，專為 xlsx 模板手術而設）
  * 讀：由尾搵 EOCD → 行 central directory → 逐 entry 按 local header 定位 data，
  *     deflate（method 8）用 zlib.inflateRawSync 解，store（method 0）直接切。
- * 寫：全部 entries 用 store method（唔壓縮）+ CRC32，重寫 local headers +
- *     central directory + EOCD。
+ * 寫：全部 entries 用 deflate（method 8，同 Excel 原生一致）+ CRC32，
+ *     重寫 local headers + central directory + EOCD。
+ *     用 deflate 唔單止慳位（677KB → ~80KB，慢線下載唔易截斷），
+ *     產出嘅 zip 形狀亦同 Excel 自己儲存嘅一樣，相容性最好。
  */
 
 const EOCD_SIG = 0x06054b50;
@@ -84,8 +86,8 @@ export function readZipEntries(buf: Buffer): Map<string, Buffer> {
   return out;
 }
 
-// ── 寫（store method，保持 entry 順序） ─────────────────────────
-export function writeZipStore(entries: Map<string, Buffer>): Buffer {
+// ── 寫（deflate method 8，保持 entry 順序） ─────────────────────
+export function writeZipDeflate(entries: Map<string, Buffer>): Buffer {
   const chunks: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -93,31 +95,32 @@ export function writeZipStore(entries: Map<string, Buffer>): Buffer {
   for (const [name, data] of entries) {
     const nameBuf = Buffer.from(name, "utf8");
     const crc = crc32(data);
+    const comp = deflateRawSync(data, { level: 9 });
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(LOC_SIG, 0);
     local.writeUInt16LE(20, 4); // version needed
     local.writeUInt16LE(0, 6); // flags
-    local.writeUInt16LE(0, 8); // method 0 = store
+    local.writeUInt16LE(8, 8); // method 8 = deflate
     local.writeUInt16LE(0, 10); // mod time
     local.writeUInt16LE(0x21, 12); // mod date = 1980-01-01
     local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(data.length, 18); // compressed size
+    local.writeUInt32LE(comp.length, 18); // compressed size
     local.writeUInt32LE(data.length, 22); // uncompressed size
     local.writeUInt16LE(nameBuf.length, 26);
     local.writeUInt16LE(0, 28); // extra len
-    chunks.push(local, nameBuf, data);
+    chunks.push(local, nameBuf, comp);
 
     const cen = Buffer.alloc(46);
     cen.writeUInt32LE(CEN_SIG, 0);
     cen.writeUInt16LE(20, 4); // version made by
     cen.writeUInt16LE(20, 6); // version needed
     cen.writeUInt16LE(0, 8); // flags
-    cen.writeUInt16LE(0, 10); // method 0 = store
+    cen.writeUInt16LE(8, 10); // method 8 = deflate
     cen.writeUInt16LE(0, 12); // mod time
     cen.writeUInt16LE(0x21, 14); // mod date
     cen.writeUInt32LE(crc, 16);
-    cen.writeUInt32LE(data.length, 20);
+    cen.writeUInt32LE(comp.length, 20);
     cen.writeUInt32LE(data.length, 24);
     cen.writeUInt16LE(nameBuf.length, 28);
     cen.writeUInt16LE(0, 30); // extra len
@@ -128,7 +131,7 @@ export function writeZipStore(entries: Map<string, Buffer>): Buffer {
     cen.writeUInt32LE(offset, 42); // local header offset
     centrals.push(cen, nameBuf);
 
-    offset += 30 + nameBuf.length + data.length;
+    offset += 30 + nameBuf.length + comp.length;
   }
 
   const cdStart = offset;

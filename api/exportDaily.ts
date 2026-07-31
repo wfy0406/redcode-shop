@@ -2,10 +2,10 @@ import type { Context } from "hono";
 import { readFile } from "node:fs/promises";
 import { and, asc, eq, gte, lt, notInArray } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { orders, orderItems, products } from "@db/schema";
+import { orders, orderItems, products, users } from "@db/schema";
 import { userFromAuthHeader, verifyToken } from "./auth";
 import { opsTemplateCandidates } from "./adminAssets";
-import { readZipEntries, writeZipStore } from "./xlsxZip";
+import { readZipEntries, writeZipDeflate } from "./xlsxZip";
 
 /**
  * GET /api/export/daily?date=YYYY-MM-DD
@@ -18,15 +18,17 @@ import { readZipEntries, writeZipStore } from "./xlsxZip";
  * 先至喺 sentinel row（r=1048571）之前插新 row。
  * 每 order line item 一列：
  *   A 日期 = 商品 listedDate（Excel serial）｜B 場次 = 0｜C 產品 = SKU｜
- *   E 金額 = qty × (discountPrice ?? price)｜M 下單批次 = 第一批｜其餘欄留空
- * 排除 cancelled/rejected；冇數據照出（淨表頭模板）。
+ *   E 金額 = qty × (discountPrice ?? price)｜H 客戶名稱 = users.name｜
+ *   M 下單批次 = 第一批｜其餘欄留空
+ * 排除 cancelled/rejected/pending_payment（未過數嘅單唔落入訂貨統計）；
+ * 冇數據照出（淨表頭模板）。
  */
 const SHEET_PATH = "xl/worksheets/sheet9.xml";
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30); // Excel serial day 0
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TEMPLATE_DATA_ROWS = 1274; // 模板預留空行：row 2..1275
 
-type ExportLine = { dateSerial: number; sku: string; amount: number };
+type ExportLine = { dateSerial: number; sku: string; amount: number; name: string };
 
 /** 讀模板：disk 上傳版（後台「網站資產」上傳）優先，repo 自帶版 fallback */
 async function readTemplate(): Promise<Buffer> {
@@ -75,6 +77,7 @@ function buildRow(rowNo: number, line: ExportLine): string {
     cellXml(`B${rowNo}`, "", 0) +
     cellXml(`C${rowNo}`, "", line.sku) +
     cellXml(`E${rowNo}`, "", line.amount) +
+    cellXml(`H${rowNo}`, "", line.name) +
     cellXml(`M${rowNo}`, "", "第一批") +
     `</row>`
   );
@@ -93,6 +96,7 @@ export function patchSheet9(xml: string, lines: ExportLine[]): string {
         rowXml = setCell(rowXml, rowNo, "B", 0);
         rowXml = setCell(rowXml, rowNo, "C", line.sku);
         rowXml = setCell(rowXml, rowNo, "E", line.amount);
+        rowXml = setCell(rowXml, rowNo, "H", line.name);
         rowXml = setCell(rowXml, rowNo, "M", "第一批");
         out = out.slice(0, m.index) + rowXml + out.slice(m.index + m[0].length);
         return;
@@ -167,15 +171,17 @@ export async function buildDailyXlsx(date: string): Promise<Buffer> {
       price: products.price,
       discountPrice: products.discountPrice,
       listedDate: products.listedDate,
+      customerName: users.name,
     })
     .from(orderItems)
     .innerJoin(orders, eq(orderItems.orderId, orders.id))
     .innerJoin(products, eq(orderItems.productId, products.id))
+    .innerJoin(users, eq(orders.userId, users.id))
     .where(
       and(
         gte(orders.createdAt, start),
         lt(orders.createdAt, end),
-        notInArray(orders.status, ["cancelled", "rejected"]),
+        notInArray(orders.status, ["cancelled", "rejected", "pending_payment"]),
       ),
     )
     .orderBy(asc(orders.id), asc(orderItems.id));
@@ -184,6 +190,7 @@ export async function buildDailyXlsx(date: string): Promise<Buffer> {
     dateSerial: Math.round((r.listedDate.getTime() - EXCEL_EPOCH_MS) / DAY_MS),
     sku: r.sku,
     amount: r.quantity * (r.discountPrice ?? r.price),
+    name: r.customerName,
   }));
 
   const template = await readTemplate();
@@ -192,7 +199,7 @@ export async function buildDailyXlsx(date: string): Promise<Buffer> {
   const sheet = entries.get(SHEET_PATH);
   if (!sheet) throw new Error(`template 入面搵唔到 ${SHEET_PATH}`);
   entries.set(SHEET_PATH, Buffer.from(patchSheet9(sheet.toString("utf8"), lines), "utf8"));
-  return writeZipStore(entries);
+  return writeZipDeflate(entries);
 }
 
 export async function exportDaily(c: Context) {
