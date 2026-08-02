@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { and, eq, gt, isNull, like, or, desc } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { cartItems, orderItems, products } from "@db/schema";
-import { PRODUCT_CATEGORY_VALUES } from "@contracts/types";
+import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 
@@ -19,6 +19,92 @@ function notAutoDelisted() {
     isNull(products.delistAt),
     gt(products.delistAt, new Date()),
   )!;
+}
+
+// ===== 更新日誌：新舊值對比（中文欄位名＋舊值 → 新值） =====
+
+/** 欄位中文名（日誌顯示用） */
+const PRODUCT_FIELD_LABELS: Record<string, string> = {
+  sku: "貨號",
+  name: "名稱",
+  description: "描述",
+  image: "主圖",
+  photos: "商品圖",
+  price: "原價",
+  discountPrice: "折扣價",
+  sizes: "尺碼",
+  sizeEnabled: "尺碼選項",
+  note: "備註",
+  category: "分類",
+  listedDate: "上架日期",
+  stock: "存貨",
+  isActive: "上架狀態",
+  delistEnabled: "定時下架",
+  delistAt: "下架時間",
+};
+
+/** 長內容欄位（圖片網址、描述）：唔列新舊值，淨係講「已更新」 */
+const PRODUCT_SILENT_FIELDS = new Set(["description", "image", "photos"]);
+
+/** 香港時間（UTC+8）格式化：dateOnly＝YYYY-MM-DD，否則 YYYY-MM-DD HH:mm */
+function fmtDateHK(d: Date, dateOnly: boolean): string {
+  const hk = new Date(d.getTime() + 8 * 3600 * 1000);
+  const iso = hk.toISOString();
+  return dateOnly ? iso.slice(0, 10) : `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
+}
+
+/** 單個欄位值嘅日誌顯示格式 */
+function fmtProductField(key: string, v: unknown): string {
+  if (v === null || v === undefined || v === "") return "（無）";
+  if (key === "price" || key === "discountPrice") return `$${v}`;
+  if (key === "isActive") return v ? "上架中" : "已下架";
+  if (key === "sizeEnabled" || key === "delistEnabled") return v ? "開" : "關";
+  if (key === "listedDate")
+    return v instanceof Date ? fmtDateHK(v, true) : String(v);
+  if (key === "delistAt")
+    return v instanceof Date ? fmtDateHK(v, false) : String(v);
+  if (key === "category") return productCategoryLabel(String(v));
+  return String(v);
+}
+
+/** 新舊值正規化比較（null ≈ undefined ≈ 空字串；Date 用 timestamp；array 逐項） */
+function productFieldSame(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown): unknown => {
+    if (v === null || v === undefined || v === "") return "";
+    if (v instanceof Date) return v.getTime();
+    if (Array.isArray(v)) return JSON.stringify(v);
+    return v;
+  };
+  return norm(a) === norm(b);
+}
+
+/**
+ * 對比更新前後，用中文列出「真係改咗」嘅欄位（舊值 → 新值）。
+ * 前端係成張表單提交，所以淨係改一個欄位都會傳晒全部欄位上嚟——
+ * 呢個函數負責過濾，全部冇變就話「內容冇變」。
+ */
+function describeProductChanges(
+  existing: Record<string, unknown>,
+  data: Record<string, unknown>,
+): string {
+  const parts: string[] = [];
+  for (const key of Object.keys(data)) {
+    // 多相更新時 image 係由 photos[0] 同步（見下面 mutation），屬同一改動，唔重複講
+    if (key === "image" && data.photos !== undefined) continue;
+    const next = data[key];
+    if (next === undefined) continue;
+    const prev = existing[key];
+    if (productFieldSame(prev, next)) continue;
+    const label = PRODUCT_FIELD_LABELS[key] ?? key;
+    if (PRODUCT_SILENT_FIELDS.has(key)) {
+      parts.push(`${label}已更新`);
+    } else {
+      parts.push(
+        `${label}：${fmtProductField(key, prev)} → ${fmtProductField(key, next)}`,
+      );
+    }
+  }
+  return parts.length > 0 ? parts.join("；") : "內容冇變";
 }
 
 export const productsRouter = createRouter({
@@ -181,7 +267,10 @@ export const productsRouter = createRouter({
         action: "product.update",
         targetType: "product",
         targetId: existing.sku,
-        detail: `更新商品「${data.name ?? existing.name}」（${existing.sku}）：${Object.keys(data).join("、")}`,
+        detail: `更新商品「${data.name ?? existing.name}」（${existing.sku}）：${describeProductChanges(
+          existing as unknown as Record<string, unknown>,
+          { ...data } as Record<string, unknown>,
+        )}`,
       });
       return db.query.products.findFirst({ where: eq(products.id, id) });
     }),
