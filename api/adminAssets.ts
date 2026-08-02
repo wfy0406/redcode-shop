@@ -4,10 +4,11 @@ import path from "node:path";
 import { userFromAuthHeader } from "./auth";
 
 /**
- * 網站資產管理（staff/admin）—— 畀非技術用戶喺後台直接上傳兩個 binary 資產，
+ * 網站資產管理（staff/admin）—— 畀非技術用戶喺後台直接上傳 binary 資產，
  * 唔使掂 GitHub：
- *   1. empty-cart.png   → 購物車空狀態插圖（前台 /empty-cart.png 引用）
+ *   1. empty-cart.png    → 購物車空狀態插圖（前台 /empty-cart.png 引用）
  *   2. ops-template.xlsx → 每日數據導出嘅 Excel 模板
+ *   3. gloglo-3.jpg      → 首頁「今晚精選」Glo Glo 著身相（前台 /gloglo-3.jpg 引用）
  *
  * 檔案寫入 UPLOAD_DIR/system/（Render Persistent Disk，重新部署都唔會散）。
  * Runtime 優先讀 disk 上傳版；disk 冇先至 fallback repo/dist 自帶版。
@@ -44,6 +45,15 @@ const SITE_ASSETS: AssetDef[] = [
     maxBytes: 5 * 1024 * 1024,
     extRe: /\.xlsx$/i,
     repoPaths: ["api/assets/ops-template.xlsx"],
+  },
+  {
+    key: "gloglo-banner",
+    filename: "gloglo-3.jpg",
+    label: "首頁 Glo Glo 著身相",
+    extHint: "JPG 圖片",
+    maxBytes: 3 * 1024 * 1024,
+    extRe: /\.jpe?g$/i,
+    repoPaths: ["dist/public/gloglo-3.jpg", "public/gloglo-3.jpg"],
   },
 ];
 
@@ -95,7 +105,7 @@ export async function siteAssetsStatus(c: Context) {
   return c.json({ assets: items });
 }
 
-/** POST /api/admin/upload-asset?key=empty-cart|ops-template —— multipart「file」欄位上傳 */
+/** POST /api/admin/upload-asset?key=empty-cart|ops-template|gloglo-banner —— multipart「file」欄位上傳 */
 export async function uploadSiteAsset(c: Context) {
   const user = await requireStaff(c);
   if (!user) return c.json({ error: "Unauthorized" }, 401);
@@ -117,15 +127,26 @@ export async function uploadSiteAsset(c: Context) {
   return c.json({ ok: true, key: asset.key, size: buffer.length });
 }
 
-/** GET /empty-cart.png —— disk 有上傳版就 serve disk 版；冇就 next() 跌落 dist 靜態版 */
-export async function serveEmptyCartOverride(c: Context, next: Next) {
-  try {
-    const data = await readFile(path.join(SYSTEM_DIR, "empty-cart.png"));
-    return c.body(new Uint8Array(data), 200, {
-      "Content-Type": "image/png",
-      "Cache-Control": "public, max-age=3600",
-    });
-  } catch {
-    return next();
-  }
+/**
+ * 通用 runtime override：disk 有上傳版就 serve disk 版；冇就 next() 跌落 dist 靜態版。
+ * （static file route 喺 production 先會註冊喺後面，所以 next() 一定落到去）
+ */
+function serveSystemAsset(filename: string, contentType: string) {
+  return async (c: Context, next: Next) => {
+    try {
+      const data = await readFile(path.join(SYSTEM_DIR, filename));
+      return c.body(new Uint8Array(data), 200, {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=3600",
+      });
+    } catch {
+      return next();
+    }
+  };
 }
+
+/** GET /empty-cart.png override */
+export const serveEmptyCartOverride = serveSystemAsset("empty-cart.png", "image/png");
+
+/** GET /gloglo-3.jpg override（首頁 Glo Glo 著身相） */
+export const serveGlogloBannerOverride = serveSystemAsset("gloglo-3.jpg", "image/jpeg");

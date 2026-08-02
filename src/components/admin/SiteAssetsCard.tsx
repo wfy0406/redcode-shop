@@ -4,15 +4,16 @@ import { getToken } from '@/lib/auth';
 import type { ToastKind } from './useToasts';
 
 /**
- * 網站資產卡 —— 畀管理員直接喺後台上傳兩個 binary 資產（唔使掂 GitHub）：
- *   1. empty-cart.png   → 購物車空狀態插圖（上傳後即時生效）
+ * 網站資產卡 —— 畀管理員直接喺後台上傳 binary 資產（唔使掂 GitHub）：
+ *   1. empty-cart.png    → 購物車空狀態插圖（上傳後即時生效）
  *   2. ops-template.xlsx → 每日數據導出 Excel 模板
+ *   3. gloglo-3.jpg      → 首頁「今晚精選」Glo Glo 著身相（上傳後即時生效）
  * 檔案寫入伺服器持久碟（重新部署唔會散），runtime 優先讀上傳版。
  * 掛喺業務分析（AnalyticsManager）底部。
  */
 
 type AssetStatus = {
-  key: 'empty-cart' | 'ops-template';
+  key: 'empty-cart' | 'ops-template' | 'gloglo-banner';
   label: string;
   status: 'uploaded' | 'repo' | 'missing';
   size: number;
@@ -22,6 +23,7 @@ type AssetStatus = {
 const ASSET_UI: Record<AssetStatus['key'], { accept: string; hint: string; icon: typeof ImageIcon }> = {
   'empty-cart': { accept: 'image/png,.png', hint: 'PNG 圖片，上限 2MB', icon: ImageIcon },
   'ops-template': { accept: '.xlsx', hint: 'Excel .xlsx，上限 5MB', icon: FileSpreadsheet },
+  'gloglo-banner': { accept: 'image/jpeg,.jpg,.jpeg', hint: 'JPG 圖片，上限 3MB（直身人像最靚）', icon: ImageIcon },
 };
 
 const STATUS_META: Record<AssetStatus['status'], { text: string; color: string }> = {
