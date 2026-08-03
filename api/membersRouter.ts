@@ -141,10 +141,18 @@ export const membersRouter = createRouter({
           throw new TRPCError({ code: "CONFLICT", message: "呢個電話號碼已經註冊咗" });
         }
       }
+      // 撞 email 檢查（2026-08-03 補；email 有 unique 索引，撞咗 DB 會炸 500，要先擋）
+      if (input.email) {
+        const emailNorm = input.email.toLowerCase();
+        const dup = await db.query.users.findFirst({ where: eq(users.email, emailNorm) });
+        if (dup && dup.id !== input.id) {
+          throw new TRPCError({ code: "CONFLICT", message: "呢個 Email 已經綁咗其他帳號" });
+        }
+      }
       const data: Partial<typeof users.$inferInsert> = {};
       if (input.name !== undefined) data.name = input.name;
       if (input.phone !== undefined) data.phone = input.phone;
-      if (input.email !== undefined) data.email = input.email;
+      if (input.email !== undefined) data.email = input.email ? input.email.toLowerCase() : null;
       if (input.address !== undefined) data.address = input.address;
       if (input.age !== undefined) data.age = input.age;
       if (input.birthMonth !== undefined) data.birthMonth = input.birthMonth;

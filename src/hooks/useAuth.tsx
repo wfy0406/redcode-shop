@@ -14,6 +14,7 @@ type AuthUser = {
   name: string;
   phone: string;
   role: "member" | "staff" | "admin";
+  email?: string | null;
   address?: string | null;
   age?: number | null;
   birthMonth?: number | null;
@@ -23,6 +24,7 @@ type RegisterInput = {
   name: string;
   phone: string;
   password: string;
+  email?: string;
   address?: string;
   age?: number;
   birthMonth?: number;

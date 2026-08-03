@@ -5,15 +5,17 @@ import FormField from './FormField';
 
 /**
  * 會員資料卡（§P8 + R3 逐行 inline edit）
- * 稱呼／地址／年齡逐行 display ↔ edit 兩態，兩態共用行高 h-14 唔跳位；
+ * 稱呼／Email／地址／年齡逐行 display ↔ edit 兩態，兩態共用行高 h-14 唔跳位；
  * 儲存 → auth.updateProfile → 成功 toast「資料已更新」+ utils.auth.me.invalidate()；
  * 失敗：錯誤訊息 persist 喺欄下直到改正。電話係登入帳號，唯讀。
+ * Email（2026-08-03 加）：選填，留空儲存＝清除；撞咗其他人嘅 Email 會報錯。
  */
 
 interface ProfileUser {
   id: number;
   name: string;
   phone: string;
+  email?: string | null;
   address?: string | null;
   age?: number | null;
   birthMonth?: number | null;
@@ -25,22 +27,34 @@ interface ProfileCardProps {
   pushToast: (text: string) => void;
 }
 
-type EditableField = 'name' | 'address' | 'age';
+type EditableField = 'name' | 'email' | 'address' | 'age';
 
 const FIELD_LABEL: Record<EditableField, string> = {
   name: '稱呼',
+  email: 'Email',
   address: '地址',
   age: '年齡',
 };
 
-/** auth.updateProfile 契約（spec §1）：name/address/age 全 optional */
-type ProfileUpdateInput = { name?: string; address?: string | null; age?: number | null };
+/** auth.updateProfile 契約（spec §1）：name/email/address/age 全 optional */
+type ProfileUpdateInput = {
+  name?: string;
+  email?: string | null;
+  address?: string | null;
+  age?: number | null;
+};
 
 function buildPayload(field: EditableField, draft: string): { payload: ProfileUpdateInput } | { error: string } {
   const trimmed = draft.trim();
   if (field === 'name') {
     if (!trimmed) return { error: '稱呼唔可以留空' };
     return { payload: { name: trimmed } };
+  }
+  if (field === 'email') {
+    // 留空＝清除；有值要係有效 email 格式（後端會再做撞號檢查）
+    if (!trimmed) return { payload: { email: null } };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return { error: 'Email 格式唔啱，請再檢查' };
+    return { payload: { email: trimmed } };
   }
   if (field === 'address') {
     return { payload: { address: trimmed || null } };
@@ -95,11 +109,13 @@ export default function ProfileCard({ user, onLogout, pushToast }: ProfileCardPr
     setDraft(
       field === 'name'
         ? user.name
-        : field === 'address'
-          ? (user.address ?? '')
-          : user.age != null
-            ? String(user.age)
-            : '',
+        : field === 'email'
+          ? (user.email ?? '')
+          : field === 'address'
+            ? (user.address ?? '')
+            : user.age != null
+              ? String(user.age)
+              : '',
     );
   };
 
@@ -160,8 +176,16 @@ export default function ProfileCard({ user, onLogout, pushToast }: ProfileCardPr
         onKeyDown={onEditKeyDown(field)}
         autoFocus
         maxLength={field === 'name' ? 255 : undefined}
-        inputMode={field === 'age' ? 'numeric' : undefined}
-        autoComplete={field === 'name' ? 'name' : field === 'address' ? 'street-address' : 'off'}
+        inputMode={field === 'age' ? 'numeric' : field === 'email' ? 'email' : undefined}
+        autoComplete={
+          field === 'name'
+            ? 'name'
+            : field === 'email'
+              ? 'email'
+              : field === 'address'
+                ? 'street-address'
+                : 'off'
+        }
         onFocus={(e) => {
           const len = e.currentTarget.value.length;
           e.currentTarget.setSelectionRange(len, len);
@@ -212,6 +236,7 @@ export default function ProfileCard({ user, onLogout, pushToast }: ProfileCardPr
       <div className="mt-5 divide-y divide-space-line border-t border-space-line">
         {renderRow('name', user.name)}
         <DisplayRow label="電話" value={user.phone} />
+        {renderRow('email', user.email?.trim() ? user.email : '未填寫')}
         {renderRow('address', user.address?.trim() ? user.address : '未填寫')}
         {renderRow('age', user.age != null ? `${user.age} 歲` : '未填寫')}
         {/* 生日月份：唯讀（2026-07-29 起只顯示；要改請聯絡 Glo Glo 後台改） */}
