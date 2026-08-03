@@ -237,7 +237,7 @@ export const ordersRouter = createRouter({
           columns: { name: true, email: true },
         });
         if (member?.email) {
-          const sent = await sendOrderPendingEmail({
+          const result = await sendOrderPendingEmail({
             to: member.email,
             name: member.name,
             orderNo: created.orderNo,
@@ -251,7 +251,9 @@ export const ordersRouter = createRouter({
               quantity: it.quantity,
             })),
           });
-          emailNote = sent ? `，待付款信已寄出至 ${member.email}` : "，待付款信寄出失敗（睇 Render log）";
+          emailNote = result.ok
+            ? `，待付款信已寄出至 ${member.email}`
+            : `，待付款信寄出失敗（${result.error ?? "未知原因"}）`;
         } else {
           emailNote = "，會員冇綁 Email，冇寄待付款信";
         }
@@ -453,7 +455,7 @@ export const ordersRouter = createRouter({
           columns: { name: true, email: true, phone: true },
         });
         if (member?.email) {
-          const sent = await sendOrderApprovedEmail({
+          const result = await sendOrderApprovedEmail({
             to: member.email,
             name: member.name,
             phone: member.phone,
@@ -473,7 +475,9 @@ export const ordersRouter = createRouter({
               address: reviewedOrder.address,
             },
           });
-          emailNote = sent ? `；確認信＋單據已寄出至 ${member.email}` : "；確認信寄出失敗（睇 Render log）";
+          emailNote = result.ok
+            ? `；確認信＋單據已寄出至 ${member.email}`
+            : `；確認信寄出失敗（${result.error ?? "未知原因"}）`;
         } else {
           emailNote = "；會員冇綁 Email，冇寄確認信";
         }
@@ -486,9 +490,8 @@ export const ordersRouter = createRouter({
         targetId: reviewedOrder?.orderNo ?? proof.orderId,
         detail: `${input.approve ? "批准" : "拒絕"}付款截圖（訂單 ${reviewedOrder?.orderNo ?? proof.orderId}）${input.note ? `：${input.note}` : ""}${emailNote}`,
       });
-      return db.query.paymentProofs.findFirst({
-        where: eq(paymentProofs.id, proof.id),
-      });
+      // 回傳 emailNote 畀後台 toast 直接顯示寄信結果（Glo 唔使再掘日誌先知道寄咗未）
+      return { emailNote };
     }),
 
   updateStatus: staffProcedure

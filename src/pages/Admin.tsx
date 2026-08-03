@@ -97,14 +97,16 @@ function AdminConsole() {
 
   const errMsg = (err: unknown) => (err instanceof Error ? err.message : '操作失敗，請再試');
 
-  /** 審批付款截圖：成功 → toast + 該單向右飛出（300ms）+ invalidate adminList */
+  /** 審批付款截圖：成功 → toast（埋寄信結果）+ 該單向右飛出（300ms）+ invalidate adminList */
   const handleReview = useCallback(
     async (proofId: number, approve: boolean, note: string | undefined, order: AdminOrder) => {
       setReviewingProofId(proofId);
       try {
-        await reviewProof.mutateAsync({ proofId, approve, note });
+        const r = await reviewProof.mutateAsync({ proofId, approve, note });
         pushToast(
-          approve ? `已批准 ${order.orderNo}，訂單轉做已確認` : `已拒絕 ${order.orderNo}`,
+          approve
+            ? `已批准 ${order.orderNo}，訂單轉做已確認${r?.emailNote ?? ''}`
+            : `已拒絕 ${order.orderNo}`,
           approve ? 'success' : 'info',
         );
         setLeavingIds((prev) => new Set(prev).add(order.id));
@@ -193,7 +195,7 @@ function AdminConsole() {
         reviewingProofId={reviewingProofId}
         onStatus={(oid, status) => void handleStatus(oid, status)}
         statusBusyId={statusBusyId}
-        onOpenLightbox={setLightboxSrc}
+        onOpenLightbox={onOpenLightbox}
       />
     ),
     purchase: <PurchaseStats />,

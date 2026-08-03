@@ -93,18 +93,21 @@ function fmtDelivery(d: OrderEmailDelivery): string {
   return d.address ? `送貨上門：${escapeHtml(d.address)}` : "送貨上門";
 }
 
-/** 底層寄信：冇 API key 靜默 skip；任何失敗回 false，絕對唔會 throw */
+/** 寄信結果：ok + 失敗原因（畀日誌／後台 toast 直接顯示，唔使再去 Render 掘 log） */
+export type SendResult = { ok: boolean; error?: string };
+
+/** 底層寄信：冇 API key 靜默 skip；任何失敗回 { ok:false, error }，絕對唔會 throw */
 export async function sendEmail(opts: {
   to: string;
   subject: string;
   html: string;
   /** Resend attachments：filename + base64 content */
   attachments?: { filename: string; content: string }[];
-}): Promise<boolean> {
+}): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     console.log(`[email] RESEND_API_KEY 未設定，略過寄信：「${opts.subject}」→ ${opts.to}`);
-    return false;
+    return { ok: false, error: "RESEND_API_KEY 未設定" };
   }
   const from = process.env.EMAIL_FROM || "RedCode官方購物網站 <noreply@ows.redcode.red>";
   try {
@@ -123,14 +126,15 @@ export async function sendEmail(opts: {
       }),
     });
     if (!res.ok) {
-      console.error(`[email] 寄信失敗（${res.status}）：「${opts.subject}」→ ${opts.to}`, await res.text());
-      return false;
+      const body = (await res.text()).slice(0, 300);
+      console.error(`[email] 寄信失敗（${res.status}）：「${opts.subject}」→ ${opts.to}`, body);
+      return { ok: false, error: `Resend ${res.status}: ${body}` };
     }
     console.log(`[email] 已寄出：「${opts.subject}」→ ${opts.to}`);
-    return true;
+    return { ok: true };
   } catch (e) {
     console.error(`[email] 寄信錯誤：「${opts.subject}」→ ${opts.to}`, e);
-    return false;
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
 
@@ -428,7 +432,7 @@ export async function sendPasswordResetEmail(
   to: string,
   code: string,
   name?: string | null,
-): Promise<boolean> {
+): Promise<SendResult> {
   try {
     const greeting = name ? `你好，${escapeHtml(name)}：` : "你好：";
     const content = `
@@ -455,7 +459,7 @@ export async function sendPasswordResetEmail(
     });
   } catch (e) {
     console.error(`[email] 砌驗證碼信出錯 → ${to}`, e);
-    return false;
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
 
@@ -468,7 +472,7 @@ export async function sendOrderPendingEmail(args: {
   discountAmount: number;
   createdAt: Date | string;
   items: OrderEmailItem[];
-}): Promise<boolean> {
+}): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
     const content = `
@@ -513,7 +517,7 @@ export async function sendOrderPendingEmail(args: {
     });
   } catch (e) {
     console.error(`[email] 砌待付款信出錯 → ${args.to}`, e);
-    return false;
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
 
@@ -528,7 +532,7 @@ export async function sendOrderApprovedEmail(args: {
   total: number;
   discountAmount: number;
   delivery: OrderEmailDelivery;
-}): Promise<boolean> {
+}): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
     const content = `
@@ -576,6 +580,6 @@ export async function sendOrderApprovedEmail(args: {
     });
   } catch (e) {
     console.error(`[email] 砌確認信出錯 → ${args.to}`, e);
-    return false;
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
