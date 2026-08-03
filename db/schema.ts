@@ -38,6 +38,10 @@ export const users = pgTable("users", {
   // Google 帳號連結（2026-08-04）：Google 嘅永久唯一 ID（sub claim）。
   // 舊會員喺會員中心連結 Google 後寫入；Google 登入優先用佢搵帳號（改 email 都唔會斷連結）。
   googleSub: varchar("googleSub", { length: 64 }).unique(),
+  // Google 帳號資料快照（2026-08-04）：連結／登入嗰陣順手記低 Google 嘅 email 同顯示名，
+  // 後台會員詳情用嚟顯示；會員喺 Google 嗰邊改咗名，下次 Google 登入會自動更新。
+  googleEmail: varchar("googleEmail", { length: 255 }),
+  googleName: varchar("googleName", { length: 255 }),
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
   address: text("address"),
   age: integer("age"),

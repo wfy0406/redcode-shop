@@ -102,6 +102,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (email);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "googleSub" varchar(64);
 CREATE UNIQUE INDEX IF NOT EXISTS users_googlesub_unique ON users ("googleSub");
 
+-- Google 帳號資料快照（2026-08-04）：後台會員詳情顯示 Google email／名稱用；
+-- 連結或 Google 登入嗰陣寫入，舊已連結會員會喺下次 Google 登入時補返
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "googleEmail" varchar(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "googleName" varchar(255);
+
 -- 2026-07-29：會員生日月份（選填，1–12；舊會員留空＝NULL）
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "birthMonth" integer;
 

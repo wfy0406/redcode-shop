@@ -1,14 +1,16 @@
 import { Link } from 'react-router';
-import { Facebook, Instagram, MessageCircle } from 'lucide-react';
+import { Facebook, Mail, MessageCircle } from 'lucide-react';
 
 /**
- * 頁尾（§5 全頁共用）：--space-0 底 + 花體 slogan + FB/IG/WhatsApp 連結 + 員工入口
+ * 頁尾（§5 全頁共用）：--space-0 底 + 花體 slogan + FB/E-Mail/WhatsApp 連結 + 員工入口
  * 公司名：RedCode HK Limited
+ * 2026-08-04（Glo 要求）：「搵我哋」刪走 Instagram（即將推出），加 E-Mail 服務支援
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
+const SUPPORT_EMAIL = 'service.support@ows.redcode.red';
 
 export default function Footer() {
   return (
@@ -61,9 +63,12 @@ export default function Footer() {
                 </a>
               </li>
               <li>
-                <span className="inline-flex items-center gap-2 text-txt-3">
-                  <Instagram size={16} aria-hidden="true" /> Instagram（即將推出）
-                </span>
+                <a
+                  href={`mailto:${SUPPORT_EMAIL}`}
+                  className="inline-flex items-center gap-2 text-txt-2 transition-colors hover:text-gold"
+                >
+                  <Mail size={16} aria-hidden="true" /> E-Mail 服務支援
+                </a>
               </li>
             </ul>
           </div>

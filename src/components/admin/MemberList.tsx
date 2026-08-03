@@ -19,6 +19,9 @@ import type { ToastKind } from './useToasts';
  * 2026-08-03 更新：
  * - 詳情加「重設密碼」掣（員工＋管理員）：會員唔記得密碼時幫佢設新密碼，即時生效，
  *   新密碼要人手話返俾會員；動作記落操作日誌（member.resetPassword）
+ * 2026-08-04 更新（Glo 要求）：
+ * - 列表用顏色 badge 標示會員有冇連結 Google（綠＝已連結，灰＝未連結）
+ * - 會員詳情加 Google 連結狀態＋Google Email＋Google 名稱
  */
 
 /** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
@@ -30,6 +33,7 @@ type MemberRow = {
   address: string | null;
   birthMonth: number | null;
   createdAt: Date | string;
+  googleLinked: boolean;
   orderCount: number;
   totalSpent: number;
 };
@@ -45,6 +49,9 @@ type MemberDetail = {
     birthMonth: number | null;
     role: string;
     createdAt: Date | string;
+    googleLinked: boolean;
+    googleEmail: string | null;
+    googleName: string | null;
   };
   orderCount: number;
   totalSpent: number;
@@ -63,6 +70,34 @@ const DELIVERY_TEXT: Record<string, string> = {
   sf_station: '順豐站自取',
   sf_locker: '順豐智能櫃',
 };
+
+/**
+ * Google 連結狀態 badge（2026-08-04 Glo 要求：列表顏色標示）
+ * 綠（--success #5EE0A0）＝已連結；灰＝未連結
+ */
+function GoogleBadge({ linked }: { linked: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium"
+      style={
+        linked
+          ? {
+              borderColor: 'var(--success)',
+              color: 'var(--success)',
+              background: 'rgba(94, 224, 160, 0.12)',
+            }
+          : { borderColor: 'var(--space-line)', color: 'var(--text-3)' }
+      }
+    >
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{ background: linked ? 'var(--success)' : 'currentColor' }}
+        aria-hidden="true"
+      />
+      {linked ? '已連結 Google' : '未連結 Google'}
+    </span>
+  );
+}
 
 /** members.update 契約（2026-07-29）：淨係傳有改嘅欄；null＝清除 */
 type MemberUpdateInput = {
@@ -491,6 +526,10 @@ export default function MemberList({
                   <div className="min-w-0">
                     <p className="text-[15px] font-bold leading-[1.4] text-txt-1">{m.name}</p>
                     <p className="mt-0.5 font-mono text-[13px] text-txt-2">{m.phone}</p>
+                    {/* Google 連結狀態（2026-08-04）：綠＝已連結，灰＝未連結 */}
+                    <div className="mt-1.5">
+                      <GoogleBadge linked={m.googleLinked} />
+                    </div>
                   </div>
                   {canDelete && (
                     <button
@@ -543,6 +582,31 @@ export default function MemberList({
                             {detail.user.birthMonth ? `${detail.user.birthMonth} 月` : '—'}
                           </span>
                         </p>
+                        {/* Google 連結資料（2026-08-04）：已連結先顯示 Google 名稱＋Email */}
+                        <p className="mt-1 text-[12px] text-txt-3">
+                          Google：
+                          {detail.user.googleLinked ? (
+                            <span className="font-medium" style={{ color: 'var(--success)' }}>
+                              已連結
+                            </span>
+                          ) : (
+                            <span className="text-txt-2">未連結</span>
+                          )}
+                        </p>
+                        {detail.user.googleLinked && (
+                          <>
+                            <p className="mt-1 text-[12px] text-txt-3">
+                              Google 名稱：
+                              <span className="text-txt-2">{detail.user.googleName || '—'}</span>
+                            </p>
+                            <p className="mt-1 break-all text-[12px] text-txt-3">
+                              Google Email：
+                              <span className="font-mono text-txt-2">
+                                {detail.user.googleEmail || '—'}
+                              </span>
+                            </p>
+                          </>
+                        )}
                         {/* 修改資料／重設密碼（員工＋管理員） */}
                         {editingId === m.id ? (
                           <MemberEditForm
@@ -623,7 +687,7 @@ export default function MemberList({
 
           {/* 桌面版（lg+）：表格。名欄唔截斷（whitespace-nowrap），太窄可以左右碌 */}
           <div className="mt-4 hidden overflow-x-auto lg:block">
-            <table className="w-full min-w-[780px] border-collapse text-[14px]">
+            <table className="w-full min-w-[880px] border-collapse text-[14px]">
             <thead>
               <tr
                 className="border-b text-left text-[12px] text-txt-3"
@@ -632,6 +696,7 @@ export default function MemberList({
                 <th className="py-2 pr-3 font-normal">名</th>
                 <th className="py-2 pr-3 font-normal">電話</th>
                 <th className="py-2 pr-3 font-normal">Email</th>
+                <th className="py-2 pr-3 font-normal">Google</th>
                 <th className="py-2 pr-3 font-normal">地址</th>
                 <th className="py-2 pr-3 font-normal">生日月份</th>
                 <th className="py-2 pr-3 font-normal">註冊日期</th>
@@ -652,6 +717,9 @@ export default function MemberList({
                   <td className="py-2.5 pr-3 font-mono text-[13px] text-txt-2">{m.phone}</td>
                   <td className="max-w-0 truncate py-2.5 pr-3 font-mono text-[13px] text-txt-3">
                     {m.email || '—'}
+                  </td>
+                  <td className="whitespace-nowrap py-2.5 pr-3">
+                    <GoogleBadge linked={m.googleLinked} />
                   </td>
                   <td className="max-w-[140px] truncate py-2.5 pr-3 text-[13px] text-txt-3">
                     {m.address || '—'}
@@ -767,6 +835,31 @@ export default function MemberList({
                       {detail.user.address || '—'}
                     </span>
                   </p>
+                  {/* Google 連結資料（2026-08-04）：已連結先顯示 Google 名稱＋Email */}
+                  <p className="col-span-full text-txt-3">
+                    Google：
+                    {detail.user.googleLinked ? (
+                      <span className="font-medium" style={{ color: 'var(--success)' }}>
+                        已連結
+                      </span>
+                    ) : (
+                      <span className="text-txt-2">未連結</span>
+                    )}
+                  </p>
+                  {detail.user.googleLinked && (
+                    <>
+                      <p className="col-span-full text-txt-3">
+                        Google 名稱：
+                        <span className="text-txt-2">{detail.user.googleName || '—'}</span>
+                      </p>
+                      <p className="col-span-full break-all text-txt-3">
+                        Google Email：
+                        <span className="font-mono text-txt-2">
+                          {detail.user.googleEmail || '—'}
+                        </span>
+                      </p>
+                    </>
+                  )}
                 </div>
 
                 {/* 修改資料／重設密碼（員工＋管理員） */}

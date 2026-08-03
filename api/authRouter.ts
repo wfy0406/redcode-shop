@@ -173,16 +173,31 @@ export const authRouter = createRouter({
 
       const email = info.email.toLowerCase();
       const sub = info.sub;
+      // Google 顯示名快照（2026-08-04）：後台會員詳情顯示用；冇名就留 null
+      const gName = info.name?.trim() || null;
       const db = getDb();
       // 1) 已連結嘅帳號：用 Google 永久 ID 直達
       let user = await db.query.users.findFirst({ where: eq(users.googleSub, sub) });
+      if (user) {
+        // 順手更新 Google email／名稱快照（會員喺 Google 改咗名都會跟到）
+        if (user.googleEmail !== email || user.googleName !== gName) {
+          await db
+            .update(users)
+            .set({ googleEmail: email, googleName: gName })
+            .where(eq(users.id, user.id));
+          user = { ...user, googleEmail: email, googleName: gName };
+        }
+      }
       if (!user) {
         // 2) email 撞中舊帳號（例如之前用電話註冊、會員資料填咗同一個 email）
         user = await db.query.users.findFirst({ where: eq(users.email, email) });
         if (user && user.googleSub !== sub) {
           // 順手補寫／校正 googleSub：Google 保證 email 由呢個帳號控制，安全
-          await db.update(users).set({ googleSub: sub }).where(eq(users.id, user.id));
-          user = { ...user, googleSub: sub };
+          await db
+            .update(users)
+            .set({ googleSub: sub, googleEmail: email, googleName: gName })
+            .where(eq(users.id, user.id));
+          user = { ...user, googleSub: sub, googleEmail: email, googleName: gName };
         }
       }
 
@@ -199,6 +214,8 @@ export const authRouter = createRouter({
               phone: placeholderPhone,
               email,
               googleSub: sub,
+              googleEmail: email,
+              googleName: gName,
               passwordHash: hashPassword(randomBytes(32).toString("hex")),
               role: "member",
             })
@@ -238,6 +255,7 @@ export const authRouter = createRouter({
         sub?: string;
         email?: string;
         email_verified?: string | boolean;
+        name?: string;
         aud?: string;
       };
       try {
@@ -255,6 +273,7 @@ export const authRouter = createRouter({
 
       const email = info.email.toLowerCase();
       const sub = info.sub;
+      const gName = info.name?.trim() || null;
       const db = getDb();
 
       // 呢個 Google 帳號已經綁咗另一個會員 → 擋（唔可以一個 Google 通兩戶）
@@ -275,7 +294,12 @@ export const authRouter = createRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
       }
 
-      const data: Partial<typeof users.$inferInsert> = { googleSub: sub };
+      // 連結同時記低 Google email／名稱快照（2026-08-04：後台會員詳情顯示用）
+      const data: Partial<typeof users.$inferInsert> = {
+        googleSub: sub,
+        googleEmail: email,
+        googleName: gName,
+      };
       // 自己 email 空、而 Google email 又冇人用的話 → 順手補埋（忘記密碼都用得著）
       if (!me.email) {
         const emailDup = await db.query.users.findFirst({

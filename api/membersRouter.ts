@@ -32,6 +32,8 @@ export const membersRouter = createRouter({
           address: users.address,
           birthMonth: users.birthMonth,
           createdAt: users.createdAt,
+          // Google 連結狀態（2026-08-04 Glo 要求：後台列表用顏色標示）：淨係出 boolean，sub 本身唔出
+          googleLinked: sql<boolean>`(${users.googleSub} is not null)`,
           orderCount: sql<number>`count(${orders.id})::int`,
           totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,
         })
@@ -67,6 +69,10 @@ export const membersRouter = createRouter({
           birthMonth: users.birthMonth,
           role: users.role,
           createdAt: users.createdAt,
+          // Google 連結資料（2026-08-04 Glo 要求：會員詳情顯示 Google email＋名稱）
+          googleLinked: sql<boolean>`(${users.googleSub} is not null)`,
+          googleEmail: users.googleEmail,
+          googleName: users.googleName,
         })
         .from(users)
         .where(eq(users.id, input.id))
