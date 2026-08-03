@@ -36,6 +36,8 @@ const publicUser = (u: typeof users.$inferSelect) => ({
   address: u.address,
   age: u.age,
   birthMonth: u.birthMonth,
+  // 已連結 Google 帳號（2026-08-04）：會員中心顯示連結狀態；sub 本身唔出畀前端
+  googleLinked: u.googleSub != null,
   role: u.role,
   createdAt: u.createdAt,
 });
@@ -131,7 +133,10 @@ export const authRouter = createRouter({
     }),
 
   // Google 登入（零新 dependency：直接用 Google tokeninfo endpoint 驗 id_token）
-  // 搵到 email → 直接簽 JWT；搵唔到 → 自動開會員戶口（phone 用 g-<sub> 佔位、隨機密碼）
+  // 搵人次序（2026-08-04 連結功能後）：
+  //   1) googleSub 搵 —— 已連結嘅帳號（改 email 都唔會斷）
+  //   2) email 搵 —— 撞中舊帳號 → 順手補寫 googleSub（等如自動連結）
+  //   3) 都冇 → 自動開會員戶口（phone 用 g-<sub> 佔位、隨機密碼、一開始就寫埋 googleSub）
   googleLogin: publicQuery
     .input(z.object({ idToken: z.string().min(10) }))
     .mutation(async ({ input }) => {
@@ -167,13 +172,24 @@ export const authRouter = createRouter({
       if (info.email_verified !== true && info.email_verified !== "true") throw googleFail();
 
       const email = info.email.toLowerCase();
+      const sub = info.sub;
       const db = getDb();
-      let user = await db.query.users.findFirst({ where: eq(users.email, email) });
+      // 1) 已連結嘅帳號：用 Google 永久 ID 直達
+      let user = await db.query.users.findFirst({ where: eq(users.googleSub, sub) });
+      if (!user) {
+        // 2) email 撞中舊帳號（例如之前用電話註冊、會員資料填咗同一個 email）
+        user = await db.query.users.findFirst({ where: eq(users.email, email) });
+        if (user && user.googleSub !== sub) {
+          // 順手補寫／校正 googleSub：Google 保證 email 由呢個帳號控制，安全
+          await db.update(users).set({ googleSub: sub }).where(eq(users.id, user.id));
+          user = { ...user, googleSub: sub };
+        }
+      }
 
       if (!user) {
-        // 自動開戶：phone 必填 → 用 g- + google sub 前 10 位做佔位（unique）；
+        // 3) 全新會員 → 自動開戶：phone 必填 → 用 g- + google sub 前 10 位做佔位（unique）；
         // 密碼用隨機 32-byte hex 落 hash，用戶之後可以經 changePassword 自設
-        const placeholderPhone = `g-${info.sub.slice(0, 10)}`;
+        const placeholderPhone = `g-${sub.slice(0, 10)}`;
         const name = info.name?.trim() || email.split("@")[0] || "Google 用戶";
         try {
           const [{ id }] = await db
@@ -182,20 +198,105 @@ export const authRouter = createRouter({
               name,
               phone: placeholderPhone,
               email,
+              googleSub: sub,
               passwordHash: hashPassword(randomBytes(32).toString("hex")),
               role: "member",
             })
             .returning({ id: users.id });
           user = await db.query.users.findFirst({ where: eq(users.id, id) });
         } catch {
-          // 並發撞 unique（email / 佔位 phone）→ 重讀一次當登入
-          user = await db.query.users.findFirst({ where: eq(users.email, email) });
+          // 並發撞 unique（email / 佔位 phone / googleSub）→ 重讀一次當登入
+          user =
+            (await db.query.users.findFirst({ where: eq(users.googleSub, sub) })) ??
+            (await db.query.users.findFirst({ where: eq(users.email, email) }));
         }
         if (!user) throw googleFail();
       }
 
       const token = await signToken({ userId: user.id, role: user.role });
       return { token, user: publicUser(user) };
+    }),
+
+  // 會員中心「連結 Google 帳號」（2026-08-04）：已登入會員綁定自己嘅 Google，
+  // 之後登入頁撳 Google 掣就直入呢個帳號（googleSub 做錨，之後改 email 都唔會斷）。
+  // 一個 Google 帳號只可以綁一個會員；同一會員可以再撳一次換綁另一個 Google（覆蓋）。
+  linkGoogle: authedProcedure
+    .input(z.object({ idToken: z.string().min(10) }))
+    .mutation(async ({ ctx, input }) => {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (!clientId) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Google 登入未啟用",
+        });
+      }
+
+      const googleFail = () =>
+        new TRPCError({ code: "UNAUTHORIZED", message: "Google 驗證失敗，請再試一次" });
+
+      let info: {
+        sub?: string;
+        email?: string;
+        email_verified?: string | boolean;
+        aud?: string;
+      };
+      try {
+        const res = await fetch(
+          `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(input.idToken)}`,
+        );
+        if (!res.ok) throw googleFail();
+        info = (await res.json()) as typeof info;
+      } catch (e) {
+        if (e instanceof TRPCError) throw e;
+        throw googleFail();
+      }
+      if (info.aud !== clientId || !info.email || !info.sub) throw googleFail();
+      if (info.email_verified !== true && info.email_verified !== "true") throw googleFail();
+
+      const email = info.email.toLowerCase();
+      const sub = info.sub;
+      const db = getDb();
+
+      // 呢個 Google 帳號已經綁咗另一個會員 → 擋（唔可以一個 Google 通兩戶）
+      const holder = await db.query.users.findFirst({
+        where: eq(users.googleSub, sub),
+      });
+      if (holder && holder.id !== ctx.user.userId) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "呢個 Google 帳號已經連結咗另一個會員帳號",
+        });
+      }
+
+      const me = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+      });
+      if (!me) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
+      }
+
+      const data: Partial<typeof users.$inferInsert> = { googleSub: sub };
+      // 自己 email 空、而 Google email 又冇人用的話 → 順手補埋（忘記密碼都用得著）
+      if (!me.email) {
+        const emailDup = await db.query.users.findFirst({
+          where: eq(users.email, email),
+        });
+        if (!emailDup) data.email = email;
+      }
+      await db.update(users).set(data).where(eq(users.id, me.id));
+      void logAudit({
+        actorId: me.id,
+        actorRole: me.role,
+        actorNameFallback: me.name,
+        action: "member.linkGoogle",
+        targetType: "member",
+        targetId: me.id,
+        detail: `會員「${me.name}」連結 Google 帳號（${email}）`,
+      });
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, me.id),
+      });
+      return publicUser(user!);
     }),
 
   // 畀前台攞 Google Client ID（runtime env，避免 Vite build-time inlining ——

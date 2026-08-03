@@ -97,6 +97,11 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS "sizeEnabled" boolean NOT NULL DEF
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email varchar(255);
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (email);
 
+-- Google 帳號連結（2026-08-04）：舊會員喺會員中心連結 Google 用；
+-- unique 但 NULL 唔計（未連結嘅會員全部 NULL），一個 Google 帳號只可以綁一個會員
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "googleSub" varchar(64);
+CREATE UNIQUE INDEX IF NOT EXISTS users_googlesub_unique ON users ("googleSub");
+
 -- 2026-07-29：會員生日月份（選填，1–12；舊會員留空＝NULL）
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "birthMonth" integer;
 

@@ -35,6 +35,9 @@ export const users = pgTable("users", {
   phone: varchar("phone", { length: 32 }).notNull().unique(),
   // Google 登入用：唯一但可 NULL（電話註冊嘅舊會員冇 email）
   email: varchar("email", { length: 255 }).unique(),
+  // Google 帳號連結（2026-08-04）：Google 嘅永久唯一 ID（sub claim）。
+  // 舊會員喺會員中心連結 Google 後寫入；Google 登入優先用佢搵帳號（改 email 都唔會斷連結）。
+  googleSub: varchar("googleSub", { length: 64 }).unique(),
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
   address: text("address"),
   age: integer("age"),
