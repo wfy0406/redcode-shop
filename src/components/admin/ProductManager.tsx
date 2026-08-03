@@ -73,6 +73,15 @@ function dayKeyOf(d: Date | string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/** 排列選項（2026-08-04 Glo 要求）：上載日期／名稱／上架日期／分類 */
+const SORT_OPTIONS = [
+  { key: 'created', label: '上載日期' },
+  { key: 'name', label: '名稱' },
+  { key: 'listed', label: '上架日期' },
+  { key: 'category', label: '分類' },
+] as const;
+type SortKey = (typeof SORT_OPTIONS)[number]['key'];
+
 export default function ProductManager({
   toast,
 }: {
@@ -97,6 +106,8 @@ export default function ProductManager({
   const [photos, setPhotos] = useState<string[]>([]);
   // 每日新增篩選：dayKeyOf(createdAt) 嘅 key；null＝全部
   const [dayFilter, setDayFilter] = useState<string | null>(null);
+  // 排列方式：created 上載日期（最新先）／name 名稱／listed 上架日期（最新先）／category 分類
+  const [sortKey, setSortKey] = useState<SortKey>('created');
 
   /** 商品圖片上傳（一次過可揀多張）：逐張 POST /api/upload（staff JWT），路徑加入相簿 */
   const uploadImages = async (files: File[]) => {
@@ -345,10 +356,37 @@ export default function ProductManager({
   }, [products]);
 
   const todayKey = dayKeyOf(new Date());
-  // 篩選中：只顯示嗰日上載嘅款；否則全部
-  const visibleProducts = dayFilter
-    ? products.filter((p) => dayKeyOf(p.createdAt) === dayFilter)
-    : products;
+  // 篩選（每日新增 chip）＋排列（上載日期／名稱／上架日期／分類）
+  const visibleProducts = useMemo(() => {
+    const filtered = dayFilter
+      ? products.filter((p) => dayKeyOf(p.createdAt) === dayFilter)
+      : [...products];
+    const time = (d: Date | string) => new Date(d).getTime();
+    switch (sortKey) {
+      case 'name':
+        // 中文品名用 localeCompare（zh-Hant）排；同名就新上載先
+        filtered.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant-HK') || b.id - a.id);
+        break;
+      case 'listed':
+        filtered.sort((a, b) => time(b.listedDate) - time(a.listedDate) || b.id - a.id);
+        break;
+      case 'category': {
+        // 跟 PRODUCT_CATEGORIES 表嘅次序排；同類入面新上載先
+        const order = new Map(PRODUCT_CATEGORIES.map((c, i) => [c.value, i]));
+        filtered.sort(
+          (a, b) =>
+            (order.get(a.category) ?? 99) - (order.get(b.category) ?? 99) ||
+            time(b.createdAt) - time(a.createdAt) ||
+            b.id - a.id,
+        );
+        break;
+      }
+      default:
+        // created：最新上載排最前
+        filtered.sort((a, b) => time(b.createdAt) - time(a.createdAt) || b.id - a.id);
+    }
+    return filtered;
+  }, [products, dayFilter, sortKey]);
 
   return (
     <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
@@ -701,6 +739,29 @@ export default function ProductManager({
             {dayFilter != null ? `（篩緊 ${visibleProducts.length} 款）` : ''}
           </span>
         </h3>
+        {/* 排列方式：上載日期（最新先）／名稱／上架日期（最新先）／分類（跟類別表次序） */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-[12px] text-txt-3">排列：</span>
+          {SORT_OPTIONS.map((opt) => {
+            const active = sortKey === opt.key;
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setSortKey(opt.key)}
+                aria-pressed={active}
+                className="shrink-0 rounded-full border px-3 py-1.5 font-mono text-[12px] transition-colors"
+                style={{
+                  borderColor: active ? 'var(--pink)' : 'var(--glass-border)',
+                  background: active ? 'var(--glass-bg-strong)' : 'var(--glass-bg)',
+                  color: active ? 'var(--pink)' : 'var(--text-3)',
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
         {/* 每日新增款式：按上載日期（產生當日）分組；撳 chip 篩出嗰日嘅款，再撳一次取消 */}
         {dailyCounts.length > 0 && (
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1.5">
