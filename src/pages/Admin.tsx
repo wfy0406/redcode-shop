@@ -196,7 +196,7 @@ function AdminConsole() {
         reviewingProofId={reviewingProofId}
         onStatus={(oid, status) => void handleStatus(oid, status)}
         statusBusyId={statusBusyId}
-        onOpenLightbox={onOpenLightbox}
+        onOpenLightbox={setLightboxSrc}
       />
     ),
     purchase: <PurchaseStats />,
