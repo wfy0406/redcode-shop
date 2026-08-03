@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Pencil, Search, Trash2, Users, X } from 'lucide-react';
+import { KeyRound, Pencil, Search, Trash2, Users, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { fmtDate, fmtDateTime, fmtHKD } from './format';
@@ -16,6 +16,9 @@ import type { ToastKind } from './useToasts';
  * - 表格加「地址」欄
  * - 撳任何一行彈出詳情：會員資料（名/電話/email/年齡/生日月份/地址/註冊日）＋訂單統計＋最近 10 張訂單
  * - 每行有刪除掣：有訂單嘅會員會喺確認對話框講明連訂單一併刪（後端 members.remove 把關）
+ * 2026-08-03 更新：
+ * - 詳情加「重設密碼」掣（員工＋管理員）：會員唔記得密碼時幫佢設新密碼，即時生效，
+ *   新密碼要人手話返俾會員；動作記落操作日誌（member.resetPassword）
  */
 
 /** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
@@ -233,6 +236,97 @@ function MemberEditForm({
   );
 }
 
+/**
+ * 幫會員重設密碼表單（員工＋管理員，2026-08-03 加）
+ * 唔使舊密碼；新密碼至少 6 位、要輸入兩次確認；成功後要人手話返俾會員知
+ */
+function ResetPasswordForm({
+  user,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  user: MemberDetail['user'];
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (newPassword: string) => void;
+}) {
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const inputCls =
+    'h-10 w-full rounded-lg border border-space-line bg-space-1 px-3 text-[13px] text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none';
+  const labelCls = 'mb-1 block text-[11px] text-txt-3';
+
+  const submit = () => {
+    if (pw.length < 6) return setFormError('新密碼至少 6 位');
+    if (pw2 !== pw) return setFormError('兩次密碼唔一致，請再確認');
+    setFormError(null);
+    onSave(pw);
+  };
+
+  return (
+    <div
+      className="mt-2 rounded-xl border p-3"
+      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+    >
+      <p className="mb-2.5 text-[12px] leading-relaxed text-txt-3">
+        幫「{user.name}」設個新密碼，即時生效，舊密碼唔使輸入。
+        <span className="text-gold">記得將新密碼話返俾會員</span>
+        ；佢登入之後可以喺會員中心自己再改。
+      </p>
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div>
+          <label className={labelCls} htmlFor={`rp-pw-${user.id}`}>
+            新密碼（至少 6 位）
+          </label>
+          <input
+            id={`rp-pw-${user.id}`}
+            type="password"
+            autoComplete="new-password"
+            className={inputCls}
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor={`rp-pw2-${user.id}`}>
+            確認新密碼
+          </label>
+          <input
+            id={`rp-pw2-${user.id}`}
+            type="password"
+            autoComplete="new-password"
+            className={inputCls}
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+          />
+        </div>
+      </div>
+      {formError && <p className="mt-2 text-[12px] text-pink-soft">{formError}</p>}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy}
+          className="btn btn-primary !px-4 !py-2 text-[13px] disabled:opacity-50"
+        >
+          {busy ? '重設緊…' : '確認重設'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="btn btn-secondary !px-4 !py-2 text-[13px]"
+        >
+          取消
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MemberList({
   toast,
 }: {
@@ -247,6 +341,7 @@ export default function MemberList({
   const [debouncedQ, setDebouncedQ] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [resettingId, setResettingId] = useState<number | null>(null);
 
   // 打字停 300ms 先出搜尋請求，唔會每個字打一次
   useEffect(() => {
@@ -299,9 +394,18 @@ export default function MemberList({
     onError: (err) => toast(err.message || '儲存失敗，請再試', 'error'),
   });
 
-  // 換咗第二個會員，順手閂返個編輯表單
+  const resetPwMutation = trpc.members.resetPassword.useMutation({
+    onSuccess: () => {
+      toast('已重設會員密碼 ✓ 記得將新密碼話返俾會員', 'success');
+      setResettingId(null);
+    },
+    onError: (err) => toast(err.message || '重設密碼失敗，請再試', 'error'),
+  });
+
+  // 換咗第二個會員，順手閂返編輯同重設密碼表單
   useEffect(() => {
     setEditingId(null);
+    setResettingId(null);
   }, [selectedId]);
 
   const askDelete = (m: MemberRow) => {
@@ -439,7 +543,7 @@ export default function MemberList({
                             {detail.user.birthMonth ? `${detail.user.birthMonth} 月` : '—'}
                           </span>
                         </p>
-                        {/* 修改資料（員工＋管理員） */}
+                        {/* 修改資料／重設密碼（員工＋管理員） */}
                         {editingId === m.id ? (
                           <MemberEditForm
                             user={detail.user}
@@ -447,15 +551,40 @@ export default function MemberList({
                             onCancel={() => setEditingId(null)}
                             onSave={(input) => updateMutation.mutate(input)}
                           />
+                        ) : resettingId === m.id ? (
+                          <ResetPasswordForm
+                            user={detail.user}
+                            busy={resetPwMutation.isPending}
+                            onCancel={() => setResettingId(null)}
+                            onSave={(newPassword) =>
+                              resetPwMutation.mutate({ id: m.id, newPassword })
+                            }
+                          />
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => setEditingId(m.id)}
-                            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
-                            style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
-                          >
-                            <Pencil size={13} aria-hidden="true" /> 修改資料
-                          </button>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingId(m.id);
+                                setResettingId(null);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                              style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                            >
+                              <Pencil size={13} aria-hidden="true" /> 修改資料
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setResettingId(m.id);
+                                setEditingId(null);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                              style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                            >
+                              <KeyRound size={13} aria-hidden="true" /> 重設密碼
+                            </button>
+                          </div>
                         )}
                         <h5 className="mt-3 text-[11px] font-bold tracking-[0.08em] text-gold">
                           最近訂單（最多 10 張）
@@ -640,7 +769,7 @@ export default function MemberList({
                   </p>
                 </div>
 
-                {/* 修改資料（員工＋管理員） */}
+                {/* 修改資料／重設密碼（員工＋管理員） */}
                 {editingId === detail.user.id ? (
                   <MemberEditForm
                     user={detail.user}
@@ -648,15 +777,40 @@ export default function MemberList({
                     onCancel={() => setEditingId(null)}
                     onSave={(input) => updateMutation.mutate(input)}
                   />
+                ) : resettingId === detail.user.id ? (
+                  <ResetPasswordForm
+                    user={detail.user}
+                    busy={resetPwMutation.isPending}
+                    onCancel={() => setResettingId(null)}
+                    onSave={(newPassword) =>
+                      resetPwMutation.mutate({ id: detail.user.id, newPassword })
+                    }
+                  />
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => setEditingId(detail.user.id)}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
-                    style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
-                  >
-                    <Pencil size={13} aria-hidden="true" /> 修改資料
-                  </button>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(detail.user.id);
+                        setResettingId(null);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                    >
+                      <Pencil size={13} aria-hidden="true" /> 修改資料
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResettingId(detail.user.id);
+                        setEditingId(null);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                    >
+                      <KeyRound size={13} aria-hidden="true" /> 重設密碼
+                    </button>
+                  </div>
                 )}
 
                 {/* 最近訂單 */}
