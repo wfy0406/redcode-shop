@@ -117,7 +117,7 @@ if (env.isProduction) {
   // 開機自動建表 + 種子數據（失敗唔會冧 server，淨係 log）
   ensureDatabase().catch((e) => console.error("[boot-migrate] failed:", e));
 
-  // 待付款訂單 3 天未傳付款截圖 → 自動取消（開機掃一次，之後每 30 分鐘掃；失敗淨係 log）
+  // 待付款訂單 48 小時未傳付款截圖 → 自動取消（開機掃一次，之後每 30 分鐘掃；失敗淨係 log）
   const { startOrderSweeper } = await import("./orderSweeper");
   startOrderSweeper();
 }

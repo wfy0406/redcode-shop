@@ -230,12 +230,12 @@ export default function Payment() {
           過數後記得 cap 低入數紙或截圖，去「會員中心 → 我嘅訂單」上傳付款截圖，
           我哋確認後就會即刻安排發貨。
         </p>
-        {/* 2026-07-30 落單規則：3 天內要傳截圖，否則訂單自動取消 */}
+        {/* 2026-07-30 落單規則：48 小時內要傳截圖，否則訂單自動取消（2026-08-04 起收緊做 48 小時） */}
         <p
           className="mx-auto mt-5 max-w-lg rounded-2xl border px-5 py-4 text-[13px] leading-[1.75]"
           style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
         >
-          ⏳ 溫馨提示：許願後請於 <strong>3 天內</strong>過數並上傳付款截圖。
+          ⏳ 溫馨提示：許願後請於 <strong>48 小時內</strong>過數並上傳付款截圖。
           逾期待付款訂單會自動取消，心水貨品唔會留貨，記得趁早呀 ♡
         </p>
         <Link to="/account" className="btn btn-primary mt-6">
