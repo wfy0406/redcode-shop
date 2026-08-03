@@ -6,7 +6,7 @@ import { LoadingBlock } from './WishingStar';
 /**
  * 操作日誌（admin only）—— trpc.audit.list
  * 記低管理員／員工／會員嘅關鍵改動：落單、上傳截圖、審批、出貨/取消、
- * 商品/優惠碼/打卡相/設定改動、會員註冊/刪除、員工帳號改動、WMS 重試。
+ * 商品/優惠碼/打卡相/設定改動、會員註冊/修改/重設密碼/刪除、員工帳號改動、WMS 重試。
  * 表格：時間／操作者／角色／動作／詳情；支援按動作類型篩選。最新 200 條。
  */
 
@@ -24,6 +24,8 @@ type AuditRow = {
 
 const ACTION_LABEL: Record<string, string> = {
   'member.register': '會員註冊',
+  'member.update': '修改會員資料',
+  'member.resetPassword': '重設會員密碼',
   'member.remove': '刪除會員',
   'order.create': '客人落單',
   'order.attachProof': '上傳截圖',

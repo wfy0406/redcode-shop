@@ -5,11 +5,13 @@ import { getDb } from "./queries/connection";
 import { cartItems, orderItems, orders, paymentProofs, users, wmsSyncLog } from "@db/schema";
 import { createRouter, adminProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
+import { hashPassword } from "./auth";
 
 /**
  * 會員列表 —— staff（員工）＋ admin 可用（2026-07-29 起：員工都可以睇同改會員資料）
  * totalSpent 排除 cancelled/rejected；按註冊時間 createdAt desc
  * update：修改會員基本資料（名/電話/email/地址/年齡/生日月份），電話撞號會 CONFLICT
+ * resetPassword：幫會員重設密碼（2026-08-03 加；會員唔記得密碼時用，即時生效）
  * remove：刪除會員（仍係 admin only）；有訂單嘅會員要 alsoDeleteOrders=true 先刪得（連訂單一併刪，唔可以復原）
  */
 export const membersRouter = createRouter({
@@ -166,6 +168,46 @@ export const membersRouter = createRouter({
         targetType: "member",
         targetId: input.id,
         detail: `修改會員「${input.name ?? target.name}」資料（${Object.keys(data).join("、") || "冇改動"}）`,
+      });
+      return { ok: true };
+    }),
+
+  /**
+   * 幫會員重設密碼（員工＋管理員，2026-08-03 加）
+   * 會員唔記得密碼搵客服時用：唔使舊密碼，新密碼即時生效；
+   * 只可以改 member 帳號（員工帳號去「員工帳號」頁）；動作會記落操作日誌
+   */
+  resetPassword: staffProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        newPassword: z.string().min(6, "新密碼至少 6 位").max(64),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const [target] = await db
+        .select({ id: users.id, role: users.role, name: users.name })
+        .from(users)
+        .where(eq(users.id, input.id))
+        .limit(1);
+      if (!target) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      }
+      if (target.role !== "member") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "員工帳號請去「員工帳號」頁修改" });
+      }
+      await db
+        .update(users)
+        .set({ passwordHash: hashPassword(input.newPassword) })
+        .where(eq(users.id, input.id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "member.resetPassword",
+        targetType: "member",
+        targetId: input.id,
+        detail: `重設會員「${target.name}」密碼`,
       });
       return { ok: true };
     }),
