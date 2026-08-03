@@ -229,29 +229,41 @@ export const ordersRouter = createRouter({
         where: eq(orders.id, orderId),
         with: { items: true, proofs: true },
       });
-      void logAudit({
-        actorId: ctx.user.userId,
-        actorRole: ctx.user.role,
-        action: "order.create",
-        targetType: "order",
-        targetId: orderNo,
-        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}${deliveryMethod !== "address" ? `，自取（${deliveryMethod === "sf_station" ? "順豐站" : "智能櫃"}${pickupPoint ? `：${pickupPoint}` : ""}）` : ""}`,
-      });
-      // 待付款通知 email（2026-08-04）：會員有綁 email 先寄；fire-and-forget 唔阻落單
+      // 待付款通知 email（2026-08-04）：會員有綁 email 先寄；結果寫埋入日誌 detail，方便後台排查
+      let emailNote = "";
       if (created) {
         const member = await db.query.users.findFirst({
           where: eq(users.id, ctx.user.userId),
           columns: { name: true, email: true },
         });
         if (member?.email) {
-          void sendOrderPendingEmail({
+          const sent = await sendOrderPendingEmail({
             to: member.email,
             name: member.name,
             orderNo: created.orderNo,
             total: created.total,
+            discountAmount: created.discountAmount,
+            createdAt: created.createdAt,
+            items: created.items.map((it) => ({
+              productName: it.productName,
+              size: it.size,
+              price: it.price,
+              quantity: it.quantity,
+            })),
           });
+          emailNote = sent ? `，待付款信已寄出至 ${member.email}` : "，待付款信寄出失敗（睇 Render log）";
+        } else {
+          emailNote = "，會員冇綁 Email，冇寄待付款信";
         }
       }
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.create",
+        targetType: "order",
+        targetId: orderNo,
+        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}${deliveryMethod !== "address" ? `，自取（${deliveryMethod === "sf_station" ? "順豐站" : "智能櫃"}${pickupPoint ? `：${pickupPoint}` : ""}）` : ""}${emailNote}`,
+      });
       return created;
     }),
 
@@ -430,29 +442,50 @@ export const ordersRouter = createRouter({
         .where(eq(orders.id, proof.orderId));
       const reviewedOrder = await db.query.orders.findFirst({
         where: eq(orders.id, proof.orderId),
+        with: { items: true },
       });
+      // 已確認通知 email（2026-08-04 第二版）：批准嗰刻寄出，附訂單單據 HTML 附件；
+      // 結果寫埋入日誌 detail（已寄出／寄出失敗／冇綁 Email），等客人話收唔到嗰陣後台即刻查到原因
+      let emailNote = "";
+      if (input.approve && reviewedOrder) {
+        const member = await db.query.users.findFirst({
+          where: eq(users.id, reviewedOrder.userId),
+          columns: { name: true, email: true, phone: true },
+        });
+        if (member?.email) {
+          const sent = await sendOrderApprovedEmail({
+            to: member.email,
+            name: member.name,
+            phone: member.phone,
+            orderNo: reviewedOrder.orderNo,
+            createdAt: reviewedOrder.createdAt,
+            items: reviewedOrder.items.map((it) => ({
+              productName: it.productName,
+              size: it.size,
+              price: it.price,
+              quantity: it.quantity,
+            })),
+            total: reviewedOrder.total,
+            discountAmount: reviewedOrder.discountAmount,
+            delivery: {
+              method: reviewedOrder.deliveryMethod,
+              pickupPoint: reviewedOrder.pickupPoint,
+              address: reviewedOrder.address,
+            },
+          });
+          emailNote = sent ? `；確認信＋單據已寄出至 ${member.email}` : "；確認信寄出失敗（睇 Render log）";
+        } else {
+          emailNote = "；會員冇綁 Email，冇寄確認信";
+        }
+      }
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
         action: input.approve ? "order.approve" : "order.reject",
         targetType: "order",
         targetId: reviewedOrder?.orderNo ?? proof.orderId,
-        detail: `${input.approve ? "批准" : "拒絕"}付款截圖（訂單 ${reviewedOrder?.orderNo ?? proof.orderId}）${input.note ? `：${input.note}` : ""}`,
+        detail: `${input.approve ? "批准" : "拒絕"}付款截圖（訂單 ${reviewedOrder?.orderNo ?? proof.orderId}）${input.note ? `：${input.note}` : ""}${emailNote}`,
       });
-      // 已確認通知 email（2026-08-04）：批准嗰刻寄出；會員有綁 email 先生效
-      if (input.approve && reviewedOrder) {
-        const member = await db.query.users.findFirst({
-          where: eq(users.id, reviewedOrder.userId),
-          columns: { name: true, email: true },
-        });
-        if (member?.email) {
-          void sendOrderApprovedEmail({
-            to: member.email,
-            name: member.name,
-            orderNo: reviewedOrder.orderNo,
-          });
-        }
-      }
       return db.query.paymentProofs.findFirst({
         where: eq(paymentProofs.id, proof.id),
       });
