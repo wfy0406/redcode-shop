@@ -187,6 +187,18 @@ export const wmsSyncLog = pgTable(
   (t) => [uniqueIndex("wmssync_order").on(t.orderId)],
 );
 
+// 忘記密碼 email 驗證碼（2026-08-04）：6 位碼只存 hash，10 分鐘有效，最多試 5 次。
+// 同一 email 可有多列（重新索取會作廢舊碼），用嗰陣攞最新未用嘅一列。
+export const passwordResetCodes = pgTable("passwordResetCodes", {
+  id: serial("id").primaryKey(),
+  email: varchar("email", { length: 255 }).notNull(),
+  codeHash: varchar("codeHash", { length: 255 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 // 全站操作日誌（admin 後台「日誌」頁用）：記低管理員／員工／會員嘅關鍵改動。
 // actorId 刻意唔設 FK——人刪咗帳號，條 log 都要留底先可以追查。
 export const auditLog = pgTable("auditLog", {
@@ -210,4 +222,5 @@ export type PromoCode = typeof promoCodes.$inferSelect;
 export type PraiseWallEntry = typeof praiseWall.$inferSelect;
 export type SiteSetting = typeof siteSettings.$inferSelect;
 export type WmsSyncLog = typeof wmsSyncLog.$inferSelect;
+export type PasswordResetCode = typeof passwordResetCodes.$inferSelect;
 export type AuditLogEntry = typeof auditLog.$inferSelect;

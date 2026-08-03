@@ -171,6 +171,18 @@ CREATE TABLE IF NOT EXISTS "auditLog" (
   "createdAt" timestamp NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS auditlog_created ON "auditLog" ("createdAt" DESC);
+
+-- 忘記密碼 email 驗證碼（2026-08-04）：6 位碼存 hash，10 分鐘有效，最多試 5 次
+CREATE TABLE IF NOT EXISTS "passwordResetCodes" (
+  id serial PRIMARY KEY,
+  email varchar(255) NOT NULL,
+  "codeHash" varchar(255) NOT NULL,
+  "expiresAt" timestamp NOT NULL,
+  "usedAt" timestamp,
+  attempts integer NOT NULL DEFAULT 0,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS prc_email_created ON "passwordResetCodes" (email, "createdAt" DESC);
 `;
 
 export async function ensureDatabase(): Promise<void> {
