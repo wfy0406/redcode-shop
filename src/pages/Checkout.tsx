@@ -779,12 +779,12 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
         <p className="mt-3 text-[13px] leading-relaxed text-txt-3">
           上傳後 Glo Glo 團隊會盡快對數，當審核完成，訂單將安排同事出貨 💫
         </p>
-        {/* 2026-07-30 落單規則：3 天內要傳截圖，否則訂單自動取消 */}
+        {/* 2026-07-30 落單規則：48 小時內要傳截圖，否則訂單自動取消（2026-08-04 起收緊做 48 小時） */}
         <p
           className="mt-3 rounded-xl border px-4 py-3 text-[13px] leading-relaxed"
           style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
         >
-          ⏳ 請於落單後 <strong>3 天內</strong>上傳付款截圖，逾期待付款訂單會自動取消，貨品唔會留貨。
+          ⏳ 請於落單後 <strong>48 小時內</strong>上傳付款截圖，逾期待付款訂單會自動取消，貨品唔會留貨。
         </p>
 
         {error && (
