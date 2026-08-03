@@ -26,6 +26,7 @@ const ACTION_LABEL: Record<string, string> = {
   'member.register': '會員註冊',
   'member.update': '修改會員資料',
   'member.resetPassword': '重設會員密碼',
+  'member.emailResetPassword': 'Email自助重設密碼',
   'member.remove': '刪除會員',
   'order.create': '客人落單',
   'order.attachProof': '上傳截圖',
