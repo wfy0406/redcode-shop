@@ -3,11 +3,12 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { getDb } from "./queries/connection";
-import { cartItems, orders, orderItems, paymentProofs, products, promoCodes, wmsSyncLog } from "@db/schema";
+import { cartItems, orders, orderItems, paymentProofs, products, promoCodes, users, wmsSyncLog } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
 import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
 import { logAudit } from "./audit";
+import { sendOrderApprovedEmail, sendOrderPendingEmail } from "./email";
 
 const orderStatusEnum = z.enum([
   "pending_payment",
@@ -236,6 +237,21 @@ export const ordersRouter = createRouter({
         targetId: orderNo,
         detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}${deliveryMethod !== "address" ? `，自取（${deliveryMethod === "sf_station" ? "順豐站" : "智能櫃"}${pickupPoint ? `：${pickupPoint}` : ""}）` : ""}`,
       });
+      // 待付款通知 email（2026-08-04）：會員有綁 email 先寄；fire-and-forget 唔阻落單
+      if (created) {
+        const member = await db.query.users.findFirst({
+          where: eq(users.id, ctx.user.userId),
+          columns: { name: true, email: true },
+        });
+        if (member?.email) {
+          void sendOrderPendingEmail({
+            to: member.email,
+            name: member.name,
+            orderNo: created.orderNo,
+            total: created.total,
+          });
+        }
+      }
       return created;
     }),
 
@@ -423,6 +439,20 @@ export const ordersRouter = createRouter({
         targetId: reviewedOrder?.orderNo ?? proof.orderId,
         detail: `${input.approve ? "批准" : "拒絕"}付款截圖（訂單 ${reviewedOrder?.orderNo ?? proof.orderId}）${input.note ? `：${input.note}` : ""}`,
       });
+      // 已確認通知 email（2026-08-04）：批准嗰刻寄出；會員有綁 email 先生效
+      if (input.approve && reviewedOrder) {
+        const member = await db.query.users.findFirst({
+          where: eq(users.id, reviewedOrder.userId),
+          columns: { name: true, email: true },
+        });
+        if (member?.email) {
+          void sendOrderApprovedEmail({
+            to: member.email,
+            name: member.name,
+            orderNo: reviewedOrder.orderNo,
+          });
+        }
+      }
       return db.query.paymentProofs.findFirst({
         where: eq(paymentProofs.id, proof.id),
       });
