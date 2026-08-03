@@ -6,6 +6,7 @@ import { trpc } from '@/providers/trpc';
 import WishingStar from '@/components/account/WishingStar';
 import OrderCard from '@/components/account/OrderCard';
 import ProfileCard from '@/components/account/ProfileCard';
+import CompleteProfileCard from '@/components/account/CompleteProfileCard';
 import PasswordCard from '@/components/account/PasswordCard';
 import AccountToastStack, { useAccountToasts } from '@/components/account/Toast';
 
@@ -85,6 +86,13 @@ export default function Account() {
     <section className="mx-auto w-full max-w-[1280px] px-5 py-12 md:px-8 md:py-16 xl:px-12">
       <p className="script text-3xl">My little galaxy</p>
       <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">會員中心</h1>
+
+      {/* Google 開戶（電話仲係 g- 佔位）→ 頂置「完成會員資料」卡：Google 預填、可改、確認先儲存 */}
+      {user.phone.startsWith('g-') && (
+        <div className="mt-8">
+          <CompleteProfileCard user={user} pushToast={pushToast} />
+        </div>
+      )}
 
       {/* 會員資料卡（逐行 inline edit） */}
       <div className="mt-8">

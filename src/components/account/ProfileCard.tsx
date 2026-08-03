@@ -235,7 +235,11 @@ export default function ProfileCard({ user, onLogout, pushToast }: ProfileCardPr
       </div>
       <div className="mt-5 divide-y divide-space-line border-t border-space-line">
         {renderRow('name', user.name)}
-        <DisplayRow label="電話" value={user.phone} />
+        {/* Google 開戶嘅電話係 g- 佔位（唔係真號）：顯示「未填寫」，真號喺上面「完成會員資料」卡補填 */}
+        <DisplayRow
+          label="電話"
+          value={user.phone.startsWith('g-') ? '未填寫（Google 登入，請喺上面補填）' : user.phone}
+        />
         {renderRow('email', user.email?.trim() ? user.email : '未填寫')}
         {renderRow('address', user.address?.trim() ? user.address : '未填寫')}
         {renderRow('age', user.age != null ? `${user.age} 歲` : '未填寫')}
