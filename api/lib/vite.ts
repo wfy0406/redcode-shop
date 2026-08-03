@@ -17,7 +17,14 @@ export function serveStaticFiles(app: App) {
   app.use("*", async (c, next) => {
     await next();
     if (c.req.path.startsWith("/assets/")) {
-      c.header("Cache-Control", "public, max-age=31536000, immutable");
+      // 2026-08-04 白屏根治：存在嘅 hash 檔 → immutable；**唔存在嘅（404）→ no-store**。
+      // 之前舊部署消失咗嘅 chunk 會落入 notFound 回 index.html（200）＋被呢度加 immutable，
+      // 瀏覽器將「HTML 扮 JS」cache 足一年 → 部署後白屏點刷新都唔好嘅真正根因。
+      if (c.res.status === 404) {
+        c.header("Cache-Control", "no-store");
+      } else {
+        c.header("Cache-Control", "public, max-age=31536000, immutable");
+      }
     } else if ((c.res.headers.get("Content-Type") ?? "").includes("text/html")) {
       c.header("Cache-Control", "no-cache, must-revalidate");
     }
@@ -26,6 +33,16 @@ export function serveStaticFiles(app: App) {
   app.use("*", serveStatic({ root: "./dist/public" }));
 
   app.notFound(async (c) => {
+    // 2026-08-04 白屏根治：靜態資源路徑（/assets/* 或常見資源副檔名）搵唔到 →
+    // 回真 404，**絕對唔好回 index.html**。否則瀏覽器攞舊 chunk 時會收到 HTML（200），
+    // 當 JS 執行即 SyntaxError 全黑，仲會將呢個壞回應 cache 埋。
+    const reqPath = c.req.path;
+    if (
+      reqPath.startsWith("/assets/") ||
+      /\.(js|mjs|css|map|png|jpe?g|webp|svg|gif|woff2?|ttf|otf|ico)$/i.test(reqPath)
+    ) {
+      return c.json({ error: "Not Found" }, 404);
+    }
     const accept = c.req.header("accept") ?? "";
     // 2026-07-29 FB 分享灰盒根因：Facebook/WhatsApp 等 crawler 送嘅 Accept 係 */*
     // （唔係 text/html），舊檢查會回 404 JSON → FB 讀唔到 OG，淨係顯示域名。

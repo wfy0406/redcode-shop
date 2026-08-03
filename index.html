@@ -21,6 +21,27 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // 2026-08-04 部署換版白屏自救：
+      // 舊快取 HTML 會指向舊版 JS bundle（檔名帶 hash，部署後舊檔喺 server 消失），
+      // 主程式載唔到 → 全黑企喺度。呢段 inline script 等 8 秒：
+      // #root 仲係空（＝JS 根本冇執行到）→ 自動重載一次攞新版 HTML＋新 bundle。
+      // sessionStorage 標記確保最多自動重載一次，唔會 loop；正常開到 app 會順手清走標記。
+      setTimeout(function () {
+        var root = document.getElementById("root");
+        var booted = root && root.childNodes.length > 0;
+        try {
+          if (booted) {
+            sessionStorage.removeItem("rc_auto_reload");
+          } else if (!sessionStorage.getItem("rc_auto_reload")) {
+            sessionStorage.setItem("rc_auto_reload", "1");
+            location.reload();
+          }
+        } catch (e) {
+          // sessionStorage 唔用得（極罕見）就放棄自救，避免重載 loop
+        }
+      }, 8000);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
