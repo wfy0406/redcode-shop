@@ -18,6 +18,8 @@ type AuthUser = {
   address?: string | null;
   age?: number | null;
   birthMonth?: number | null;
+  // 已連結 Google 帳號（2026-08-04）：會員中心顯示連結狀態用
+  googleLinked?: boolean;
 };
 
 type RegisterInput = {

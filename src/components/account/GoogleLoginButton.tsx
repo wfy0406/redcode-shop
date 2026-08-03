@@ -65,9 +65,11 @@ function loadGsi(): Promise<void> {
 interface Props {
   onCredential: (idToken: string) => void;
   onError?: (message: string) => void;
+  /** GIS 掣面文字：登入/註冊頁用 signin_with（預設）；會員中心連結卡用 continue_with */
+  text?: 'signin_with' | 'continue_with';
 }
 
-export default function GoogleLoginButton({ onCredential, onError }: Props) {
+export default function GoogleLoginButton({ onCredential, onError, text = 'signin_with' }: Props) {
   const configQuery = trpc.auth.googleConfig.useQuery(undefined, {
     staleTime: 300_000,
     retry: false,
@@ -98,7 +100,7 @@ export default function GoogleLoginButton({ onCredential, onError }: Props) {
           theme: 'filled_black',
           size: 'large',
           shape: 'pill',
-          text: 'signin_with',
+          text,
           logo_alignment: 'center',
         });
         setReady(true);

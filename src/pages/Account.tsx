@@ -7,6 +7,7 @@ import WishingStar from '@/components/account/WishingStar';
 import OrderCard from '@/components/account/OrderCard';
 import ProfileCard from '@/components/account/ProfileCard';
 import CompleteProfileCard from '@/components/account/CompleteProfileCard';
+import GoogleLinkCard from '@/components/account/GoogleLinkCard';
 import PasswordCard from '@/components/account/PasswordCard';
 import AccountToastStack, { useAccountToasts } from '@/components/account/Toast';
 
@@ -97,6 +98,11 @@ export default function Account() {
       {/* 會員資料卡（逐行 inline edit） */}
       <div className="mt-8">
         <ProfileCard user={user} onLogout={logout} pushToast={pushToast} />
+      </div>
+
+      {/* Google 帳號連結卡（2026-08-04）：舊會員綁定 Google，之後一撳登入；未設 GOOGLE_CLIENT_ID 會自動隱藏 */}
+      <div className="mt-6">
+        <GoogleLinkCard linked={!!user.googleLinked} pushToast={pushToast} />
       </div>
 
       {/* 更改密碼卡 */}
