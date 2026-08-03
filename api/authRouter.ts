@@ -1,12 +1,32 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
-import { randomBytes } from "node:crypto";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { randomBytes, randomInt } from "node:crypto";
 import { getDb } from "./queries/connection";
-import { users } from "@db/schema";
+import { passwordResetCodes, users } from "@db/schema";
 import { createRouter, publicQuery, authedProcedure } from "./middleware";
 import { hashPassword, verifyPassword, signToken } from "./auth";
 import { logAudit } from "./audit";
+import { sendPasswordResetEmail } from "./email";
+
+/**
+ * 電話正規化（2026-08-04 Glo 規則）：香港號碼統一儲 8 位本地號。
+ * 「9123 4567」「+852 9123 4567」「85291234567」全部視為同一個號。
+ * 其他格式（Google 開戶嘅 g-xxxx 佔位、海外號）原樣保留。
+ */
+function normalizePhone(raw: string): string {
+  const trimmed = raw.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 8) return digits;
+  if (digits.length === 11 && digits.startsWith("852")) return digits.slice(3);
+  return trimmed;
+}
+
+/** 撞檢查／登入用嘅變體：8 位本地號要同時查舊數據可能存咗嘅 852 版本 */
+function phoneLookupVariants(raw: string): string[] {
+  const n = normalizePhone(raw);
+  return /^\d{8}$/.test(n) ? [n, `852${n}`] : [n];
+}
 
 const publicUser = (u: typeof users.$inferSelect) => ({
   id: u.id,
@@ -37,8 +57,10 @@ export const authRouter = createRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
+      // 電話統一儲 8 位本地號；撞檢查連埋 852 版本一齊查（舊數據可能有前綴）
+      const phone = normalizePhone(input.phone);
       const existing = await db.query.users.findFirst({
-        where: eq(users.phone, input.phone),
+        where: inArray(users.phone, phoneLookupVariants(input.phone)),
       });
       if (existing) {
         throw new TRPCError({
@@ -63,7 +85,7 @@ export const authRouter = createRouter({
         .insert(users)
         .values({
           name: input.name,
-          phone: input.phone,
+          phone,
           passwordHash: hashPassword(input.password),
           email,
           address: input.address ?? null,
@@ -80,7 +102,7 @@ export const authRouter = createRouter({
         action: "member.register",
         targetType: "member",
         targetId: id,
-        detail: `新會員註冊「${input.name}」（${input.phone}）`,
+        detail: `新會員註冊「${input.name}」（${phone}）`,
       });
       return { token, user: publicUser(user!) };
     }),
@@ -94,8 +116,9 @@ export const authRouter = createRouter({
     )
     .mutation(async ({ input }) => {
       const db = getDb();
+      // 登入都照計 852 變體：舊帳號可能存咗前綴版，客人打 8 位本地號一樣入到
       const user = await db.query.users.findFirst({
-        where: eq(users.phone, input.phone),
+        where: inArray(users.phone, phoneLookupVariants(input.phone)),
       });
       if (!user || !verifyPassword(input.password, user.passwordHash)) {
         throw new TRPCError({
@@ -258,6 +281,101 @@ export const authRouter = createRouter({
         .update(users)
         .set({ passwordHash: hashPassword(input.newPassword) })
         .where(eq(users.id, user.id));
+      return { ok: true };
+    }),
+
+  // ── 忘記密碼（2026-08-04）：email 收 6 位驗證碼 → 驗證 → 重設密碼 ──
+  // 安全設計：
+  // - 永遠回 { ok: true }，唔會透露個 email 有冇綁帳號（防帳號枚舉）
+  // - 驗證碼只存 hash（同密碼同一套 hashPassword），10 分鐘有效
+  // - 每個碼最多試 5 次；成功重設後即標記 used；再索取新碼會作廢晒舊碼
+  requestPasswordReset: publicQuery
+    .input(
+      z.object({
+        email: z.string().trim().email("Email 格式唔啱").max(255),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const email = input.email.toLowerCase();
+      const db = getDb();
+      const user = await db.query.users.findFirst({
+        where: eq(users.email, email),
+        columns: { id: true, name: true },
+      });
+      if (user) {
+        // 舊碼全部作廢，等客人淨係可以用最新嗰個
+        await db
+          .update(passwordResetCodes)
+          .set({ usedAt: new Date() })
+          .where(
+            and(eq(passwordResetCodes.email, email), isNull(passwordResetCodes.usedAt)),
+          );
+        const code = String(randomInt(100000, 1000000)); // 6 位數字
+        await db.insert(passwordResetCodes).values({
+          email,
+          codeHash: hashPassword(code),
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        });
+        await sendPasswordResetEmail(email, code, user.name);
+      }
+      return { ok: true };
+    }),
+
+  resetPasswordWithCode: publicQuery
+    .input(
+      z.object({
+        email: z.string().trim().email("Email 格式唔啱").max(255),
+        code: z.string().trim().regex(/^\d{6}$/, "驗證碼係 6 位數字"),
+        newPassword: z.string().min(6, "新密碼至少 6 位").max(64),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const email = input.email.toLowerCase();
+      const db = getDb();
+      const invalid = () =>
+        new TRPCError({
+          code: "BAD_REQUEST",
+          message: "驗證碼唔啱或者已經過期，請重新索取",
+        });
+      const [record] = await db
+        .select()
+        .from(passwordResetCodes)
+        .where(
+          and(eq(passwordResetCodes.email, email), isNull(passwordResetCodes.usedAt)),
+        )
+        .orderBy(desc(passwordResetCodes.createdAt))
+        .limit(1);
+      if (!record) throw invalid();
+      if (record.expiresAt.getTime() < Date.now()) throw invalid();
+      if (record.attempts >= 5) throw invalid();
+      if (!verifyPassword(input.code, record.codeHash)) {
+        await db
+          .update(passwordResetCodes)
+          .set({ attempts: record.attempts + 1 })
+          .where(eq(passwordResetCodes.id, record.id));
+        throw invalid();
+      }
+      const user = await db.query.users.findFirst({
+        where: eq(users.email, email),
+        columns: { id: true, name: true },
+      });
+      if (!user) throw invalid();
+      await db
+        .update(users)
+        .set({ passwordHash: hashPassword(input.newPassword) })
+        .where(eq(users.id, user.id));
+      await db
+        .update(passwordResetCodes)
+        .set({ usedAt: new Date() })
+        .where(eq(passwordResetCodes.id, record.id));
+      void logAudit({
+        actorId: user.id,
+        actorRole: "member",
+        action: "member.emailResetPassword",
+        targetType: "member",
+        targetId: user.id,
+        detail: `會員「${user.name}」經 Email 驗證碼自助重設密碼`,
+      });
       return { ok: true };
     }),
 });
