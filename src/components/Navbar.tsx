@@ -19,6 +19,14 @@ const WHATSAPP_URL = 'https://wa.me/85254835368';
 /** 員工內部系統（倉庫/HR，Render 託管） */
 const STAFF_SYSTEM_URL = 'https://red-code-wms.onrender.com/';
 
+/** 時段問候（2026-08-04 Glo 要求；跟客人裝置本地時間）：早晨 05–12／午安 12–18／晚上好 18–05 */
+function greetingNow(): string {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return '早晨';
+  if (h >= 12 && h < 18) return '午安';
+  return '晚上好';
+}
+
 const NAV_LINKS = [
   { to: '/', label: '首頁' },
   { to: '/products', label: '商品' },
@@ -41,6 +49,16 @@ export default function Navbar() {
     (sum, line) => sum + line.quantity,
     0,
   );
+
+  // 手機選單連結（2026-08-04 抽出嚟：問候語＋登出掣嘅動畫 delay 要跟佢長度計）
+  const mobileLinks = [
+    ...NAV_LINKS,
+    { to: '/cart', label: '購物車' },
+    user
+      ? { to: '/account', label: `會員中心（${user.name}）` }
+      : { to: '/login', label: '會員登入' },
+    ...(isStaff ? [{ to: '/admin', label: '後台管理' }] : []),
+  ];
 
   return (
     <header
@@ -182,14 +200,20 @@ export default function Navbar() {
             }}
             aria-label="手機導航"
           >
-          {[
-            ...NAV_LINKS,
-            { to: '/cart', label: '購物車' },
-            user
-              ? { to: '/account', label: `會員中心（${user.name}）` }
-              : { to: '/login', label: '會員登入' },
-            ...(isStaff ? [{ to: '/admin', label: '後台管理' }] : []),
-          ].map(
+          {/* 2026-08-04 Glo 要求：選項上方放個人化時段問候（已登入先顯示） */}
+          {user && (
+            <p
+              className="border-b pb-4 pt-2 font-serif-tc text-xl font-semibold"
+              style={{
+                borderColor: 'var(--space-line)',
+                color: 'var(--gold)',
+                animation: 'mobile-nav-in 400ms var(--ease-expo) 0ms both',
+              }}
+            >
+              {user.name}寶寶，{greetingNow()}💕！
+            </p>
+          )}
+          {mobileLinks.map(
             (link, i) => (
               <NavLink
                 key={link.to}
@@ -206,6 +230,23 @@ export default function Navbar() {
                 {link.label}
               </NavLink>
             ),
+          )}
+          {/* 2026-08-04 Glo 要求：手機選單加登出（desktop 頂欄一早有，呢度補返） */}
+          {user && (
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                logout();
+              }}
+              className="border-b py-4 text-left font-serif-tc text-2xl font-semibold text-txt-3"
+              style={{
+                borderColor: 'var(--space-line)',
+                animation: `mobile-nav-in 400ms var(--ease-expo) ${mobileLinks.length * 50}ms both`,
+              }}
+            >
+              登出
+            </button>
           )}
           <a
             href={STAFF_SYSTEM_URL}
