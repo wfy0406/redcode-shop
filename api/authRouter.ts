@@ -219,6 +219,9 @@ export const authRouter = createRouter({
     .input(
       z.object({
         name: z.string().min(1).max(255).optional(),
+        // 電話（2026-08-04 加）：主要畀 Google 開戶（g- 佔位）嘅會員補填真電話；
+        // 一般會員改電話都行（電話係登入帳號，改完要用新號登入）
+        phone: z.string().min(4).max(32).optional(),
         // Email（2026-08-03 加）：傳 null 或空字串＝清除；有值要撞檢查
         email: z.string().trim().email("Email 格式唔啱").max(255).nullable().optional(),
         address: z.string().nullable().optional(),
@@ -244,6 +247,20 @@ export const authRouter = createRouter({
           }
         }
         data.email = email;
+      }
+      if (input.phone !== undefined) {
+        // 同註冊同一套正規化＋撞檢查（連埋 852 前綴變體）；撞自己冇所謂
+        const phone = normalizePhone(input.phone);
+        const dup = await db.query.users.findFirst({
+          where: inArray(users.phone, phoneLookupVariants(input.phone)),
+        });
+        if (dup && dup.id !== ctx.user.userId) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "呢個電話號碼已經綁咗其他帳號",
+          });
+        }
+        data.phone = phone;
       }
       if (input.address !== undefined) data.address = input.address;
       if (input.age !== undefined) data.age = input.age;
