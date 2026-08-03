@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState } from 'react';
 import type { TouchEvent } from 'react';
 import { Link, useParams } from 'react-router';
-import { Check, Heart, Minus, Plus, Share2, ShoppingBag } from 'lucide-react';
+import { CalendarDays, Check, Heart, Minus, Plus, Share2, ShoppingBag, Tag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
+import { productCategoryLabel } from '@contracts/types';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/admin/WishingStar';
 import {
@@ -19,7 +20,8 @@ import { useRevealDep } from '@/components/shop/useRevealDep';
 
 /**
  * §P3 商品詳情 /product/:id —— trpc.products.byId
- * 左圖右資訊（手機上下）：折扣 badge、價錢、尺寸 pill 選擇（必填）、數量 stepper、
+ * 左圖右資訊（手機上下）：折扣 badge、價錢、類別 pill＋上架日期（2026-08-03 加）、
+ * 尺寸 pill 選擇（必填）、數量 stepper、
  * 加入購物車（真 mutation + toast）、心心收藏（本地）、描述、相關商品（同類別隨機 4 件）。
  * 讀取失敗 → demo fallback +「睇緊示範款」橫額；load 唔到 id → 搵唔到頁。
  */
@@ -153,6 +155,16 @@ export default function ProductDetail() {
   const effPrice = effectivePrice(product);
   const outOfStock = product.stock <= 0;
 
+  // 上架日期顯示（YYYY-MM-DD，跟瀏覽器本地時區——香港客睇就係香港日期）；
+  // 舊數據/壞日期就冚咗佢唔顯示
+  const listedDateText = (() => {
+    const d =
+      product.listedDate instanceof Date ? product.listedDate : new Date(product.listedDate);
+    if (Number.isNaN(d.getTime())) return null;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  })();
+
   // 分享用正式路徑（/products/123，唔用 #/）：Facebook/WhatsApp crawler 讀唔到
   // hash 後面嘅嘢，一定要 server 見到條 path 先會出到商品 OG 預覽圖。
   // 人類訪客撳入嚟，main.tsx 會即刻轉返 hash 路由，照常顯示商品頁。
@@ -261,6 +273,24 @@ export default function ProductDetail() {
           <h1 className="mt-2 font-serif-tc text-[32px] font-bold leading-[1.25] text-txt-1">
             {product.name}
           </h1>
+
+          {/* 類別＋上架日期（2026-08-03 加）：同 ProductCard 同款玻璃 pill＋icon，
+              一行過放標題同價錢之間，唔阻落單流程 */}
+          <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[12px] text-lavender"
+              style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
+            >
+              <Tag size={12} aria-hidden="true" />
+              {productCategoryLabel(product.category)}
+            </span>
+            {listedDateText && (
+              <span className="inline-flex items-center gap-1.5 font-mono text-[12px] text-txt-3">
+                <CalendarDays size={13} aria-hidden="true" />
+                {listedDateText} 上架
+              </span>
+            )}
+          </div>
 
           <p className="mt-4 flex items-baseline gap-3">
             <span className="font-mono text-[30px] font-medium text-pink">
