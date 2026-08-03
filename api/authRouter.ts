@@ -31,6 +31,8 @@ export const authRouter = createRouter({
         age: z.number().int().min(0).max(150).optional(),
         // 生日月份（選填，1–12；舊會員留空）
         birthMonth: z.number().int().min(1).max(12).optional(),
+        // Email（選填，2026-08-03 加；日後忘記密碼收驗證碼用）
+        email: z.string().trim().email("Email 格式唔啱").max(255).optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -44,12 +46,26 @@ export const authRouter = createRouter({
           message: "呢個電話號碼已經註冊過",
         });
       }
+      // Email（選填）：統一細楷；有填就檢查撞唔撞人哋嘅帳號（包括 Google 開戶嗰啲）
+      const email = input.email?.trim().toLowerCase() || null;
+      if (email) {
+        const emailDup = await db.query.users.findFirst({
+          where: eq(users.email, email),
+        });
+        if (emailDup) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "呢個 Email 已經綁咗其他帳號",
+          });
+        }
+      }
       const [{ id }] = await db
         .insert(users)
         .values({
           name: input.name,
           phone: input.phone,
           passwordHash: hashPassword(input.password),
+          email,
           address: input.address ?? null,
           age: input.age ?? null,
           birthMonth: input.birthMonth ?? null,
@@ -180,6 +196,8 @@ export const authRouter = createRouter({
     .input(
       z.object({
         name: z.string().min(1).max(255).optional(),
+        // Email（2026-08-03 加）：傳 null 或空字串＝清除；有值要撞檢查
+        email: z.string().trim().email("Email 格式唔啱").max(255).nullable().optional(),
         address: z.string().nullable().optional(),
         age: z.number().int().min(1).max(120).nullable().optional(),
       }),
@@ -188,6 +206,22 @@ export const authRouter = createRouter({
       const db = getDb();
       const data: Partial<typeof users.$inferInsert> = {};
       if (input.name !== undefined) data.name = input.name;
+      if (input.email !== undefined) {
+        // null／空 → 清除；有值 → 細楷＋防撞（唔可以撞其他人嘅帳號，撞自己冇所謂）
+        const email = input.email?.trim().toLowerCase() || null;
+        if (email) {
+          const dup = await db.query.users.findFirst({
+            where: eq(users.email, email),
+          });
+          if (dup && dup.id !== ctx.user.userId) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "呢個 Email 已經綁咗其他帳號",
+            });
+          }
+        }
+        data.email = email;
+      }
       if (input.address !== undefined) data.address = input.address;
       if (input.age !== undefined) data.age = input.age;
       if (Object.keys(data).length > 0) {
