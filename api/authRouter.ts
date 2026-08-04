@@ -211,6 +211,16 @@ export const authRouter = createRouter({
             .set({ googleSub: sub, googleEmail: email, googleName: gName })
             .where(eq(users.id, user.id));
           user = { ...user, googleSub: sub, googleEmail: email, googleName: gName };
+          // 2026-08-04（Glo 要求）：舊會員經 Google 登入自動連結咗 Google，日誌要記低
+          void logAudit({
+            actorId: user.id,
+            actorRole: user.role,
+            actorNameFallback: user.name,
+            action: "member.linkGoogle",
+            targetType: "member",
+            targetId: user.id,
+            detail: `會員「${user.name}」經 Google 登入自動連結 Google 帳號（${email}）`,
+          });
         }
       }
 
@@ -243,8 +253,18 @@ export const authRouter = createRouter({
             (await db.query.users.findFirst({ where: eq(users.email, email) }));
         }
         if (!user) throw googleFail();
-        // 全新 Google 會員 → 即發歡迎信（2026-08-04；email 一定存在，Google 保證）
         if (isNewMember) {
+          // 2026-08-04（Glo 要求）：Google 註冊嘅新會員，日誌要寫明有連結 Google
+          void logAudit({
+            actorId: user.id,
+            actorRole: "member",
+            actorNameFallback: user.name,
+            action: "member.register",
+            targetType: "member",
+            targetId: user.id,
+            detail: `新會員註冊「${user.name}」（Google 註冊 ${email}，已連結 Google）`,
+          });
+          // 全新 Google 會員 → 即發歡迎信（2026-08-04；email 一定存在，Google 保證）
           void sendWelcomeEmail({ to: email, name: user.name })
             .then((r) => {
               if (!r.ok) console.error(`[email] 歡迎信寄唔出 → ${email}:`, r.error);
