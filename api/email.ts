@@ -7,6 +7,7 @@
  * - RESEND_API_KEY：Resend 攞嘅 API key（冇設＝全部 email 靜默 skip，網站照常運作）
  * - EMAIL_FROM：寄件人，例如 `RedCode官方購物網站 <noreply@ows.redcode.red>`（域名要喺 Resend 驗證咗先用得）
  * - SITE_URL：網站地址，預設 https://redcode.red（email 入面 logo 同掣嘅連結用）
+ * - REVIEW_ALERT_EMAIL：訂單待審批通知收件人，預設 leader@ows.redcode.red（2026-08-04 加）
  *
  * 所有 sendXxxEmail 都係 never-throw：任何失敗（包括砌 HTML 出錯）淨係 console.error 兼回 SendResult，
  * 唔會阻到主流程（落單／審批唔會因為寄信失敗而彈錯）。
@@ -587,6 +588,62 @@ export async function sendOrderApprovedEmail(args: {
     });
   } catch (e) {
     console.error(`[email] 砌確認信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/**
+ * ④ 訂單待審批通知（2026-08-04 Glo 要求）：
+ * 客人（或員工代客）上傳付款截圖、訂單轉 payment_review 嗰刻，發去審批負責人
+ * （預設 leader@ows.redcode.red，可用 REVIEW_ALERT_EMAIL 環境變數改）。
+ * 內含完整客戶資料＋訂單內容（編號／時間／姓名／電話／Email／取貨／明細／總額／備註），
+ * 撳掣直達後台審批；跟返官網統一信件格式（brandedEmail 安靜奢華模板）。
+ */
+export async function sendOrderReviewAlertEmail(args: {
+  orderNo: string;
+  createdAt: Date | string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string | null;
+  delivery: OrderEmailDelivery;
+  note: string | null;
+  promoCode: string | null;
+  items: OrderEmailItem[];
+  total: number;
+  discountAmount: number;
+}): Promise<SendResult> {
+  const to = process.env.REVIEW_ALERT_EMAIL || "leader@ows.redcode.red";
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const content = `
+      <p style="margin:0;">有會員啱啱上傳咗付款截圖，以下訂單而家<b>待審批</b>，請盡快登入後台處理：</p>
+      ${infoBox([
+        ["訂單編號", orderNo],
+        ["落單時間", fmtDateHK(args.createdAt)],
+        ["客戶姓名", escapeHtml(args.customerName)],
+        ["客戶電話", escapeHtml(args.customerPhone)],
+        ["客戶 Email", args.customerEmail ? escapeHtml(args.customerEmail) : "—"],
+        ["取貨方式", fmtDelivery(args.delivery)],
+        ...(args.promoCode ? ([["優惠碼", escapeHtml(args.promoCode)]] as [string, string][]) : []),
+      ])}
+      ${itemsTable(args.items)}
+      ${totalsBlock(args.total, args.discountAmount)}
+      ${args.note ? note(`客戶備註：${escapeHtml(args.note)}`) : ""}
+      ${ctaButton("前往後台審批", `${siteUrl()}/#/admin`)}
+      ${note("審批通過後，系統會自動發確認電郵（附訂單單據）俾客戶。")}
+    `;
+    return await sendEmail({
+      to,
+      subject: `【RedCode 後台】訂單 ${args.orderNo} 待審批 — ${args.customerName}`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo}（${escapeHtml(args.customerName)}）有待審批付款截圖`,
+        kicker: "REDCODE · 訂單審批通知",
+        title: "訂單待審批",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌待審批通知出錯 → ${to}`, e);
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }

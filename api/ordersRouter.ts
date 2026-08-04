@@ -7,6 +7,7 @@ import { cartItems, orders, orderItems, paymentProofs, products, promoCodes, use
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
 import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
+import { sendOrderReviewAlertEmail } from "./email";
 import { logAudit } from "./audit";
 import { sendOrderApprovedEmail, sendOrderPendingEmail } from "./email";
 
@@ -79,6 +80,40 @@ async function attachProofCore(
     .set({ status: "payment_review", updatedAt: new Date() })
     .where(eq(orders.id, orderId));
   void forwardOrderToWms(orderId).catch((e) => console.error("[wms] forward error:", e));
+  // 2026-08-04（Glo 要求）：訂單一轉待審批，即刻背景電郵通知負責人（leader@ows.redcode.red）
+  // ——完整客戶資料＋訂單內容；失敗淨係 log，唔阻回應
+  void (async () => {
+    const order = await db.query.orders.findFirst({
+      where: eq(orders.id, orderId),
+      with: { items: true },
+    });
+    if (!order) return;
+    const user = await db.query.users.findFirst({ where: eq(users.id, order.userId) });
+    if (!user) return;
+    const r = await sendOrderReviewAlertEmail({
+      orderNo: order.orderNo,
+      createdAt: order.createdAt,
+      customerName: user.name,
+      customerPhone: user.phone,
+      customerEmail: user.email,
+      delivery: {
+        method: order.deliveryMethod,
+        pickupPoint: order.pickupPoint,
+        address: order.address,
+      },
+      note: order.note,
+      promoCode: order.promoCode,
+      items: order.items.map((it) => ({
+        productName: it.productName,
+        size: it.size,
+        price: it.price,
+        quantity: it.quantity,
+      })),
+      total: order.total,
+      discountAmount: order.discountAmount,
+    });
+    if (!r.ok) console.error(`[email] 待審批通知寄唔出（訂單 ${order.orderNo}）：`, r.error);
+  })().catch((e) => console.error("[email] 待審批通知出錯:", e));
   return id;
 }
 
