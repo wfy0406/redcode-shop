@@ -7,7 +7,7 @@ import { passwordResetCodes, users } from "@db/schema";
 import { createRouter, publicQuery, authedProcedure } from "./middleware";
 import { hashPassword, verifyPassword, signToken } from "./auth";
 import { logAudit } from "./audit";
-import { sendPasswordResetEmail } from "./email";
+import { sendPasswordResetEmail, sendWelcomeEmail } from "./email";
 
 /**
  * 電話正規化（2026-08-04 Glo 規則）：香港號碼統一儲 8 位本地號。
@@ -106,6 +106,15 @@ export const authRouter = createRouter({
         targetId: id,
         detail: `新會員註冊「${input.name}」（${phone}）`,
       });
+      // 2026-08-04（Glo 要求）：註冊成功即發歡迎信（內附迎新優惠碼 WELLCOMEYOU）；
+      // 有填 email 先寄得到（冇填就 skip，唔阻註冊）；失敗淨係 log
+      if (email) {
+        void sendWelcomeEmail({ to: email, name: input.name })
+          .then((r) => {
+            if (!r.ok) console.error(`[email] 歡迎信寄唔出 → ${email}:`, r.error);
+          })
+          .catch((e) => console.error("[email] 歡迎信出錯:", e));
+      }
       return { token, user: publicUser(user!) };
     }),
 
@@ -201,6 +210,7 @@ export const authRouter = createRouter({
         }
       }
 
+      let isNewMember = false;
       if (!user) {
         // 3) 全新會員 → 自動開戶：phone 必填 → 用 g- + google sub 前 10 位做佔位（unique）；
         // 密碼用隨機 32-byte hex 落 hash，用戶之後可以經 changePassword 自設
@@ -220,6 +230,7 @@ export const authRouter = createRouter({
               role: "member",
             })
             .returning({ id: users.id });
+          isNewMember = true;
           user = await db.query.users.findFirst({ where: eq(users.id, id) });
         } catch {
           // 並發撞 unique（email / 佔位 phone / googleSub）→ 重讀一次當登入
@@ -228,6 +239,14 @@ export const authRouter = createRouter({
             (await db.query.users.findFirst({ where: eq(users.email, email) }));
         }
         if (!user) throw googleFail();
+        // 全新 Google 會員 → 即發歡迎信（2026-08-04；email 一定存在，Google 保證）
+        if (isNewMember) {
+          void sendWelcomeEmail({ to: email, name: user.name })
+            .then((r) => {
+              if (!r.ok) console.error(`[email] 歡迎信寄唔出 → ${email}:`, r.error);
+            })
+            .catch((e) => console.error("[email] 歡迎信出錯:", e));
+        }
       }
 
       const token = await signToken({ userId: user.id, role: user.role });

@@ -193,6 +193,12 @@ CREATE TABLE IF NOT EXISTS "passwordResetCodes" (
   "createdAt" timestamp NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS prc_email_created ON "passwordResetCodes" (email, "createdAt" DESC);
+
+-- 2026-08-04（Glo 要求）：迎新優惠碼 WELLCOMEYOU——全單 92 折（percent 8 ＝ 減 8%）、
+-- 無最低消費門檻、每個帳號限用一次；ON CONFLICT 唔郁後台之後嘅任何改動（停用/改規則都唔會被覆蓋）
+INSERT INTO "promoCodes" ("code", "kind", "value", "minSpend", "perUserLimit", "usedCount", "isActive")
+VALUES ('WELLCOMEYOU', 'percent', 8, 0, 1, 0, true)
+ON CONFLICT ("code") DO NOTHING;
 `;
 
 export async function ensureDatabase(): Promise<void> {

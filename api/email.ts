@@ -647,3 +647,50 @@ export async function sendOrderReviewAlertEmail(args: {
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
+
+/**
+ * ⑤ 會員歡迎信（2026-08-04 Glo 要求）：註冊成功即發（電話註冊有填 email 先寄得到；Google 開戶必寄）。
+ * 內附迎新優惠碼 WELLCOMEYOU（全單 92 折、無消費金額門檻、每個帳號限用一次），
+ * 兩張品牌圖放喺 public/email/，用 ${site} 絕對 URL 引用。
+ */
+export async function sendWelcomeEmail(args: {
+  to: string;
+  name: string;
+}): Promise<SendResult> {
+  try {
+    const site = siteUrl();
+    const content = `
+      <p style="margin:0 0 14px;">${escapeHtml(args.name)}寶寶，你好呀 💕</p>
+      <p style="margin:0;">歡迎你正式成為 RedCode 嘅一份子！由今日起，每晚 Glo Glo 都會喺 Facebook 直播同你逐件衫慢慢揀、講質地、講襯法。我地官網成日都會有衫、褲、鞋、襪、小飾物或其他唔同貨推出 ♡</p>
+      <img src="${site}/email/welcome-hero.jpg" alt="迎新小禮物" width="504"
+        style="display:block;width:100%;max-width:100%;height:auto;margin:22px 0;" />
+      <p style="margin:0;">第一次見面，Glo Glo 一早準備咗份迎新小禮物俾你 ✨</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+        <tr><td align="center" style="background:${BOX_BG};border:1px solid ${HAIRLINE};padding:30px 18px 26px;">
+          <p style="margin:0;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${FAINT};">新會員限定 · 迎新優惠碼</p>
+          <span style="display:block;margin:14px 0 10px;font-family:${SERIF_STACK};font-size:34px;font-weight:700;letter-spacing:8px;text-indent:8px;color:${INK};">WELLCOMEYOU</span>
+          <p style="margin:0 0 8px;font-size:15px;color:${BODY};">全單 <b style="color:${BRAND_PINK};">92 折</b> · 無消費金額門檻</p>
+          <p style="margin:0;font-size:12.5px;line-height:1.8;color:${MUTED};">買幾多錢都用得 ✦ 每個帳號限用一次<br />結帳時喺「優惠碼」一欄輸入，折扣即時自動扣減。</p>
+        </td></tr>
+      </table>
+      ${ctaButton("去揀今日嘅靚衫", `${site}/#/products`)}
+      <img src="${site}/email/welcome-dress.jpg" alt="今晚直播見" width="390"
+        style="display:block;width:78%;max-width:390px;height:auto;margin:26px auto 6px;" />
+      ${note(`以後有咩唔明，隨時 WhatsApp <a href="https://wa.me/85254835368" style="color:${BRAND_PINK};text-decoration:none;">5483 5368</a> 或者 E-Mail 去 <a href="mailto:service.support@ows.redcode.red" style="color:${BRAND_PINK};text-decoration:none;">service.support@ows.redcode.red</a> 搵我哋，Glo Glo 同小幫手會好快覆你 💕`)}
+      <p style="margin:18px 0 0;">期待喺直播間見到你 ✦<br />Glo Glo 上</p>
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: "【RedCode】寶寶，歡迎你加入我哋嘅小星球 💕",
+      html: brandedEmail({
+        preheader: "你嘅迎新優惠碼 WELLCOMEYOU 已經準備好——全單 92 折，無消費金額門檻",
+        kicker: "REDCODE · 歡迎加入",
+        title: "寶寶，歡迎你呀 ✦",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌歡迎信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
