@@ -596,8 +596,9 @@ export async function sendOrderApprovedEmail(args: {
  * ④ 訂單待審批通知（2026-08-04 Glo 要求）：
  * 客人（或員工代客）上傳付款截圖、訂單轉 payment_review 嗰刻，發去審批負責人
  * （預設 leader@ows.redcode.red，可用 REVIEW_ALERT_EMAIL 環境變數改）。
- * 內含完整客戶資料＋訂單內容（編號／時間／姓名／電話／Email／取貨／明細／總額／備註），
- * 撳掣直達後台審批；跟返官網統一信件格式（brandedEmail 安靜奢華模板）。
+ * 內含完整客戶資料＋訂單內容（編號／時間／姓名／電話／Email／取貨／明細／總額／備註）。
+ * 2026-08-04（Glo 更新）：唔再放「前往後台審批」按鈕——信內文字提示主管到內部系統嘅
+ * 「官網訂單審批」處理；跟返官網統一信件格式（brandedEmail 安靜奢華模板）。
  */
 export async function sendOrderReviewAlertEmail(args: {
   orderNo: string;
@@ -616,7 +617,7 @@ export async function sendOrderReviewAlertEmail(args: {
   try {
     const orderNo = escapeHtml(args.orderNo);
     const content = `
-      <p style="margin:0;">有會員啱啱上傳咗付款截圖，以下訂單而家<b>待審批</b>，請盡快登入後台處理：</p>
+      <p style="margin:0;">有會員啱啱上傳咗付款截圖，以下訂單而家<b>待審批</b>，請主管到內部系統嘅「官網訂單審批」處理：</p>
       ${infoBox([
         ["訂單編號", orderNo],
         ["落單時間", fmtDateHK(args.createdAt)],
@@ -629,7 +630,7 @@ export async function sendOrderReviewAlertEmail(args: {
       ${itemsTable(args.items)}
       ${totalsBlock(args.total, args.discountAmount)}
       ${args.note ? note(`客戶備註：${escapeHtml(args.note)}`) : ""}
-      ${ctaButton("前往後台審批", `${siteUrl()}/#/admin`)}
+      ${note("請主管到內部系統嘅「官網訂單審批」處理呢張訂單。")}
       ${note("審批通過後，系統會自動發確認電郵（附訂單單據）俾客戶。")}
     `;
     return await sendEmail({
