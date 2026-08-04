@@ -20,13 +20,16 @@ type AuthUser = {
   birthMonth?: number | null;
   // 已連結 Google 帳號（2026-08-04）：會員中心顯示連結狀態用
   googleLinked?: boolean;
+  // Google 開戶嘅帳號：email 鎖死跟 Google 電郵，唔俾改（2026-08-04 Glo 要求）
+  emailLocked?: boolean;
 };
 
 type RegisterInput = {
   name: string;
   phone: string;
   password: string;
-  email?: string;
+  // Email（2026-08-04 起必填，Glo 要求）
+  email: string;
   address?: string;
   age?: number;
   birthMonth?: number;

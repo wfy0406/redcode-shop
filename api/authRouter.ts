@@ -38,6 +38,14 @@ const publicUser = (u: typeof users.$inferSelect) => ({
   birthMonth: u.birthMonth,
   // 已連結 Google 帳號（2026-08-04）：會員中心顯示連結狀態；sub 本身唔出畀前端
   googleLinked: u.googleSub != null,
+  // Google 開戶嘅帳號 email 鎖死跟 Google 電郵（2026-08-04 Glo 要求）：
+  // Google 開戶嘅帳號一出世 email 就等於 googleEmail，後端 updateProfile 嘅鎖保證佢永遠一致；
+  // 電話註冊、後嚟先連結 Google 而 email 唔同嘅會員就唔會被鎖（佢哋可以自己改 email）
+  emailLocked:
+    u.googleSub != null &&
+    u.email != null &&
+    u.googleEmail != null &&
+    u.email.toLowerCase() === u.googleEmail.toLowerCase(),
   role: u.role,
   createdAt: u.createdAt,
 });
@@ -53,8 +61,8 @@ export const authRouter = createRouter({
         age: z.number().int().min(0).max(150).optional(),
         // 生日月份（選填，1–12；舊會員留空）
         birthMonth: z.number().int().min(1).max(12).optional(),
-        // Email（選填，2026-08-03 加；日後忘記密碼收驗證碼用）
-        email: z.string().trim().email("Email 格式唔啱").max(255).optional(),
+        // Email（2026-08-03 加；2026-08-04 起改必填，Glo 要求：註冊一定要填，歡迎信先寄得到）
+        email: z.string().trim().email("Email 格式唔啱").max(255),
       }),
     )
     .mutation(async ({ input }) => {
@@ -70,18 +78,16 @@ export const authRouter = createRouter({
           message: "呢個電話號碼已經註冊過",
         });
       }
-      // Email（選填）：統一細楷；有填就檢查撞唔撞人哋嘅帳號（包括 Google 開戶嗰啲）
-      const email = input.email?.trim().toLowerCase() || null;
-      if (email) {
-        const emailDup = await db.query.users.findFirst({
-          where: eq(users.email, email),
+      // Email（必填）：統一細楷；檢查撞唔撞人哋嘅帳號（包括 Google 開戶嗰啲）
+      const email = input.email.trim().toLowerCase();
+      const emailDup = await db.query.users.findFirst({
+        where: eq(users.email, email),
+      });
+      if (emailDup) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "呢個 Email 已經綁咗其他帳號",
         });
-        if (emailDup) {
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: "呢個 Email 已經綁咗其他帳號",
-          });
-        }
       }
       const [{ id }] = await db
         .insert(users)
@@ -107,14 +113,12 @@ export const authRouter = createRouter({
         detail: `新會員註冊「${input.name}」（${phone}）`,
       });
       // 2026-08-04（Glo 要求）：註冊成功即發歡迎信（內附迎新優惠碼 WELLCOMEYOU）；
-      // 有填 email 先寄得到（冇填就 skip，唔阻註冊）；失敗淨係 log
-      if (email) {
-        void sendWelcomeEmail({ to: email, name: input.name })
-          .then((r) => {
-            if (!r.ok) console.error(`[email] 歡迎信寄唔出 → ${email}:`, r.error);
-          })
-          .catch((e) => console.error("[email] 歡迎信出錯:", e));
-      }
+      // email 而家係必填，所以每個新會員都一定寄；失敗淨係 log，唔阻註冊
+      void sendWelcomeEmail({ to: email, name: input.name })
+        .then((r) => {
+          if (!r.ok) console.error(`[email] 歡迎信寄唔出 → ${email}:`, r.error);
+        })
+        .catch((e) => console.error("[email] 歡迎信出錯:", e));
       return { token, user: publicUser(user!) };
     }),
 
@@ -374,6 +378,30 @@ export const authRouter = createRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
+      // 2026-08-04（Glo 要求）：Google 開戶嘅帳號 email 鎖死跟 Google 電郵，唔俾改。
+      // 判斷同 publicUser.emailLocked 一致：已連結 Google，而且帳號 email 同 Google 電郵一致。
+      // （傳返原值落嚟當冇改過，照過；想改走／清走就即場擋）
+      const me = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+      });
+      if (!me) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
+      }
+      const emailLocked =
+        me.googleSub != null &&
+        me.email != null &&
+        me.googleEmail != null &&
+        me.email.toLowerCase() === me.googleEmail.toLowerCase();
+      if (emailLocked && input.email !== undefined) {
+        const currentEmail = (me.email ?? "").toLowerCase();
+        const nextEmail = input.email?.trim().toLowerCase() || null;
+        if (nextEmail !== currentEmail) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Google 帳號嘅電郵唔可以更改",
+          });
+        }
+      }
       const data: Partial<typeof users.$inferInsert> = {};
       if (input.name !== undefined) data.name = input.name;
       if (input.email !== undefined) {

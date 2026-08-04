@@ -9,7 +9,7 @@ import GoogleLoginButton from '@/components/account/GoogleLoginButton';
 /**
  * RedCode 設計系統 §P5 —— 會員註冊 /register
  * 玻璃卡表單：寶寶（買家）姓名、電話（登入帳號，亦係 WhatsApp 通知渠道）、
- * 密碼、確認密碼、Email（選填，2026-08-03 加）、地址（選填）、年齡（選填）、
+ * 密碼、確認密碼、Email（2026-08-03 加；2026-08-04 起改必填，Glo 要求）、地址（選填）、年齡（選填）、
  * 生日月份（選填，2026-07-29 加）。
  * 前端驗證：必填 / 電話 8 位數字起 / 密碼 ≥6 位 / 兩次密碼一致 / Email 格式；
  * 後端 CONFLICT（電話已註冊／Email 已綁定）友善顯示。成功自動登入 → /account。
@@ -71,7 +71,9 @@ export default function Register() {
     else if (!/^\d{8,}$/.test(normalized)) next.phone = '電話號碼要至少 8 位數字';
     if (password.length < 6) next.password = '密碼要至少 6 位';
     if (confirm !== password) next.confirm = '兩次密碼唔一致，請再確認';
-    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+    // Email 必填（2026-08-04 Glo 要求）：留空擋、格式唔啱擋
+    if (!email.trim()) next.email = '請輸入你嘅 Email（歡迎信同優惠碼會寄去呢個信箱）';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
       next.email = 'Email 格式唔啱，請再檢查';
     if (age.trim()) {
       const n = Number(age);
@@ -94,7 +96,7 @@ export default function Register() {
         name: name.trim(),
         phone: normalizePhone(phone),
         password,
-        ...(email.trim() ? { email: email.trim() } : {}),
+        email: email.trim(),
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(age.trim() ? { age: Number(age) } : {}),
         ...(birthMonth ? { birthMonth: Number(birthMonth) } : {}),
@@ -159,8 +161,7 @@ export default function Register() {
           <FormField
             id="reg-email"
             label="Email"
-            optional
-            hint={<span className="text-[13px] text-txt-3">日後忘記密碼，可以經 Email 自助重設</span>}
+            hint={<span className="text-[13px] text-txt-3">收歡迎信＋迎新優惠碼；日後忘記密碼都可以經 Email 重設</span>}
             type="email"
             inputMode="email"
             autoComplete="email"

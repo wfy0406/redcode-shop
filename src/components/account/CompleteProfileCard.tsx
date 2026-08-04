@@ -7,7 +7,8 @@ import WishingStar from './WishingStar';
  * 「完成會員資料」卡（2026-08-04 Google 登入配套）
  * Google 開戶嗰陣淨係攞到 email 同名，電話要用 g- 佔位頂住 ——
  * 呢張卡喺會員中心頂置（電話仲係 g- 先出現），將 Google 預填嘅資料擺晒出嚟：
- * 稱呼／Email 預填可改，電話空白要親手填，撳「確認儲存」先真正落實（＝ Glo 講嘅「預設可改完先確認」）。
+ * 稱呼預填可改；Email 鎖定跟 Google 電郵（2026-08-04 Glo 要求，唯讀唔准改）；
+ * 電話空白要親手填，撳「確認儲存」先真正落實（＝ Glo 講嘅「預設可改完先確認」）。
  * 儲存成功後 user.phone 變返真號，呢張卡自動消失。
  */
 
@@ -34,7 +35,8 @@ export default function CompleteProfileCard({ user, pushToast }: CompleteProfile
   const updateProfile = trpc.auth.updateProfile.useMutation();
 
   const [name, setName] = useState(user.name);
-  const [email, setEmail] = useState(user.email ?? '');
+  // Email 鎖定（2026-08-04 Glo 要求）：Google 開戶嘅帳號 email 跟實 Google 電郵，唔准改 → 淨係讀，冇 setter
+  const [email] = useState(user.email ?? '');
   const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -86,7 +88,8 @@ export default function CompleteProfileCard({ user, pushToast }: CompleteProfile
       <h2 className="mt-2 font-serif-tc text-2xl font-semibold text-txt-1">完成會員資料 ✦</h2>
       <p className="mt-3 text-[14px] leading-[1.8] text-txt-2">
         你係用 Google 帳號登入，我哋已經幫你開好會員戶口。
-        下面資料由 Google 預填，<span className="text-txt-1">你可以改完先撳「確認儲存」</span>。
+        Email 跟實你嘅 Google 電郵（唔可以更改），稱呼可以改，
+        <span className="text-txt-1">電話就要你親手填一次</span>，填好撳「確認儲存」。
       </p>
 
       <div className="mt-5 flex flex-col gap-5">
@@ -98,17 +101,13 @@ export default function CompleteProfileCard({ user, pushToast }: CompleteProfile
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
-        <FormField
-          id="cp-email"
-          label="Email（Google 預填，可以改）"
-          type="email"
-          inputMode="email"
-          autoComplete="email"
-          optional
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
+        {/* Email 鎖定（2026-08-04 Glo 要求）：Google 開戶嘅帳號 email 跟實 Google 電郵，唯讀顯示 */}
+        <div className="w-full">
+          <span className="mb-2 block text-sm text-txt-2">Email（你嘅 Google 電郵，唔可以更改）</span>
+          <div className="flex h-12 w-full items-center rounded-xl border border-space-line bg-space-2 px-4 text-[15px] text-txt-3">
+            {email}
+          </div>
+        </div>
         <FormField
           id="cp-phone"
           label="電話（Google 冇呢項資料，要親手填一次）"

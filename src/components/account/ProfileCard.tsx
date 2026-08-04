@@ -9,6 +9,8 @@ import FormField from './FormField';
  * 儲存 → auth.updateProfile → 成功 toast「資料已更新」+ utils.auth.me.invalidate()；
  * 失敗：錯誤訊息 persist 喺欄下直到改正。電話係登入帳號，唯讀。
  * Email（2026-08-03 加）：選填，留空儲存＝清除；撞咗其他人嘅 Email 會報錯。
+ * Email 鎖定（2026-08-04 Glo 要求）：Google 開戶嘅會員（emailLocked）Email 跟實 Google 電郵，
+ * 呢度唯讀顯示＋講明唔改得；後端 updateProfile 一樣會擋。
  */
 
 interface ProfileUser {
@@ -19,6 +21,8 @@ interface ProfileUser {
   address?: string | null;
   age?: number | null;
   birthMonth?: number | null;
+  // Google 開戶嘅帳號：Email 鎖定跟 Google 電郵（2026-08-04）
+  emailLocked?: boolean;
 }
 
 interface ProfileCardProps {
@@ -240,7 +244,12 @@ export default function ProfileCard({ user, onLogout, pushToast }: ProfileCardPr
           label="電話"
           value={user.phone.startsWith('g-') ? '未填寫（Google 登入，請喺上面補填）' : user.phone}
         />
-        {renderRow('email', user.email?.trim() ? user.email : '未填寫')}
+        {/* Google 開戶嘅會員 Email 鎖定（2026-08-04 Glo 要求）：唯讀，冇「編輯」掣 */}
+        {user.emailLocked ? (
+          <DisplayRow label="Email" value={user.email ?? '未填寫'} />
+        ) : (
+          renderRow('email', user.email?.trim() ? user.email : '未填寫')
+        )}
         {renderRow('address', user.address?.trim() ? user.address : '未填寫')}
         {renderRow('age', user.age != null ? `${user.age} 歲` : '未填寫')}
         {/* 生日月份：唯讀（2026-07-29 起只顯示；要改請聯絡 Glo Glo 後台改） */}
@@ -249,6 +258,11 @@ export default function ProfileCard({ user, onLogout, pushToast }: ProfileCardPr
           value={user.birthMonth != null ? `${user.birthMonth} 月` : '未填寫'}
         />
       </div>
+      {user.emailLocked && (
+        <p className="mt-3 text-[13px] leading-[1.7] text-txt-3">
+          你係用 Google 開戶，Email 跟實你嘅 Google 電郵，唔可以喺度更改。
+        </p>
+      )}
     </div>
   );
 }
