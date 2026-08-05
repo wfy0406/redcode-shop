@@ -4,6 +4,8 @@ import { Link } from 'react-router';
  * 私隱政策 /privacy（2026-08-05 Glo 要求：全站頁底連結）
  * 內容＝2026-08-04 經 Glo 批核嘅 17 節政策原文（RedCode_私隱政策.md）。
  * 排版跟 About 頁嘅安靜奢華語言：花體 kicker＋serif 標題＋髮絲線分節。
+ * 2026-08-06：聯絡途徑加入 Facebook Messenger（m.me/redcodexhk）；
+ * 直接促銷拒收方法補返會員中心「優惠資訊」自助開關。
  */
 
 function Section({
@@ -71,7 +73,7 @@ export default function Privacy() {
           私隱政策
         </h1>
         <p className="mt-3 font-mono text-[13px] tracking-[0.08em] text-txt-3">
-          RedCode Fashion Design · 最近更新：2026 年 8 月 4 日
+          RedCode Fashion Design · 最近更新：2026 年 8 月 6 日
         </p>
       </header>
 
@@ -109,7 +111,8 @@ export default function Privacy() {
                 </>,
                 <>
                   <b className="text-txt-1">客戶服務</b>
-                  ：你經 WhatsApp（5483 5368）或電郵（service.support@ows.redcode.red）聯絡我哋嘅對話及來往紀錄
+                  ：你經 WhatsApp（5483 5368）、電郵（service.support@ows.redcode.red）或 Facebook
+                  Messenger（m.me/redcodexhk）聯絡我哋嘅對話及來往紀錄
                 </>,
                 <>
                   <b className="text-txt-1">Google 登入／連結</b>
@@ -274,9 +277,9 @@ export default function Privacy() {
               </>,
               '我哋第一次向你發送推廣訊息時，會話你知你有權要求停止使用你嘅資料作直接促銷。',
               <>
-                <b className="text-txt-1">你可以隨時免費拒絕接收推廣訊息</b>：WhatsApp 5483
-                5368、電郵
-                service.support@ows.redcode.red，或按推廣電郵內嘅指示辦理。我哋收到要求後會免費停止，並將你喺推廣名單中剔除，期間唔會影響你接收訂單相關嘅交易電郵。
+                <b className="text-txt-1">你可以隨時免費拒絕接收推廣訊息</b>：喺會員中心「優惠資訊」自行關閉、WhatsApp
+                5483 5368、電郵
+                service.support@ows.redcode.red 或 Facebook Messenger（m.me/redcodexhk），或按推廣電郵內嘅指示辦理。我哋收到要求後會免費停止，並將你喺推廣名單中剔除，期間唔會影響你接收訂單相關嘅交易電郵。
               </>,
             ]}
           />
@@ -362,8 +365,8 @@ export default function Privacy() {
           <KeyBox>
             <p>
               <b className="text-txt-1">提出方法</b>：電郵
-              service.support@ows.redcode.red 或 WhatsApp 5483
-              5368，註明「私隱查閱／改正要求」，並提供足夠資料俾我哋核實你嘅身份。我哋會喺條例規定嘅
+              service.support@ows.redcode.red、WhatsApp 5483
+              5368 或 Facebook Messenger（m.me/redcodexhk），註明「私隱查閱／改正要求」，並提供足夠資料俾我哋核實你嘅身份。我哋會喺條例規定嘅
               <b className="text-txt-1">40 日內</b>回覆。查閱要求我哋可能收取合理費用（不會超過直接成本），收費前會預先話你知。
             </p>
           </KeyBox>
@@ -396,6 +399,8 @@ export default function Privacy() {
             E-Mail：service.support@ows.redcode.red
             <br />
             WhatsApp：5483 5368
+            <br />
+            Facebook Messenger：m.me/redcodexhk（RedCode 專頁私訊）
             <br />
             網站：https://redcode.red
           </p>

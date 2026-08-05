@@ -5,6 +5,7 @@ import { Link } from 'react-router';
  * 內容＝RedCode_服務條款.md（研究 HKTVmall／Zara HK／友和條款＋《貨品售賣條例》後度身訂造）。
  * 核心保障（Glo 指定）：第 4 節寫明「發出訂單確認電郵時，買賣合約先正式成立」＋
  * 第 6.3 條標錯價可取消訂單全額退款——避免標錯價被逼履約。
+ * 2026-08-06：聯絡途徑加入 Facebook Messenger（m.me/redcodexhk）。
  */
 
 function Section({
@@ -66,7 +67,7 @@ export default function Terms() {
           TERMS OF SERVICE
         </p>
         <p className="mt-3 font-mono text-[13px] tracking-[0.08em] text-txt-3">
-          RedCode Fashion Design · 最近更新：2026 年 8 月 5 日
+          RedCode Fashion Design · 最近更新：2026 年 8 月 6 日
         </p>
       </header>
 
@@ -190,7 +191,7 @@ export default function Terms() {
             5.5 <b className="text-txt-1">防偽冒聲明</b>：我哋嘅收款戶口及識別碼
             <b className="text-txt-1">只會</b>喺本網站公布。我哋絕對唔會經 WhatsApp
             私訊、Facebook
-            留言或其他渠道提供其他收款戶口。如有懷疑，請先經第 14.7 條嘅方法同我哋核實。
+            留言或 Messenger 私訊等其他渠道提供其他收款戶口。如有懷疑，請先經第 14.7 條嘅方法同我哋核實。
           </p>
           <p>
             5.6
@@ -224,8 +225,8 @@ export default function Terms() {
         <Section num="07" title="訂單取消與審批">
           <p>
             7.1 <b className="text-txt-1">你嘅取消權</b>
-            ：喺我哋發出訂單確認之前，你可以經 WhatsApp
-            或電郵取消訂單；已付款嘅，我哋會按第 7.3
+            ：喺我哋發出訂單確認之前，你可以經 WhatsApp、
+            電郵或 Facebook Messenger 取消訂單；已付款嘅，我哋會按第 7.3
             條退款。訂單確認發出之後，你唔可以單方面取消訂單。
           </p>
           <p>
@@ -293,8 +294,8 @@ export default function Terms() {
             9.2 <b className="text-txt-1">你嘅法定權利不受影響</b>
             ：如貨品有缺陷或損壞（並非你造成）、同本網站描述唔相符、寄錯貨或數量唔啱，你可以喺
             <b className="text-txt-1">收貨後 7 天內</b>
-            經 WhatsApp
-            或電郵聯絡我哋（附上貨品相片及訂單編號）。經核實後，我哋會安排換貨；無貨可換嘅，全額退款。本條款嘅任何內容，均唔會排除或限制你根據香港《貨品售賣條例》（第
+            經 WhatsApp、電郵或 Facebook
+            Messenger（m.me/redcodexhk）聯絡我哋（附上貨品相片及訂單編號）。經核實後，我哋會安排換貨；無貨可換嘅，全額退款。本條款嘅任何內容，均唔會排除或限制你根據香港《貨品售賣條例》（第
             26 章）享有嘅法定權利。
           </p>
           <p>
@@ -407,6 +408,8 @@ export default function Terms() {
             E-Mail：service.support@ows.redcode.red
             <br />
             WhatsApp：5483 5368
+            <br />
+            Facebook Messenger：m.me/redcodexhk（RedCode 專頁私訊）
             <br />
             網站：https://redcode.red
           </p>
