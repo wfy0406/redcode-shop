@@ -1,9 +1,35 @@
-import { useMemo, useState } from "react";
-import { trpc } from "../../trpc";
-import { useAuth } from "../../hooks/useAuth";
-import { ORDER_STATUS_LABELS, ORDER_STATUS_BADGE } from "../../lib/orderStatus";
-import MarketingOptInBadge from "./MarketingOptInBadge";
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { KeyRound, Pencil, Search, Trash2, Users, X } from 'lucide-react';
+import { trpc } from '@/providers/trpc';
+import { useAuth } from '@/hooks/useAuth';
+import { fmtDate, fmtDateTime, fmtHKD } from './format';
+import { LoadingBlock } from './WishingStar';
+import StatusBadge from './StatusBadge';
+import type { OrderStatus } from './types';
+import type { ToastKind } from './useToasts';
 
+/**
+ * 會員列表（F-H，admin only）—— trpc.members.list
+ * 2026-07-28 更新：
+ * - 搜尋框：輸入名或電話即時篩（300ms debounce，server ilike 模糊對照）
+ * - 表格加「地址」欄
+ * - 撳任何一行彈出詳情：會員資料（名/電話/email/年齡/生日月份/地址/註冊日）＋訂單統計＋最近 10 張訂單
+ * - 每行有刪除掣：有訂單嘅會員會喺確認對話框講明連訂單一併刪（後端 members.remove 把關）
+ * 2026-08-03 更新：
+ * - 詳情加「重設密碼」掣（員工＋管理員）：會員唔記得密碼時幫佢設新密碼，即時生效，
+ *   新密碼要人手話返俾會員；動作記落操作日誌（member.resetPassword）
+ * 2026-08-04 更新（Glo 要求）：
+ * - 列表用顏色 badge 標示會員有冇連結 Google（綠＝已連結，灰＝未連結）
+ * - 會員詳情加 Google 連結狀態＋Google Email＋Google 名稱
+ * 2026-08-05 更新（Glo 要求）：
+ * - 列表同詳情加直接促銷同意狀態（粉紅＝接受推廣，灰＝唔接受）＋同意日期
+ * 2026-08-06 更新（Glo 要求）：
+ * - 推廣同意改三態制：接受（粉紅）／未選擇（琥珀，舊會員未表態，登入會彈窗問一次）／唔接受（灰）
+ * - 會員詳情加「設為接受／設為唔接受」快掣（員工＋管理員），人手設定後會員唔會再見到彈窗
+ */
+
+/** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
 type MemberRow = {
   id: number;
   name: string;
@@ -11,10 +37,12 @@ type MemberRow = {
   email: string | null;
   address: string | null;
   birthMonth: number | null;
-  createdAt: string | Date;
+  createdAt: Date | string;
   googleLinked: boolean;
+  // 直接促銷同意（2026-08-05）：true＝註冊時剔咗接受推廣
   marketingOptIn: boolean;
-  marketingPromptedAt: string | Date | null;
+  // 三態制（2026-08-06）：NULL＋2026-08-05 或之前註冊＝未選
+  marketingPromptedAt: Date | string | null;
   orderCount: number;
   totalSpent: number;
 };
@@ -28,631 +56,1043 @@ type MemberDetail = {
     address: string | null;
     age: number | null;
     birthMonth: number | null;
-    createdAt: string | Date;
+    role: string;
+    createdAt: Date | string;
     googleLinked: boolean;
     googleEmail: string | null;
     googleName: string | null;
+    // 直接促銷同意（2026-08-05）：狀態＋同意時間
     marketingOptIn: boolean;
-    marketingOptInAt: string | Date | null;
-    marketingPromptedAt: string | Date | null;
+    marketingOptInAt: Date | string | null;
+    // 三態制（2026-08-06）：NULL＋2026-08-05 或之前註冊＝未選
+    marketingPromptedAt: Date | string | null;
   };
   orderCount: number;
   totalSpent: number;
   recentOrders: {
     id: number;
     orderNo: string;
-    status: keyof typeof ORDER_STATUS_LABELS;
+    status: OrderStatus;
     total: number;
     deliveryMethod: string;
-    createdAt: string | Date;
+    createdAt: Date | string;
   }[];
 };
 
-function formatMoney(cents: number): string {
-  return `$${(cents / 100).toFixed(0)}`;
-}
+const DELIVERY_TEXT: Record<string, string> = {
+  address: '送貨上門',
+  sf_station: '順豐站自取',
+  sf_locker: '順豐智能櫃',
+};
 
-function formatTime(iso: string | Date): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** 修改會員資料彈窗（員工＋管理員，2026-07-29；員工提交會轉審批 2026-08-06 Glo 要求） */
-function EditMemberModal({
-  member,
-  onClose,
-  toast,
-}: {
-  member: MemberDetail["user"];
-  onClose: () => void;
-  toast: (msg: string) => void;
-}) {
-  const utils = trpc.useUtils();
-  const [name, setName] = useState(member.name);
-  const [phone, setPhone] = useState(member.phone);
-  const [email, setEmail] = useState(member.email ?? "");
-  const [address, setAddress] = useState(member.address ?? "");
-  const [age, setAge] = useState(member.age != null ? String(member.age) : "");
-  const [birthMonth, setBirthMonth] = useState(
-    member.birthMonth != null ? String(member.birthMonth) : "",
-  );
-  const [marketingOptIn, setMarketingOptIn] = useState(member.marketingOptIn);
-  const [error, setError] = useState("");
-
-  const updateMut = trpc.members.update.useMutation({
-    onSuccess: (r) => {
-      // 員工操作需審批（2026-08-06 Glo 要求）：staff 會收到 pendingApproval＋requestId
-      if ("pendingApproval" in r && r.pendingApproval) {
-        toast(`已提交審批（#${r.requestId}），等主管/管理員批准`);
-      } else {
-        toast("會員資料已更新");
-      }
-      void utils.members.list.invalidate();
-      void utils.members.detail.invalidate({ id: member.id });
-      onClose();
-    },
-    onError: (e) => setError(e.message),
-  });
-
+/**
+ * Google 連結狀態 badge（2026-08-04 Glo 要求：列表顏色標示）
+ * 綠（--success #5EE0A0）＝已連結；灰＝未連結
+ */
+function GoogleBadge({ linked }: { linked: boolean }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md rounded-2xl bg-white p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="mb-4 text-lg font-bold text-stone-800">修改會員資料</h3>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setError("");
-            updateMut.mutate({
-              id: member.id,
-              name,
-              phone,
-              email: email.trim() ? email.trim() : null,
-              address: address.trim() ? address.trim() : null,
-              age: age.trim() ? Number(age) : null,
-              birthMonth: birthMonth.trim() ? Number(birthMonth) : null,
-              marketingOptIn,
-            });
-          }}
-          className="space-y-3"
-        >
-          <div>
-            <label className="mb-1 block text-xs font-medium text-stone-600">名稱</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-stone-600">電話</label>
-            <input
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              required
-              className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-stone-600">Email（選填）</label>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
-              className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-stone-600">地址（選填）</label>
-            <textarea
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              rows={2}
-              className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-stone-600">年齡（選填）</label>
-              <input
-                value={age}
-                onChange={(e) => setAge(e.target.value)}
-                type="number"
-                min="0"
-                max="150"
-                className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-stone-600">
-                生日月份（選填）
-              </label>
-              <select
-                value={birthMonth}
-                onChange={(e) => setBirthMonth(e.target.value)}
-                className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-              >
-                <option value="">未填</option>
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>
-                    {m} 月
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-stone-700">
-            <input
-              type="checkbox"
-              checked={marketingOptIn}
-              onChange={(e) => setMarketingOptIn(e.target.checked)}
-            />
-            同意接收推廣資訊（人手設定＝已表態，會員唔會再見到彈窗）
-          </label>
-          {error && <div className="text-sm text-red-500">{error}</div>}
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-stone-200 px-4 py-2 text-sm text-stone-600 hover:bg-stone-50"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              disabled={updateMut.isPending}
-              className="rounded-lg bg-stone-900 px-4 py-2 text-sm text-white hover:bg-stone-700 disabled:opacity-50"
-            >
-              {updateMut.isPending ? "儲存中…" : "儲存"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-/** 重設密碼彈窗（2026-08-03 加；員工幫唔記得密碼嘅會員即時重設） */
-function ResetPasswordModal({
-  member,
-  onClose,
-  toast,
-}: {
-  member: MemberDetail["user"];
-  onClose: () => void;
-  toast: (msg: string) => void;
-}) {
-  const [pw, setPw] = useState("");
-  const [pw2, setPw2] = useState("");
-  const [error, setError] = useState("");
-
-  const resetMut = trpc.members.resetPassword.useMutation({
-    onSuccess: () => {
-      toast(`已重設「${member.name}」嘅密碼`);
-      onClose();
-    },
-    onError: (e) => setError(e.message),
-  });
-
-  return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-sm rounded-2xl bg-white p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="mb-1 text-lg font-bold text-stone-800">重設密碼</h3>
-        <p className="mb-4 text-sm text-stone-500">
-          幫「{member.name}」設新密碼，即時生效，唔使舊密碼。
-        </p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setError("");
-            if (pw !== pw2) {
-              setError("兩次輸入嘅密碼唔一樣");
-              return;
+    <span
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium"
+      style={
+        linked
+          ? {
+              borderColor: 'var(--success)',
+              color: 'var(--success)',
+              background: 'rgba(94, 224, 160, 0.12)',
             }
-            resetMut.mutate({ id: member.id, newPassword: pw });
-          }}
-          className="space-y-3"
-        >
-          <input
-            value={pw}
-            onChange={(e) => setPw(e.target.value)}
-            type="password"
-            required
-            minLength={6}
-            placeholder="新密碼（至少 6 位）"
-            className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-          />
-          <input
-            value={pw2}
-            onChange={(e) => setPw2(e.target.value)}
-            type="password"
-            required
-            minLength={6}
-            placeholder="再輸入一次新密碼"
-            className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm"
-          />
-          {error && <div className="text-sm text-red-500">{error}</div>}
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-stone-200 px-4 py-2 text-sm text-stone-600 hover:bg-stone-50"
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              disabled={resetMut.isPending}
-              className="rounded-lg bg-stone-900 px-4 py-2 text-sm text-white hover:bg-stone-700 disabled:opacity-50"
-            >
-              {resetMut.isPending ? "重設中…" : "重設密碼"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+          : { borderColor: 'var(--space-line)', color: 'var(--text-3)' }
+      }
+    >
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{ background: linked ? 'var(--success)' : 'currentColor' }}
+        aria-hidden="true"
+      />
+      {linked ? '已連結 Google' : '未連結 Google'}
+    </span>
   );
 }
 
-/** 會員詳情彈窗：基本資料＋訂單統計＋最近 10 張訂單（2026-07-28） */
-function MemberDetailModal({
-  memberId,
-  onClose,
-  toast,
+// 三態推導（2026-08-06 Glo 要求）：接受／未選／唔接受。
+// 香港時間 2026-08-06 00:00 前註冊＋從未表態＝未選，呢班會員登入會見到一次性彈窗。
+const CONSENT_CUTOFF = new Date('2026-08-05T16:00:00.000Z');
+type ConsentState = 'yes' | 'unset' | 'no';
+function consentStateOf(u: {
+  marketingOptIn: boolean;
+  marketingPromptedAt: Date | string | null;
+  createdAt: Date | string;
+}): ConsentState {
+  if (u.marketingOptIn) return 'yes';
+  if (!u.marketingPromptedAt && new Date(u.createdAt) < CONSENT_CUTOFF) return 'unset';
+  return 'no';
+}
+
+/**
+ * 直接促銷同意 badge（2026-08-06 三態制：粉紅＝接受，琥珀＝未選擇，灰＝唔接受）
+ */
+function MarketingBadge({ state }: { state: ConsentState }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium"
+      style={
+        state === 'yes'
+          ? {
+              borderColor: 'var(--pink-soft)',
+              color: 'var(--pink-soft)',
+              background: 'rgba(255, 0, 132, 0.10)',
+            }
+          : state === 'unset'
+            ? {
+                borderColor: '#f0b429',
+                color: '#f0b429',
+                background: 'rgba(240, 180, 41, 0.10)',
+              }
+            : { borderColor: 'var(--space-line)', color: 'var(--text-3)' }
+      }
+    >
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{
+          background:
+            state === 'yes' ? 'var(--pink-soft)' : state === 'unset' ? '#f0b429' : 'currentColor',
+        }}
+        aria-hidden="true"
+      />
+      {state === 'yes' ? '接受推廣' : state === 'unset' ? '未選擇' : '唔接受推廣'}
+    </span>
+  );
+}
+
+/** members.update 契約（2026-07-29）：淨係傳有改嘅欄；null＝清除 */
+type MemberUpdateInput = {
+  id: number;
+  name?: string;
+  phone?: string;
+  email?: string | null;
+  address?: string | null;
+  age?: number | null;
+  birthMonth?: number | null;
+};
+
+/**
+ * 修改會員資料表單（員工＋管理員用）——名/電話/Email/地址/年齡/生日月份
+ * 留空嘅 Email/地址/年齡/生日月份會當清除（傳 null）
+ */
+function MemberEditForm({
+  user,
+  busy,
+  onCancel,
+  onSave,
 }: {
-  memberId: number;
-  onClose: () => void;
-  toast: (msg: string) => void;
+  user: MemberDetail['user'];
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (input: MemberUpdateInput) => void;
 }) {
-  const { isAdmin } = useAuth();
-  const detailQ = trpc.members.detail.useQuery({ id: memberId });
-  const utils = trpc.useUtils();
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [showEdit, setShowEdit] = useState(false);
-  const [showResetPw, setShowResetPw] = useState(false);
+  const [name, setName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone);
+  const [email, setEmail] = useState(user.email ?? '');
+  const [address, setAddress] = useState(user.address ?? '');
+  const [age, setAge] = useState(user.age != null ? String(user.age) : '');
+  const [birthMonth, setBirthMonth] = useState(
+    user.birthMonth != null ? String(user.birthMonth) : '',
+  );
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const removeMut = trpc.members.remove.useMutation({
-    onSuccess: () => {
-      toast("會員已刪除");
-      void utils.members.list.invalidate();
-      onClose();
-    },
-    onError: (e) => toast(`刪除失敗：${e.message}`),
-  });
+  const inputCls =
+    'h-10 w-full rounded-lg border border-space-line bg-space-1 px-3 text-[13px] text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none';
+  const labelCls = 'mb-1 block text-[11px] text-txt-3';
 
-  const d: MemberDetail | undefined = detailQ.data;
+  const submit = () => {
+    if (!name.trim()) return setFormError('名稱必填');
+    const phoneDigits = phone.replace(/[\s-]/g, '');
+    if (!/^\d{8,}$/.test(phoneDigits)) return setFormError('電話要至少 8 位數字');
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      return setFormError('Email 格式唔啱');
+    let ageNum: number | null = null;
+    if (age.trim()) {
+      const n = Number(age);
+      if (!Number.isInteger(n) || n < 0 || n > 150)
+        return setFormError('年齡要係 0–150 嘅整數');
+      ageNum = n;
+    }
+    setFormError(null);
+    onSave({
+      id: user.id,
+      name: name.trim(),
+      phone: phoneDigits,
+      email: email.trim() || null,
+      address: address.trim() || null,
+      age: ageNum,
+      birthMonth: birthMonth ? Number(birthMonth) : null,
+    });
+  };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
+      className="mt-2 rounded-xl border p-3"
+      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
     >
-      <div
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {detailQ.isLoading || !d ? (
-          <div className="py-20 text-center text-stone-400">載入中…</div>
-        ) : (
-          <>
-            <div className="mb-4 flex items-start justify-between">
-              <div>
-                <h3 className="text-xl font-bold text-stone-800">{d.user.name}</h3>
-                <div className="mt-1 text-sm text-stone-500">
-                  註冊於 {formatTime(d.user.createdAt)}
-                </div>
-              </div>
-              <button
-                onClick={onClose}
-                className="rounded-full p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700"
-              >
-                ✕
-              </button>
-            </div>
-
-            <dl className="mb-4 grid grid-cols-1 gap-x-6 gap-y-2 rounded-xl bg-stone-50 p-4 text-sm sm:grid-cols-2">
-              <div>
-                <dt className="text-stone-400">電話</dt>
-                <dd className="text-stone-800">{d.user.phone}</dd>
-              </div>
-              <div>
-                <dt className="text-stone-400">Email</dt>
-                <dd className="text-stone-800">{d.user.email ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-stone-400">地址</dt>
-                <dd className="text-stone-800">{d.user.address ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-stone-400">年齡</dt>
-                <dd className="text-stone-800">{d.user.age != null ? `${d.user.age} 歲` : "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-stone-400">生日月份</dt>
-                <dd className="text-stone-800">
-                  {d.user.birthMonth != null ? `${d.user.birthMonth} 月` : "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-stone-400">Google 帳號</dt>
-                <dd className="text-stone-800">
-                  {d.user.googleLinked ? (
-                    <>
-                      <span className="mr-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-                        已連結
-                      </span>
-                      {d.user.googleEmail ?? ""}
-                      {d.user.googleName ? `（${d.user.googleName}）` : ""}
-                    </>
-                  ) : (
-                    <span className="text-stone-400">未連結</span>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-stone-400">推廣資訊</dt>
-                <dd>
-                  <MarketingOptInBadge
-                    optIn={d.user.marketingOptIn}
-                    promptedAt={d.user.marketingPromptedAt}
-                    createdAt={d.user.createdAt}
-                  />
-                  {d.user.marketingOptIn && d.user.marketingOptInAt && (
-                    <span className="ml-1 text-xs text-stone-400">
-                      （{formatTime(d.user.marketingOptInAt)} 同意）
-                    </span>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-stone-400">累積訂單</dt>
-                <dd className="text-stone-800">
-                  {d.orderCount} 張（{formatMoney(d.totalSpent)}）
-                </dd>
-              </div>
-            </dl>
-
-            <h4 className="mb-2 text-sm font-semibold text-stone-700">最近訂單</h4>
-            {d.recentOrders.length === 0 ? (
-              <div className="mb-4 rounded-xl border border-dashed border-stone-200 py-6 text-center text-sm text-stone-400">
-                暫時冇訂單
-              </div>
-            ) : (
-              <div className="mb-4 overflow-x-auto rounded-xl border border-stone-200">
-                <table className="w-full min-w-[560px] text-sm">
-                  <thead className="bg-stone-50 text-left text-stone-500">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">訂單號</th>
-                      <th className="px-3 py-2 font-medium">狀態</th>
-                      <th className="px-3 py-2 font-medium">金額</th>
-                      <th className="px-3 py-2 font-medium">取貨</th>
-                      <th className="px-3 py-2 font-medium">時間</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {d.recentOrders.map((o) => (
-                      <tr key={o.id} className="hover:bg-stone-50">
-                        <td className="px-3 py-2 font-mono text-xs text-stone-700">{o.orderNo}</td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-xs ${ORDER_STATUS_BADGE[o.status] ?? "bg-stone-100 text-stone-600"}`}
-                          >
-                            {ORDER_STATUS_LABELS[o.status] ?? o.status}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-stone-700">{formatMoney(o.total)}</td>
-                        <td className="px-3 py-2 text-stone-600">
-                          {o.deliveryMethod === "address"
-                            ? "送貨"
-                            : o.deliveryMethod === "sf_station"
-                              ? "順豐站"
-                              : "智能櫃"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-stone-500">
-                          {formatTime(o.createdAt)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowEdit(true)}
-                  className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50"
-                >
-                  修改資料
-                </button>
-                <button
-                  onClick={() => setShowResetPw(true)}
-                  className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-50"
-                >
-                  重設密碼
-                </button>
-              </div>
-              {isAdmin && (
-                <div>
-                  {confirmDelete ? (
-                    <span className="flex items-center gap-2 text-sm">
-                      <span className="text-red-600">
-                        {d.orderCount > 0
-                          ? `會連埋 ${d.orderCount} 張訂單一齊刪除，確定？`
-                          : "確定刪除呢個會員？"}
-                      </span>
-                      <button
-                        onClick={() =>
-                          removeMut.mutate({ id: d.user.id, alsoDeleteOrders: d.orderCount > 0 })
-                        }
-                        className="rounded-lg bg-red-500 px-3 py-1.5 text-white hover:bg-red-400"
-                      >
-                        確定刪除
-                      </button>
-                      <button
-                        onClick={() => setConfirmDelete(false)}
-                        className="rounded-lg border border-stone-200 px-3 py-1.5 text-stone-600"
-                      >
-                        取消
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmDelete(true)}
-                      className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-500 hover:bg-red-50"
-                    >
-                      刪除會員
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {showEdit && (
-              <EditMemberModal member={d.user} onClose={() => setShowEdit(false)} toast={toast} />
-            )}
-            {showResetPw && (
-              <ResetPasswordModal
-                member={d.user}
-                onClose={() => setShowResetPw(false)}
-                toast={toast}
-              />
-            )}
-          </>
-        )}
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div>
+          <label className={labelCls} htmlFor={`me-name-${user.id}`}>
+            名稱
+          </label>
+          <input
+            id={`me-name-${user.id}`}
+            className={inputCls}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor={`me-phone-${user.id}`}>
+            電話（登入帳號）
+          </label>
+          <input
+            id={`me-phone-${user.id}`}
+            className={inputCls}
+            value={phone}
+            inputMode="tel"
+            onChange={(e) => setPhone(e.target.value)}
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <label className={labelCls} htmlFor={`me-email-${user.id}`}>
+            Email（留空＝清除）
+          </label>
+          <input
+            id={`me-email-${user.id}`}
+            className={inputCls}
+            value={email}
+            inputMode="email"
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <label className={labelCls} htmlFor={`me-address-${user.id}`}>
+            地址（留空＝清除）
+          </label>
+          <textarea
+            id={`me-address-${user.id}`}
+            rows={2}
+            className="w-full rounded-lg border border-space-line bg-space-1 px-3 py-2 text-[13px] leading-relaxed text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor={`me-age-${user.id}`}>
+            年齡（留空＝清除）
+          </label>
+          <input
+            id={`me-age-${user.id}`}
+            className={inputCls}
+            value={age}
+            inputMode="numeric"
+            onChange={(e) => setAge(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor={`me-bm-${user.id}`}>
+            生日月份
+          </label>
+          <select
+            id={`me-bm-${user.id}`}
+            className={inputCls}
+            value={birthMonth}
+            onChange={(e) => setBirthMonth(e.target.value)}
+          >
+            <option value="">留空</option>
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i + 1} value={String(i + 1)}>
+                {i + 1} 月
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {formError && <p className="mt-2 text-[12px] text-pink-soft">{formError}</p>}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy}
+          className="btn btn-primary !px-4 !py-2 text-[13px] disabled:opacity-50"
+        >
+          {busy ? '儲存緊…' : '儲存'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="btn btn-secondary !px-4 !py-2 text-[13px]"
+        >
+          取消
+        </button>
       </div>
     </div>
   );
 }
 
 /**
- * 會員列表（員工＋管理員）
- * 2026-07-28：搜尋（名或電話）＋地址欄＋撳行睇詳情彈窗
+ * 幫會員重設密碼表單（員工＋管理員，2026-08-03 加）
+ * 唔使舊密碼；新密碼至少 6 位、要輸入兩次確認；成功後要人手話返俾會員知
  */
-export default function MemberList({ toast }: { toast: (msg: string) => void }) {
-  const [q, setQ] = useState("");
-  const [search, setSearch] = useState("");
-  const [detailId, setDetailId] = useState<number | null>(null);
-  const listQ = trpc.members.list.useQuery(search ? { q: search } : undefined);
+function ResetPasswordForm({
+  user,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  user: MemberDetail['user'];
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (newPassword: string) => void;
+}) {
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const rows = useMemo(() => (listQ.data ?? []) as MemberRow[], [listQ.data]);
+  const inputCls =
+    'h-10 w-full rounded-lg border border-space-line bg-space-1 px-3 text-[13px] text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none';
+  const labelCls = 'mb-1 block text-[11px] text-txt-3';
+
+  const submit = () => {
+    if (pw.length < 6) return setFormError('新密碼至少 6 位');
+    if (pw2 !== pw) return setFormError('兩次密碼唔一致，請再確認');
+    setFormError(null);
+    onSave(pw);
+  };
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold text-stone-800">會員</h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setSearch(q.trim());
-          }}
-          className="ml-auto flex gap-2"
-        >
+    <div
+      className="mt-2 rounded-xl border p-3"
+      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+    >
+      <p className="mb-2.5 text-[12px] leading-relaxed text-txt-3">
+        幫「{user.name}」設個新密碼，即時生效，舊密碼唔使輸入。
+        <span className="text-gold">記得將新密碼話返俾會員</span>
+        ；佢登入之後可以喺會員中心自己再改。
+      </p>
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div>
+          <label className={labelCls} htmlFor={`rp-pw-${user.id}`}>
+            新密碼（至少 6 位）
+          </label>
           <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="搜尋名稱或電話"
-            className="rounded-lg border border-stone-300 px-3 py-1.5 text-sm"
+            id={`rp-pw-${user.id}`}
+            type="password"
+            autoComplete="new-password"
+            className={inputCls}
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
           />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor={`rp-pw2-${user.id}`}>
+            確認新密碼
+          </label>
+          <input
+            id={`rp-pw2-${user.id}`}
+            type="password"
+            autoComplete="new-password"
+            className={inputCls}
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+          />
+        </div>
+      </div>
+      {formError && <p className="mt-2 text-[12px] text-pink-soft">{formError}</p>}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy}
+          className="btn btn-primary !px-4 !py-2 text-[13px] disabled:opacity-50"
+        >
+          {busy ? '重設緊…' : '確認重設'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="btn btn-secondary !px-4 !py-2 text-[13px]"
+        >
+          取消
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function MemberList({
+  toast,
+}: {
+  toast: (text: string, kind?: ToastKind) => void;
+}) {
+  const utils = trpc.useUtils();
+  const { user: me } = useAuth();
+  // 刪除會員仍然係最高管理員專用（後端 members.remove 係 adminProcedure）；
+  // 員工可以睇同改，唔可以刪
+  const canDelete = me?.role === 'admin';
+  const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [resettingId, setResettingId] = useState<number | null>(null);
+
+  // 打字停 300ms 先出搜尋請求，唔會每個字打一次
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [q]);
+
+  const listQuery = trpc.members.list.useQuery(
+    debouncedQ ? { q: debouncedQ } : undefined,
+  );
+  const members = useMemo(() => (listQuery.data ?? []) as MemberRow[], [listQuery.data]);
+
+  const detailQuery = trpc.members.detail.useQuery(
+    { id: selectedId ?? 0 },
+    { enabled: selectedId !== null },
+  );
+
+  // Esc 閂詳情
+  useEffect(() => {
+    if (selectedId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedId]);
+
+  const removeMutation = trpc.members.remove.useMutation({
+    onSuccess: (result) => {
+      toast(
+        result?.deletedOrders
+          ? `已刪除會員（連埋 ${result.deletedOrders} 張訂單）`
+          : '已刪除會員',
+        'success',
+      );
+      setSelectedId(null);
+      void utils.members.list.invalidate();
+      void utils.analytics.summary.invalidate();
+    },
+    onError: (err) => toast(err.message || '刪除會員失敗', 'error'),
+  });
+
+  const updateMutation = trpc.members.update.useMutation({
+    onSuccess: () => {
+      toast('已儲存會員資料 ✓', 'success');
+      setEditingId(null);
+      void utils.members.list.invalidate();
+      void utils.members.detail.invalidate();
+    },
+    onError: (err) => toast(err.message || '儲存失敗，請再試', 'error'),
+  });
+
+  const resetPwMutation = trpc.members.resetPassword.useMutation({
+    onSuccess: () => {
+      toast('已重設會員密碼 ✓ 記得將新密碼話返俾會員', 'success');
+      setResettingId(null);
+    },
+    onError: (err) => toast(err.message || '重設密碼失敗，請再試', 'error'),
+  });
+
+  // 換咗第二個會員，順手閂返編輯同重設密碼表單
+  useEffect(() => {
+    setEditingId(null);
+    setResettingId(null);
+  }, [selectedId]);
+
+  const askDelete = (m: MemberRow) => {
+    const withOrders = m.orderCount > 0;
+    const msg = withOrders
+      ? `會員「${m.name}」有 ${m.orderCount} 張訂單。\n\n確定連埋訂單一併刪除？呢個操作唔可以復原。`
+      : `確定刪除會員「${m.name}」？呢個操作唔可以復原。`;
+    if (!window.confirm(msg)) return;
+    removeMutation.mutate(withOrders ? { id: m.id, alsoDeleteOrders: true } : { id: m.id });
+  };
+
+  const detail = detailQuery.data as MemberDetail | undefined;
+
+  return (
+    <section
+      className="rounded-2xl border p-5 backdrop-blur-xl md:p-6"
+      style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
+    >
+      <h3 className="flex items-center gap-2 text-[15px] font-bold text-txt-1">
+        <Users size={16} aria-hidden="true" className="text-lavender" />
+        會員
+        {!listQuery.isLoading && !listQuery.isError && (
+          <span className="font-mono text-[13px] font-normal text-txt-3">
+            （{members.length}
+            {debouncedQ ? ' 個結果' : ''}）
+          </span>
+        )}
+      </h3>
+
+      {/* 搜尋：名或電話 */}
+      <div className="relative mt-3">
+        <Search
+          size={15}
+          aria-hidden="true"
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-txt-3"
+        />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="輸入名或電話搜尋…"
+          aria-label="搜尋會員（名或電話）"
+          className="w-full rounded-xl border bg-transparent py-2 pl-9 pr-9 text-[14px] text-txt-1 outline-none transition-colors placeholder:text-txt-3 focus:border-lavender"
+          style={{ borderColor: 'var(--space-line)' }}
+        />
+        {q && (
           <button
-            type="submit"
-            className="rounded-lg bg-stone-900 px-3 py-1.5 text-sm text-white hover:bg-stone-700"
+            type="button"
+            onClick={() => setQ('')}
+            aria-label="清除搜尋"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-txt-3 transition-colors hover:text-txt-1"
           >
-            搜尋
+            <X size={14} aria-hidden="true" />
           </button>
-          {search && (
-            <button
-              type="button"
-              onClick={() => {
-                setQ("");
-                setSearch("");
-              }}
-              className="rounded-lg border border-stone-200 px-3 py-1.5 text-sm text-stone-500 hover:bg-stone-50"
-            >
-              清除
-            </button>
-          )}
-        </form>
+        )}
       </div>
 
-      {listQ.isLoading ? (
-        <div className="py-20 text-center text-stone-400">載入中…</div>
-      ) : rows.length === 0 ? (
-        <div className="py-20 text-center text-stone-400">
-          {search ? `搵唔到「${search}」相關嘅會員` : "暫時冇會員"}
-        </div>
+      {listQuery.isLoading ? (
+        <LoadingBlock text="許願星搬緊會員名單…" />
+      ) : listQuery.isError ? (
+        <p className="py-8 text-center text-[14px] text-pink-soft">
+          載入會員失敗：{listQuery.error.message}
+        </p>
+      ) : members.length === 0 ? (
+        <p className="py-8 text-center text-[14px] text-txt-3">
+          {debouncedQ ? `搵唔到名或電話有「${debouncedQ}」嘅會員。` : '暫時冇會員。'}
+        </p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-stone-200">
-          <table className="w-full min-w-[860px] text-sm">
-            <thead className="bg-stone-50 text-left text-stone-500">
-              <tr>
-                <th className="px-3 py-2 font-medium">名稱</th>
-                <th className="px-3 py-2 font-medium">電話</th>
-                <th className="px-3 py-2 font-medium">地址</th>
-                <th className="px-3 py-2 font-medium">Google</th>
-                <th className="px-3 py-2 font-medium">推廣</th>
-                <th className="px-3 py-2 font-medium">訂單</th>
-                <th className="px-3 py-2 font-medium">消費</th>
-                <th className="px-3 py-2 font-medium">註冊時間</th>
+        <>
+          {/* 手機/平板版：卡片式列表（2026-07-29 修復——舊表格喺手機四欄逼埋，名淨係睇到一個字；
+              同日起用 lg 分界：1024px 以下都用卡片，平板/窄電腦唔再逼表格） */}
+          <ul className="mt-4 flex flex-col gap-2 lg:hidden">
+            {members.map((m) => (
+              <li
+                key={m.id}
+                onClick={() => setSelectedId((cur) => (cur === m.id ? null : m.id))}
+                className="cursor-pointer rounded-xl border px-4 py-3 transition-colors hover:bg-white/5"
+                style={{
+                  borderColor: selectedId === m.id ? 'var(--gold)' : 'var(--space-line)',
+                  background: 'var(--space-2)',
+                }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[15px] font-bold leading-[1.4] text-txt-1">{m.name}</p>
+                    <p className="mt-0.5 font-mono text-[13px] text-txt-2">{m.phone}</p>
+                    {/* Google 連結狀態（2026-08-04）：綠＝已連結，灰＝未連結；
+                        直接促銷同意（2026-08-05）：粉紅＝接受推廣，灰＝唔接受 */}
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      <GoogleBadge linked={m.googleLinked} />
+                      <MarketingBadge state={consentStateOf(m)} />
+                    </div>
+                  </div>
+                  {canDelete && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        askDelete(m);
+                      }}
+                      disabled={removeMutation.isPending}
+                      aria-label={`刪除會員 ${m.name}`}
+                      className="-mr-1.5 -mt-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-50"
+                    >
+                      <Trash2 size={16} aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+                {m.email && (
+                  <p className="mt-1 break-all font-mono text-[12px] text-txt-3">{m.email}</p>
+                )}
+                {m.address && (
+                  <p className="mt-1 text-[12px] leading-[1.5] text-txt-3">地址：{m.address}</p>
+                )}
+                <p className="mt-1.5 font-mono text-[12px] text-txt-3">
+                  {m.birthMonth != null && <>生日 {m.birthMonth} 月 · </>}
+                  註冊 {fmtDate(m.createdAt)} · 訂單 {m.orderCount} · 累計{' '}
+                  <span className="text-pink">{fmtHKD(m.totalSpent)}</span>
+                </p>
+
+                {/* 撳邊張卡，詳情即場喺嗰張卡下面展開（2026-07-29：取代彈窗，唔再「彈去第二度」） */}
+                {selectedId === m.id && (
+                  <div
+                    className="mt-3 border-t pt-3"
+                    style={{ borderColor: 'var(--space-line)' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {detailQuery.isLoading ? (
+                      <LoadingBlock text="許願星搬緊會員資料…" />
+                    ) : detailQuery.isError ? (
+                      <p className="text-[12px] text-pink-soft">
+                        載入失敗：{detailQuery.error.message}
+                      </p>
+                    ) : detail ? (
+                      <>
+                        <p className="text-[12px] text-txt-3">
+                          年齡：<span className="text-txt-2">{detail.user.age ?? '—'}</span>
+                        </p>
+                        <p className="mt-1 text-[12px] text-txt-3">
+                          生日月份：
+                          <span className="text-txt-2">
+                            {detail.user.birthMonth ? `${detail.user.birthMonth} 月` : '—'}
+                          </span>
+                        </p>
+                        {/* Google 連結資料（2026-08-04）：已連結先顯示 Google 名稱＋Email */}
+                        <p className="mt-1 text-[12px] text-txt-3">
+                          Google：
+                          {detail.user.googleLinked ? (
+                            <span className="font-medium" style={{ color: 'var(--success)' }}>
+                              已連結
+                            </span>
+                          ) : (
+                            <span className="text-txt-2">未連結</span>
+                          )}
+                        </p>
+                        {detail.user.googleLinked && (
+                          <>
+                            <p className="mt-1 text-[12px] text-txt-3">
+                              Google 名稱：
+                              <span className="text-txt-2">{detail.user.googleName || '—'}</span>
+                            </p>
+                            <p className="mt-1 break-all text-[12px] text-txt-3">
+                              Google Email：
+                              <span className="font-mono text-txt-2">
+                                {detail.user.googleEmail || '—'}
+                              </span>
+                            </p>
+                          </>
+                        )}
+                        {/* 直接促銷同意（2026-08-06 三態制）：接受／未選擇（琥珀，下次登入彈窗問一次）／唔接受；
+                            行尾快掣畀員工人手設定，設定＝已表態，會員唔會再見到彈窗 */}
+                        <p className="mt-1 text-[12px] text-txt-3">
+                          直接促銷：
+                          {consentStateOf(detail.user) === 'yes' ? (
+                            <span className="font-medium text-pink-soft">
+                              接受推廣
+                              {detail.user.marketingOptInAt
+                                ? `（${fmtDate(detail.user.marketingOptInAt)} 同意）`
+                                : ''}
+                            </span>
+                          ) : consentStateOf(detail.user) === 'unset' ? (
+                            <span className="font-medium" style={{ color: '#f0b429' }}>
+                              未選擇（下次登入會彈窗問一次）
+                            </span>
+                          ) : (
+                            <span className="text-txt-2">唔接受推廣</span>
+                          )}
+                          <button
+                            type="button"
+                            disabled={updateMutation.isPending}
+                            onClick={() =>
+                              updateMutation.mutate({ id: m.id, marketingOptIn: true })
+                            }
+                            className="ml-2 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-60"
+                            style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                          >
+                            設為接受
+                          </button>
+                          <button
+                            type="button"
+                            disabled={updateMutation.isPending}
+                            onClick={() =>
+                              updateMutation.mutate({ id: m.id, marketingOptIn: false })
+                            }
+                            className="ml-1.5 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-60"
+                            style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                          >
+                            設為唔接受
+                          </button>
+                        </p>
+                        {/* 修改資料／重設密碼（員工＋管理員） */}
+                        {editingId === m.id ? (
+                          <MemberEditForm
+                            user={detail.user}
+                            busy={updateMutation.isPending}
+                            onCancel={() => setEditingId(null)}
+                            onSave={(input) => updateMutation.mutate(input)}
+                          />
+                        ) : resettingId === m.id ? (
+                          <ResetPasswordForm
+                            user={detail.user}
+                            busy={resetPwMutation.isPending}
+                            onCancel={() => setResettingId(null)}
+                            onSave={(newPassword) =>
+                              resetPwMutation.mutate({ id: m.id, newPassword })
+                            }
+                          />
+                        ) : (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingId(m.id);
+                                setResettingId(null);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                              style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                            >
+                              <Pencil size={13} aria-hidden="true" /> 修改資料
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setResettingId(m.id);
+                                setEditingId(null);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                              style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                            >
+                              <KeyRound size={13} aria-hidden="true" /> 重設密碼
+                            </button>
+                          </div>
+                        )}
+                        <h5 className="mt-3 text-[11px] font-bold tracking-[0.08em] text-gold">
+                          最近訂單（最多 10 張）
+                        </h5>
+                        {detail.recentOrders.length === 0 ? (
+                          <p className="mt-1.5 text-[12px] text-txt-3">暫時冇訂單。</p>
+                        ) : (
+                          <ul className="mt-1 flex flex-col">
+                            {detail.recentOrders.map((o) => (
+                              <li
+                                key={o.id}
+                                className="flex items-center gap-2 border-t py-2 text-[12px]"
+                                style={{ borderColor: 'var(--space-line)' }}
+                              >
+                                <span className="font-mono text-txt-1">{o.orderNo}</span>
+                                <span className="text-[11px] text-txt-3">
+                                  {DELIVERY_TEXT[o.deliveryMethod] ?? o.deliveryMethod}
+                                </span>
+                                <span className="ml-auto flex items-center gap-1.5">
+                                  <StatusBadge status={o.status} />
+                                  <span className="font-mono text-pink">{fmtHKD(o.total)}</span>
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="mt-2 text-[11px] text-txt-3">再撳一下呢張卡收起詳情。</p>
+                      </>
+                    ) : null}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[12px] text-txt-3 lg:hidden">撳任何一個會員，詳情即場喺嗰張卡下面展開。</p>
+
+          {/* 桌面版（lg+）：表格。名欄唔截斷（whitespace-nowrap），太窄可以左右碌 */}
+          <div className="mt-4 hidden overflow-x-auto lg:block">
+            <table className="w-full min-w-[880px] border-collapse text-[14px]">
+            <thead>
+              <tr
+                className="border-b text-left text-[12px] text-txt-3"
+                style={{ borderColor: 'var(--space-line)' }}
+              >
+                <th className="py-2 pr-3 font-normal">名</th>
+                <th className="py-2 pr-3 font-normal">電話</th>
+                <th className="py-2 pr-3 font-normal">Email</th>
+                <th className="py-2 pr-3 font-normal">Google</th>
+                <th className="py-2 pr-3 font-normal">推廣</th>
+                <th className="py-2 pr-3 font-normal">地址</th>
+                <th className="py-2 pr-3 font-normal">生日月份</th>
+                <th className="py-2 pr-3 font-normal">註冊日期</th>
+                <th className="w-16 py-2 pr-3 text-right font-normal">訂單數</th>
+                <th className="w-28 py-2 text-right font-normal">累計消費</th>
+                {canDelete && <th className="w-14 py-2 pl-3 text-right font-normal">刪除</th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-stone-100">
-              {rows.map((m) => (
+            <tbody>
+              {members.map((m) => (
                 <tr
                   key={m.id}
-                  onClick={() => setDetailId(m.id)}
-                  className="cursor-pointer hover:bg-stone-50"
+                  onClick={() => setSelectedId(m.id)}
+                  className="cursor-pointer border-b transition-colors last:border-0 hover:bg-white/5"
+                  style={{ borderColor: 'var(--space-line)' }}
                 >
-                  <td className="px-3 py-2 font-medium text-stone-800">{m.name}</td>
-                  <td className="px-3 py-2 text-stone-600">{m.phone}</td>
-                  <td className="max-w-[220px] truncate px-3 py-2 text-stone-600">
-                    {m.address ?? <span className="text-stone-300">—</span>}
+                  <td className="whitespace-nowrap py-2.5 pr-4 font-medium text-txt-1">{m.name}</td>
+                  <td className="py-2.5 pr-3 font-mono text-[13px] text-txt-2">{m.phone}</td>
+                  <td className="max-w-0 truncate py-2.5 pr-3 font-mono text-[13px] text-txt-3">
+                    {m.email || '—'}
                   </td>
-                  <td className="px-3 py-2">
-                    {m.googleLinked ? (
-                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
-                        已連結
-                      </span>
-                    ) : (
-                      <span className="text-xs text-stone-300">—</span>
-                    )}
+                  <td className="whitespace-nowrap py-2.5 pr-3">
+                    <GoogleBadge linked={m.googleLinked} />
                   </td>
-                  <td className="px-3 py-2">
-                    <MarketingOptInBadge
-                      optIn={m.marketingOptIn}
-                      promptedAt={m.marketingPromptedAt}
-                      createdAt={m.createdAt}
-                    />
+                  <td className="whitespace-nowrap py-2.5 pr-3">
+                    <MarketingBadge state={consentStateOf(m)} />
                   </td>
-                  <td className="px-3 py-2 text-stone-600">{m.orderCount}</td>
-                  <td className="px-3 py-2 text-stone-600">{formatMoney(m.totalSpent)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-stone-500">
-                    {formatTime(m.createdAt)}
+                  <td className="max-w-[140px] truncate py-2.5 pr-3 text-[13px] text-txt-3">
+                    {m.address || '—'}
+                  </td>
+                  <td className="whitespace-nowrap py-2.5 pr-3 font-mono text-[13px] text-txt-2">
+                    {m.birthMonth != null ? `${m.birthMonth} 月` : '—'}
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-[13px] text-txt-3">
+                    {fmtDate(m.createdAt)}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right font-mono text-[13px] text-txt-2">
+                    {m.orderCount}
+                  </td>
+                  <td className="py-2.5 text-right font-mono text-[13px] text-pink">
+                    {fmtHKD(m.totalSpent)}
+                  </td>
+                  <td className="py-2.5 pl-3 text-right">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        askDelete(m);
+                      }}
+                      disabled={removeMutation.isPending}
+                      aria-label={`刪除會員 ${m.name}`}
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-50"
+                    >
+                      <Trash2 size={16} aria-hidden="true" />
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+          <p className="mt-2 text-[12px] text-txt-3">撳任何一行睇詳細資料。</p>
+          </div>
+        </>
       )}
 
-      {detailId !== null && (
-        <MemberDetailModal memberId={detailId} onClose={() => setDetailId(null)} toast={toast} />
-      )}
-    </div>
+      {/* 會員詳情彈窗（只限電腦版 lg+；手機/平板用卡片即場展開，詳情出喺你撳嘅位置）
+          2026-07-29 走位修復：MemberList 嘅 <section> 有 backdrop-blur，會令 position:fixed
+          以佢做定位基準 → 碌落下面撳會員，彈窗「彈咗去上面」。用 createPortal 直掛
+          document.body，fixed 就實以瀏覽器視窗置中，撳邊行都喺你眼前出現。 */}
+      {selectedId !== null &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 hidden h-dvh items-center justify-center bg-black/60 p-4 backdrop-blur-sm lg:flex"
+          onClick={() => setSelectedId(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="會員詳細資料"
+        >
+          <div
+            className="max-h-[85dvh] w-full max-w-lg overflow-y-auto rounded-2xl border p-5"
+            style={{ borderColor: 'var(--gold)', background: 'var(--space-1)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {detailQuery.isLoading ? (
+              <LoadingBlock text="許願星搬緊會員資料…" />
+            ) : detailQuery.isError ? (
+              <p className="py-8 text-center text-[14px] text-pink-soft">
+                載入失敗：{detailQuery.error.message}
+              </p>
+            ) : detail ? (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-[17px] font-bold text-txt-1">{detail.user.name}</h4>
+                    <p className="mt-0.5 font-mono text-[13px] text-txt-3">
+                      {detail.user.phone}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(null)}
+                    aria-label="關閉"
+                    className="rounded-lg p-1.5 text-txt-3 transition-colors hover:text-txt-1"
+                  >
+                    <X size={18} aria-hidden="true" />
+                  </button>
+                </div>
+
+                {/* 基本資料（手機一行一項，唔再兩欄逼到「累計 HK$」斷行） */}
+                <div className="mt-4 grid grid-cols-1 gap-y-2.5 text-[13px] sm:grid-cols-2 sm:gap-x-4">
+                  <p className="text-txt-3">
+                    Email：
+                    <span className="break-all font-mono text-txt-2">{detail.user.email || '—'}</span>
+                  </p>
+                  <p className="text-txt-3">
+                    年齡：<span className="text-txt-2">{detail.user.age ?? '—'}</span>
+                  </p>
+                  <p className="text-txt-3">
+                    生日月份：
+                    <span className="text-txt-2">
+                      {detail.user.birthMonth ? `${detail.user.birthMonth} 月` : '—'}
+                    </span>
+                  </p>
+                  <p className="text-txt-3">
+                    註冊：
+                    <span className="font-mono text-txt-2">{fmtDate(detail.user.createdAt)}</span>
+                  </p>
+                  <p className="col-span-full text-txt-3">
+                    訂單數：
+                    <span className="font-mono text-txt-2">{detail.orderCount}</span>
+                    <span className="ml-3">累計：</span>
+                    <span className="whitespace-nowrap font-mono text-pink">
+                      {fmtHKD(detail.totalSpent)}
+                    </span>
+                  </p>
+                  <p className="col-span-full text-txt-3">
+                    地址：
+                    <span className="whitespace-pre-wrap text-txt-1">
+                      {detail.user.address || '—'}
+                    </span>
+                  </p>
+                  {/* Google 連結資料（2026-08-04）：已連結先顯示 Google 名稱＋Email */}
+                  <p className="col-span-full text-txt-3">
+                    Google：
+                    {detail.user.googleLinked ? (
+                      <span className="font-medium" style={{ color: 'var(--success)' }}>
+                        已連結
+                      </span>
+                    ) : (
+                      <span className="text-txt-2">未連結</span>
+                    )}
+                  </p>
+                  {detail.user.googleLinked && (
+                    <>
+                      <p className="col-span-full text-txt-3">
+                        Google 名稱：
+                        <span className="text-txt-2">{detail.user.googleName || '—'}</span>
+                      </p>
+                      <p className="col-span-full break-all text-txt-3">
+                        Google Email：
+                        <span className="font-mono text-txt-2">
+                          {detail.user.googleEmail || '—'}
+                        </span>
+                      </p>
+                    </>
+                  )}
+                  {/* 直接促銷同意（2026-08-06 三態制）：接受／未選擇（琥珀，下次登入彈窗問一次）／唔接受；
+                      行尾快掣畀員工人手設定，設定＝已表態，會員唔會再見到彈窗 */}
+                  <p className="col-span-full text-txt-3">
+                    直接促銷：
+                    {consentStateOf(detail.user) === 'yes' ? (
+                      <span className="font-medium text-pink-soft">
+                        接受推廣
+                        {detail.user.marketingOptInAt
+                          ? `（${fmtDate(detail.user.marketingOptInAt)} 同意）`
+                          : ''}
+                      </span>
+                    ) : consentStateOf(detail.user) === 'unset' ? (
+                      <span className="font-medium" style={{ color: '#f0b429' }}>
+                        未選擇（下次登入會彈窗問一次）
+                      </span>
+                    ) : (
+                      <span className="text-txt-2">唔接受推廣</span>
+                    )}
+                    <button
+                      type="button"
+                      disabled={updateMutation.isPending}
+                      onClick={() =>
+                        updateMutation.mutate({ id: detail.user.id, marketingOptIn: true })
+                      }
+                      className="ml-2 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-60"
+                      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                    >
+                      設為接受
+                    </button>
+                    <button
+                      type="button"
+                      disabled={updateMutation.isPending}
+                      onClick={() =>
+                        updateMutation.mutate({ id: detail.user.id, marketingOptIn: false })
+                      }
+                      className="ml-1.5 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-60"
+                      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                    >
+                      設為唔接受
+                    </button>
+                  </p>
+                </div>
+
+                {/* 修改資料／重設密碼（員工＋管理員） */}
+                {editingId === detail.user.id ? (
+                  <MemberEditForm
+                    user={detail.user}
+                    busy={updateMutation.isPending}
+                    onCancel={() => setEditingId(null)}
+                    onSave={(input) => updateMutation.mutate(input)}
+                  />
+                ) : resettingId === detail.user.id ? (
+                  <ResetPasswordForm
+                    user={detail.user}
+                    busy={resetPwMutation.isPending}
+                    onCancel={() => setResettingId(null)}
+                    onSave={(newPassword) =>
+                      resetPwMutation.mutate({ id: detail.user.id, newPassword })
+                    }
+                  />
+                ) : (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(detail.user.id);
+                        setResettingId(null);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                    >
+                      <Pencil size={13} aria-hidden="true" /> 修改資料
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResettingId(detail.user.id);
+                        setEditingId(null);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
+                      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                    >
+                      <KeyRound size={13} aria-hidden="true" /> 重設密碼
+                    </button>
+                  </div>
+                )}
+
+                {/* 最近訂單 */}
+                <h5 className="mt-5 text-[12px] font-bold tracking-[0.08em] text-gold">
+                  最近訂單（最多 10 張）
+                </h5>
+                {detail.recentOrders.length === 0 ? (
+                  <p className="mt-2 text-[13px] text-txt-3">暫時冇訂單。</p>
+                ) : (
+                  <ul className="mt-2 flex flex-col">
+                    {detail.recentOrders.map((o) => (
+                      <li
+                        key={o.id}
+                        className="flex items-center gap-3 border-t py-2 text-[13px]"
+                        style={{ borderColor: 'var(--space-line)' }}
+                      >
+                        <span className="font-mono text-txt-1">{o.orderNo}</span>
+                        <span className="hidden font-mono text-[12px] text-txt-3 sm:inline">
+                          {fmtDateTime(o.createdAt)}
+                        </span>
+                        <span className="text-[12px] text-txt-3">
+                          {DELIVERY_TEXT[o.deliveryMethod] ?? o.deliveryMethod}
+                        </span>
+                        <span className="ml-auto flex items-center gap-2">
+                          <StatusBadge status={o.status} />
+                          <span className="font-mono text-pink">{fmtHKD(o.total)}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : null}
+          </div>
+        </div>,
+          document.body,
+        )}
+    </section>
   );
 }
