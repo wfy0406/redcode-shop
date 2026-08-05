@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Images, LayoutList, LogIn, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Images, LayoutList, LogIn, Mail, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -14,6 +14,7 @@ import PurchaseStats from '@/components/admin/PurchaseStats';
 import ProductManager from '@/components/admin/ProductManager';
 import PraiseManager from '@/components/admin/PraiseManager';
 import PromoManager from '@/components/admin/PromoManager';
+import MarketingEmailCard from '@/components/admin/MarketingEmailCard';
 import StaffManager from '@/components/admin/StaffManager';
 import AnalyticsManager from '@/components/admin/AnalyticsManager';
 import MemberList from '@/components/admin/MemberList';
@@ -37,6 +38,7 @@ type ViewKey =
   | 'products'
   | 'praise'
   | 'promo'
+  | 'marketing'
   | 'members'
   | 'staff'
   | 'audit';
@@ -158,6 +160,8 @@ function AdminConsole() {
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
     { key: 'praise', label: '客戶打卡牆', icon: <Images size={17} aria-hidden="true" /> },
     { key: 'promo', label: '優惠碼', icon: <TicketPercent size={17} aria-hidden="true" /> },
+    // 促銷電郵（2026-08-05 Glo 要求）：寫推廣 email 寄畀已同意接收嘅會員
+    { key: 'marketing', label: '促銷電郵', icon: <Mail size={17} aria-hidden="true" /> },
     // 會員列表只限最高管理員（admin）
     ...(isAdmin
       ? [{ key: 'members' as ViewKey, label: '會員', icon: <Users size={17} aria-hidden="true" /> }]
@@ -203,6 +207,7 @@ function AdminConsole() {
     products: <ProductManager toast={pushToast} />,
     praise: <PraiseManager toast={pushToast} />,
     promo: <PromoManager toast={pushToast} />,
+    marketing: <MarketingEmailCard toast={pushToast} />,
     members: <MemberList toast={pushToast} />,
     staff: isAdmin ? <StaffManager toast={pushToast} /> : ADMIN_ONLY_HINT,
     audit: isAdmin ? <AuditLog /> : ADMIN_ONLY_HINT,
