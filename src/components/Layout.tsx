@@ -6,6 +6,7 @@ import Meteors from '@/components/Meteors';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import MessengerIcon from '@/components/MessengerIcon';
+import MarketingConsentModal from '@/components/MarketingConsentModal';
 
 /**
  * 全站 Layout —— Nested-route pattern（react-dev.md Pattern B）：
@@ -13,6 +14,7 @@ import MessengerIcon from '@/components/MessengerIcon';
  *
  * 包含：星野 canvas（單實例）+ 星雲層（§3.3）+ 玻璃導航 + 頁尾 + 右下 WhatsApp 浮鈕（§3.6/§5）
  * 2026-08-06（Glo 要求）：WhatsApp 浮鈕上面加 Messenger 浮鈕，一撳直開 m.me 對話。
+ * 2026-08-06：mount 推廣同意一次性彈窗（舊會員未表態逼揀一次）。
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
@@ -87,6 +89,9 @@ export default function Layout() {
       >
         <MessageCircle size={24} aria-hidden="true" />
       </a>
+
+      {/* 推廣同意一次性彈窗（2026-08-06 Glo 要求）：舊會員未表態先會彈，揀完唔再彈 */}
+      <MarketingConsentModal />
     </div>
   );
 }

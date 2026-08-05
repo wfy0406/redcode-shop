@@ -24,6 +24,9 @@ type AuthUser = {
   emailLocked?: boolean;
   // 直接促銷同意（2026-08-05 Glo 要求）：會員中心開關顯示當前狀態
   marketingOptIn?: boolean;
+  // 三態制（2026-08-06）：一次性彈窗判斷「未選」用呢兩個欄
+  marketingPromptedAt?: string | null;
+  createdAt?: string;
 };
 
 type RegisterInput = {

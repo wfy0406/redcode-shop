@@ -52,6 +52,10 @@ export const users = pgTable("users", {
   // 舊會員全部 false/NULL＝未同意，後台促銷電郵唔會寄畀佢哋。
   marketingOptIn: boolean("marketingOptIn").notNull().default(false),
   marketingOptInAt: timestamp("marketingOptInAt"),
+  // 推廣同意「已表態」時間（2026-08-06 Glo 要求，三態制）：
+  // NULL＋optIn=false＋2026-08-05 或之前註冊＝「未選」，登入會彈一次窗逼揀；
+  // 有值＝已表態（無論接受定唔接受），唔會再彈。唔使 backfill，舊會員自動落入未選。
+  marketingPromptedAt: timestamp("marketingPromptedAt"),
   role: roleEnum("role").notNull().default("member"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });

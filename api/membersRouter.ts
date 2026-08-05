@@ -36,6 +36,7 @@ export const membersRouter = createRouter({
           googleLinked: sql<boolean>`(${users.googleSub} is not null)`,
           // 直接促銷同意（2026-08-05 Glo 要求：列表睇到客戶接唔接受推廣）
           marketingOptIn: users.marketingOptIn,
+          marketingPromptedAt: users.marketingPromptedAt,
           orderCount: sql<number>`count(${orders.id})::int`,
           totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,
         })
@@ -78,6 +79,7 @@ export const membersRouter = createRouter({
           // 直接促銷同意（2026-08-05 Glo 要求：詳細會員資料都要睇到）
           marketingOptIn: users.marketingOptIn,
           marketingOptInAt: users.marketingOptInAt,
+          marketingPromptedAt: users.marketingPromptedAt,
         })
         .from(users)
         .where(eq(users.id, input.id))
@@ -133,6 +135,7 @@ export const membersRouter = createRouter({
         address: z.string().nullable().optional(),
         age: z.number().int().min(0).max(150).nullable().optional(),
         birthMonth: z.number().int().min(1).max(12).nullable().optional(),
+        marketingOptIn: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -169,6 +172,13 @@ export const membersRouter = createRouter({
       if (input.address !== undefined) data.address = input.address;
       if (input.age !== undefined) data.age = input.age;
       if (input.birthMonth !== undefined) data.birthMonth = input.birthMonth;
+      // 推廣同意（2026-08-06 Glo 要求）：員工可喺會員詳情人手設定接受／唔接受；
+      // 人手設定＝已表態，寫 marketingPromptedAt，會員唔會再見到彈窗
+      if (input.marketingOptIn !== undefined) {
+        data.marketingOptIn = input.marketingOptIn;
+        if (input.marketingOptIn) data.marketingOptInAt = new Date();
+        data.marketingPromptedAt = new Date();
+      }
       if (Object.keys(data).length > 0) {
         await db.update(users).set(data).where(eq(users.id, input.id));
       }

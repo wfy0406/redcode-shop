@@ -115,6 +115,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS "birthMonth" integer;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "marketingOptIn" boolean NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "marketingOptInAt" timestamp;
 
+-- 推廣同意「已表態」時間（2026-08-06 Glo 要求，三態制）：NULL＝未表態；
+-- 舊會員（2026-08-05 或之前註冊）未表態登入會彈一次窗逼揀，揀完寫入時間唔再彈
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "marketingPromptedAt" timestamp;
+
 CREATE TABLE IF NOT EXISTS "promoCodes" (
   id serial PRIMARY KEY,
   code varchar(32) NOT NULL UNIQUE,
