@@ -38,6 +38,8 @@ const publicUser = (u: typeof users.$inferSelect) => ({
   birthMonth: u.birthMonth,
   // 直接促銷同意（2026-08-05）：會員中心開關顯示用；後台列表由 membersRouter 自己 select
   marketingOptIn: u.marketingOptIn,
+  // 三態制（2026-08-06）：前台一次性彈窗靠 createdAt + marketingPromptedAt 判斷「未選」
+  marketingPromptedAt: u.marketingPromptedAt,
   // 已連結 Google 帳號（2026-08-04）：會員中心顯示連結狀態；sub 本身唔出畀前端
   googleLinked: u.googleSub != null,
   // Google 開戶嘅帳號 email 鎖死跟 Google 電郵（2026-08-04 Glo 要求）：
@@ -505,6 +507,41 @@ export const authRouter = createRouter({
         targetType: "member",
         targetId: me.id,
         detail: `會員「${me.name}」${input.optIn ? "開啟" : "關閉"}推廣資訊接收`,
+      });
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, me.id),
+      });
+      return publicUser(user!);
+    }),
+
+  // 一次性推廣同意彈窗嘅回答（2026-08-06 Glo 要求）：
+  // 無論接受定唔接受都記 marketingPromptedAt=now → 唔再彈；
+  // 接受先更新 marketingOptInAt（PDPO 舉證）；唔接受唔郁舊紀錄。
+  respondMarketingPrompt: authedProcedure
+    .input(z.object({ optIn: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const me = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+      });
+      if (!me) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
+      }
+      const now = new Date();
+      const data: Partial<typeof users.$inferInsert> = {
+        marketingOptIn: input.optIn,
+        marketingPromptedAt: now,
+      };
+      if (input.optIn) data.marketingOptInAt = now;
+      await db.update(users).set(data).where(eq(users.id, me.id));
+      void logAudit({
+        actorId: me.id,
+        actorRole: me.role,
+        actorNameFallback: me.name,
+        action: "member.respondMarketingPrompt",
+        targetType: "member",
+        targetId: me.id,
+        detail: `會員「${me.name}」喺推廣同意彈窗揀咗「${input.optIn ? "接受" : "唔接受"}」推廣資訊`,
       });
       const user = await db.query.users.findFirst({
         where: eq(users.id, me.id),
