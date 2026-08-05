@@ -22,6 +22,8 @@ import type { ToastKind } from './useToasts';
  * 2026-08-04 更新（Glo 要求）：
  * - 列表用顏色 badge 標示會員有冇連結 Google（綠＝已連結，灰＝未連結）
  * - 會員詳情加 Google 連結狀態＋Google Email＋Google 名稱
+ * 2026-08-05 更新（Glo 要求）：
+ * - 列表同詳情加直接促銷同意狀態（粉紅＝接受推廣，灰＝唔接受）＋同意日期
  */
 
 /** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
@@ -34,6 +36,8 @@ type MemberRow = {
   birthMonth: number | null;
   createdAt: Date | string;
   googleLinked: boolean;
+  // 直接促銷同意（2026-08-05）：true＝註冊時剔咗接受推廣
+  marketingOptIn: boolean;
   orderCount: number;
   totalSpent: number;
 };
@@ -52,6 +56,9 @@ type MemberDetail = {
     googleLinked: boolean;
     googleEmail: string | null;
     googleName: string | null;
+    // 直接促銷同意（2026-08-05）：狀態＋同意時間
+    marketingOptIn: boolean;
+    marketingOptInAt: Date | string | null;
   };
   orderCount: number;
   totalSpent: number;
@@ -95,6 +102,34 @@ function GoogleBadge({ linked }: { linked: boolean }) {
         aria-hidden="true"
       />
       {linked ? '已連結 Google' : '未連結 Google'}
+    </span>
+  );
+}
+
+/**
+ * 直接促銷同意 badge（2026-08-05 Glo 要求：列表顏色標示）
+ * 粉紅（--pink-soft）＝接受推廣；灰＝唔接受
+ */
+function MarketingBadge({ optIn }: { optIn: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium"
+      style={
+        optIn
+          ? {
+              borderColor: 'var(--pink-soft)',
+              color: 'var(--pink-soft)',
+              background: 'rgba(255, 0, 132, 0.10)',
+            }
+          : { borderColor: 'var(--space-line)', color: 'var(--text-3)' }
+      }
+    >
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{ background: optIn ? 'var(--pink-soft)' : 'currentColor' }}
+        aria-hidden="true"
+      />
+      {optIn ? '接受推廣' : '唔接受推廣'}
     </span>
   );
 }
@@ -526,9 +561,11 @@ export default function MemberList({
                   <div className="min-w-0">
                     <p className="text-[15px] font-bold leading-[1.4] text-txt-1">{m.name}</p>
                     <p className="mt-0.5 font-mono text-[13px] text-txt-2">{m.phone}</p>
-                    {/* Google 連結狀態（2026-08-04）：綠＝已連結，灰＝未連結 */}
-                    <div className="mt-1.5">
+                    {/* Google 連結狀態（2026-08-04）：綠＝已連結，灰＝未連結；
+                        直接促銷同意（2026-08-05）：粉紅＝接受推廣，灰＝唔接受 */}
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
                       <GoogleBadge linked={m.googleLinked} />
+                      <MarketingBadge optIn={m.marketingOptIn} />
                     </div>
                   </div>
                   {canDelete && (
@@ -607,6 +644,20 @@ export default function MemberList({
                             </p>
                           </>
                         )}
+                        {/* 直接促銷同意（2026-08-05）：接受咗會順帶顯示同意日期 */}
+                        <p className="mt-1 text-[12px] text-txt-3">
+                          直接促銷：
+                          {detail.user.marketingOptIn ? (
+                            <span className="font-medium text-pink-soft">
+                              接受推廣
+                              {detail.user.marketingOptInAt
+                                ? `（${fmtDate(detail.user.marketingOptInAt)} 同意）`
+                                : ''}
+                            </span>
+                          ) : (
+                            <span className="text-txt-2">唔接受推廣</span>
+                          )}
+                        </p>
                         {/* 修改資料／重設密碼（員工＋管理員） */}
                         {editingId === m.id ? (
                           <MemberEditForm
@@ -697,6 +748,7 @@ export default function MemberList({
                 <th className="py-2 pr-3 font-normal">電話</th>
                 <th className="py-2 pr-3 font-normal">Email</th>
                 <th className="py-2 pr-3 font-normal">Google</th>
+                <th className="py-2 pr-3 font-normal">推廣</th>
                 <th className="py-2 pr-3 font-normal">地址</th>
                 <th className="py-2 pr-3 font-normal">生日月份</th>
                 <th className="py-2 pr-3 font-normal">註冊日期</th>
@@ -720,6 +772,9 @@ export default function MemberList({
                   </td>
                   <td className="whitespace-nowrap py-2.5 pr-3">
                     <GoogleBadge linked={m.googleLinked} />
+                  </td>
+                  <td className="whitespace-nowrap py-2.5 pr-3">
+                    <MarketingBadge optIn={m.marketingOptIn} />
                   </td>
                   <td className="max-w-[140px] truncate py-2.5 pr-3 text-[13px] text-txt-3">
                     {m.address || '—'}
@@ -860,6 +915,20 @@ export default function MemberList({
                       </p>
                     </>
                   )}
+                  {/* 直接促銷同意（2026-08-05 Glo 要求：詳細會員資料都要睇到） */}
+                  <p className="col-span-full text-txt-3">
+                    直接促銷：
+                    {detail.user.marketingOptIn ? (
+                      <span className="font-medium text-pink-soft">
+                        接受推廣
+                        {detail.user.marketingOptInAt
+                          ? `（${fmtDate(detail.user.marketingOptInAt)} 同意）`
+                          : ''}
+                      </span>
+                    ) : (
+                      <span className="text-txt-2">唔接受推廣</span>
+                    )}
+                  </p>
                 </div>
 
                 {/* 修改資料／重設密碼（員工＋管理員） */}
