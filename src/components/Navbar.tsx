@@ -13,6 +13,8 @@ import MessengerIcon from '@/components/MessengerIcon';
  * sticky top-0 z-50（react-dev.md navbar contract：唔用 fixed，Layout 唔使 offset bookkeeping）
  * 高度 72px（手機 60px）、glass-bg + blur 16px、底邊 1px glass-border
  * 2026-08-06（Glo 要求）：WhatsApp 掣左邊加 Messenger 掣，一撳直開 m.me 對話。
+ * 2026-08-06（Glo 要求）：刪走選單入面嘅「後台管理」連結（desktop＋手機選單）——
+ * 唔俾外部見到員工入口，員工自己記住 /admin 網址直接用。
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
@@ -43,7 +45,7 @@ const NAV_LINKS = [
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const { user, isStaff, logout } = useAuth();
+  const { user, logout } = useAuth();
   // F4：badge 接通真購物車數量（未登入唔好 call，enabled 守住）
   const cartQuery = trpc.cart.list.useQuery(undefined, {
     enabled: !!user,
@@ -61,7 +63,6 @@ export default function Navbar() {
     user
       ? { to: '/account', label: `會員中心（${user.name}）` }
       : { to: '/login', label: '會員登入' },
-    ...(isStaff ? [{ to: '/admin', label: '後台管理' }] : []),
   ];
 
   return (
@@ -147,11 +148,6 @@ export default function Navbar() {
           {/* AUTH-SLOT: 已接 useAuth（自訂電話+密碼登入） */}
           {user ? (
             <span className="hidden items-center gap-3 md:flex">
-              {isStaff && (
-                <Link to="/admin" className="nav-link" style={{ color: 'var(--gold)' }}>
-                  後台管理
-                </Link>
-              )}
               <Link to="/account" className="nav-link">
                 {user.name}
               </Link>
@@ -239,7 +235,6 @@ export default function Navbar() {
                 style={{
                   borderColor: 'var(--space-line)',
                   animation: `mobile-nav-in 400ms var(--ease-expo) ${i * 50}ms both`,
-                  ...(link.to === '/admin' ? { color: 'var(--gold)' } : {}),
                 }}
               >
                 {link.label}
