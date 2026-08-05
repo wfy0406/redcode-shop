@@ -5,7 +5,6 @@ import { getDb } from "./queries/connection";
 import { praiseWall } from "@db/schema";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
-import { openApprovalRequest } from "./approvalsRouter";
 
 /**
  * 客戶打卡牆（Star Girls）—— 首頁橫 scroll 相片牆
@@ -40,14 +39,6 @@ export const praiseRouter = createRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
-      // 員工操作需審批（2026-08-06 Glo 要求）：staff 唔直接執行，開審批單等主管/管理員批准
-      const reqId = await openApprovalRequest({
-        user: ctx.user,
-        action: "praise.create",
-        payload: { input },
-        summary: `打卡牆新增相片${input.caption?.trim() ? `「${input.caption.trim()}」` : ""}`,
-      });
-      if (reqId !== null) return { pendingApproval: true as const, requestId: reqId };
       const [{ id }] = await db
         .insert(praiseWall)
         .values({
@@ -85,15 +76,6 @@ export const praiseRouter = createRouter({
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "打卡相不存在" });
       }
-      // 員工操作需審批（2026-08-06 Glo 要求）：staff 唔直接執行，開審批單等主管/管理員批准；
-      // before 快照記低現狀，審批中心用嚟做改前 vs 改後對照
-      const reqId = await openApprovalRequest({
-        user: ctx.user,
-        action: "praise.update",
-        payload: { input, before: existing },
-        summary: `修改打卡牆相片 #${input.id}${existing.caption ? `「${existing.caption}」` : ""}`,
-      });
-      if (reqId !== null) return { pendingApproval: true as const, requestId: reqId };
       await db
         .update(praiseWall)
         .set({
@@ -125,15 +107,6 @@ export const praiseRouter = createRouter({
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "打卡相不存在" });
       }
-      // 員工操作需審批（2026-08-06 Glo 要求）：staff 唔直接執行，開審批單等主管/管理員批准；
-      // before 快照記低現狀，審批中心用嚟完整預覽將會刪除嘅資料
-      const reqId = await openApprovalRequest({
-        user: ctx.user,
-        action: "praise.remove",
-        payload: { input, before: existing },
-        summary: `刪除打卡牆相片 #${input.id}${existing.caption ? `「${existing.caption}」` : ""}`,
-      });
-      if (reqId !== null) return { pendingApproval: true as const, requestId: reqId };
       await db.delete(praiseWall).where(eq(praiseWall.id, input.id));
       void logAudit({
         actorId: ctx.user.userId,

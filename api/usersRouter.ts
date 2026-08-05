@@ -14,15 +14,7 @@ import { logAudit } from "./audit";
  * updateRole：改權限（唔可以改自己）
  * remove：刪帳號（唔可以刪自己；有訂單嘅會員刪唔到）
  */
-// 三級員工制（2026-08-06 Glo 要求）：staff 員工（敏感操作需審批）／supervisor 主管／admin 管理員
-const roleSchema = z.enum(["member", "staff", "supervisor", "admin"]);
-
-const ROLE_LABELS: Record<"member" | "staff" | "supervisor" | "admin", string> = {
-  member: "會員",
-  staff: "員工",
-  supervisor: "主管",
-  admin: "管理員",
-};
+const roleSchema = z.enum(["member", "staff", "admin"]);
 
 export const usersRouter = createRouter({
   list: adminProcedure.query(async () => {
@@ -70,7 +62,7 @@ export const usersRouter = createRouter({
           role: input.role,
         })
         .returning({ id: users.id });
-      const roleLabel = ROLE_LABELS[input.role];
+      const roleLabel = { member: "會員", staff: "員工", admin: "管理員" }[input.role];
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
@@ -99,7 +91,7 @@ export const usersRouter = createRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "帳號不存在" });
       }
       await db.update(users).set({ role: input.role }).where(eq(users.id, input.id));
-      const roleLabel = ROLE_LABELS[input.role];
+      const roleLabel = { member: "會員", staff: "員工", admin: "管理員" }[input.role];
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,

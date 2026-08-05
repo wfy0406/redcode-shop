@@ -1,21 +1,16 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { desc, eq, ne, and, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, promoCodes, users, type PromoCode } from "@db/schema";
-import { createRouter, authedProcedure, staffProcedure, adminProcedure } from "./middleware";
+import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
-import { openApprovalRequest } from "./approvalsRouter";
-import { env } from "./lib/env";
-import { sendMarketingEmail } from "./email";
+import { sendMarketingEmail as deliverMarketingEmail } from "./email";
 
-/**
- * 優惠碼
- * validate：結帳時用（authed），檢查碼有效＋未過期＋未爆額＋夠最低消費，回折扣額
- * adminList / create / update / remove：員工後台用（staff/admin）
- *   create/update/remove 全部記落操作日誌（「日誌」頁睇返邊個改過）
- */
+export const PROMO_KIND_VALUES = ["percent", "fixed"] as const;
+const kindSchema = z.enum(PROMO_KIND_VALUES);
+
 export function normalizePromoCode(code: string): string {
   return code.toUpperCase().trim();
 }
@@ -80,95 +75,80 @@ export async function resolvePromoDiscount(
   return { promo, discountAmount: Math.min(discountAmount, subtotal) };
 }
 
+const promoFieldsSchema = z.object({
+  code: z.string().min(1).max(32),
+  kind: kindSchema,
+  value: z.number().int().positive(),
+  minSpend: z.number().int().nonnegative().optional(),
+  usageLimit: z.number().int().positive().optional(),
+  perUserLimit: z.number().int().positive().optional(),
+  expiresAt: z.coerce.date().optional(),
+});
+
+function assertKindValue(kind: "percent" | "fixed", value: number) {
+  if (kind === "percent" && (value < 1 || value > 90)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "百分比優惠碼嘅折扣要喺 1 至 90 之間",
+    });
+  }
+}
+
 export const promoRouter = createRouter({
   validate: authedProcedure
     .input(
       z.object({
-        code: z.string().trim().min(1).max(32),
-        subtotal: z.number().int().min(0),
+        code: z.string().min(1),
+        subtotal: z.number().int().positive(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
-      const code = input.code.toUpperCase();
-      const promo = await db.query.promoCodes.findFirst({
-        where: eq(promoCodes.code, code),
-      });
-      if (!promo || !promo.isActive) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "優惠碼唔存在或已停用" });
-      }
-      if (promo.expiresAt && promo.expiresAt < new Date()) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已過期" });
-      }
-      if (promo.usageLimit !== null && promo.usedCount >= promo.usageLimit) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已用晒" });
-      }
-      // 每人限用次數：數呢個會員用過呢個碼幾多張已成立訂單（取消/拒絕唔計）
-      if (promo.perUserLimit !== null) {
-        const [{ usedByMe }] = await db
-          .select({ usedByMe: sql<number>`count(*)::int` })
-          .from(orders)
-          .where(
-            and(
-              eq(orders.userId, ctx.user.userId),
-              eq(orders.promoCode, code),
-              sql`${orders.status} not in ('cancelled', 'rejected')`,
-            ),
-          );
-        if (usedByMe >= promo.perUserLimit) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `呢個優惠碼每個帳號限用 ${promo.perUserLimit} 次，你已經用晒`,
-          });
-        }
-      }
-      if (input.subtotal < promo.minSpend) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `未夠最低消費 $${(promo.minSpend / 100).toFixed(0)}`,
-        });
-      }
-      const discount =
-        promo.kind === "percent"
-          ? Math.floor((input.subtotal * promo.value) / 100)
-          : Math.min(promo.value, input.subtotal);
-      return { code, kind: promo.kind, value: promo.value, discount };
+      // 每人限用檢查用：數呢個帳號之前用過呢個碼幾多次
+      const [{ n: myUses }] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.promoCode, normalizePromoCode(input.code)),
+            eq(orders.userId, ctx.user.userId),
+          ),
+        );
+      const { promo, discountAmount } = await resolvePromoDiscount(
+        db,
+        input.code,
+        input.subtotal,
+        myUses,
+      );
+      return {
+        code: promo.code,
+        kind: promo.kind as "percent" | "fixed",
+        value: promo.value,
+        discountAmount,
+        finalTotal: input.subtotal - discountAmount,
+      };
     }),
 
-  adminList: staffProcedure.query(async () => {
+  list: staffProcedure.query(async () => {
     const db = getDb();
-    return db.select().from(promoCodes).orderBy(desc(promoCodes.id));
+    return db
+      .select()
+      .from(promoCodes)
+      .orderBy(desc(promoCodes.createdAt));
   }),
 
   create: staffProcedure
-    .input(
-      z.object({
-        code: z.string().trim().min(2).max(32),
-        kind: z.enum(["percent", "fixed"]),
-        value: z.number().int().min(1),
-        minSpend: z.number().int().min(0).optional(),
-        usageLimit: z.number().int().min(1).nullable().optional(),
-        perUserLimit: z.number().int().min(1).nullable().optional(),
-        expiresAt: z.coerce.date().nullable().optional(),
-      }),
-    )
+    .input(promoFieldsSchema)
     .mutation(async ({ ctx, input }) => {
+      assertKindValue(input.kind, input.value);
       const db = getDb();
-      const code = input.code.toUpperCase();
+      const code = normalizePromoCode(input.code);
       const dup = await db.query.promoCodes.findFirst({
         where: eq(promoCodes.code, code),
       });
       if (dup) {
-        throw new TRPCError({ code: "CONFLICT", message: `優惠碼「${code}」已存在` });
+        throw new TRPCError({ code: "CONFLICT", message: "優惠碼已存在" });
       }
-      // 員工操作需審批（2026-08-06 Glo 要求）：staff 唔直接執行，開審批單等主管/管理員批准
-      const reqId = await openApprovalRequest({
-        user: ctx.user,
-        action: "promoCode.create",
-        payload: { input: { ...input, code } },
-        summary: `新增優惠碼「${code}」（${input.kind === "percent" ? `${input.value}% off` : `減 $${(input.value / 100).toFixed(0)}`}）`,
-      });
-      if (reqId !== null) return { pendingApproval: true as const, requestId: reqId };
       const [{ id }] = await db
         .insert(promoCodes)
         .values({
@@ -187,63 +167,64 @@ export const promoRouter = createRouter({
         action: "promo.create",
         targetType: "promo",
         targetId: code,
-        detail: `新增優惠碼「${code}」（${input.kind === "percent" ? `${input.value}% off` : `減 $${(input.value / 100).toFixed(0)}`}）`,
+        detail: `新增優惠碼 ${code}（${input.kind === "percent" ? `${input.value}% 折扣` : `減 HK$${input.value}`}）`,
       });
-      return { id, code };
+      return db.query.promoCodes.findFirst({ where: eq(promoCodes.id, id) });
     }),
 
   update: staffProcedure
     .input(
       z.object({
         id: z.number().int().positive(),
-        kind: z.enum(["percent", "fixed"]).optional(),
-        value: z.number().int().min(1).optional(),
-        minSpend: z.number().int().min(0).optional(),
-        usageLimit: z.number().int().min(1).nullable().optional(),
-        perUserLimit: z.number().int().min(1).nullable().optional(),
+        code: z.string().min(1).max(32).optional(),
+        kind: kindSchema.optional(),
+        value: z.number().int().positive().optional(),
+        minSpend: z.number().int().nonnegative().optional(),
+        usageLimit: z.number().int().positive().nullable().optional(),
+        perUserLimit: z.number().int().positive().nullable().optional(),
         expiresAt: z.coerce.date().nullable().optional(),
         isActive: z.boolean().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
-      const { id, ...data } = input;
+      const { id, ...fields } = input;
       const existing = await db.query.promoCodes.findFirst({
         where: eq(promoCodes.id, id),
       });
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "優惠碼唔存在" });
       }
-      // 員工操作需審批（2026-08-06 Glo 要求）：staff 唔直接執行，開審批單等主管/管理員批准；
-      // before 快照記低現狀，審批中心用嚟做改前 vs 改後對照
-      const reqId = await openApprovalRequest({
-        user: ctx.user,
-        action: "promoCode.update",
-        payload: { input, before: existing },
-        summary: `修改優惠碼「${existing.code}」`,
-      });
-      if (reqId !== null) return { pendingApproval: true as const, requestId: reqId };
-      await db
-        .update(promoCodes)
-        .set({
-          ...(data.kind !== undefined ? { kind: data.kind } : {}),
-          ...(data.value !== undefined ? { value: data.value } : {}),
-          ...(data.minSpend !== undefined ? { minSpend: data.minSpend } : {}),
-          ...(data.usageLimit !== undefined ? { usageLimit: data.usageLimit } : {}),
-          ...(data.perUserLimit !== undefined ? { perUserLimit: data.perUserLimit } : {}),
-          ...(data.expiresAt !== undefined ? { expiresAt: data.expiresAt } : {}),
-          ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
-        })
-        .where(eq(promoCodes.id, id));
+      const data: Partial<typeof promoCodes.$inferInsert> = {};
+      if (fields.code !== undefined) data.code = normalizePromoCode(fields.code);
+      if (fields.kind !== undefined) data.kind = fields.kind;
+      if (fields.value !== undefined) data.value = fields.value;
+      if (fields.minSpend !== undefined) data.minSpend = fields.minSpend;
+      if (fields.usageLimit !== undefined) data.usageLimit = fields.usageLimit;
+      if (fields.perUserLimit !== undefined) data.perUserLimit = fields.perUserLimit;
+      if (fields.expiresAt !== undefined) data.expiresAt = fields.expiresAt;
+      if (fields.isActive !== undefined) data.isActive = fields.isActive;
+      const kind = (data.kind ?? existing.kind) as "percent" | "fixed";
+      const value = data.value ?? existing.value;
+      assertKindValue(kind, value);
+      if (data.code && data.code !== existing.code) {
+        const dup = await db.query.promoCodes.findFirst({
+          where: and(eq(promoCodes.code, data.code), ne(promoCodes.id, id)),
+        });
+        if (dup) {
+          throw new TRPCError({ code: "CONFLICT", message: "優惠碼已存在" });
+        }
+      }
+      await db.update(promoCodes).set(data).where(eq(promoCodes.id, id));
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
         action: "promo.update",
         targetType: "promo",
         targetId: existing.code,
-        detail: `更新優惠碼「${existing.code}」：${Object.keys(data).join("、")}${data.isActive !== undefined ? `（${data.isActive ? "啟用" : "停用"}）` : ""}`,
+        detail: `更新優惠碼 ${existing.code}：${Object.keys(data).join("、")}${fields.isActive !== undefined ? `（${fields.isActive ? "啟用" : "停用"}）` : ""}`,
       });
-      return { ok: true };
+      return db.query.promoCodes.findFirst({ where: eq(promoCodes.id, id) });
     }),
 
   remove: staffProcedure
@@ -256,6 +237,7 @@ export const promoRouter = createRouter({
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "優惠碼唔存在" });
       }
+      // orders.promoCode 係 varchar 快照（唔係 FK），硬刪安全
       await db.delete(promoCodes).where(eq(promoCodes.id, input.id));
       void logAudit({
         actorId: ctx.user.userId,
@@ -263,99 +245,121 @@ export const promoRouter = createRouter({
         action: "promo.remove",
         targetType: "promo",
         targetId: existing.code,
-        detail: `刪除優惠碼「${existing.code}」`,
+        detail: `刪除優惠碼 ${existing.code}`,
       });
       return { ok: true };
     }),
 
   /**
-   * 促銷電郵（2026-08-05 Glo 要求）：寄畀已同意接收推廣嘅會員（marketingOptIn=true 兼有 email）。
-   * PDPO 第 6A 部：只用已同意名單，每封附退訂方法（覆 email 話唔收）；寄件紀錄記落操作日誌。
-   * 預覽模式（dryRun=true）：唔寄，淨係回番收件人數＋頭 20 個收件人畀管理員確認。
-   * 冇設 RESEND_API_KEY 就 FORBIDDEN（測試環境唔會誤寄）。
+   * 促銷電郵收件人數（2026-08-05 Glo 要求）：註冊時剔咗「同意接收推廣」兼且有 email 嘅會員
+   * 後台「促銷電郵」頁顯示「將會寄畀 X 位會員」用
    */
-  sendMarketingEmail: adminProcedure
+  marketingAudience: staffProcedure.query(async () => {
+    const db = getDb();
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(users)
+      .where(
+        and(
+          eq(users.role, "member"),
+          eq(users.marketingOptIn, true),
+          sql`${users.email} is not null`,
+        ),
+      );
+    return { count: row?.n ?? 0 };
+  }),
+
+  /**
+   * 寄出優惠促銷電郵（2026-08-05 Glo 要求）：
+   * - 只寄畀 marketingOptIn=true 兼且有 email 嘅會員（註冊頁剔選先算同意，PDPO 第 6A 部）
+   * - 款同官網其他電郵一樣（email.ts sendMarketingEmail → brandedEmail 模板）
+   * - 可選加圖（最多 3 張，顯示喺內文下面；只接受本站 /uploads/ 路徑，即後台上傳嘅圖）
+   * - 填咗優惠碼會先檢查佢存在兼啟用，先至會寄（避免寄錯碼出街）
+   * - 逐位會員寄出（稱呼跟返佢個名）；失敗唔會阻後面嘅，最後回 sent/failed 統計
+   * - 動作記落操作日誌（promo.marketingEmail）
+   */
+  sendMarketingEmail: staffProcedure
     .input(
       z.object({
-        subject: z.string().trim().min(1, "主旨必填").max(120),
-        body: z.string().trim().min(1, "內容必填").max(5000),
-        dryRun: z.boolean().optional(),
+        subject: z.string().trim().min(1, "主旨必填").max(80, "主旨最長 80 字"),
+        body: z.string().trim().min(1, "內文必填").max(3000, "內文最長 3000 字"),
+        promoCode: z.string().trim().max(32).optional(),
+        // 圖片（2026-08-05 Glo 要求）：選填，最多 3 張；只准本站 /uploads/ 路徑
+        imageUrls: z
+          .array(z.string().trim().min(1).max(300))
+          .max(3, "最多 3 張圖")
+          .optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
-      const recipients = await db
+      // 圖片路徑把關：只准本站 /uploads/（員工經後台上傳嘅圖），
+      // 唔接受外站 URL（防死鏈／防人呢個 API 寄含惡意圖嘅信）
+      const imageUrls = input.imageUrls ?? [];
+      for (const u of imageUrls) {
+        if (!u.startsWith("/uploads/") || u.includes("..")) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "圖片要用後台上傳嘅圖（/uploads/ 路徑）",
+          });
+        }
+      }
+      // 優惠碼（選填）：存在兼啟用先寄得
+      let code: string | undefined;
+      if (input.promoCode) {
+        code = normalizePromoCode(input.promoCode);
+        const promo = await db.query.promoCodes.findFirst({
+          where: eq(promoCodes.code, code),
+        });
+        if (!promo) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `優惠碼 ${code} 唔存在` });
+        }
+        if (!promo.isActive) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `優惠碼 ${code} 已停用` });
+        }
+      }
+      const audience = await db
         .select({ id: users.id, name: users.name, email: users.email })
         .from(users)
         .where(
           and(
+            eq(users.role, "member"),
             eq(users.marketingOptIn, true),
             sql`${users.email} is not null`,
           ),
         );
-      if (input.dryRun) {
-        return {
-          dryRun: true as const,
-          recipientCount: recipients.length,
-          sample: recipients.slice(0, 20).map((r) => ({ name: r.name, email: r.email })),
-        };
-      }
-      if (!env.resendApiKey) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "未設 RESEND_API_KEY，唔可以寄促銷電郵",
-        });
-      }
-      if (recipients.length === 0) {
+      if (audience.length === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "冇已同意接收推廣嘅會員（會員要喺註冊或會員中心剔選接收推廣）",
+          message: "暫時冇會員同意接收推廣資訊，冇人可以寄",
         });
       }
-      // 員工操作需審批（2026-08-06 Glo 要求）：staff 唔直接執行，開審批單等主管/管理員批准
-      const reqId = await openApprovalRequest({
-        user: ctx.user,
-        action: "promo.sendMarketingEmail",
-        payload: { input, before: { recipientCount: recipients.length } },
-        summary: `寄促銷電郵「${input.subject}」畀 ${recipients.length} 個已同意會員`,
-      });
-      if (reqId !== null) return { pendingApproval: true as const, requestId: reqId };
       let sent = 0;
-      const failures: string[] = [];
-      // 逐個寄（量少，唔使 batch；一個 fail 唔阻其他）
-      for (const r of recipients) {
-        try {
-          // 用 email.ts 現成嘅品牌模板促銷信（自動加【RedCode】前綴＋PDPO 退訂說明）
-          const res = await sendMarketingEmail({
-            to: r.email!,
-            name: r.name,
-            subject: input.subject,
-            bodyText: input.body,
-          });
-          if (res.ok) {
-            sent++;
-          } else {
-            console.error(`[promo] send marketing email to ${r.email} failed:`, res.error);
-            failures.push(r.email!);
-          }
-        } catch (err) {
-          console.error(`[promo] send marketing email to ${r.email} failed:`, err);
-          failures.push(r.email!);
+      let failed = 0;
+      let firstError: string | undefined;
+      for (const m of audience) {
+        const r = await deliverMarketingEmail({
+          to: m.email as string,
+          name: m.name,
+          subject: input.subject,
+          bodyText: input.body,
+          promoCode: code,
+          imageUrls: imageUrls.length ? imageUrls : undefined,
+        });
+        if (r.ok) {
+          sent += 1;
+        } else {
+          failed += 1;
+          firstError ??= r.error;
         }
       }
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
-        action: "promo.sendMarketingEmail",
+        action: "promo.marketingEmail",
         targetType: "promo",
-        detail: `寄促銷電郵「${input.subject}」：成功 ${sent}/${recipients.length}${failures.length > 0 ? `，失敗：${failures.join("、")}` : ""}`,
+        detail: `寄出促銷電郵「${input.subject}」：成功 ${sent} 位、失敗 ${failed} 位（受眾 ${audience.length} 位已同意推廣會員）${code ? `，附優惠碼 ${code}` : ""}${imageUrls.length ? `，附 ${imageUrls.length} 張圖` : ""}${firstError ? `；首個失敗原因：${firstError}` : ""}`,
       });
-      return {
-        dryRun: false as const,
-        recipientCount: recipients.length,
-        sent,
-        failed: failures.length,
-        failures,
-      };
+      return { ok: true, total: audience.length, sent, failed, error: firstError };
     }),
 });
