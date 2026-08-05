@@ -273,6 +273,7 @@ export const promoRouter = createRouter({
    * 寄出優惠促銷電郵（2026-08-05 Glo 要求）：
    * - 只寄畀 marketingOptIn=true 兼且有 email 嘅會員（註冊頁剔選先算同意，PDPO 第 6A 部）
    * - 款同官網其他電郵一樣（email.ts sendMarketingEmail → brandedEmail 模板）
+   * - 可選加圖（最多 3 張，顯示喺內文下面；只接受本站 /uploads/ 路徑，即後台上傳嘅圖）
    * - 填咗優惠碼會先檢查佢存在兼啟用，先至會寄（避免寄錯碼出街）
    * - 逐位會員寄出（稱呼跟返佢個名）；失敗唔會阻後面嘅，最後回 sent/failed 統計
    * - 動作記落操作日誌（promo.marketingEmail）
@@ -283,10 +284,26 @@ export const promoRouter = createRouter({
         subject: z.string().trim().min(1, "主旨必填").max(80, "主旨最長 80 字"),
         body: z.string().trim().min(1, "內文必填").max(3000, "內文最長 3000 字"),
         promoCode: z.string().trim().max(32).optional(),
+        // 圖片（2026-08-05 Glo 要求）：選填，最多 3 張；只准本站 /uploads/ 路徑
+        imageUrls: z
+          .array(z.string().trim().min(1).max(300))
+          .max(3, "最多 3 張圖")
+          .optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
+      // 圖片路徑把關：只准本站 /uploads/（員工經後台上傳嘅圖），
+      // 唔接受外站 URL（防死鏈／防人呢個 API 寄含惡意圖嘅信）
+      const imageUrls = input.imageUrls ?? [];
+      for (const u of imageUrls) {
+        if (!u.startsWith("/uploads/") || u.includes("..")) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "圖片要用後台上傳嘅圖（/uploads/ 路徑）",
+          });
+        }
+      }
       // 優惠碼（選填）：存在兼啟用先寄得
       let code: string | undefined;
       if (input.promoCode) {
@@ -327,6 +344,7 @@ export const promoRouter = createRouter({
           subject: input.subject,
           bodyText: input.body,
           promoCode: code,
+          imageUrls: imageUrls.length ? imageUrls : undefined,
         });
         if (r.ok) {
           sent += 1;
@@ -340,7 +358,7 @@ export const promoRouter = createRouter({
         actorRole: ctx.user.role,
         action: "promo.marketingEmail",
         targetType: "promo",
-        detail: `寄出促銷電郵「${input.subject}」：成功 ${sent} 位、失敗 ${failed} 位（受眾 ${audience.length} 位已同意推廣會員）${code ? `，附優惠碼 ${code}` : ""}${firstError ? `；首個失敗原因：${firstError}` : ""}`,
+        detail: `寄出促銷電郵「${input.subject}」：成功 ${sent} 位、失敗 ${failed} 位（受眾 ${audience.length} 位已同意推廣會員）${code ? `，附優惠碼 ${code}` : ""}${imageUrls.length ? `，附 ${imageUrls.length} 張圖` : ""}${firstError ? `；首個失敗原因：${firstError}` : ""}`,
       });
       return { ok: true, total: audience.length, sent, failed, error: firstError };
     }),

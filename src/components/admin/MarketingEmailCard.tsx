@@ -1,14 +1,17 @@
 import { useState } from 'react';
-import { Mail, Send, Users } from 'lucide-react';
+import { ImagePlus, Mail, Send, Users, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import { getToken } from '@/lib/auth';
 import WishingStar, { LoadingBlock } from './WishingStar';
 import type { ToastKind } from './useToasts';
 
 /**
  * 促銷電郵（2026-08-05 Glo 要求）—— promo.marketingAudience / promo.sendMarketingEmail
- * 左：撰寫電郵（主旨＋內文＋選填優惠碼）＋即時預覽（款同官網 branded 電郵一樣）；
+ * 左：撰寫電郵（主旨＋內文＋選填優惠碼＋選填圖片最多 3 張）＋即時預覽（款同官網 branded 電郵一樣）；
  * 右：收件人數（註冊時剔咗同意收推廣嘅會員）＋兩步確認寄出。
  * 合規：每封底部由系統自動附加「免費拒絕接收」方法（PDPO 第 6A 部），呢度改唔到。
+ * 圖片（2026-08-05 Glo 要求）：經 /api/upload 上傳去網站 disk（同付款截圖同一套），
+ * 電郵入面用絕對 URL 顯示，順序排喺內文下面、優惠碼之前。
  */
 
 const inputCls =
@@ -23,8 +26,34 @@ export default function MarketingEmailCard({
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [promoCode, setPromoCode] = useState('');
+  const [images, setImages] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+
+  // 圖片上傳（2026-08-05）：經 /api/upload 落網站 disk，攞返 /uploads/xxx 路徑
+  const uploadImage = async (file: File) => {
+    setFormError(null);
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}` },
+        body: form,
+      });
+      const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string };
+      if (!res.ok || !data.path) {
+        throw new Error(data.error || '上傳失敗，請再試');
+      }
+      setImages((cur) => [...cur, data.path as string]);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : '上傳失敗，請再試');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const sendMutation = trpc.promo.sendMarketingEmail.useMutation({
     onSuccess: (r) => {
@@ -34,6 +63,7 @@ export default function MarketingEmailCard({
         setSubject('');
         setBody('');
         setPromoCode('');
+        setImages([]);
       } else if (r) {
         toast(
           `寄出完成：成功 ${r.sent} 位、失敗 ${r.failed} 位${r.error ? `（${r.error}）` : ''}`,
@@ -61,6 +91,7 @@ export default function MarketingEmailCard({
       subject: subject.trim(),
       body: body.trim(),
       ...(promoCode.trim() ? { promoCode: promoCode.trim() } : {}),
+      ...(images.length ? { imageUrls: images } : {}),
     });
   };
 
@@ -127,6 +158,53 @@ export default function MarketingEmailCard({
             />
             <p className="mt-1 text-[12px] text-txt-3">優惠碼要係已存在兼啟用中，先寄得出去。</p>
           </div>
+          <div>
+            <label className="mb-1.5 block text-[14px] text-txt-2">圖片（選填，最多 3 張）</label>
+            <div className="flex flex-wrap items-center gap-3">
+              {images.map((u) => (
+                <div key={u} className="relative">
+                  <img
+                    src={u}
+                    alt="已上傳嘅推廣圖片"
+                    className="h-20 w-20 rounded-lg border object-cover"
+                    style={{ borderColor: 'var(--space-line)' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setImages((cur) => cur.filter((x) => x !== u))}
+                    aria-label="移除呢張圖"
+                    className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full border text-txt-1 transition-colors hover:text-pink-soft"
+                    style={{ borderColor: 'var(--space-line)', background: 'var(--space-1)' }}
+                  >
+                    <X size={11} aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+              {images.length < 3 && (
+                <label
+                  className={`flex h-20 w-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-[11px] text-txt-3 transition-colors hover:text-txt-1 ${uploading ? 'pointer-events-none opacity-60' : ''}`}
+                  style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                >
+                  {uploading ? <WishingStar size={16} /> : <ImagePlus size={18} aria-hidden="true" />}
+                  {uploading ? '上傳緊…' : '加圖'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    disabled={uploading}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void uploadImage(f);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+            <p className="mt-1 text-[12px] text-txt-3">
+              JPG／PNG／WebP，最大 10MB；會順序顯示喺內文下面、優惠碼之前。
+            </p>
+          </div>
         </div>
         {formError && (
           <p className="mt-3 flex items-center gap-1.5 text-[13px] text-pink-soft" role="alert">
@@ -165,6 +243,9 @@ export default function MarketingEmailCard({
                     </p>
                   ))
                 )}
+                {images.map((u) => (
+                  <img key={u} src={u} alt="推廣圖片" className="mt-3 w-full rounded-lg" />
+                ))}
                 {promoCode.trim() && (
                   <div
                     className="mt-4 border px-4 py-4 text-center"
