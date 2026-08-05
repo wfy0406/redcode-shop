@@ -695,3 +695,65 @@ export async function sendWelcomeEmail(args: {
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
+
+/**
+ * 優惠促銷電郵（2026-08-05 Glo 要求）：後台「促銷電郵」頁用，
+ * 只寄畀註冊時剔咗同意接收推廣嘅會員（promo.sendMarketingEmail 把關）。
+ *
+ * 款同官網其他電郵一樣（brandedEmail 安靜奢華模板）：
+ * 內文由員工喺後台撰寫（純文字；空行分段、單行換行變 <br>），
+ * 可選優惠碼用品牌盒突出（同歡迎信嘅優惠碼盒同款），主旨會自動加「【RedCode】」前綴。
+ *
+ * 合規位（PDPO 第 6A 部＋私隱政策第 7 節承諾）：每封促銷電郵底部一定要話收件人知
+ * 可以免費拒絕再收——呢段由系統自動附加，員工改唔到。
+ */
+export async function sendMarketingEmail(args: {
+  to: string;
+  name: string;
+  subject: string; // 員工寫嘅主旨（唔使加【RedCode】，系統會加）
+  bodyText: string; // 員工寫嘅內文（純文字；空行分段）
+  promoCode?: string; // 選填：優惠碼盒
+}): Promise<SendResult> {
+  try {
+    const site = siteUrl();
+    const paragraphs = args.bodyText
+      .split(/\n{2,}/)
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .map(
+        (p) =>
+          `<p style="margin:0 0 14px;">${escapeHtml(p).replace(/\n/g, "<br />")}</p>`,
+      )
+      .join("");
+    const promoBox = args.promoCode
+      ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+        <tr><td align="center" style="background:${BOX_BG};border:1px solid ${HAIRLINE};padding:26px 18px 22px;">
+          <p style="margin:0;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${FAINT};">今期優惠碼</p>
+          <span style="display:block;margin:12px 0 8px;font-family:${SERIF_STACK};font-size:30px;font-weight:700;letter-spacing:6px;text-indent:6px;color:${INK};">${escapeHtml(args.promoCode)}</span>
+          <p style="margin:0;font-size:12.5px;line-height:1.8;color:${MUTED};">結帳時喺「優惠碼」一欄輸入，折扣即時自動扣減。</p>
+        </td></tr>
+      </table>`
+      : "";
+    const content = `
+      <p style="margin:0 0 14px;">${escapeHtml(args.name)}寶寶，你好呀 💕</p>
+      ${paragraphs}
+      ${promoBox}
+      ${ctaButton("去官網睇新貨", `${site}/#/products`)}
+      ${note(`呢封係推廣電郵，你喺註冊時同意咗接收 RedCode 嘅優惠資訊先會收到。如果唔想再收到，隨時 WhatsApp <a href="https://wa.me/85254835368" style="color:${BRAND_PINK};text-decoration:none;">5483 5368</a> 或 E-Mail 去 <a href="mailto:service.support@ows.redcode.red" style="color:${BRAND_PINK};text-decoration:none;">service.support@ows.redcode.red</a> 話我哋知，我哋會免費將你喺推廣名單剔除（訂單相關嘅電郵唔受影響）。`)}
+      <p style="margin:18px 0 0;">期待喺直播間見到你 ✦<br />Glo Glo 上</p>
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】${args.subject}`,
+      html: brandedEmail({
+        preheader: args.bodyText.replace(/\s+/g, " ").slice(0, 90),
+        kicker: "REDCODE · 優惠速遞",
+        title: args.subject,
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌促銷電郵出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
