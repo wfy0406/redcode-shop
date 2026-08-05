@@ -58,6 +58,8 @@ export default function Register() {
   const [address, setAddress] = useState('');
   const [age, setAge] = useState('');
   const [birthMonth, setBirthMonth] = useState('');
+  // 直接促銷同意（2026-08-05 Glo 要求，PDPO：唔可以預先剔選，要會員主動剔先算同意）
+  const [agreeMarketing, setAgreeMarketing] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -100,6 +102,7 @@ export default function Register() {
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(age.trim() ? { age: Number(age) } : {}),
         ...(birthMonth ? { birthMonth: Number(birthMonth) } : {}),
+        marketingOptIn: agreeMarketing,
       });
       navigate('/account', { replace: true });
     } catch (err) {
@@ -240,6 +243,29 @@ export default function Register() {
               ))}
             </select>
           </div>
+
+          {/* 直接促銷同意（2026-08-05 Glo 要求）：對應私隱政策第 7 節；
+              預設唔剔（沉默唔當同意），剔咗先會收到優惠/直播推廣訊息 */}
+          <label
+            htmlFor="reg-marketing"
+            className="flex cursor-pointer items-start gap-3 rounded-xl border border-space-line bg-space-2 px-4 py-3.5"
+          >
+            <input
+              id="reg-marketing"
+              type="checkbox"
+              checked={agreeMarketing}
+              onChange={(e) => setAgreeMarketing(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-pink"
+            />
+            <span className="text-[13px] leading-[1.7] text-txt-2">
+              我同意 RedCode 用我嘅姓名、電話同 Email，經電郵或 WhatsApp 發送商品、直播同優惠資訊畀我
+              <span className="text-txt-3">（選填；可以隨時免費拒絕接收，詳情見</span>
+              <Link to="/privacy" className="text-pink-soft underline underline-offset-2">
+                私隱政策
+              </Link>
+              <span className="text-txt-3">第 7 節）。</span>
+            </span>
+          </label>
 
           {submitError && (
             <p
