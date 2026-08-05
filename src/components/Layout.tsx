@@ -5,16 +5,20 @@ import Starfield from '@/components/Starfield';
 import Meteors from '@/components/Meteors';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
+import MessengerIcon from '@/components/MessengerIcon';
 
 /**
  * 全站 Layout —— Nested-route pattern（react-dev.md Pattern B）：
  * Layout render <Outlet/>，App.tsx 用巢狀 <Route>。
  *
  * 包含：星野 canvas（單實例）+ 星雲層（§3.3）+ 玻璃導航 + 頁尾 + 右下 WhatsApp 浮鈕（§3.6/§5）
+ * 2026-08-06（Glo 要求）：WhatsApp 浮鈕上面加 Messenger 浮鈕，一撳直開 m.me 對話。
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
+// Facebook Messenger 深層連結：撳咗直開 RedCode 專頁對話
+const MESSENGER_URL = 'https://m.me/redcodexhk';
 
 export default function Layout() {
   const { pathname } = useLocation();
@@ -57,6 +61,19 @@ export default function Layout() {
       </main>
 
       <Footer />
+
+      {/* Messenger 浮鈕（2026-08-06 Glo 要求）：同 WhatsApp 一樣一撳直開對話，排喺佢上面 */}
+      <a
+        href={MESSENGER_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`btn btn-messenger fixed right-6 z-50 !h-14 !w-14 !rounded-full !p-0 ${
+          hasBottomBar ? 'bottom-40' : 'bottom-[5.5rem]'
+        }`}
+        aria-label="Facebook Messenger 聯絡 Glo Glo 團隊"
+      >
+        <MessengerIcon size={24} />
+      </a>
 
       {/* §3.6/§5 右下 WhatsApp 浮鈕（全站最重要轉化鈕） */}
       <a

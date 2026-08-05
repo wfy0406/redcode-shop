@@ -211,6 +211,19 @@
     box-shadow: 0 8px 36px rgba(94, 224, 160, 0.4);
   }
 
+  /* Messenger 鈕（2026-08-06 Glo 要求）：同 WhatsApp 鈕同款，Messenger 藍 #0084FF 調亮 */
+  .btn-messenger {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1.5px solid #4da3ff;
+    color: #4da3ff;
+    box-shadow: 0 8px 24px rgba(0, 132, 255, 0.25);
+  }
+
+  .btn-messenger:hover {
+    background: rgba(0, 132, 255, 0.1);
+    box-shadow: 0 8px 36px rgba(0, 132, 255, 0.4);
+  }
+
   /* ===== §3.5 導航 link 消失線 ===== */
   .nav-link {
     position: relative;

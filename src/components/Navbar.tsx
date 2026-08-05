@@ -6,15 +6,19 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import type { CartLine } from '@/components/cart/types';
+import MessengerIcon from '@/components/MessengerIcon';
 
 /**
  * RedCode 設計系統 §4.2 —— 玻璃導航
  * sticky top-0 z-50（react-dev.md navbar contract：唔用 fixed，Layout 唔使 offset bookkeeping）
  * 高度 72px（手機 60px）、glass-bg + blur 16px、底邊 1px glass-border
+ * 2026-08-06（Glo 要求）：WhatsApp 掣左邊加 Messenger 掣，一撳直開 m.me 對話。
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
+// Facebook Messenger 深層連結：撳咗直開 RedCode 專頁對話
+const MESSENGER_URL = 'https://m.me/redcodexhk';
 
 /** 員工內部系統（倉庫/HR，Render 託管） */
 const STAFF_SYSTEM_URL = 'https://red-code-wms.onrender.com/';
@@ -90,8 +94,19 @@ export default function Navbar() {
           ))}
         </nav>
 
-        {/* 右：WhatsApp → 願望清單 → 購物車 → 會員 → 員工內部系統 */}
+        {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員 → 員工內部系統 */}
         <div className="flex items-center gap-2 md:gap-4">
+          {/* Messenger 鈕（2026-08-06 Glo 要求）：icon-only，一撳直開專頁對話 */}
+          <a
+            href={MESSENGER_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-messenger !px-3 !py-2 text-sm"
+            aria-label="Facebook Messenger 聯絡我們"
+          >
+            <MessengerIcon size={16} />
+          </a>
+
           {/* WhatsApp 玻璃鈕（品牌命脈，手機都唔收埋） */}
           <a
             href={WHATSAPP_URL}

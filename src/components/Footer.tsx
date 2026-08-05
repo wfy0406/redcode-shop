@@ -1,16 +1,20 @@
 import { Link } from 'react-router';
 import { Facebook, Mail, MessageCircle } from 'lucide-react';
+import MessengerIcon from '@/components/MessengerIcon';
 
 /**
  * 頁尾（§5 全頁共用）：--space-0 底 + 花體 slogan + FB/E-Mail/WhatsApp 連結 + 員工入口
  * 公司名：RedCode HK Limited
  * 2026-08-04（Glo 要求）：「搵我哋」刪走 Instagram（即將推出），加 E-Mail 服務支援
  * 2026-08-05（Glo 要求）：底欄加 隱私政策（Privacy Policy）／服務條款（Terms of Service）連結
+ * 2026-08-06（Glo 要求）：「搵我哋」加 Messenger 私訊，一撳直開 m.me 對話
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
+// Facebook Messenger 深層連結：撳咗直開 RedCode 專頁對話
+const MESSENGER_URL = 'https://m.me/redcodexhk';
 const SUPPORT_EMAIL = 'service.support@ows.redcode.red';
 
 export default function Footer() {
@@ -51,6 +55,16 @@ export default function Footer() {
                   className="inline-flex items-center gap-2 text-txt-2 transition-colors hover:text-success"
                 >
                   <MessageCircle size={16} aria-hidden="true" /> WhatsApp 落單查詢
+                </a>
+              </li>
+              <li>
+                <a
+                  href={MESSENGER_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-txt-2 transition-colors hover:text-[#4da3ff]"
+                >
+                  <MessengerIcon size={16} /> Messenger 私訊我哋
                 </a>
               </li>
               <li>
