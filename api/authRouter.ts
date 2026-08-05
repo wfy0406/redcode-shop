@@ -63,6 +63,8 @@ export const authRouter = createRouter({
         birthMonth: z.number().int().min(1).max(12).optional(),
         // Email（2026-08-03 加；2026-08-04 起改必填，Glo 要求：註冊一定要填，歡迎信先寄得到）
         email: z.string().trim().email("Email 格式唔啱").max(255),
+        // 直接促銷同意（2026-08-05 Glo 要求，PDPO 第 6A 部）：註冊頁剔選格，冇傳/冇剔＝false
+        marketingOptIn: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -99,6 +101,9 @@ export const authRouter = createRouter({
           address: input.address ?? null,
           age: input.age ?? null,
           birthMonth: input.birthMonth ?? null,
+          // 直接促銷同意：剔咗先記 true＋時間；冇剔＝false（預設），促銷電郵唔會寄畀佢
+          marketingOptIn: input.marketingOptIn ?? false,
+          marketingOptInAt: input.marketingOptIn ? new Date() : null,
         })
         .returning({ id: users.id });
       const user = await db.query.users.findFirst({ where: eq(users.id, id) });
@@ -110,7 +115,7 @@ export const authRouter = createRouter({
         action: "member.register",
         targetType: "member",
         targetId: id,
-        detail: `新會員註冊「${input.name}」（${phone}）`,
+        detail: `新會員註冊「${input.name}」（${phone}${input.marketingOptIn ? "，同意接收推廣資訊" : ""}）`,
       });
       // 2026-08-04（Glo 要求）：註冊成功即發歡迎信（內附迎新優惠碼 WELLCOMEYOU）；
       // email 而家係必填，所以每個新會員都一定寄；失敗淨係 log，唔阻註冊
