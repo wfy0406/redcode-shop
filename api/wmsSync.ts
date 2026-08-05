@@ -7,6 +7,9 @@
  *     〔2026-07-28 跟 WMS《貨號欄位修正請求》由 v1.3 嘅名稱組裝改為 sku 組裝〕
  *   ② sourcePayload.items 每件加 listedDate（YYYY-MM-DD）——WMS v1.3.7 起
  *     訂單日期用貨品上架日期（對唔到貨號／冇欄位就繼續用落單日期，向後相容）；
+ *   〔2026-08-06 跟 WMS《官網→WMS對接需求：貨品圖片+會員資料》：
+ *     sourcePayload.items 每件加 imageUrls（完整 URL array，首張＝主圖；冇圖送 null）；
+ *     customer 加 age（number|null）／registeredAt（會員註冊日，YYYY-MM-DD）〕
  *   ② actualPrice 改送扣完優惠碼嘅單件實收（按行金額比例攤分，最後一件食尾數）；
  *   ③ 停送 customerEmail／paymentMethod／sessionNo／color；remark 唔再包「尺寸」段；
  *   ④ 回調 decision=rejected 新增 rejectType：cancel＝訂單取消（終態）／reupload＝付款重傳
@@ -242,10 +245,11 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
   // WMS 用貨品上架日期做訂單日期，等倉管對返邊批貨
   const productIds = [...new Set(order.items.map((i) => i.productId))];
   const productRows = await db
-    .select({ id: products.id, listedDate: products.listedDate })
+    .select({ id: products.id, listedDate: products.listedDate, image: products.image, photos: products.photos })
     .from(products)
     .where(inArray(products.id, productIds));
   const listedDateMap = new Map(productRows.map((p) => [p.id, hktDate(p.listedDate)]));
+  const productImageMap = new Map(productRows.map((p) => [p.id, { image: p.image, photos: p.photos }]));
 
   const sourcePayload = JSON.stringify({
     orderNo: order.orderNo,
@@ -265,15 +269,22 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
       name: order.user.name,
       phone: order.user.phone,
       email: order.user.email ?? null,
+      age: order.user.age ?? null,
+      registeredAt: hktDate(order.user.createdAt),
     },
-    items: order.items.map((i) => ({
-      sku: i.sku,
-      name: i.productName,
-      size: i.size,
-      quantity: i.quantity,
-      price: i.price,
-      listedDate: listedDateMap.get(i.productId) ?? null,
-    })),
+    items: order.items.map((i) => {
+      const p = productImageMap.get(i.productId);
+      const paths = p ? (p.photos && p.photos.length ? p.photos : [p.image]) : [];
+      return {
+        sku: i.sku,
+        name: i.productName,
+        size: i.size,
+        quantity: i.quantity,
+        price: i.price,
+        listedDate: listedDateMap.get(i.productId) ?? null,
+        imageUrls: paths.length ? paths.map((u) => `${publicBaseUrl()}${u}`) : null,
+      };
+    }),
     screenshotUrl: proof ? `${publicBaseUrl()}${proof.imagePath}` : null,
   });
 

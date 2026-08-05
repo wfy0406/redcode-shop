@@ -12,6 +12,9 @@ import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback } from "./wmsSync";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
+import { eq } from "drizzle-orm";
+import { getDb } from "./queries/connection";
+import { products } from "@db/schema";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -97,6 +100,22 @@ app.get("/uploads/:file", async (c) => {
   } catch {
     return c.json({ error: "Not Found" }, 404);
   }
+});
+
+// A-2（2026-08-06 WMS《官網→WMS對接需求》）：公開查圖 API——WMS 按貨號 SKU 拎貨品圖片完整 URL。
+// 唯讀、唔使 key；photos[0]＝主圖（同封面 image 同步），冇 photos 就淨係封面一張。
+app.get("/api/products/:sku/images", async (c) => {
+  const sku = c.req.param("sku");
+  const db = getDb();
+  const [p] = await db
+    .select({ image: products.image, photos: products.photos })
+    .from(products)
+    .where(eq(products.sku, sku))
+    .limit(1);
+  if (!p) return c.json({ imageUrls: null }, 404);
+  const paths = p.photos && p.photos.length ? p.photos : [p.image];
+  const base = process.env.PUBLIC_BASE_URL || "https://redcode.red";
+  return c.json({ imageUrls: paths.map((u) => `${base}${u}`) });
 });
 
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
