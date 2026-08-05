@@ -702,10 +702,11 @@ export async function sendWelcomeEmail(args: {
  *
  * 款同官網其他電郵一樣（brandedEmail 安靜奢華模板）：
  * 內文由員工喺後台撰寫（純文字；空行分段、單行換行變 <br>），
+ * 可選加圖（最多 3 張，顯示喺內文下面、優惠碼之前；2026-08-05 Glo 要求），
  * 可選優惠碼用品牌盒突出（同歡迎信嘅優惠碼盒同款），主旨會自動加「【RedCode】」前綴。
  *
  * 合規位（PDPO 第 6A 部＋私隱政策第 7 節承諾）：每封促銷電郵底部一定要話收件人知
- * 可以免費拒絕再收——呢段由系統自動附加，員工改唔到。
+ * 可以免費拒絕再收（會員中心「優惠資訊」開關自助停用）——呢段由系統自動附加，員工改唔到。
  */
 export async function sendMarketingEmail(args: {
   to: string;
@@ -713,6 +714,7 @@ export async function sendMarketingEmail(args: {
   subject: string; // 員工寫嘅主旨（唔使加【RedCode】，系統會加）
   bodyText: string; // 員工寫嘅內文（純文字；空行分段）
   promoCode?: string; // 選填：優惠碼盒
+  imageUrls?: string[]; // 選填：內文下面嘅圖（本站 /uploads/ 相對路徑，會砌成絕對 URL）
 }): Promise<SendResult> {
   try {
     const site = siteUrl();
@@ -723,6 +725,14 @@ export async function sendMarketingEmail(args: {
       .map(
         (p) =>
           `<p style="margin:0 0 14px;">${escapeHtml(p).replace(/\n/g, "<br />")}</p>`,
+      )
+      .join("");
+    // 圖片（選填，最多 3 張）：順序顯示喺內文下面、優惠碼之前；
+    // 電郵 client 要用絕對 URL 先載入到（site + /uploads/xxx）
+    const images = (args.imageUrls ?? [])
+      .map(
+        (u) =>
+          `<div style="margin:20px 0 0;"><img src="${site}${escapeHtml(u)}" alt="RedCode 推廣圖片" width="560" style="display:block;width:100%;max-width:560px;height:auto;border-radius:10px;" /></div>`,
       )
       .join("");
     const promoBox = args.promoCode
@@ -737,9 +747,10 @@ export async function sendMarketingEmail(args: {
     const content = `
       <p style="margin:0 0 14px;">${escapeHtml(args.name)}寶寶，你好呀 💕</p>
       ${paragraphs}
+      ${images}
       ${promoBox}
       ${ctaButton("去官網睇新貨", `${site}/#/products`)}
-      ${note(`呢封係推廣電郵，你喺註冊時同意咗接收 RedCode 嘅優惠資訊先會收到。如果唔想再收到，隨時 WhatsApp <a href="https://wa.me/85254835368" style="color:${BRAND_PINK};text-decoration:none;">5483 5368</a> 或 E-Mail 去 <a href="mailto:service.support@ows.redcode.red" style="color:${BRAND_PINK};text-decoration:none;">service.support@ows.redcode.red</a> 話我哋知，我哋會免費將你喺推廣名單剔除（訂單相關嘅電郵唔受影響）。`)}
+      ${note(`呢封係推廣電郵，你喺註冊時同意咗接收 RedCode 嘅優惠資訊先會收到。如果唔想再收到，隨時可以去我哋官網<a href="${site}/#/account" style="color:${BRAND_PINK};text-decoration:none;">會員中心</a>嘅「優惠資訊」停用咗佢，系統會將你喺推廣名單剔除（訂單相關嘅電郵唔受影響）。`)}
       <p style="margin:18px 0 0;">期待喺直播間見到你 ✦<br />Glo Glo 上</p>
     `;
     return await sendEmail({
