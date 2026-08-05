@@ -268,7 +268,7 @@ export default function MarketingEmailCard({
                   </span>
                 </div>
                 <p className="mt-4 text-[11.5px] leading-[1.8] text-[#8d857a]">
-                  呢封係推廣電郵……如果唔想再收到，隨時 WhatsApp 或 E-Mail 話我哋知，我哋會免費將你喺推廣名單剔除。（呢段系統自動附加）
+                  呢封係推廣電郵……如果唔想再收到，隨時可以去我哋官網<span style={{ color: '#e6007e' }}>會員中心</span>嘅「優惠資訊」停用咗佢，系統會將你喺推廣名單剔除。（呢段系統自動附加）
                 </p>
                 <p className="mt-3">
                   期待喺直播間見到你 ✦
