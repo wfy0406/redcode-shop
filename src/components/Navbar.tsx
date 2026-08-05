@@ -13,17 +13,15 @@ import MessengerIcon from '@/components/MessengerIcon';
  * sticky top-0 z-50（react-dev.md navbar contract：唔用 fixed，Layout 唔使 offset bookkeeping）
  * 高度 72px（手機 60px）、glass-bg + blur 16px、底邊 1px glass-border
  * 2026-08-06（Glo 要求）：WhatsApp 掣左邊加 Messenger 掣，一撳直開 m.me 對話。
- * 2026-08-06（Glo 要求）：刪走選單入面嘅「後台管理」連結（desktop＋手機選單）——
- * 唔俾外部見到員工入口，員工自己記住 /admin 網址直接用。
+ * 2026-08-06（Glo 要求）：刪走「員工內部系統」WMS 連結（desktop 右側＋手機選單底部）——
+ * 放上網擔心被攻擊或資料外洩，唔俾外部見到（員工自己記住 WMS 網址直接用）。
+ * 「後台管理」入口保留：登入嘅員工／主管／管理員先見到，外部訪客見唔到。
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 // Facebook Messenger 深層連結：撳咗直開 RedCode 專頁對話
 const MESSENGER_URL = 'https://m.me/redcodexhk';
-
-/** 員工內部系統（倉庫/HR，Render 託管） */
-const STAFF_SYSTEM_URL = 'https://red-code-wms.onrender.com/';
 
 /** 時段問候（2026-08-04 Glo 要求；跟客人裝置本地時間）：早晨 05–12／午安 12–18／晚上好 18–05 */
 function greetingNow(): string {
@@ -45,7 +43,7 @@ const NAV_LINKS = [
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, isStaff, logout } = useAuth();
   // F4：badge 接通真購物車數量（未登入唔好 call，enabled 守住）
   const cartQuery = trpc.cart.list.useQuery(undefined, {
     enabled: !!user,
@@ -63,6 +61,7 @@ export default function Navbar() {
     user
       ? { to: '/account', label: `會員中心（${user.name}）` }
       : { to: '/login', label: '會員登入' },
+    ...(isStaff ? [{ to: '/admin', label: '後台管理' }] : []),
   ];
 
   return (
@@ -95,7 +94,7 @@ export default function Navbar() {
           ))}
         </nav>
 
-        {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員 → 員工內部系統 */}
+        {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員 */}
         <div className="flex items-center gap-2 md:gap-4">
           {/* Messenger 鈕（2026-08-06 Glo 要求）：icon-only，一撳直開專頁對話 */}
           <a
@@ -148,6 +147,11 @@ export default function Navbar() {
           {/* AUTH-SLOT: 已接 useAuth（自訂電話+密碼登入） */}
           {user ? (
             <span className="hidden items-center gap-3 md:flex">
+              {isStaff && (
+                <Link to="/admin" className="nav-link" style={{ color: 'var(--gold)' }}>
+                  後台管理
+                </Link>
+              )}
               <Link to="/account" className="nav-link">
                 {user.name}
               </Link>
@@ -164,17 +168,6 @@ export default function Navbar() {
               會員登入
             </Link>
           )}
-
-          {/* 員工內部系統：最右、低調但搵得到（連去 Render 倉庫系統） */}
-          <a
-            href={STAFF_SYSTEM_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden items-center gap-2 text-[13px] text-txt-3 transition-colors hover:text-lavender lg:flex"
-          >
-            <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
-            員工內部系統
-          </a>
 
           {/* 手機 hamburger */}
           <button
@@ -235,6 +228,7 @@ export default function Navbar() {
                 style={{
                   borderColor: 'var(--space-line)',
                   animation: `mobile-nav-in 400ms var(--ease-expo) ${i * 50}ms both`,
+                  ...(link.to === '/admin' ? { color: 'var(--gold)' } : {}),
                 }}
               >
                 {link.label}
@@ -258,16 +252,6 @@ export default function Navbar() {
               登出
             </button>
           )}
-          <a
-            href={STAFF_SYSTEM_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setMenuOpen(false)}
-            className="mt-6 flex items-center gap-2 text-[13px] text-txt-3"
-          >
-            <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
-            員工內部系統
-          </a>
             <style>{`@keyframes mobile-nav-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
           </nav>,
           document.body,
