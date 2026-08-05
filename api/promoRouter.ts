@@ -3,9 +3,10 @@ import { TRPCError } from "@trpc/server";
 import { desc, eq, ne, and, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { orders, promoCodes, type PromoCode } from "@db/schema";
+import { orders, promoCodes, users, type PromoCode } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
+import { sendMarketingEmail as deliverMarketingEmail } from "./email";
 
 export const PROMO_KIND_VALUES = ["percent", "fixed"] as const;
 const kindSchema = z.enum(PROMO_KIND_VALUES);
@@ -247,5 +248,100 @@ export const promoRouter = createRouter({
         detail: `刪除優惠碼 ${existing.code}`,
       });
       return { ok: true };
+    }),
+
+  /**
+   * 促銷電郵收件人數（2026-08-05 Glo 要求）：註冊時剔咗「同意接收推廣」兼且有 email 嘅會員
+   * 後台「促銷電郵」頁顯示「將會寄畀 X 位會員」用
+   */
+  marketingAudience: staffProcedure.query(async () => {
+    const db = getDb();
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(users)
+      .where(
+        and(
+          eq(users.role, "member"),
+          eq(users.marketingOptIn, true),
+          sql`${users.email} is not null`,
+        ),
+      );
+    return { count: row?.n ?? 0 };
+  }),
+
+  /**
+   * 寄出優惠促銷電郵（2026-08-05 Glo 要求）：
+   * - 只寄畀 marketingOptIn=true 兼且有 email 嘅會員（註冊頁剔選先算同意，PDPO 第 6A 部）
+   * - 款同官網其他電郵一樣（email.ts sendMarketingEmail → brandedEmail 模板）
+   * - 填咗優惠碼會先檢查佢存在兼啟用，先至會寄（避免寄錯碼出街）
+   * - 逐位會員寄出（稱呼跟返佢個名）；失敗唔會阻後面嘅，最後回 sent/failed 統計
+   * - 動作記落操作日誌（promo.marketingEmail）
+   */
+  sendMarketingEmail: staffProcedure
+    .input(
+      z.object({
+        subject: z.string().trim().min(1, "主旨必填").max(80, "主旨最長 80 字"),
+        body: z.string().trim().min(1, "內文必填").max(3000, "內文最長 3000 字"),
+        promoCode: z.string().trim().max(32).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      // 優惠碼（選填）：存在兼啟用先寄得
+      let code: string | undefined;
+      if (input.promoCode) {
+        code = normalizePromoCode(input.promoCode);
+        const promo = await db.query.promoCodes.findFirst({
+          where: eq(promoCodes.code, code),
+        });
+        if (!promo) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `優惠碼 ${code} 唔存在` });
+        }
+        if (!promo.isActive) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `優惠碼 ${code} 已停用` });
+        }
+      }
+      const audience = await db
+        .select({ id: users.id, name: users.name, email: users.email })
+        .from(users)
+        .where(
+          and(
+            eq(users.role, "member"),
+            eq(users.marketingOptIn, true),
+            sql`${users.email} is not null`,
+          ),
+        );
+      if (audience.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "暫時冇會員同意接收推廣資訊，冇人可以寄",
+        });
+      }
+      let sent = 0;
+      let failed = 0;
+      let firstError: string | undefined;
+      for (const m of audience) {
+        const r = await deliverMarketingEmail({
+          to: m.email as string,
+          name: m.name,
+          subject: input.subject,
+          bodyText: input.body,
+          promoCode: code,
+        });
+        if (r.ok) {
+          sent += 1;
+        } else {
+          failed += 1;
+          firstError ??= r.error;
+        }
+      }
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "promo.marketingEmail",
+        targetType: "promo",
+        detail: `寄出促銷電郵「${input.subject}」：成功 ${sent} 位、失敗 ${failed} 位（受眾 ${audience.length} 位已同意推廣會員）${code ? `，附優惠碼 ${code}` : ""}${firstError ? `；首個失敗原因：${firstError}` : ""}`,
+      });
+      return { ok: true, total: audience.length, sent, failed, error: firstError };
     }),
 });
