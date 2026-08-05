@@ -22,6 +22,8 @@ type AuthUser = {
   googleLinked?: boolean;
   // Google 開戶嘅帳號：email 鎖死跟 Google 電郵，唔俾改（2026-08-04 Glo 要求）
   emailLocked?: boolean;
+  // 直接促銷同意（2026-08-05 Glo 要求）：會員中心開關顯示當前狀態
+  marketingOptIn?: boolean;
 };
 
 type RegisterInput = {

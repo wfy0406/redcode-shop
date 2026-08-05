@@ -36,6 +36,8 @@ const publicUser = (u: typeof users.$inferSelect) => ({
   address: u.address,
   age: u.age,
   birthMonth: u.birthMonth,
+  // 直接促銷同意（2026-08-05）：會員中心開關顯示用；後台列表由 membersRouter 自己 select
+  marketingOptIn: u.marketingOptIn,
   // 已連結 Google 帳號（2026-08-04）：會員中心顯示連結狀態；sub 本身唔出畀前端
   googleLinked: u.googleSub != null,
   // Google 開戶嘅帳號 email 鎖死跟 Google 電郵（2026-08-04 Glo 要求）：
@@ -262,7 +264,7 @@ export const authRouter = createRouter({
           // 2026-08-04（Glo 要求）：Google 註冊嘅新會員，日誌要寫明有連結 Google
           void logAudit({
             actorId: user.id,
-            actorRole: "member",
+            actorRole: user.role,
             actorNameFallback: user.name,
             action: "member.register",
             targetType: "member",
@@ -471,6 +473,43 @@ export const authRouter = createRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
       }
       return publicUser(user);
+    }),
+
+  // 直接促銷同意開關（2026-08-05 Glo 要求，PDPO 第 6A 部）：
+  // 會員中心可以自己隨時開/關；開＝記新同意時間（marketingOptInAt），
+  // 關＝保留當初同意紀錄唔郁（舉證用），動作記落操作日誌；
+  // 關咗之後後台「促銷電郵」唔會再寄畀佢
+  setMarketingOptIn: authedProcedure
+    .input(z.object({ optIn: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const me = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+      });
+      if (!me) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
+      }
+      const data: Partial<typeof users.$inferInsert> = {
+        marketingOptIn: input.optIn,
+      };
+      // 由唔同意→同意先記新同意時間；撤回時保留原紀錄，日誌已記低撤回動作
+      if (input.optIn && !me.marketingOptIn) {
+        data.marketingOptInAt = new Date();
+      }
+      await db.update(users).set(data).where(eq(users.id, me.id));
+      void logAudit({
+        actorId: me.id,
+        actorRole: me.role,
+        actorNameFallback: me.name,
+        action: "member.setMarketingOptIn",
+        targetType: "member",
+        targetId: me.id,
+        detail: `會員「${me.name}」${input.optIn ? "開啟" : "關閉"}推廣資訊接收`,
+      });
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, me.id),
+      });
+      return publicUser(user!);
     }),
 
   changePassword: authedProcedure

@@ -8,6 +8,7 @@ import OrderCard from '@/components/account/OrderCard';
 import ProfileCard from '@/components/account/ProfileCard';
 import CompleteProfileCard from '@/components/account/CompleteProfileCard';
 import GoogleLinkCard from '@/components/account/GoogleLinkCard';
+import MarketingPrefCard from '@/components/account/MarketingPrefCard';
 import PasswordCard from '@/components/account/PasswordCard';
 import AccountToastStack, { useAccountToasts } from '@/components/account/Toast';
 
@@ -98,6 +99,11 @@ export default function Account() {
       {/* 會員資料卡（逐行 inline edit） */}
       <div className="mt-8">
         <ProfileCard user={user} onLogout={logout} pushToast={pushToast} />
+      </div>
+
+      {/* 優惠資訊接收設定卡（2026-08-05 Glo 要求）：會員自己開/關直接促銷同意 */}
+      <div className="mt-6">
+        <MarketingPrefCard optIn={!!user.marketingOptIn} pushToast={pushToast} />
       </div>
 
       {/* Google 帳號連結卡（2026-08-04）：舊會員綁定 Google，之後一撳登入；未設 GOOGLE_CLIENT_ID 會自動隱藏 */}
