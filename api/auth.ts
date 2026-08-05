@@ -24,7 +24,7 @@ export function verifyPassword(password: string, stored: string): boolean {
 
 export type AuthUser = {
   userId: number;
-  role: "member" | "staff" | "admin";
+  role: "member" | "staff" | "supervisor" | "admin";
 };
 
 function jwtSecret(): Uint8Array {
@@ -47,7 +47,7 @@ export async function verifyToken(token: string): Promise<AuthUser | null> {
     const { payload } = await jwtVerify(token, jwtSecret());
     const userId = Number(payload.sub);
     const role = payload.role as AuthUser["role"];
-    if (!Number.isInteger(userId) || !["member", "staff", "admin"].includes(role)) {
+    if (!Number.isInteger(userId) || !["member", "staff", "supervisor", "admin"].includes(role)) {
       return null;
     }
     return { userId, role };
