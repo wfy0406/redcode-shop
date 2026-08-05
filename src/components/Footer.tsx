@@ -3,11 +3,13 @@ import { Facebook, Mail, MessageCircle } from 'lucide-react';
 import MessengerIcon from '@/components/MessengerIcon';
 
 /**
- * 頁尾（§5 全頁共用）：--space-0 底 + 花體 slogan + FB/E-Mail/WhatsApp 連結 + 員工入口
+ * 頁尾（§5 全頁共用）：--space-0 底 + 花體 slogan + FB/E-Mail/WhatsApp 連結
  * 公司名：RedCode HK Limited
  * 2026-08-04（Glo 要求）：「搵我哋」刪走 Instagram（即將推出），加 E-Mail 服務支援
  * 2026-08-05（Glo 要求）：底欄加 隱私政策（Privacy Policy）／服務條款（Terms of Service）連結
  * 2026-08-06（Glo 要求）：「搵我哋」加 Messenger 私訊，一撳直開 m.me 對話
+ * 2026-08-06（Glo 要求）：刪走底欄「員工內部系統」連結——放上網擔心被攻擊或資料外洩，
+ * 唔俾外部見到員工入口（員工自己記住網址直接用，唔經官網）
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
@@ -103,16 +105,6 @@ export default function Footer() {
               服務條款（Terms of Service）
             </Link>
           </div>
-          {/* 員工入口（低調，連去 Render 倉庫系統） */}
-          <a
-            href="https://red-code-wms.onrender.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 transition-colors hover:text-lavender"
-          >
-            <span className="inline-block h-1.5 w-1.5 bg-gold" aria-hidden="true" />
-            員工內部系統
-          </a>
         </div>
       </div>
     </footer>
