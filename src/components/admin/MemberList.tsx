@@ -24,6 +24,9 @@ import type { ToastKind } from './useToasts';
  * - 會員詳情加 Google 連結狀態＋Google Email＋Google 名稱
  * 2026-08-05 更新（Glo 要求）：
  * - 列表同詳情加直接促銷同意狀態（粉紅＝接受推廣，灰＝唔接受）＋同意日期
+ * 2026-08-06 更新（Glo 要求）：
+ * - 推廣同意改三態制：接受（粉紅）／未選擇（琥珀，舊會員未表態，登入會彈窗問一次）／唔接受（灰）
+ * - 會員詳情加「設為接受／設為唔接受」快掣（員工＋管理員），人手設定後會員唔會再見到彈窗
  */
 
 /** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
@@ -38,6 +41,8 @@ type MemberRow = {
   googleLinked: boolean;
   // 直接促銷同意（2026-08-05）：true＝註冊時剔咗接受推廣
   marketingOptIn: boolean;
+  // 三態制（2026-08-06）：NULL＋2026-08-05 或之前註冊＝未選
+  marketingPromptedAt: Date | string | null;
   orderCount: number;
   totalSpent: number;
 };
@@ -59,6 +64,8 @@ type MemberDetail = {
     // 直接促銷同意（2026-08-05）：狀態＋同意時間
     marketingOptIn: boolean;
     marketingOptInAt: Date | string | null;
+    // 三態制（2026-08-06）：NULL＋2026-08-05 或之前註冊＝未選
+    marketingPromptedAt: Date | string | null;
   };
   orderCount: number;
   totalSpent: number;
@@ -106,30 +113,52 @@ function GoogleBadge({ linked }: { linked: boolean }) {
   );
 }
 
+// 三態推導（2026-08-06 Glo 要求）：接受／未選／唔接受。
+// 香港時間 2026-08-06 00:00 前註冊＋從未表態＝未選，呢班會員登入會見到一次性彈窗。
+const CONSENT_CUTOFF = new Date('2026-08-05T16:00:00.000Z');
+type ConsentState = 'yes' | 'unset' | 'no';
+function consentStateOf(u: {
+  marketingOptIn: boolean;
+  marketingPromptedAt: Date | string | null;
+  createdAt: Date | string;
+}): ConsentState {
+  if (u.marketingOptIn) return 'yes';
+  if (!u.marketingPromptedAt && new Date(u.createdAt) < CONSENT_CUTOFF) return 'unset';
+  return 'no';
+}
+
 /**
- * 直接促銷同意 badge（2026-08-05 Glo 要求：列表顏色標示）
- * 粉紅（--pink-soft）＝接受推廣；灰＝唔接受
+ * 直接促銷同意 badge（2026-08-06 三態制：粉紅＝接受，琥珀＝未選擇，灰＝唔接受）
  */
-function MarketingBadge({ optIn }: { optIn: boolean }) {
+function MarketingBadge({ state }: { state: ConsentState }) {
   return (
     <span
       className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium"
       style={
-        optIn
+        state === 'yes'
           ? {
               borderColor: 'var(--pink-soft)',
               color: 'var(--pink-soft)',
               background: 'rgba(255, 0, 132, 0.10)',
             }
-          : { borderColor: 'var(--space-line)', color: 'var(--text-3)' }
+          : state === 'unset'
+            ? {
+                borderColor: '#f0b429',
+                color: '#f0b429',
+                background: 'rgba(240, 180, 41, 0.10)',
+              }
+            : { borderColor: 'var(--space-line)', color: 'var(--text-3)' }
       }
     >
       <span
         className="inline-block h-1.5 w-1.5 rounded-full"
-        style={{ background: optIn ? 'var(--pink-soft)' : 'currentColor' }}
+        style={{
+          background:
+            state === 'yes' ? 'var(--pink-soft)' : state === 'unset' ? '#f0b429' : 'currentColor',
+        }}
         aria-hidden="true"
       />
-      {optIn ? '接受推廣' : '唔接受推廣'}
+      {state === 'yes' ? '接受推廣' : state === 'unset' ? '未選擇' : '唔接受推廣'}
     </span>
   );
 }
@@ -565,7 +594,7 @@ export default function MemberList({
                         直接促銷同意（2026-08-05）：粉紅＝接受推廣，灰＝唔接受 */}
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                       <GoogleBadge linked={m.googleLinked} />
-                      <MarketingBadge optIn={m.marketingOptIn} />
+                      <MarketingBadge state={consentStateOf(m)} />
                     </div>
                   </div>
                   {canDelete && (
@@ -644,19 +673,46 @@ export default function MemberList({
                             </p>
                           </>
                         )}
-                        {/* 直接促銷同意（2026-08-05）：接受咗會順帶顯示同意日期 */}
+                        {/* 直接促銷同意（2026-08-06 三態制）：接受／未選擇（琥珀，下次登入彈窗問一次）／唔接受；
+                            行尾快掣畀員工人手設定，設定＝已表態，會員唔會再見到彈窗 */}
                         <p className="mt-1 text-[12px] text-txt-3">
                           直接促銷：
-                          {detail.user.marketingOptIn ? (
+                          {consentStateOf(detail.user) === 'yes' ? (
                             <span className="font-medium text-pink-soft">
                               接受推廣
                               {detail.user.marketingOptInAt
                                 ? `（${fmtDate(detail.user.marketingOptInAt)} 同意）`
                                 : ''}
                             </span>
+                          ) : consentStateOf(detail.user) === 'unset' ? (
+                            <span className="font-medium" style={{ color: '#f0b429' }}>
+                              未選擇（下次登入會彈窗問一次）
+                            </span>
                           ) : (
                             <span className="text-txt-2">唔接受推廣</span>
                           )}
+                          <button
+                            type="button"
+                            disabled={updateMutation.isPending}
+                            onClick={() =>
+                              updateMutation.mutate({ id: m.id, marketingOptIn: true })
+                            }
+                            className="ml-2 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-60"
+                            style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                          >
+                            設為接受
+                          </button>
+                          <button
+                            type="button"
+                            disabled={updateMutation.isPending}
+                            onClick={() =>
+                              updateMutation.mutate({ id: m.id, marketingOptIn: false })
+                            }
+                            className="ml-1.5 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-60"
+                            style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                          >
+                            設為唔接受
+                          </button>
                         </p>
                         {/* 修改資料／重設密碼（員工＋管理員） */}
                         {editingId === m.id ? (
@@ -774,7 +830,7 @@ export default function MemberList({
                     <GoogleBadge linked={m.googleLinked} />
                   </td>
                   <td className="whitespace-nowrap py-2.5 pr-3">
-                    <MarketingBadge optIn={m.marketingOptIn} />
+                    <MarketingBadge state={consentStateOf(m)} />
                   </td>
                   <td className="max-w-[140px] truncate py-2.5 pr-3 text-[13px] text-txt-3">
                     {m.address || '—'}
@@ -915,19 +971,46 @@ export default function MemberList({
                       </p>
                     </>
                   )}
-                  {/* 直接促銷同意（2026-08-05 Glo 要求：詳細會員資料都要睇到） */}
+                  {/* 直接促銷同意（2026-08-06 三態制）：接受／未選擇（琥珀，下次登入彈窗問一次）／唔接受；
+                      行尾快掣畀員工人手設定，設定＝已表態，會員唔會再見到彈窗 */}
                   <p className="col-span-full text-txt-3">
                     直接促銷：
-                    {detail.user.marketingOptIn ? (
+                    {consentStateOf(detail.user) === 'yes' ? (
                       <span className="font-medium text-pink-soft">
                         接受推廣
                         {detail.user.marketingOptInAt
                           ? `（${fmtDate(detail.user.marketingOptInAt)} 同意）`
                           : ''}
                       </span>
+                    ) : consentStateOf(detail.user) === 'unset' ? (
+                      <span className="font-medium" style={{ color: '#f0b429' }}>
+                        未選擇（下次登入會彈窗問一次）
+                      </span>
                     ) : (
                       <span className="text-txt-2">唔接受推廣</span>
                     )}
+                    <button
+                      type="button"
+                      disabled={updateMutation.isPending}
+                      onClick={() =>
+                        updateMutation.mutate({ id: detail.user.id, marketingOptIn: true })
+                      }
+                      className="ml-2 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-60"
+                      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                    >
+                      設為接受
+                    </button>
+                    <button
+                      type="button"
+                      disabled={updateMutation.isPending}
+                      onClick={() =>
+                        updateMutation.mutate({ id: detail.user.id, marketingOptIn: false })
+                      }
+                      className="ml-1.5 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-60"
+                      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                    >
+                      設為唔接受
+                    </button>
                   </p>
                 </div>
 
