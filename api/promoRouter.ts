@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { orders, promoCodes, users } from "@db/schema";
+import { orders, promoCodes, users, type PromoCode } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure, adminProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { openApprovalRequest } from "./approvalsRouter";
 import { env } from "./lib/env";
-import { sendEmail, buildMarketingEmail } from "./lib/email";
+import { sendMarketingEmail } from "./email";
 
 /**
  * 優惠碼
@@ -15,6 +16,70 @@ import { sendEmail, buildMarketingEmail } from "./lib/email";
  * adminList / create / update / remove：員工後台用（staff/admin）
  *   create/update/remove 全部記落操作日誌（「日誌」頁睇返邊個改過）
  */
+export function normalizePromoCode(code: string): string {
+  return code.toUpperCase().trim();
+}
+
+// 可以係主 connection 又可以係 transaction（tx.query.promoCodes 同形）
+type PromoDb = {
+  query: {
+    promoCodes: {
+      findFirst: (args: { where?: SQL }) => Promise<PromoCode | undefined>;
+    };
+  };
+};
+
+/**
+ * 優惠碼共用驗證＋折扣計算（promo.validate 同 orders.create 都用佢）。
+ * 成功回傳 { promo, discountAmount }；失敗逐項 throw BAD_REQUEST。
+ */
+export async function resolvePromoDiscount(
+  db: PromoDb,
+  rawCode: string,
+  subtotal: number,
+  usageByUser?: number,
+): Promise<{ promo: PromoCode; discountAmount: number }> {
+  const code = normalizePromoCode(rawCode);
+  const promo = await db.query.promoCodes.findFirst({
+    where: eq(promoCodes.code, code),
+  });
+  if (!promo) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼唔存在" });
+  }
+  if (!promo.isActive) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已停用" });
+  }
+  if (promo.expiresAt && promo.expiresAt.getTime() < Date.now()) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已過期" });
+  }
+  if (subtotal < promo.minSpend) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `未夠最低消費 HK$${promo.minSpend}`,
+    });
+  }
+  if (promo.usageLimit !== null && promo.usedCount >= promo.usageLimit) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已用完" });
+  }
+  // 每人限用：caller 先數好呢個帳號用過呢個碼幾多次
+  // （口徑同 usedCount 一樣——計已建立嘅訂單，取消唔扣返）
+  if (
+    promo.perUserLimit !== null &&
+    usageByUser !== undefined &&
+    usageByUser >= promo.perUserLimit
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `每人限用 ${promo.perUserLimit} 次，你呢個帳號已經用晒`,
+    });
+  }
+  const discountAmount =
+    promo.kind === "percent"
+      ? Math.floor((subtotal * promo.value) / 100)
+      : Math.min(promo.value, subtotal);
+  return { promo, discountAmount: Math.min(discountAmount, subtotal) };
+}
+
 export const promoRouter = createRouter({
   validate: authedProcedure
     .input(
@@ -260,12 +325,19 @@ export const promoRouter = createRouter({
       // 逐個寄（量少，唔使 batch；一個 fail 唔阻其他）
       for (const r of recipients) {
         try {
-          await sendEmail({
+          // 用 email.ts 現成嘅品牌模板促銷信（自動加【RedCode】前綴＋PDPO 退訂說明）
+          const res = await sendMarketingEmail({
             to: r.email!,
+            name: r.name,
             subject: input.subject,
-            html: buildMarketingEmail(r.name, input.body),
+            bodyText: input.body,
           });
-          sent++;
+          if (res.ok) {
+            sent++;
+          } else {
+            console.error(`[promo] send marketing email to ${r.email} failed:`, res.error);
+            failures.push(r.email!);
+          }
         } catch (err) {
           console.error(`[promo] send marketing email to ${r.email} failed:`, err);
           failures.push(r.email!);
