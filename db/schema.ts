@@ -47,6 +47,11 @@ export const users = pgTable("users", {
   age: integer("age"),
   // 生日月份（1–12，選填；2026-07-29 加。舊會員留空＝NULL，之後可以補填）
   birthMonth: integer("birthMonth"),
+  // 直接促銷同意（2026-08-05 Glo 要求，PDPO 第 6A 部）：註冊時會員主動剔選先算同意，
+  // 預設 false（沉默唔當同意）；同意嗰刻記落 marketingOptInAt。
+  // 舊會員全部 false/NULL＝未同意，後台促銷電郵唔會寄畀佢哋。
+  marketingOptIn: boolean("marketingOptIn").notNull().default(false),
+  marketingOptInAt: timestamp("marketingOptInAt"),
   role: roleEnum("role").notNull().default("member"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });

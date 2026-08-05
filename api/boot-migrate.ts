@@ -110,6 +110,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS "googleName" varchar(255);
 -- 2026-07-29：會員生日月份（選填，1–12；舊會員留空＝NULL）
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "birthMonth" integer;
 
+-- 直接促銷同意（2026-08-05 Glo 要求，PDPO 第 6A 部）：註冊頁剔選先算同意，
+-- 預設 false（沉默唔當同意）；舊會員一律 false/NULL＝未同意，唔會收到促銷電郵
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "marketingOptIn" boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "marketingOptInAt" timestamp;
+
 CREATE TABLE IF NOT EXISTS "promoCodes" (
   id serial PRIMARY KEY,
   code varchar(32) NOT NULL UNIQUE,
