@@ -33,6 +33,8 @@ type RegisterInput = {
   address?: string;
   age?: number;
   birthMonth?: number;
+  // 直接促銷同意（2026-08-05 Glo 要求）：註冊頁剔選格，冇剔＝undefined/false
+  marketingOptIn?: boolean;
 };
 
 type AuthContextValue = {

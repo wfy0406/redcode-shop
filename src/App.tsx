@@ -13,11 +13,14 @@ import Account from '@/pages/Account';
 import MyOrders from '@/pages/MyOrders';
 import Payment from '@/pages/Payment';
 import Receipt from '@/pages/Receipt';
+import Privacy from '@/pages/Privacy';
+import Terms from '@/pages/Terms';
 import Admin from '@/pages/Admin';
 
 /**
  * Routing contract：Nested-route pattern（react-dev.md Pattern B）
  * Layout render <Outlet/>，所以呢度用巢狀 <Route>，唔好溝 children pattern。
+ * 2026-08-05：加 /privacy（私隱政策）＋ /terms（服務條款），頁尾 Footer 有連結。
  */
 export default function App() {
   return (
@@ -36,6 +39,8 @@ export default function App() {
         <Route path="orders" element={<MyOrders />} />
         <Route path="payment" element={<Payment />} />
         <Route path="receipt/:orderId" element={<Receipt />} />
+        <Route path="privacy" element={<Privacy />} />
+        <Route path="terms" element={<Terms />} />
         <Route path="admin" element={<Admin />} />
       </Route>
     </Routes>

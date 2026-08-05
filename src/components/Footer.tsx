@@ -5,6 +5,7 @@ import { Facebook, Mail, MessageCircle } from 'lucide-react';
  * 頁尾（§5 全頁共用）：--space-0 底 + 花體 slogan + FB/E-Mail/WhatsApp 連結 + 員工入口
  * 公司名：RedCode HK Limited
  * 2026-08-04（Glo 要求）：「搵我哋」刪走 Instagram（即將推出），加 E-Mail 服務支援
+ * 2026-08-05（Glo 要求）：底欄加 隱私政策（Privacy Policy）／服務條款（Terms of Service）連結
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
@@ -79,6 +80,15 @@ export default function Footer() {
           style={{ borderColor: 'var(--space-line)' }}
         >
           <p>© {new Date().getFullYear()} RedCode HK Limited. All rights reserved.</p>
+          {/* 法律頁連結（2026-08-05 Glo 要求）：全站頁尾都睇到 */}
+          <div className="flex items-center gap-5">
+            <Link to="/privacy" className="transition-colors hover:text-pink-soft">
+              隱私政策（Privacy Policy）
+            </Link>
+            <Link to="/terms" className="transition-colors hover:text-pink-soft">
+              服務條款（Terms of Service）
+            </Link>
+          </div>
           {/* 員工入口（低調，連去 Render 倉庫系統） */}
           <a
             href="https://red-code-wms.onrender.com/"
