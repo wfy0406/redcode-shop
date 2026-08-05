@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BadgeCheck, BarChart3, ClipboardCheck, ClipboardList, Images, LayoutList, LogIn, Mail, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Images, LayoutList, LogIn, Mail, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -19,7 +19,6 @@ import StaffManager from '@/components/admin/StaffManager';
 import AnalyticsManager from '@/components/admin/AnalyticsManager';
 import MemberList from '@/components/admin/MemberList';
 import AuditLog from '@/components/admin/AuditLog';
-import ApprovalCenter from '@/components/admin/ApprovalCenter';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
 
@@ -34,7 +33,6 @@ import type { AdminOrder } from '@/components/admin/types';
 type ViewKey =
   | 'analytics'
   | 'review'
-  | 'approvals'
   | 'orders'
   | 'purchase'
   | 'products'
@@ -79,7 +77,7 @@ function GuardCard({
 
 function AdminConsole() {
   const utils = trpc.useUtils();
-  const { user: me, isSupervisor } = useAuth();
+  const { user: me } = useAuth();
   const isAdmin = me?.role === 'admin';
   const { toasts, push: pushToast } = useToasts();
   const [view, setView] = useState<ViewKey>('review');
@@ -157,10 +155,6 @@ function AdminConsole() {
       icon: <ClipboardCheck size={17} aria-hidden="true" />,
       badge: queue.length,
     },
-    // 審批中心（2026-08-06 Glo 要求）：五類敏感操作排隊等主管／管理員批准，supervisor 以上先見到
-    ...(isSupervisor
-      ? [{ key: 'approvals' as ViewKey, label: '審批中心', icon: <BadgeCheck size={17} aria-hidden="true" /> }]
-      : []),
     { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
     { key: 'purchase', label: '訂貨統計', icon: <ClipboardList size={17} aria-hidden="true" /> },
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
@@ -186,10 +180,6 @@ function AdminConsole() {
     <p className="py-14 text-center text-[14px] text-txt-3">需要最高管理員權限。</p>
   );
 
-  const SUPERVISOR_ONLY_HINT = (
-    <p className="py-14 text-center text-[14px] text-txt-3">需要主管或以上權限。</p>
-  );
-
   // F-D2：Record map 取代 if-else 鏈 —— 新 view 落 map 先會 render，
   // 唔會再靜默跌入 trailing else（舊坑：新 view 會 render 咗 PraiseManager）
   const viewBody: Record<ViewKey, React.ReactNode> = {
@@ -203,7 +193,6 @@ function AdminConsole() {
         leavingIds={leavingIds}
       />
     ),
-    approvals: isSupervisor ? <ApprovalCenter toast={pushToast} /> : SUPERVISOR_ONLY_HINT,
     orders: (
       <OrderList
         orders={orders}
