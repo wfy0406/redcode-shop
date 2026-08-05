@@ -23,7 +23,8 @@ const requireStaff = t.middleware(async ({ ctx, next }) => {
   if (!user) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "請先登入" });
   }
-  if (user.role !== "staff" && user.role !== "admin") {
+  // 三級制（2026-08-06）：supervisor＝主管，同主管級以上先入到後台
+  if (user.role !== "staff" && user.role !== "supervisor" && user.role !== "admin") {
     throw new TRPCError({ code: "FORBIDDEN", message: "需要管理員權限" });
   }
   return next({ ctx: { ...ctx, user } });

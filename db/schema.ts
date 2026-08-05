@@ -11,7 +11,8 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
-export const roleEnum = pgEnum("role", ["member", "staff", "admin"]);
+// 2026-08-06：enum 加咗 supervisor（主管）；DB 已 ALTER TYPE，schema 要跟返
+export const roleEnum = pgEnum("role", ["member", "staff", "supervisor", "admin"]);
 
 export const orderStatusEnum = pgEnum("order_status", [
   "pending_payment",
