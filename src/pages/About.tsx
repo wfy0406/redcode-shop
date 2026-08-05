@@ -1,6 +1,7 @@
 import { Facebook, MessageCircle } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
 import { useReveal } from '@/hooks/useReveal';
+import MessengerIcon from '@/components/MessengerIcon';
 
 /**
  * RedCode 關於我們（design-system.md §P4）
@@ -8,14 +9,17 @@ import { useReveal } from '@/hooks/useReveal';
  * 2. 品牌故事：時間線直排，節點用金色四角星（資料源自 brief.md 真實品牌事實）
  * 3. Glo Glo 專區：gloglo-1/2/3 duotone 相片 + 寵粉文化
  * 4. 點解揀我哋：大字編號 01–04（DM Mono --purple-text，唔用 icon 卡）
- * 5. 聯絡區：三條全寬列（WhatsApp／Facebook／土瓜灣），hover 整行 --space-2 亮起
- * 6. WhatsApp + Facebook CTA 區塊
+ * 5. 聯絡區：全寬列（WhatsApp／Messenger／Facebook），hover 整行 --space-2 亮起
+ * 6. Facebook + Messenger + WhatsApp CTA 區塊
+ * 2026-08-06（Glo 要求）：搵我哋加 Messenger 列＋底部 CTA 加 Messenger 掣，一撳直開 m.me 對話
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼（brief：聯絡方法未能確認，用佔位先）
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 const WHATSAPP_DISPLAY = '+852 5483 5368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
+// Facebook Messenger 深層連結：撳咗直開 RedCode 專頁對話
+const MESSENGER_URL = 'https://m.me/redcodexhk';
 
 /* ---------- §P4 金色四角星（時間線節點） ---------- */
 function GoldStar({ className }: { className?: string }) {
@@ -329,6 +333,31 @@ export default function About() {
               <span className="font-mono text-lg text-success md:text-xl">{WHATSAPP_DISPLAY}</span>
             </a>
 
+            {/* Messenger 列（2026-08-06 Glo 要求）：Facebook 專頁 inbox，一撳直開對話 */}
+            <a
+              href={MESSENGER_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex flex-col gap-4 px-6 py-6 transition-colors duration-200 hover:bg-space-2 md:flex-row md:items-center md:justify-between md:px-10"
+              style={{ borderColor: 'var(--space-line)' }}
+            >
+              <div className="flex items-center gap-4">
+                <span
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border"
+                  style={{ borderColor: '#4da3ff', color: '#4da3ff' }}
+                >
+                  <MessengerIcon size={20} />
+                </span>
+                <div>
+                  <p className="text-lg font-bold text-txt-1">Messenger 私訊對話</p>
+                  <p className="text-sm text-txt-3">Facebook 專頁 inbox，一撳直開對話</p>
+                </div>
+              </div>
+              <span className="font-mono text-lg md:text-xl" style={{ color: '#4da3ff' }}>
+                m.me/redcodexhk
+              </span>
+            </a>
+
             {/* Facebook 列 */}
             <a
               href={FACEBOOK_URL}
@@ -369,7 +398,7 @@ export default function About() {
           </h2>
           <p className="mx-auto mt-4 max-w-md text-[15px] leading-[1.75] text-txt-2">
             追蹤 Facebook 專頁就唔會錯過任何一場；
-            有咩想問，WhatsApp 隨時搵到 Glo Glo 團隊。
+            有咩想問，WhatsApp 或 Messenger 隨時搵到 Glo Glo 團隊。
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <a
@@ -380,6 +409,15 @@ export default function About() {
             >
               <Facebook size={18} aria-hidden="true" />
               去 Facebook 追蹤
+            </a>
+            <a
+              href={MESSENGER_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-messenger"
+            >
+              <MessengerIcon size={18} />
+              Messenger 私訊
             </a>
             <a
               href={WHATSAPP_URL}
