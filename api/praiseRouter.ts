@@ -5,6 +5,7 @@ import { getDb } from "./queries/connection";
 import { praiseWall } from "@db/schema";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
+import { requestApprovalIfStaff } from "./approvalGuard";
 
 /**
  * 客戶打卡牆（Star Girls）—— 首頁橫 scroll 相片牆
@@ -39,6 +40,16 @@ export const praiseRouter = createRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "praise.create",
+          payload: { input },
+          summary: `打卡牆新增相片${input.caption?.trim() ? `「${input.caption.trim()}」` : ""}`,
+        });
+        if (pending) return pending;
+      }
       const [{ id }] = await db
         .insert(praiseWall)
         .values({
@@ -76,6 +87,16 @@ export const praiseRouter = createRouter({
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "打卡相不存在" });
       }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "praise.update",
+          payload: { input, before: existing },
+          summary: `修改打卡牆相片 #${input.id}${existing.caption ? `「${existing.caption}」` : ""}${input.isActive === false ? "（下架）" : ""}`,
+        });
+        if (pending) return pending;
+      }
       await db
         .update(praiseWall)
         .set({
@@ -106,6 +127,16 @@ export const praiseRouter = createRouter({
       });
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "打卡相不存在" });
+      }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "praise.remove",
+          payload: { input, before: existing },
+          summary: `刪除打卡牆相片 #${input.id}${existing.caption ? `「${existing.caption}」` : ""}`,
+        });
+        if (pending) return pending;
       }
       await db.delete(praiseWall).where(eq(praiseWall.id, input.id));
       void logAudit({

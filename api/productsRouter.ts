@@ -6,6 +6,7 @@ import { cartItems, orderItems, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
+import { requestApprovalIfStaff } from "./approvalGuard";
 
 const categorySchema = z.enum(PRODUCT_CATEGORY_VALUES as [string, ...string[]]);
 
@@ -189,6 +190,16 @@ export const productsRouter = createRouter({
       if (dup) {
         throw new TRPCError({ code: "CONFLICT", message: "貨號已存在" });
       }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "product.create",
+          payload: { input },
+          summary: `新增商品「${input.name}」（${input.sku}，HK$${input.discountPrice ?? input.price}）`,
+        });
+        if (pending) return pending;
+      }
       // 多相：畀咗 photos 就用佢（第一張＝封面同步落 image 欄）；冇就由 image 欄做唯一一張
       const gallery = input.photos?.length ? input.photos : [input.image];
       const [{ id }] = await db
@@ -260,6 +271,16 @@ export const productsRouter = createRouter({
         }
         data.image = data.photos[0];
       }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "product.update",
+          payload: { input, before: existing },
+          summary: `修改商品 #${input.id}「${existing.name}」（${existing.sku}）`,
+        });
+        if (pending) return pending;
+      }
       await db.update(products).set(data).where(eq(products.id, id));
       void logAudit({
         actorId: ctx.user.userId,
@@ -284,6 +305,17 @@ export const productsRouter = createRouter({
       });
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在" });
+      }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
+      // （攔喺購物車清理之前：pending 期間唔會有任何副作用；有訂單紀錄嘅擋刪檢查留返批准執行時做）
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "product.remove",
+          payload: { input, before: existing },
+          summary: `刪除商品 #${input.id}「${existing.name}」（${existing.sku}）`,
+        });
+        if (pending) return pending;
       }
       // 購物車紀錄係即興嘢（唔係訂單歷史），直接清走，唔做刪除嘅絆腳石
       await db.delete(cartItems).where(eq(cartItems.productId, input.id));

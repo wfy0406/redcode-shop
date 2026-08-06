@@ -6,6 +6,7 @@ import { cartItems, orderItems, orders, paymentProofs, users, wmsSyncLog } from 
 import { createRouter, adminProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { hashPassword } from "./auth";
+import { requestApprovalIfStaff } from "./approvalGuard";
 
 /**
  * 會員列表 —— staff（員工）＋ admin 可用（2026-07-29 起：員工都可以睇同改會員資料）
@@ -164,6 +165,25 @@ export const membersRouter = createRouter({
         if (dup && dup.id !== input.id) {
           throw new TRPCError({ code: "CONFLICT", message: "呢個 Email 已經綁咗其他帳號" });
         }
+      }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 唔直接執行，開審批單等主管/管理員批准
+      if (ctx.user.role === "staff") {
+        const [before] = await db
+          .select({
+            name: users.name, phone: users.phone, email: users.email,
+            address: users.address, age: users.age, birthMonth: users.birthMonth,
+            marketingOptIn: users.marketingOptIn,
+          })
+          .from(users)
+          .where(eq(users.id, input.id))
+          .limit(1);
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "member.update",
+          payload: { input, before: before ?? null },
+          summary: `修改會員 #${input.id}「${target.name}」資料`,
+        });
+        if (pending) return pending;
       }
       const data: Partial<typeof users.$inferInsert> = {};
       if (input.name !== undefined) data.name = input.name;

@@ -6,6 +6,7 @@ import { getDb } from "./queries/connection";
 import { orders, promoCodes, users, type PromoCode } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
+import { requestApprovalIfStaff } from "./approvalGuard";
 import { sendMarketingEmail as deliverMarketingEmail } from "./email";
 
 export const PROMO_KIND_VALUES = ["percent", "fixed"] as const;
@@ -149,6 +150,16 @@ export const promoRouter = createRouter({
       if (dup) {
         throw new TRPCError({ code: "CONFLICT", message: "優惠碼已存在" });
       }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "promoCode.create",
+          payload: { input },
+          summary: `新增優惠碼 ${code}（${input.kind === "percent" ? `${input.value}% 折扣` : `減 HK$${input.value}`}）`,
+        });
+        if (pending) return pending;
+      }
       const [{ id }] = await db
         .insert(promoCodes)
         .values({
@@ -194,6 +205,16 @@ export const promoRouter = createRouter({
       });
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "優惠碼唔存在" });
+      }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "promoCode.update",
+          payload: { input, before: existing },
+          summary: `修改優惠碼 ${existing.code}${fields.isActive === false ? "（停用）" : fields.isActive === true ? "（重新啟用）" : ""}`,
+        });
+        if (pending) return pending;
       }
       const data: Partial<typeof promoCodes.$inferInsert> = {};
       if (fields.code !== undefined) data.code = normalizePromoCode(fields.code);
@@ -333,6 +354,16 @@ export const promoRouter = createRouter({
           code: "BAD_REQUEST",
           message: "暫時冇會員同意接收推廣資訊，冇人可以寄",
         });
+      }
+      // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先寄
+      {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "promo.sendMarketingEmail",
+          payload: { input, audienceCount: audience.length },
+          summary: `寄促銷電郵「${input.subject}」畀 ${audience.length} 位會員`,
+        });
+        if (pending) return pending;
       }
       let sent = 0;
       let failed = 0;

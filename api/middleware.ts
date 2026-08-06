@@ -44,8 +44,23 @@ const requireAdmin = t.middleware(async ({ ctx, next }) => {
   return next({ ctx: { ...ctx, user } });
 });
 
+const requireSupervisor = t.middleware(async ({ ctx, next }) => {
+  const user = await userFromAuthHeader(ctx.req.headers.get("authorization"));
+  if (!user) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "請先登入" });
+  }
+  // 三級制（2026-08-06）：審批中心只有主管＋管理員入得（員工唔批得單）
+  if (user.role !== "supervisor" && user.role !== "admin") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "需要主管或管理員權限" });
+  }
+  return next({ ctx: { ...ctx, user } });
+});
+
 /** Requires a valid Bearer JWT with role staff or admin; injects ctx.user. */
 export const staffProcedure = t.procedure.use(requireStaff);
+
+/** Requires a valid Bearer JWT with role supervisor or admin; injects ctx.user. */
+export const supervisorProcedure = t.procedure.use(requireSupervisor);
 
 /** Requires a valid Bearer JWT with role admin only; injects ctx.user. */
 export const adminProcedure = t.procedure.use(requireAdmin);
