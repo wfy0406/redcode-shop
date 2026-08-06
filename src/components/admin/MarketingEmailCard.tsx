@@ -58,6 +58,11 @@ export default function MarketingEmailCard({
   const sendMutation = trpc.promo.sendMarketingEmail.useMutation({
     onSuccess: (r) => {
       setConfirming(false);
+      // 三級制（2026-08-06）：員工提交寄信會進入審批，主管/管理員批准先真係寄出
+      if (r && 'pendingApproval' in r) {
+        toast('已提交審批，主管/管理員批准後先會寄出 ⏳', 'info');
+        return;
+      }
       if (r && r.failed === 0) {
         toast(`已寄出促銷電郵畀 ${r.sent} 位會員 ✓`, 'success');
         setSubject('');

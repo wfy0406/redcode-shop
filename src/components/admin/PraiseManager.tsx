@@ -60,7 +60,13 @@ function PraiseRow({
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   const updateMutation = trpc.praise.update.useMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if ((result as { pendingApproval?: boolean } | null)?.pendingApproval) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast('已儲存打卡相', 'success');
       void utils.praise.adminList.invalidate();
     },
@@ -68,7 +74,13 @@ function PraiseRow({
   });
 
   const removeMutation = trpc.praise.remove.useMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if ((result as { pendingApproval?: boolean } | null)?.pendingApproval) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast('已刪除打卡相', 'info');
       void utils.praise.adminList.invalidate();
     },
@@ -213,7 +225,13 @@ export default function PraiseManager({
   const [uploading, setUploading] = useState(false);
 
   const createMutation = trpc.praise.create.useMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if ((result as { pendingApproval?: boolean } | null)?.pendingApproval) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast('已加入打卡牆 ♡', 'success');
       setImage('');
       setCaption('');

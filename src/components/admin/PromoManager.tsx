@@ -58,7 +58,13 @@ export default function PromoManager({
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
 
   const createMutation = trpc.promo.create.useMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if ((result as { pendingApproval?: boolean } | null)?.pendingApproval) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast(`已新增優惠碼「${form.code.trim().toUpperCase()}」`, 'success');
       setForm(initialForm);
       setFormError(null);
@@ -68,7 +74,13 @@ export default function PromoManager({
   });
 
   const toggleMutation = trpc.promo.update.useMutation({
-    onSuccess: (_data: unknown, vars: { id: number; isActive?: boolean }) => {
+    onSuccess: (result: unknown, vars: { id: number; isActive?: boolean }) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if ((result as { pendingApproval?: boolean } | null)?.pendingApproval) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast(vars.isActive ? '已啟用優惠碼' : '已停用優惠碼', 'success');
       void utils.promo.list.invalidate();
     },
@@ -211,7 +223,7 @@ export default function PromoManager({
               id="np-usagelimit"
               inputMode="numeric"
               value={form.usageLimit}
-              onChange={(e) => set('usageLimit')(e.target.value)}
+              onChange={(e) => set('usagelimit' in form ? 'usageLimit' : 'usageLimit')(e.target.value)}
               className={`${inputCls} font-mono`}
               placeholder="留空即不限次數"
             />
