@@ -172,6 +172,13 @@ export default function ProductManager({
 
   const createMutation = trpc.products.create.useMutation({
     onSuccess: (created) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if (created && 'pendingApproval' in created) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        resetForm();
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast(`已新增商品「${created?.name ?? ''}」`, 'success');
       resetForm();
       setFormError(null);
@@ -183,6 +190,14 @@ export default function ProductManager({
   // 編輯模式 submit（products.update 全欄位）
   const editMutation = trpc.products.update.useMutation({
     onSuccess: (updated) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if (updated && 'pendingApproval' in updated) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        resetForm();
+        setEditingId(null);
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast(`已更新商品「${updated?.name ?? ''}」`, 'success');
       resetForm();
       setEditingId(null);
@@ -207,13 +222,27 @@ export default function ProductManager({
       toast(err.message || '更新失敗', 'error');
     },
     onSuccess: (updated) => {
+      // 三級制（2026-08-06）：員工提交會進入審批——樂觀更新咗嘅 cache 要 invalidate 還原
+      if (updated && 'pendingApproval' in updated) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        void utils.approvals.myRequests.invalidate();
+        invalidateProducts();
+        return;
+      }
       toast(updated?.isActive ? '已重新上架' : '已下架（列表 dim 顯示，可以隨時再上架）', 'success');
       invalidateProducts();
     },
   });
 
   const removeMutation = trpc.products.remove.useMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if ((result as { pendingApproval?: boolean } | null)?.pendingApproval) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        setConfirmRemoveId(null);
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast('已刪除商品', 'info');
       setConfirmRemoveId(null);
       invalidateProducts();
@@ -227,6 +256,12 @@ export default function ProductManager({
   // 類別即時修改（列表行內 dropdown）
   const categoryMutation = trpc.products.update.useMutation({
     onSuccess: (updated) => {
+      // 三級制（2026-08-06）：員工提交會進入審批，唔係即時生效
+      if (updated && 'pendingApproval' in updated) {
+        toast('已提交審批，主管/管理員批准後先生效 ⏳', 'info');
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast(`已將「${updated?.name ?? ''}」歸類做${productCategoryLabel(updated?.category)}`, 'success');
       invalidateProducts();
     },
