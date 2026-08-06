@@ -13,7 +13,7 @@ type AuthUser = {
   id: number;
   name: string;
   phone: string;
-  role: "member" | "staff" | "admin";
+  role: "member" | "staff" | "supervisor" | "admin";
   email?: string | null;
   address?: string | null;
   age?: number | null;
@@ -110,7 +110,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return {
       user,
       isLoading: hasToken && meQuery.isLoading,
-      isStaff: !!user && (user.role === "staff" || user.role === "admin"),
+      // 三級制（2026-08-06）：supervisor 主管都係後台用戶
+      isStaff: !!user && (user.role === "staff" || user.role === "supervisor" || user.role === "admin"),
       login,
       register,
       loginWithGoogle,

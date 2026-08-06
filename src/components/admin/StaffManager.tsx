@@ -17,6 +17,8 @@ const inputCls =
 
 const ROLE_META: Record<string, { label: string; color: string }> = {
   admin: { label: '管理員', color: 'var(--gold)' },
+  // 三級制（2026-08-06）：主管＝原有員工權限
+  supervisor: { label: '主管', color: '#b79cff' },
   staff: { label: '員工', color: 'var(--success)' },
   member: { label: '會員', color: 'var(--text-3)' },
 };
@@ -153,8 +155,8 @@ export default function StaffManager({
               onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
               className={inputCls}
             >
-              <option value="staff">員工（可以入後台審批訂單、管理商品）</option>
-              <option value="admin">管理員（員工權限 + 管理帳號）</option>
+              <option value="supervisor">主管（可以入後台審批訂單、管理商品）</option>
+              <option value="admin">管理員（主管權限 + 管理帳號）</option>
               <option value="member">會員（普通客，唔入得後台）</option>
             </select>
           </div>
@@ -230,7 +232,7 @@ export default function StaffManager({
                     style={{ borderColor: meta.color, color: meta.color }}
                   >
                     <option value="member">會員</option>
-                    <option value="staff">員工</option>
+                    <option value="supervisor">主管</option>
                     <option value="admin">管理員</option>
                   </select>
                   {/* 刪除（自己唔刪得，兩步確認） */}
