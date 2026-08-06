@@ -80,6 +80,16 @@ export const approvalRequests = pgTable("approvalRequests", {
   reviewedAt: timestamp("reviewedAt"),
 });
 
+// 商品圖片檔案庫（2026-08-06 Glo 要求：WMS 補舊訂單圖用——商品就算日後刪咗，
+// /api/products/:sku/images 都要繼續返到佢最後嘅圖；products 表唔夠，因為 remove 會刪 row。
+// 商品 create/update/remove 時歸檔 SKU → 圖；圖片檔案本身從來唔會喺 disk 刪除）
+export const productImageArchive = pgTable("productImageArchive", {
+  sku: varchar("sku", { length: 64 }).primaryKey(),
+  imageUrls: jsonb("imageUrls").notNull(),
+  productName: varchar("productName", { length: 255 }),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
   sku: varchar("sku", { length: 64 }).notNull().unique(),
@@ -262,3 +272,4 @@ export type SiteSetting = typeof siteSettings.$inferSelect;
 export type WmsSyncLog = typeof wmsSyncLog.$inferSelect;
 export type PasswordResetCode = typeof passwordResetCodes.$inferSelect;
 export type AuditLogEntry = typeof auditLog.$inferSelect;
+export type ProductImageArchive = typeof productImageArchive.$inferSelect;

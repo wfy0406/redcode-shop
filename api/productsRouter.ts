@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, eq, gt, isNull, like, or, desc } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { cartItems, orderItems, products } from "@db/schema";
+import { cartItems, orderItems, productImageArchive, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
@@ -23,6 +23,34 @@ function notAutoDelisted() {
 }
 
 // ===== 更新日誌：新舊值對比（中文欄位名＋舊值 → 新值） =====
+
+/**
+ * 商品圖歸檔（2026-08-06 Glo 要求：WMS 補舊訂單圖嘅保險）。
+ * 商品 create/update/remove 時將 SKU → 圖 對照落 productImageArchive；
+ * 商品就算日後刪咗，/api/products/:sku/images 都可以喺檔案庫攞返最後嘅圖。
+ * 歸檔失敗唔阻主流程（最壞情況＝回復未加保險前嘅行為），所以 catch 咗淨 log。
+ */
+async function archiveProductImages(
+  sku: string,
+  name: string | null,
+  image: string | null,
+  photos: string[] | null,
+): Promise<void> {
+  try {
+    const urls = photos && photos.length ? photos : image ? [image] : [];
+    if (urls.length === 0) return;
+    const db = getDb();
+    await db
+      .insert(productImageArchive)
+      .values({ sku, productName: name, imageUrls: urls, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: productImageArchive.sku,
+        set: { imageUrls: urls, productName: name, updatedAt: new Date() },
+      });
+  } catch (e) {
+    console.error("[productImageArchive] archive failed:", e);
+  }
+}
 
 /** 欄位中文名（日誌顯示用） */
 const PRODUCT_FIELD_LABELS: Record<string, string> = {
@@ -222,6 +250,8 @@ export const productsRouter = createRouter({
           delistAt: input.delistAt ?? null,
         })
         .returning({ id: products.id });
+      // 圖片歸檔：WMS 補舊單圖保險（商品日後刪咗都查得到）
+      await archiveProductImages(input.sku, input.name, gallery[0], gallery);
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
@@ -282,6 +312,18 @@ export const productsRouter = createRouter({
         if (pending) return pending;
       }
       await db.update(products).set(data).where(eq(products.id, id));
+      // 圖片歸檔：以更新後嘅最新圖為準（WMS 補舊單圖保險）
+      const refreshed = await db.query.products.findFirst({
+        where: eq(products.id, id),
+      });
+      if (refreshed) {
+        await archiveProductImages(
+          refreshed.sku,
+          refreshed.name,
+          refreshed.image,
+          refreshed.photos,
+        );
+      }
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
@@ -293,7 +335,7 @@ export const productsRouter = createRouter({
           { ...data } as Record<string, unknown>,
         )}`,
       });
-      return db.query.products.findFirst({ where: eq(products.id, id) });
+      return refreshed;
     }),
 
   remove: staffProcedure
@@ -331,6 +373,14 @@ export const productsRouter = createRouter({
           message: `呢件商品有 ${orderCount} 張訂單紀錄，唔可以直接刪除。想徹底刪走：先去「訂單管理」刪埋相關訂單再返嚟刪；想留返訂單紀錄：用「下架」代替（客人即刻睇唔到）。`,
         });
       }
+      // 圖片歸檔（刪除前最後一步）：商品刪咗之後，/api/products/:sku/images
+      // 會喺檔案庫攞返呢啲圖，WMS 補舊訂單嘅圖唔會斷（2026-08-06 Glo 要求）
+      await archiveProductImages(
+        existing.sku,
+        existing.name,
+        existing.image,
+        existing.photos,
+      );
       await db.delete(products).where(eq(products.id, input.id));
       void logAudit({
         actorId: ctx.user.userId,

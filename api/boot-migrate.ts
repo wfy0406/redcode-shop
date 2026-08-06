@@ -219,6 +219,15 @@ CREATE TABLE IF NOT EXISTS "approvalRequests" (
 CREATE INDEX IF NOT EXISTS approvalrequests_status_idx ON "approvalRequests" (status);
 CREATE INDEX IF NOT EXISTS approvalrequests_requester_idx ON "approvalRequests" ("requesterId");
 
+-- 商品圖片檔案庫（2026-08-06 Glo 要求：WMS 補舊訂單圖用——商品刪咗都仲要查到圖）：
+-- 見 schema.ts productImageArchive 註解；由 products create/update/remove 歸檔維護
+CREATE TABLE IF NOT EXISTS "productImageArchive" (
+  sku varchar(64) PRIMARY KEY,
+  "imageUrls" jsonb NOT NULL,
+  "productName" varchar(255),
+  "updatedAt" timestamp NOT NULL DEFAULT now()
+);
+
 -- 2026-08-04（Glo 要求）：迎新優惠碼 WELLCOMEYOU——全單 92 折（percent 8 ＝ 減 8%）、
 -- 無最低消費門檻、每個帳號限用一次；ON CONFLICT 唔郁後台之後嘅任何改動（停用/改規則都唔會被覆蓋）
 INSERT INTO "promoCodes" ("code", "kind", "value", "minSpend", "perUserLimit", "usedCount", "isActive")
