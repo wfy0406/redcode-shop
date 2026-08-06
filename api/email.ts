@@ -768,3 +768,45 @@ export async function sendMarketingEmail(args: {
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
+
+/** ⑥ 訂單自動取消（2026-08-06 Glo 要求）：落單滿 48 小時未上傳付款截圖，系統自動取消後寄出 */
+export async function sendOrderCancelledEmail(args: {
+  to: string;
+  name: string;
+  orderNo: string;
+  total: number;
+  discountAmount: number;
+  createdAt: Date | string;
+  items: OrderEmailItem[];
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">你嘅訂單因為落單後超過 <b>48 小時</b>仍未收到付款截圖，系統已經自動取消，貨品已放返出嚟發售：</p>
+      ${infoBox([
+        ["訂單編號", orderNo],
+        ["落單時間", fmtDateHK(args.createdAt)],
+        ["取消原因", `<span style="color:${BRAND_PINK};">超過 48 小時未收到付款截圖</span>`],
+      ])}
+      ${itemsTable(args.items)}
+      ${totalsBlock(args.total, args.discountAmount)}
+      <p style="margin:22px 0 0;">如果你其實已經付咗款，請盡快聯絡我哋提供付款證明，同事會幫你跟進；想買返嘅話，亦可以隨時再落單。</p>
+      ${ctaButton("再去逛逛", `${siteUrl()}/#/products`)}
+      ${note("呢張訂單已經取消，唔使再付款。多謝你對 RedCode 嘅支持 ♥")}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】訂單 ${args.orderNo} 已取消 — 超過 48 小時未收到付款截圖`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo} 已取消（超過 48 小時未收到付款截圖）`,
+        kicker: "REDCODE · 訂單通知",
+        title: "訂單已取消",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌取消信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}

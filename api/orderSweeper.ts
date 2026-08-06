@@ -1,12 +1,14 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { orders, products } from "@db/schema";
+import { orders, products, users } from "@db/schema";
 import { logAudit } from "./audit";
+import { sendOrderCancelledEmail } from "./email";
 
 /**
  * 待付款訂單自動取消（2026-07-30 Glo 規則；2026-08-04 起收緊做 2 天）
  * 客人落單後 2 天（48 小時）都未上傳付款截圖（status 仲係 pending_payment），
- * 系統自動將張單轉做「已取消」＋逐行加返庫存（同後台人手取消同一套做法），
+ * 系統自動將張單轉做「已取消」＋逐行加返庫存（同後台人手取消同一套做法）
+ * ＋寄訂單取消信畀會員（有綁 email 先寄；2026-08-06 Glo 要求），
  * 審計日誌留底（actor＝系統）。
  * 已上傳截圖嘅單唔受影響：佢哋 status 一早轉咗 payment_review。
  * 開機時即刻掃一次，之後每 30 分鐘掃一次；任何失敗淨係 log，唔會冧 server。
@@ -44,13 +46,40 @@ export async function sweepExpiredPendingOrders(now = new Date()): Promise<numbe
         }
       });
       cancelled += 1;
+      // 訂單取消信（2026-08-06 Glo 要求）：會員有綁 email 先寄；寄信結果寫入日誌 detail，方便後台排查
+      let emailNote = "";
+      const member = await db.query.users.findFirst({
+        where: eq(users.id, order.userId),
+        columns: { name: true, email: true },
+      });
+      if (member?.email) {
+        const result = await sendOrderCancelledEmail({
+          to: member.email,
+          name: member.name,
+          orderNo: order.orderNo,
+          total: order.total,
+          discountAmount: order.discountAmount,
+          createdAt: order.createdAt,
+          items: order.items.map((it) => ({
+            productName: it.productName,
+            size: it.size,
+            price: it.price,
+            quantity: it.quantity,
+          })),
+        });
+        emailNote = result.ok
+          ? `，取消信已寄出至 ${member.email}`
+          : `，取消信寄出失敗（${result.error ?? "未知原因"}）`;
+      } else {
+        emailNote = "，會員冇綁 Email，冇寄取消信";
+      }
       void logAudit({
         actorId: null,
         actorRole: "system",
         action: "order.autoCancel",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `訂單 ${order.orderNo} 落單滿 2 天（48 小時）未上傳付款截圖，系統自動取消（庫存已加返）`,
+        detail: `訂單 ${order.orderNo} 落單滿 2 天（48 小時）未上傳付款截圖，系統自動取消（庫存已加返）${emailNote}`,
       });
     } catch (e) {
       console.error(`[sweeper] 取消訂單 ${order.orderNo} 失敗:`, e);

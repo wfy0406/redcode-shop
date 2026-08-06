@@ -42,20 +42,21 @@ export async function forwardMemberToWms(userId: number): Promise<void> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), MEMBER_SYNC_TIMEOUT_MS);
   try {
+    // 可選欄位（email/age）有先送：WMS 個 zod schema 係 optional 但唔接受 null，
+    // 送 null 會俾佢擋（2026-08-06 Render log 實測 "Invalid input: expected string, received null"）
+    const payload: Record<string, unknown> = {
+      apiKey: process.env.WMS_API_KEY,
+      phone: user.phone,
+      name: user.name,
+      registeredAt: hktDate(user.createdAt),
+      marketingOptIn: user.marketingOptIn ?? false,
+    };
+    if (user.email) payload.email = user.email;
+    if (user.age != null) payload.age = user.age;
     const resp = await fetch(`${wmsBaseUrl()}/api/trpc/order.receiveMember`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        json: {
-          apiKey: process.env.WMS_API_KEY,
-          phone: user.phone,
-          name: user.name,
-          email: user.email ?? null,
-          age: user.age ?? null,
-          registeredAt: hktDate(user.createdAt),
-          marketingOptIn: user.marketingOptIn ?? false,
-        },
-      }),
+      body: JSON.stringify({ json: payload }),
       signal: ctrl.signal,
     });
     const data = (await resp.json().catch(() => null)) as {
@@ -77,7 +78,7 @@ export async function forwardMemberToWms(userId: number): Promise<void> {
 
 /**
  * 初次接駁一次性回填（2026-08-06 WMS 建議：現有會員逐個 call 一次，phone upsert 唔會重複）。
- * Server 開機時跑：siteSettings 有 wmsMemberBackfillAt 旗標 → 做過就 skip；
+ * Server 開機時跑：siteSettings 有 wmsMemberBackfillV2At 旗標 → 做過就 skip；
  * 冇就將全部 role=member 會員逐個推落 WMS，做完落旗標。
  * 推嘅邏輯共用 forwardMemberToWms（自動 skip g- 佔位電話；失敗淨 log 唔阻下一個），
  * 所以成個回填係 best-effort＋idempotent，就算中途冧，下次開機會再試晒全部（upsert 唔怕重複）。
@@ -85,8 +86,10 @@ export async function forwardMemberToWms(userId: number): Promise<void> {
 export async function backfillMembersToWmsOnce(): Promise<void> {
   if (!process.env.WMS_API_KEY || process.env.WMS_SYNC_DISABLED === "1") return;
   const db = getDb();
+  // 旗標 v2（2026-08-06）：舊版回填過一次，但嗰版 payload 會送 null email/age，
+  // 被 WMS zod 擋咗一批；改咗 payload 之後要用新旗標再回填一次，補返嗰批失敗嘅會員
   const done = await db.query.siteSettings.findFirst({
-    where: eq(siteSettings.key, "wmsMemberBackfillAt"),
+    where: eq(siteSettings.key, "wmsMemberBackfillV2At"),
   });
   if (done) return; // 已經回填過，開機直接 skip
   const members = await db.query.users.findMany({
@@ -106,7 +109,7 @@ export async function backfillMembersToWmsOnce(): Promise<void> {
   }
   await db
     .insert(siteSettings)
-    .values({ key: "wmsMemberBackfillAt", value: new Date().toISOString() })
+    .values({ key: "wmsMemberBackfillV2At", value: new Date().toISOString() })
     .onConflictDoNothing();
   console.log(`[wms] 會員初次回填完成：${count} 位已推（失敗嘅睇上面 log）`);
 }
