@@ -203,6 +203,22 @@ CREATE TABLE IF NOT EXISTS "passwordResetCodes" (
 );
 CREATE INDEX IF NOT EXISTS prc_email_created ON "passwordResetCodes" (email, "createdAt" DESC);
 
+-- 員工敏感操作審批請求（2026-08-06 Glo 要求）：見 schema.ts approvalRequests 註解
+CREATE TABLE IF NOT EXISTS "approvalRequests" (
+  id serial PRIMARY KEY,
+  "requesterId" integer NOT NULL,
+  action varchar(64) NOT NULL,
+  payload jsonb NOT NULL,
+  summary text NOT NULL,
+  status varchar(16) NOT NULL DEFAULT 'pending',
+  "reviewerId" integer,
+  "reviewNote" text,
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "reviewedAt" timestamp
+);
+CREATE INDEX IF NOT EXISTS approvalrequests_status_idx ON "approvalRequests" (status);
+CREATE INDEX IF NOT EXISTS approvalrequests_requester_idx ON "approvalRequests" ("requesterId");
+
 -- 2026-08-04（Glo 要求）：迎新優惠碼 WELLCOMEYOU——全單 92 折（percent 8 ＝ 減 8%）、
 -- 無最低消費門檻、每個帳號限用一次；ON CONFLICT 唔郁後台之後嘅任何改動（停用/改規則都唔會被覆蓋）
 INSERT INTO "promoCodes" ("code", "kind", "value", "minSpend", "perUserLimit", "usedCount", "isActive")
@@ -219,6 +235,9 @@ export async function ensureDatabase(): Promise<void> {
   });
   try {
     console.log("[boot-migrate] ensuring tables...");
+    // 三級員工制（2026-08-06 Glo 要求）：role enum 加 supervisor。
+    // ADD VALUE 唔可以同其他 SQL 夾埋一個 query（implicit transaction 會炸），要獨立跑。
+    await pool.query(`ALTER TYPE role ADD VALUE IF NOT EXISTS 'supervisor';`);
     await pool.query(DDL);
     console.log("[boot-migrate] tables ok");
   } finally {

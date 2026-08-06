@@ -8,6 +8,7 @@ import {
   integer,
   boolean,
   bigint,
+  jsonb,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -59,6 +60,24 @@ export const users = pgTable("users", {
   marketingPromptedAt: timestamp("marketingPromptedAt"),
   role: roleEnum("role").notNull().default("member"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
+// 員工敏感操作審批請求（2026-08-06 Glo 要求）：
+// 員工（staff）喺後台做五類敏感操作（會員修改／促銷電郵／打卡牆／商品增改刪／優惠碼增停）時
+// 唔會即時執行，會喺度開一張 pending 單；主管/管理員喺審批中心 approve 先真正執行
+// （以審批人身份經 tRPC createCaller call 返原 mutation），reject 就唔執行。
+// payload 入面 input＝要執行嘅入參，before＝現狀快照（修改/刪除類先有，審批預覽對照用）。
+export const approvalRequests = pgTable("approvalRequests", {
+  id: serial("id").primaryKey(),
+  requesterId: integer("requesterId").notNull(),
+  action: varchar("action", { length: 64 }).notNull(),
+  payload: jsonb("payload").notNull(),
+  summary: text("summary").notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("pending"),
+  reviewerId: integer("reviewerId"),
+  reviewNote: text("reviewNote"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  reviewedAt: timestamp("reviewedAt"),
 });
 
 export const products = pgTable("products", {
@@ -230,7 +249,9 @@ export const auditLog = pgTable("auditLog", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
-export type User = typeof users.$inferSelect;export type Product = typeof products.$inferSelect;
+export type User = typeof users.$inferSelect;
+export type ApprovalRequest = typeof approvalRequests.$inferSelect;
+export type Product = typeof products.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
