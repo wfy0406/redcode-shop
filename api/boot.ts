@@ -147,6 +147,11 @@ if (env.isProduction) {
   // 開機自動建表 + 種子數據（失敗唔會冧 server，淨係 log）
   ensureDatabase().catch((e) => console.error("[boot-migrate] failed:", e));
 
+  // B-2 初次接駁（2026-08-06 WMS 建議）：一次性回填現有會員落 WMS；
+  // siteSettings 旗標記低做過，之後開機自動 skip（lazy import 同其他模組一致）
+  const { backfillMembersToWmsOnce } = await import("./wmsMemberSync");
+  backfillMembersToWmsOnce().catch((e) => console.error("[wms] member backfill failed:", e));
+
   // 待付款訂單 48 小時未傳付款截圖 → 自動取消（開機掃一次，之後每 30 分鐘掃；失敗淨係 log）
   const { startOrderSweeper } = await import("./orderSweeper");
   startOrderSweeper();
