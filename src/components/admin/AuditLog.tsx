@@ -48,11 +48,16 @@ const ACTION_LABEL: Record<string, string> = {
   'staff.create': '開新帳號',
   'staff.updateRole': '改權限',
   'staff.remove': '刪除帳號',
+  'approval.request': '提交審批請求',
+  'approval.approve': '批准審批',
+  'approval.reject': '拒絕審批',
+  'promo.marketingEmail': '寄促銷電郵',
 };
 
 const ROLE_META: Record<string, { label: string; color: string }> = {
   admin: { label: '管理員', color: 'var(--gold)' },
   staff: { label: '員工', color: 'var(--lavender)' },
+  supervisor: { label: '主管', color: '#b79cff' },
   member: { label: '會員', color: 'var(--starlight)' },
   system: { label: '系統', color: 'var(--text-3)' },
 };
@@ -63,6 +68,7 @@ const FILTERS: { key: string; label: string; match: (a: string) => boolean }[] =
   { key: 'member', label: '會員', match: (a) => a.startsWith('member.') },
   { key: 'product', label: '商品', match: (a) => a.startsWith('product.') },
   { key: 'staff', label: '帳號', match: (a) => a.startsWith('staff.') },
+  { key: 'approval', label: '審批', match: (a) => a.startsWith('approval.') },
   { key: 'other', label: '其他', match: (a) => /^(promo|praise|setting)\./.test(a) },
 ];
 

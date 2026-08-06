@@ -155,6 +155,7 @@ export default function StaffManager({
               onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
               className={inputCls}
             >
+              <option value="staff">員工（入後台操作，敏感操作需主管審批）</option>
               <option value="supervisor">主管（可以入後台審批訂單、管理商品）</option>
               <option value="admin">管理員（主管權限 + 管理帳號）</option>
               <option value="member">會員（普通客，唔入得後台）</option>
@@ -232,6 +233,7 @@ export default function StaffManager({
                     style={{ borderColor: meta.color, color: meta.color }}
                   >
                     <option value="member">會員</option>
+                    <option value="staff">員工</option>
                     <option value="supervisor">主管</option>
                     <option value="admin">管理員</option>
                   </select>
