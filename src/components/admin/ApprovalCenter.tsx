@@ -1,6 +1,6 @@
 /**
  * 審批中心（2026-08-06 Glo 要求）：員工（staff）嘅敏感操作要主管/管理員批准先生效
- * - 主管/管理員：「待審批」（完整預覽＋批准/拒絕）＋「處理紀錄」（最近 50）
+ * - 主管/管理員：「待審批」（完整預覽＋批准/拒絕）＋「處理紀錄」（每 50 條一頁，新嘅排先）
  * - 員工：「我嘅審批請求」（最近 20，狀態＋拒絕原因）
  *
  * 預覽係重中之重（Glo 原話：審批每個細節都好重要，要一睇就明重點）：
@@ -9,7 +9,7 @@
  *   淨係顯示真係改咗嘅欄（黃色 highlight 新值）
  * - 刪除類：紅色警告＋現狀全部資料
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import Lightbox from '@/components/admin/Lightbox';
@@ -476,6 +476,8 @@ export default function ApprovalCenter({ toast }: { toast: ToastFn }) {
   const isReviewer = user?.role === 'supervisor' || user?.role === 'admin';
   const utils = trpc.useUtils();
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  // 處理紀錄分頁（2026-08-06 Glo 要求：每 50 條一頁）
+  const [historyPage, setHistoryPage] = useState(1);
 
   // 主管/管理員：待審批（15s 自動刷新，等緊新單）＋處理紀錄；員工：自己嘅請求
   const pendingQuery = trpc.approvals.pendingList.useQuery(undefined, {
@@ -483,10 +485,13 @@ export default function ApprovalCenter({ toast }: { toast: ToastFn }) {
     refetchInterval: 15_000,
     refetchOnWindowFocus: false,
   });
-  const historyQuery = trpc.approvals.history.useQuery(undefined, {
-    enabled: isReviewer,
-    refetchOnWindowFocus: false,
-  });
+  const historyQuery = trpc.approvals.history.useQuery(
+    { page: historyPage },
+    {
+      enabled: isReviewer,
+      refetchOnWindowFocus: false,
+    },
+  );
   const myQuery = trpc.approvals.myRequests.useQuery(undefined, {
     enabled: !isReviewer,
     refetchInterval: 15_000,
@@ -521,6 +526,13 @@ export default function ApprovalCenter({ toast }: { toast: ToastFn }) {
 
   const busy = approveMutation.isPending || rejectMutation.isPending;
 
+  // 批咗/拒咗啲單之後 total 會變，頁數超咗界就夾返入範圍
+  // （hook 要放喺 staff 早退 return 之前，唔可以條件式呼叫）
+  const historyPageCountNow = historyQuery.data?.pageCount ?? 1;
+  useEffect(() => {
+    if (historyPage > historyPageCountNow) setHistoryPage(historyPageCountNow);
+  }, [historyPage, historyPageCountNow]);
+
   // ── 員工視角：我嘅審批請求 ──
   if (!isReviewer) {
     const rows = (myQuery.data ?? []) as ApprovalRow[];
@@ -547,7 +559,10 @@ export default function ApprovalCenter({ toast }: { toast: ToastFn }) {
 
   // ── 主管/管理員視角：待審批＋處理紀錄 ──
   const pending = (pendingQuery.data ?? []) as ApprovalRow[];
-  const history = (historyQuery.data ?? []) as ApprovalRow[];
+  const historyData = historyQuery.data;
+  const history = (historyData?.rows ?? []) as ApprovalRow[];
+  const historyTotal = historyData?.total ?? 0;
+  const historyPageCount = historyData?.pageCount ?? 1;
   return (
     <section>
       <h2 className="font-serif-tc text-xl font-bold text-txt-1">審批中心</h2>
@@ -577,17 +592,44 @@ export default function ApprovalCenter({ toast }: { toast: ToastFn }) {
         </ul>
       )}
 
-      <h3 className="mt-8 text-[14px] font-semibold text-txt-1">處理紀錄（最近 50）</h3>
+      <h3 className="mt-8 text-[14px] font-semibold text-txt-1">
+        處理紀錄（每 50 條一頁{historyTotal > 0 ? `，共 ${historyTotal} 條` : ''}）
+      </h3>
       {historyQuery.isLoading ? (
         <LoadingBlock text="載入緊紀錄…" />
-      ) : history.length === 0 ? (
+      ) : historyTotal === 0 ? (
         <p className="py-10 text-center text-[14px] text-txt-3">暫時冇處理紀錄。</p>
       ) : (
-        <ul className="mt-3 space-y-2.5">
-          {history.map((r) => (
-            <HistoryRow key={r.id} row={r} showReviewer />
-          ))}
-        </ul>
+        <>
+          <ul className="mt-3 space-y-2.5">
+            {history.map((r) => (
+              <HistoryRow key={r.id} row={r} showReviewer />
+            ))}
+          </ul>
+          {historyPageCount > 1 && (
+            <div className="mt-4 flex items-center justify-center gap-3 text-[13px] text-txt-2">
+              <button
+                type="button"
+                onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                disabled={historyPage <= 1}
+                className="btn btn-secondary !px-4 !py-2 text-[13px] disabled:opacity-40"
+              >
+                ← 上一頁
+              </button>
+              <span className="font-mono">
+                第 {historyPage} / {historyPageCount} 頁
+              </span>
+              <button
+                type="button"
+                onClick={() => setHistoryPage((p) => Math.min(historyPageCount, p + 1))}
+                disabled={historyPage >= historyPageCount}
+                className="btn btn-secondary !px-4 !py-2 text-[13px] disabled:opacity-40"
+              >
+                下一頁 →
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {lightboxSrc && <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
