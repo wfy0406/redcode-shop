@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Images, LayoutList, LogIn, Mail, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Images, LayoutList, ListChecks, LogIn, Mail, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -18,6 +18,7 @@ import MarketingEmailCard from '@/components/admin/MarketingEmailCard';
 import StaffManager from '@/components/admin/StaffManager';
 import AnalyticsManager from '@/components/admin/AnalyticsManager';
 import MemberList from '@/components/admin/MemberList';
+import ApprovalCenter from '@/components/admin/ApprovalCenter';
 import AuditLog from '@/components/admin/AuditLog';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
@@ -33,6 +34,7 @@ import type { AdminOrder } from '@/components/admin/types';
 type ViewKey =
   | 'analytics'
   | 'review'
+  | 'approvals'
   | 'orders'
   | 'purchase'
   | 'products'
@@ -155,6 +157,8 @@ function AdminConsole() {
       icon: <ClipboardCheck size={17} aria-hidden="true" />,
       badge: queue.length,
     },
+    // 審批中心（2026-08-06 三級制）：主管/管理員審批員工請求；員工睇自己嘅請求
+    { key: 'approvals', label: '審批中心', icon: <ListChecks size={17} aria-hidden="true" /> },
     { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
     { key: 'purchase', label: '訂貨統計', icon: <ClipboardList size={17} aria-hidden="true" /> },
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
@@ -162,10 +166,9 @@ function AdminConsole() {
     { key: 'promo', label: '優惠碼', icon: <TicketPercent size={17} aria-hidden="true" /> },
     // 促銷電郵（2026-08-05 Glo 要求）：寫推廣 email 寄畀已同意接收嘅會員
     { key: 'marketing', label: '促銷電郵', icon: <Mail size={17} aria-hidden="true" /> },
-    // 會員列表只限最高管理員（admin）
-    ...(isAdmin
-      ? [{ key: 'members' as ViewKey, label: '會員', icon: <Users size={17} aria-hidden="true" /> }]
-      : []),
+    // 會員列表（2026-08-06 三級制）：主管同員工都入得——員工改會員資料要主管/管理員審批；
+    // 刪會員仍然 admin only（MemberList 入面 canDelete 擋）
+    { key: 'members', label: '會員', icon: <Users size={17} aria-hidden="true" /> },
     // 員工帳號管理只限最高管理員（admin）
     ...(isAdmin
       ? [{ key: 'staff' as ViewKey, label: '員工帳號', icon: <ShieldCheck size={17} aria-hidden="true" /> }]
@@ -209,6 +212,7 @@ function AdminConsole() {
     promo: <PromoManager toast={pushToast} />,
     marketing: <MarketingEmailCard toast={pushToast} />,
     members: <MemberList toast={pushToast} />,
+    approvals: <ApprovalCenter toast={pushToast} />,
     staff: isAdmin ? <StaffManager toast={pushToast} /> : ADMIN_ONLY_HINT,
     audit: isAdmin ? <AuditLog /> : ADMIN_ONLY_HINT,
   };

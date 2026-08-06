@@ -46,6 +46,8 @@ type AuthContextValue = {
   user: AuthUser | null;
   isLoading: boolean;
   isStaff: boolean;
+  // 三級制（2026-08-06）：主管＋管理員（審批中心用）
+  isSupervisor: boolean;
   login: (phone: string, password: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   loginWithGoogle: (idToken: string) => Promise<void>;
@@ -112,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading: hasToken && meQuery.isLoading,
       // 三級制（2026-08-06）：supervisor 主管都係後台用戶
       isStaff: !!user && (user.role === "staff" || user.role === "supervisor" || user.role === "admin"),
+      isSupervisor: !!user && (user.role === "supervisor" || user.role === "admin"),
       login,
       register,
       loginWithGoogle,
