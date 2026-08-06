@@ -14,7 +14,7 @@ import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, up
 import { env } from "./lib/env";
 import { eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { products } from "@db/schema";
+import { productImageArchive, products } from "@db/schema";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -107,15 +107,26 @@ app.get("/uploads/:file", async (c) => {
 app.get("/api/products/:sku/images", async (c) => {
   const sku = c.req.param("sku");
   const db = getDb();
+  const base = process.env.PUBLIC_BASE_URL || "https://redcode.red";
   const [p] = await db
     .select({ image: products.image, photos: products.photos })
     .from(products)
     .where(eq(products.sku, sku))
     .limit(1);
-  if (!p) return c.json({ imageUrls: null }, 404);
-  const paths = p.photos && p.photos.length ? p.photos : [p.image];
-  const base = process.env.PUBLIC_BASE_URL || "https://redcode.red";
-  return c.json({ imageUrls: paths.map((u) => `${base}${u}`) });
+  if (p) {
+    const paths = p.photos && p.photos.length ? p.photos : [p.image];
+    return c.json({ imageUrls: paths.map((u) => `${base}${u}`) });
+  }
+  // 商品已刪除（例如管理員連訂單一併清走先刪到）：去圖片檔案庫搵最後紀錄，
+  // WMS 補舊訂單嘅圖唔會因為商品刪除而斷（2026-08-06 Glo 要求）
+  const [a] = await db
+    .select({ imageUrls: productImageArchive.imageUrls })
+    .from(productImageArchive)
+    .where(eq(productImageArchive.sku, sku))
+    .limit(1);
+  const archived = Array.isArray(a?.imageUrls) ? (a.imageUrls as string[]) : [];
+  if (archived.length === 0) return c.json({ imageUrls: null }, 404);
+  return c.json({ imageUrls: archived.map((u) => `${base}${u}`) });
 });
 
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));

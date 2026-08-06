@@ -223,7 +223,7 @@ export default function PromoManager({
               id="np-usagelimit"
               inputMode="numeric"
               value={form.usageLimit}
-              onChange={(e) => set('usagelimit' in form ? 'usageLimit' : 'usageLimit')(e.target.value)}
+              onChange={(e) => set('usageLimit')(e.target.value)}
               className={`${inputCls} font-mono`}
               placeholder="留空即不限次數"
             />

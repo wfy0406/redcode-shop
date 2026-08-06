@@ -8,7 +8,7 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { desc, eq, inArray, ne } from "drizzle-orm";
+import { desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { approvalRequests, users } from "@db/schema";
 import { createRouter, staffProcedure, supervisorProcedure } from "./middleware";
@@ -42,28 +42,47 @@ export const approvalsRouter = createRouter({
   }),
 
   // 處理紀錄（最近 50 條已處理）
-  history: supervisorProcedure.query(async () => {
-    const db = getDb();
-    const rows = await db
-      .select()
-      .from(approvalRequests)
-      .where(ne(approvalRequests.status, "pending"))
-      .orderBy(desc(approvalRequests.reviewedAt), desc(approvalRequests.id))
-      .limit(50);
-    const ids = new Set<number>();
-    for (const r of rows) {
-      ids.add(r.requesterId);
-      if (r.reviewerId) ids.add(r.reviewerId);
-    }
-    const names = await nameMap([...ids]);
-    return rows.map((r) => ({
-      ...r,
-      requesterName: names.get(r.requesterId) ?? `#${r.requesterId}`,
-      reviewerName: r.reviewerId
-        ? (names.get(r.reviewerId) ?? `#${r.reviewerId}`)
-        : null,
-    }));
-  }),
+  // 處理紀錄（2026-08-06 Glo 要求：每 50 條一頁，新嘅排先；回 total/pageCount 俾前端出頁碼掣）
+  history: supervisorProcedure
+    .input(z.object({ page: z.number().int().min(1).default(1) }).optional())
+    .query(async ({ input }) => {
+      const db = getDb();
+      const page = input?.page ?? 1;
+      const PAGE_SIZE = 50;
+      const filter = ne(approvalRequests.status, "pending");
+      const [rows, totalRows] = await Promise.all([
+        db
+          .select()
+          .from(approvalRequests)
+          .where(filter)
+          .orderBy(desc(approvalRequests.reviewedAt), desc(approvalRequests.id))
+          .limit(PAGE_SIZE)
+          .offset((page - 1) * PAGE_SIZE),
+        db
+          .select({ total: sql<number>`count(*)::int` })
+          .from(approvalRequests)
+          .where(filter),
+      ]);
+      const total = totalRows[0]?.total ?? 0;
+      const ids = new Set<number>();
+      for (const r of rows) {
+        ids.add(r.requesterId);
+        if (r.reviewerId) ids.add(r.reviewerId);
+      }
+      const names = await nameMap([...ids]);
+      return {
+        rows: rows.map((r) => ({
+          ...r,
+          requesterName: names.get(r.requesterId) ?? `#${r.requesterId}`,
+          reviewerName: r.reviewerId
+            ? (names.get(r.reviewerId) ?? `#${r.reviewerId}`)
+            : null,
+        })),
+        total,
+        page,
+        pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+      };
+    }),
 
   // 員工睇自己交嘅單（最近 20 條）
   myRequests: staffProcedure.query(async ({ ctx }) => {
