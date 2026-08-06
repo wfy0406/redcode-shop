@@ -7,6 +7,7 @@ import { createRouter, adminProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { hashPassword } from "./auth";
 import { requestApprovalIfStaff } from "./approvalGuard";
+import { forwardMemberToWms } from "./wmsMemberSync";
 
 /**
  * 會員列表 —— staff（員工）＋ admin 可用（2026-07-29 起：員工都可以睇同改會員資料）
@@ -210,6 +211,8 @@ export const membersRouter = createRouter({
         targetId: input.id,
         detail: `修改會員「${input.name ?? target.name}」資料（${Object.keys(data).join("、") || "冇改動"}）`,
       });
+      // B-2（2026-08-06 WMS 對接）：會員資料有變 → 同步去 WMS（fire-and-forget，失敗唔阻流程）
+      void forwardMemberToWms(input.id).catch((e) => console.error("[wms] member sync error:", e));
       return { ok: true };
     }),
 

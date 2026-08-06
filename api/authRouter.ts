@@ -8,6 +8,7 @@ import { createRouter, publicQuery, authedProcedure } from "./middleware";
 import { hashPassword, verifyPassword, signToken } from "./auth";
 import { logAudit } from "./audit";
 import { sendPasswordResetEmail, sendWelcomeEmail } from "./email";
+import { forwardMemberToWms } from "./wmsMemberSync";
 
 /**
  * 電話正規化（2026-08-04 Glo 規則）：香港號碼統一儲 8 位本地號。
@@ -128,6 +129,8 @@ export const authRouter = createRouter({
           if (!r.ok) console.error(`[email] 歡迎信寄唔出 → ${email}:`, r.error);
         })
         .catch((e) => console.error("[email] 歡迎信出錯:", e));
+      // B-2（2026-08-06 WMS 對接）：會員資料有變 → 同步去 WMS（fire-and-forget，失敗唔阻流程）
+      void forwardMemberToWms(id).catch((e) => console.error("[wms] member sync error:", e));
       return { token, user: publicUser(user!) };
     }),
 
@@ -474,6 +477,8 @@ export const authRouter = createRouter({
       if (!user) {
         throw new TRPCError({ code: "NOT_FOUND", message: "用戶不存在" });
       }
+      // B-2（2026-08-06 WMS 對接）：會員資料有變 → 同步去 WMS（fire-and-forget，失敗唔阻流程）
+      void forwardMemberToWms(ctx.user.userId).catch((e) => console.error("[wms] member sync error:", e));
       return publicUser(user);
     }),
 
@@ -511,6 +516,8 @@ export const authRouter = createRouter({
       const user = await db.query.users.findFirst({
         where: eq(users.id, me.id),
       });
+      // B-2（2026-08-06 WMS 對接）：會員資料有變 → 同步去 WMS（fire-and-forget，失敗唔阻流程）
+      void forwardMemberToWms(me.id).catch((e) => console.error("[wms] member sync error:", e));
       return publicUser(user!);
     }),
 
@@ -546,6 +553,8 @@ export const authRouter = createRouter({
       const user = await db.query.users.findFirst({
         where: eq(users.id, me.id),
       });
+      // B-2（2026-08-06 WMS 對接）：會員資料有變 → 同步去 WMS（fire-and-forget，失敗唔阻流程）
+      void forwardMemberToWms(me.id).catch((e) => console.error("[wms] member sync error:", e));
       return publicUser(user!);
     }),
 
