@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Search, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
@@ -81,7 +82,19 @@ function effectivePrice(p: ShopProduct): number {
 export default function Products() {
   const [keyword, setKeyword] = useState('');
   const [sort, setSort] = useState<SortKey>('latest');
-  const [category, setCategory] = useState<CategoryFilter>('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // 類別同網址 ?category= 雙向同步（2026-08-07 Glo 要求）：選單分類連結／直接貼網址都篩到
+  const [category, setCategory] = useState<CategoryFilter>(() => {
+    const c = searchParams.get('category');
+    return PRODUCT_CATEGORIES.some((x) => x.value === c) ? (c as CategoryFilter) : 'all';
+  });
+  useEffect(() => {
+    const c = searchParams.get('category');
+    const valid: CategoryFilter = PRODUCT_CATEGORIES.some((x) => x.value === c)
+      ? (c as CategoryFilter)
+      : 'all';
+    setCategory((cur) => (cur === valid ? cur : valid));
+  }, [searchParams]);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   // 指定日期（YYYY-MM-DD）：揀咗就蓋過上面嘅範圍 chips（今日/近3日嗰啲）
   const [pickedDate, setPickedDate] = useState('');
@@ -229,7 +242,10 @@ export default function Products() {
             <button
               key={c.value}
               type="button"
-              onClick={() => setCategory(c.value)}
+              onClick={() => {
+                setCategory(c.value);
+                setSearchParams(c.value === 'all' ? {} : { category: c.value }, { replace: true });
+              }}
               aria-pressed={active}
               className={cn(
                 'rounded-full border px-4 py-2 text-[13px] transition-colors duration-200',

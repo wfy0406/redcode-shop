@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, NavLink } from 'react-router';
-import { Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
+import { Link, NavLink, useLocation } from 'react-router';
+import { ChevronDown, Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import type { CartLine } from '@/components/cart/types';
 import MessengerIcon from '@/components/MessengerIcon';
+import { PRODUCT_CATEGORIES } from '@contracts/types';
 
 /**
  * RedCode 設計系統 §4.2 —— 玻璃導航
@@ -16,6 +17,9 @@ import MessengerIcon from '@/components/MessengerIcon';
  * 2026-08-06（Glo 要求）：刪走「員工內部系統」WMS 連結（desktop 右側＋手機選單底部）——
  * 放上網擔心被攻擊或資料外洩，唔俾外部見到（員工自己記住 WMS 網址直接用）。
  * 「後台管理」入口保留：登入嘅員工／主管／管理員先見到，外部訪客見唔到。
+ * 2026-08-07（Glo 要求）：選單「商品」可展開商品分類——desktop hover（＋鍵盤 focus）
+ * 彈 dropdown；手機全屏選單撳箭嘴展開分類子列表。分類連結去 /products?category=X，
+ * 商品頁會讀網址參數自動篩選。
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
@@ -43,6 +47,11 @@ const NAV_LINKS = [
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
+  // 手機選單「商品」分類展開狀態（2026-08-07 Glo 要求：選單商品可展開見到分類）
+  const [shopExpanded, setShopExpanded] = useState(false);
+  const { pathname, search } = useLocation();
+  // 當前商品類別（URL ?category=）：分類連結高亮判斷（NavLink 嘅 isActive 唔分 search param，所以要人手計）
+  const currentCat = new URLSearchParams(search).get('category') ?? '';
   const { user, isStaff, logout } = useAuth();
   // F4：badge 接通真購物車數量（未登入唔好 call，enabled 守住）
   const cartQuery = trpc.cart.list.useQuery(undefined, {
@@ -82,16 +91,71 @@ export default function Navbar() {
 
         {/* 中：連結（desktop） */}
         <nav className="hidden items-center gap-8 md:flex" aria-label="主導航">
-          {NAV_LINKS.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              end={link.to === '/'}
-              className={({ isActive }) => cn('nav-link', isActive && 'active')}
-            >
-              {link.label}
-            </NavLink>
-          ))}
+          {NAV_LINKS.map((link) =>
+            link.to === '/products' ? (
+              // 2026-08-07 Glo 要求：「商品」hover／鍵盤 focus 展開分類 dropdown
+              <div key={link.to} className="group relative">
+                <NavLink
+                  to={link.to}
+                  className={({ isActive }) =>
+                    cn('nav-link inline-flex items-center gap-1', isActive && 'active')
+                  }
+                >
+                  {link.label}
+                  <ChevronDown
+                    size={13}
+                    strokeWidth={2.5}
+                    aria-hidden="true"
+                    className="transition-transform duration-200 group-hover:rotate-180"
+                  />
+                </NavLink>
+                {/* pt-2 做橋位：mouse 由選單移落 dropdown 唔會閃走；group-focus-within 照顧鍵盤 Tab */}
+                <div className="invisible absolute left-1/2 top-full -translate-x-1/2 translate-y-1 pt-2 opacity-0 transition-all duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100">
+                  <div
+                    className="min-w-[150px] rounded-2xl border px-1.5 py-2"
+                    style={{
+                      borderColor: 'var(--glass-border)',
+                      background: 'var(--space-1)',
+                      boxShadow: '0 14px 36px rgba(0, 0, 0, 0.35)',
+                    }}
+                  >
+                    <Link
+                      to="/products"
+                      className={cn(
+                        'block rounded-xl px-3.5 py-2 text-[13px] font-bold tracking-wide transition-colors hover:bg-space-3',
+                        pathname === '/products' && !currentCat ? 'text-pink-soft' : 'text-txt-2',
+                      )}
+                    >
+                      全部商品
+                    </Link>
+                    {PRODUCT_CATEGORIES.map((c) => (
+                      <Link
+                        key={c.value}
+                        to={`/products?category=${c.value}`}
+                        className={cn(
+                          'block rounded-xl px-3.5 py-2 text-[13px] font-bold tracking-wide transition-colors hover:bg-space-3',
+                          pathname === '/products' && currentCat === c.value
+                            ? 'text-pink-soft'
+                            : 'text-txt-2',
+                        )}
+                      >
+                        {c.label}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                end={link.to === '/'}
+                className={({ isActive }) => cn('nav-link', isActive && 'active')}
+              >
+                {link.label}
+              </NavLink>
+            ),
+          )}
         </nav>
 
         {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員 */}
@@ -217,8 +281,75 @@ export default function Navbar() {
               {user.name}寶寶，{greetingNow()}💕！
             </p>
           )}
-          {mobileLinks.map(
-            (link, i) => (
+          {mobileLinks.map((link, i) =>
+            link.to === '/products' ? (
+              // 2026-08-07 Glo 要求：手機選單「商品」撳箭嘴展開商品分類子列表
+              <div
+                key={link.to}
+                className="border-b"
+                style={{
+                  borderColor: 'var(--space-line)',
+                  animation: `mobile-nav-in 400ms var(--ease-expo) ${i * 50}ms both`,
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <NavLink
+                    to={link.to}
+                    onClick={() => setMenuOpen(false)}
+                    className="flex-1 py-4 font-serif-tc text-2xl font-semibold text-txt-1"
+                  >
+                    {link.label}
+                  </NavLink>
+                  <button
+                    type="button"
+                    aria-label={shopExpanded ? '收起商品分類' : '展開商品分類'}
+                    aria-expanded={shopExpanded}
+                    onClick={() => setShopExpanded((v) => !v)}
+                    className="flex min-h-11 min-w-11 items-center justify-center text-txt-2"
+                  >
+                    <ChevronDown
+                      size={22}
+                      strokeWidth={2.5}
+                      aria-hidden="true"
+                      className="transition-transform duration-200"
+                      style={{ transform: shopExpanded ? 'rotate(180deg)' : 'none' }}
+                    />
+                  </button>
+                </div>
+                {shopExpanded && (
+                  <div
+                    className="mb-3 ml-3 flex flex-col border-l-2 pl-5"
+                    style={{ borderColor: 'var(--space-line)' }}
+                  >
+                    <Link
+                      to="/products"
+                      onClick={() => setMenuOpen(false)}
+                      className={cn(
+                        'py-2 text-lg font-extrabold tracking-wide',
+                        pathname === '/products' && !currentCat ? 'text-pink-soft' : 'text-txt-2',
+                      )}
+                    >
+                      全部商品
+                    </Link>
+                    {PRODUCT_CATEGORIES.map((c) => (
+                      <Link
+                        key={c.value}
+                        to={`/products?category=${c.value}`}
+                        onClick={() => setMenuOpen(false)}
+                        className={cn(
+                          'py-2 text-lg font-extrabold tracking-wide',
+                          pathname === '/products' && currentCat === c.value
+                            ? 'text-pink-soft'
+                            : 'text-txt-2',
+                        )}
+                      >
+                        {c.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
               <NavLink
                 key={link.to}
                 to={link.to}
