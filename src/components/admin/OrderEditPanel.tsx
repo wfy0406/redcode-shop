@@ -15,6 +15,8 @@ interface EditLine {
 /**
  * 後台手動改單面板：加/減貨品、改數量、調折扣／實收。
  * 庫存由 server 按差額調整；實收欄填咗就佢話事（自動計返折扣）。
+ * 2026-08-08（Glo 要求）：可以順手改 取貨方式（送貨上門／順豐站／智能櫃＋站點）、
+ * 收件地址、備註、優惠碼。優惠碼改咗兼冇手動郁折扣/實收 → server 按碼重計折扣。
  */
 export default function OrderEditPanel({ order, onClose, onSaved }: {
   order: AdminOrder;
@@ -37,6 +39,16 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
   const [addProductId, setAddProductId] = useState<number | null>(null);
   const [addSize, setAddSize] = useState<string>('');
   const [err, setErr] = useState<string | null>(null);
+  // 2026-08-08（Glo 要求）：取貨方式／地址／備註／優惠碼都可以改
+  const [note, setNote] = useState(order.note ?? '');
+  const [address, setAddress] = useState(order.address ?? '');
+  const [method, setMethod] = useState<'address' | 'sf_station' | 'sf_locker'>(
+    (order.deliveryMethod as 'address' | 'sf_station' | 'sf_locker' | undefined) ?? 'address',
+  );
+  const [pickupPoint, setPickupPoint] = useState(order.pickupPoint ?? '');
+  const [promoCode, setPromoCode] = useState(order.promoCode ?? '');
+  // 手動郁過折扣欄先算手動（否則改優惠碼時折扣畀 server 按碼重計）
+  const [discountTouched, setDiscountTouched] = useState(false);
 
   const update = trpc.orders.adminUpdate.useMutation({
     onSuccess: async (r) => {
@@ -52,6 +64,10 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
   const totalNum = totalInput.trim() !== '' ? Math.max(0, Number(totalInput) || 0) : null;
   const effectiveDiscount = totalNum !== null ? subtotal - totalNum : discountNum;
   const effectiveTotal = subtotal - effectiveDiscount;
+  const promoChanged =
+    promoCode.trim().toUpperCase() !== (order.promoCode ?? '').toUpperCase();
+  // 改咗優惠碼＋冇手動郁折扣＋冇填實收 → 折扣由 server 按碼重計（呢度估唔到實數）
+  const usePromoAuto = promoChanged && !discountTouched && totalNum === null;
 
   const addProduct = products.find((p) => p.id === addProductId) ?? null;
   const addSizes =
@@ -104,8 +120,13 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
     update.mutate({
       orderId: order.id,
       items: lines.map((l) => ({ productId: l.productId, size: l.size, quantity: l.quantity })),
-      discountAmount: totalNum !== null ? undefined : discountNum,
+      discountAmount: totalNum !== null || usePromoAuto ? undefined : discountNum,
       total: totalNum !== null ? totalNum : undefined,
+      note: note.trim() === '' ? null : note.trim(),
+      address: address.trim() === '' ? null : address.trim(),
+      deliveryMethod: method,
+      pickupPoint: method === 'address' ? null : pickupPoint.trim() || null,
+      promoCode: promoCode.trim() === '' ? null : promoCode.trim(),
     });
   };
 
@@ -224,7 +245,10 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
             min={0}
             value={discount}
             disabled={totalInput.trim() !== ''}
-            onChange={(e) => setDiscount(e.target.value)}
+            onChange={(e) => {
+              setDiscount(e.target.value);
+              setDiscountTouched(true);
+            }}
             aria-label="折扣金額"
             className="h-9 w-24 rounded-lg border bg-space-2 px-2 font-mono text-txt-1 disabled:opacity-40"
             style={{ borderColor: 'var(--space-line)' }}
@@ -246,11 +270,95 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
         <span className="text-[12px] text-txt-3">填咗實收就佢話事，會自動計返折扣</span>
       </div>
 
-      {/* 即時計數 */}
-      <p className="mt-3 font-mono text-[13px] text-txt-2">
-        貨品合計 {fmtHKD(subtotal)} − 折扣 {fmtHKD(effectiveDiscount)} ＝{' '}
-        <span className="font-bold text-gold">實收 {fmtHKD(effectiveTotal)}</span>
-      </p>
+      {/* 取貨方式／地址／備註／優惠碼（2026-08-08 Glo 要求） */}
+      <div
+        className="mt-3 flex flex-col gap-2 border-t pt-3 text-[13px]"
+        style={{ borderColor: 'var(--space-line)' }}
+      >
+        <label className="flex flex-wrap items-center gap-1.5 text-txt-2">
+          取貨方式
+          <select
+            value={method}
+            onChange={(e) => setMethod(e.target.value as 'address' | 'sf_station' | 'sf_locker')}
+            aria-label="取貨方式"
+            className="h-9 rounded-lg border bg-space-2 px-2 text-txt-1"
+            style={{ borderColor: 'var(--space-line)' }}
+          >
+            <option value="address">送貨上門</option>
+            <option value="sf_station">順豐站自取</option>
+            <option value="sf_locker">順豐智能櫃自取</option>
+          </select>
+          {method !== 'address' && (
+            <input
+              type="text"
+              value={pickupPoint}
+              onChange={(e) => setPickupPoint(e.target.value)}
+              placeholder="站點名稱／編號（選填）"
+              aria-label="自取站點"
+              className="h-9 min-w-0 flex-1 rounded-lg border bg-space-2 px-2 text-txt-1 placeholder:text-txt-disabled"
+              style={{ borderColor: 'var(--space-line)' }}
+            />
+          )}
+        </label>
+        {method === 'address' && (
+          <label className="flex items-center gap-1.5 text-txt-2">
+            收件地址
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="（冇）"
+              aria-label="收件地址"
+              className="h-9 min-w-0 flex-1 rounded-lg border bg-space-2 px-2 text-txt-1 placeholder:text-txt-disabled"
+              style={{ borderColor: 'var(--space-line)' }}
+            />
+          </label>
+        )}
+        <label className="flex items-center gap-1.5 text-txt-2">
+          備註
+          <input
+            type="text"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="（冇）"
+            aria-label="訂單備註"
+            className="h-9 min-w-0 flex-1 rounded-lg border bg-space-2 px-2 text-txt-1 placeholder:text-txt-disabled"
+            style={{ borderColor: 'var(--space-line)' }}
+          />
+        </label>
+        <label className="flex flex-wrap items-center gap-1.5 text-txt-2">
+          優惠碼
+          <input
+            type="text"
+            value={promoCode}
+            onChange={(e) => setPromoCode(e.target.value)}
+            placeholder="（冇）"
+            aria-label="優惠碼"
+            className="h-9 w-32 rounded-lg border bg-space-2 px-2 font-mono uppercase text-txt-1 placeholder:normal-case placeholder:text-txt-disabled"
+            style={{ borderColor: 'var(--space-line)' }}
+          />
+          <span className="text-[12px] text-txt-3">
+            {promoChanged
+              ? usePromoAuto
+                ? '儲存後會按優惠碼自動重計折扣'
+                : '你已手動填折扣／實收：金額以手動為準，優惠碼只留記錄'
+              : '改咗先會重計；留空＝冇優惠碼'}
+          </span>
+        </label>
+      </div>
+
+      {/* 即時計數（優惠碼重計嗰陣折扣要 server 先計到，儲存後見實數） */}
+      {usePromoAuto ? (
+        <p className="mt-3 font-mono text-[13px] text-txt-2">
+          貨品合計 {fmtHKD(subtotal)} − 折扣（優惠碼重計）＝{' '}
+          <span className="font-bold text-gold">實收儲存後自動計</span>
+        </p>
+      ) : (
+        <p className="mt-3 font-mono text-[13px] text-txt-2">
+          貨品合計 {fmtHKD(subtotal)} − 折扣 {fmtHKD(effectiveDiscount)} ＝{' '}
+          <span className="font-bold text-gold">實收 {fmtHKD(effectiveTotal)}</span>
+        </p>
+      )}
 
       {err && (
         <p role="alert" className="mt-2 text-[13px] text-pink-soft">

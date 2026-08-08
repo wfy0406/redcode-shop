@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { getDb } from "./queries/connection";
 import { cartItems, orders, orderItems, paymentProofs, products, promoCodes, users, wmsSyncLog } from "@db/schema";
@@ -34,6 +34,13 @@ function generateOrderNo(): string {
 
 function promoCodeDetail(code: string | undefined): string {
   return code?.trim() ? `（用優惠碼 ${code.trim()}）` : "";
+}
+
+/** 取貨方式顯示用 label（審計日誌用）：送貨上門／順豐站自取／順豐智能櫃自取 */
+function deliveryLabel(method: string, pickupPoint: string | null): string {
+  if (method === "sf_station") return `順豐站自取${pickupPoint ? `：${pickupPoint}` : ""}`;
+  if (method === "sf_locker") return `順豐智能櫃自取${pickupPoint ? `：${pickupPoint}` : ""}`;
+  return "送貨上門";
 }
 
 /** 商品係咪已（自動）下架：人手下架 isActive=false，或者開咗定時下架兼時間已到 */
@@ -601,6 +608,15 @@ export const ordersRouter = createRouter({
           .min(1, "訂單至少要有一件貨"),
         discountAmount: z.number().int().nonnegative().optional(),
         total: z.number().int().nonnegative().optional(),
+        // 2026-08-08（Glo 要求）：後台改單可以順手改 備註／收件地址／取貨方式／優惠碼
+        // undefined＝唔郁；null／空字串＝清除。揀送貨上門會自動清 pickupPoint。
+        // 優惠碼填新碼：server 驗證（存在/啟用/未過期/夠最低消費/未用完/每人限用，呢張單唔計入已用次數）
+        // ＋usedCount+1＋重計折扣——但手動填咗折扣或實收就手動優先，優惠碼只作記錄。
+        note: z.string().max(500).nullable().optional(),
+        address: z.string().max(500).nullable().optional(),
+        deliveryMethod: deliveryMethodEnum.optional(),
+        pickupPoint: z.string().max(255).nullable().optional(),
+        promoCode: z.string().max(32).nullable().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -663,19 +679,29 @@ export const ordersRouter = createRouter({
         };
       });
       const subtotal = newLines.reduce((s, l) => s + l.price * l.quantity, 0);
-      let discountAmount: number;
-      if (input.total !== undefined) {
-        if (input.total > subtotal) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `實收唔可以高過貨品合計 HK$${subtotal}`,
-          });
-        }
-        discountAmount = subtotal - input.total;
-      } else {
-        discountAmount = Math.min(input.discountAmount ?? order.discountAmount ?? 0, subtotal);
-      }
-      const total = subtotal - discountAmount;
+
+      // 2026-08-08（Glo 要求）：備註／地址／取貨方式新值（undefined＝跟返舊值）
+      const nextNote = input.note === undefined ? order.note : input.note?.trim() || null;
+      const nextAddress =
+        input.address === undefined ? order.address : input.address?.trim() || null;
+      const nextDeliveryMethod = input.deliveryMethod ?? order.deliveryMethod;
+      const nextPickupPoint =
+        nextDeliveryMethod === "address"
+          ? null
+          : input.pickupPoint === undefined
+            ? order.pickupPoint
+            : input.pickupPoint?.trim() || null;
+      // 優惠碼有冇改動（唔分大小寫；舊值本身就係大寫儲存；同一個碼唔會重複驗證同扣配額）
+      const promoInput = input.promoCode?.trim() || null;
+      const promoWantsChange =
+        input.promoCode !== undefined &&
+        (promoInput ?? "").toUpperCase() !== (order.promoCode ?? "");
+
+      // 實際折扣／實收／最終優惠碼喺 transaction 入面定（優惠碼驗證＋扣配額要用 tx 先夠 atomic）
+      let discountAmount = 0;
+      let total = 0;
+      let nextPromoCode = order.promoCode;
+      let promoAutoDiscount = false;
 
       await db.transaction(async (tx) => {
         if (!skipStock) {
@@ -713,9 +739,79 @@ export const ordersRouter = createRouter({
         await tx.insert(orderItems).values(
           newLines.map((l) => ({ orderId: order.id, ...l })),
         );
+
+        // 優惠碼改動（2026-08-08 Glo 要求）：空＝清除；新碼＝驗證＋usedCount+1＋重計折扣
+        if (promoWantsChange) {
+          if (!promoInput) {
+            nextPromoCode = null;
+          } else {
+            // 每人限用檢查：數呢個帳號嘅其他訂單用過呢個碼幾多次（呢張單唔計）
+            const [{ n: myUses }] = await tx
+              .select({ n: sql<number>`count(*)::int` })
+              .from(orders)
+              .where(
+                and(
+                  eq(orders.promoCode, promoInput.toUpperCase()),
+                  eq(orders.userId, order.userId),
+                  ne(orders.id, order.id),
+                ),
+              );
+            const resolved = await resolvePromoDiscount(tx, promoInput, subtotal, myUses);
+            const bumped = await tx
+              .update(promoCodes)
+              .set({ usedCount: sql`${promoCodes.usedCount} + 1` })
+              .where(
+                and(
+                  eq(promoCodes.id, resolved.promo.id),
+                  or(
+                    isNull(promoCodes.usageLimit),
+                    lt(promoCodes.usedCount, promoCodes.usageLimit),
+                  ),
+                ),
+              )
+              .returning({ id: promoCodes.id });
+            if (bumped.length === 0) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已用完" });
+            }
+            nextPromoCode = resolved.promo.code;
+            // 手動冇填折扣／實收：用優惠碼重計折扣
+            if (input.total === undefined && input.discountAmount === undefined) {
+              discountAmount = Math.min(resolved.discountAmount, subtotal);
+              promoAutoDiscount = true;
+            }
+          }
+        }
+        // 折扣／實收：手動優先（實收 > 折扣）；冇手動就 優惠碼重計／清除歸零／跟返舊值
+        if (input.total !== undefined) {
+          if (input.total > subtotal) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `實收唔可以高過貨品合計 HK$${subtotal}`,
+            });
+          }
+          discountAmount = subtotal - input.total;
+        } else if (input.discountAmount !== undefined) {
+          discountAmount = Math.min(input.discountAmount, subtotal);
+        } else if (promoWantsChange) {
+          // 換新碼嘅折扣上面已經 set 咗；清除碼就歸零
+          discountAmount = nextPromoCode ? discountAmount : 0;
+        } else {
+          discountAmount = Math.min(order.discountAmount ?? 0, subtotal);
+        }
+        total = subtotal - discountAmount;
+
         await tx
           .update(orders)
-          .set({ discountAmount, total, updatedAt: new Date() })
+          .set({
+            discountAmount,
+            total,
+            note: nextNote,
+            address: nextAddress,
+            deliveryMethod: nextDeliveryMethod,
+            pickupPoint: nextPickupPoint,
+            promoCode: nextPromoCode,
+            updatedAt: new Date(),
+          })
           .where(eq(orders.id, order.id));
       });
 
@@ -730,13 +826,30 @@ export const ordersRouter = createRouter({
         sync && (sync.status === "sent" || sync.status === "partial")
           ? "呢張單之前已送落 WMS，改動唔會自動更新嗰邊。想 WMS 用新資料重審：叫 WMS 拒絕（重傳）等客人再上傳截圖；或者先同 WMS 講定再重試同步。"
           : null;
+      // 備註／地址／取貨方式／優惠碼嘅改動都記落日誌（有改先寫，唔好洗版）
+      const fieldChanges: string[] = [];
+      if (nextNote !== order.note)
+        fieldChanges.push(`備註「${order.note ?? "—"}」→「${nextNote ?? "—"}」`);
+      if (nextAddress !== order.address)
+        fieldChanges.push(`地址「${order.address ?? "—"}」→「${nextAddress ?? "—"}」`);
+      if (
+        nextDeliveryMethod !== order.deliveryMethod ||
+        nextPickupPoint !== order.pickupPoint
+      )
+        fieldChanges.push(
+          `取貨方式 ${deliveryLabel(order.deliveryMethod, order.pickupPoint)} → ${deliveryLabel(nextDeliveryMethod, nextPickupPoint)}`,
+        );
+      if (nextPromoCode !== order.promoCode)
+        fieldChanges.push(
+          `優惠碼 ${order.promoCode ?? "—"} → ${nextPromoCode ?? "—"}${promoAutoDiscount ? "（已按碼重計折扣）" : ""}`,
+        );
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
         action: "order.adminUpdate",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `後台改單 ${order.orderNo}：貨品「${fmtLines(order.items)}」→「${fmtLines(newLines)}」；折扣 HK$${order.discountAmount} → HK$${discountAmount}；實收 HK$${order.total} → HK$${total}${skipStock ? "（已取消訂單：只更新記錄，庫存無變）" : ""}`,
+        detail: `後台改單 ${order.orderNo}：貨品「${fmtLines(order.items)}」→「${fmtLines(newLines)}」；折扣 HK$${order.discountAmount} → HK$${discountAmount}；實收 HK$${order.total} → HK$${total}${skipStock ? "（已取消訂單：只更新記錄，庫存無變）" : ""}${fieldChanges.length ? `；${fieldChanges.join("；")}` : ""}`,
       });
       const updated = await db.query.orders.findFirst({
         where: eq(orders.id, order.id),
