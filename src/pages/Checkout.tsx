@@ -11,12 +11,15 @@ import type { CartLine, CreatedOrder } from '@/components/cart/types';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { getToken } from '@/lib/auth';
+import { PAYMENT_METHODS_SETTING_KEY, parsePaymentMethods } from '@contracts/paymentMethods';
 
 /**
  * RedCode 結帳（design-system.md §P7，含付款截圖上傳）
  * 三步玻璃進度條（步驟點 = 四角星，完成步驟填金）：
  * ① 確認訂單：cart 項目 + 優惠碼 + 總計；收貨地址 textarea（預填 user.address）+ 備註
- * ② 付款：orders.create → 收款資料卡（中銀／PayMe／Alipay／FPS 真資料）
+ *    ＋預設取貨方式（2026-08-08 Glo 要求：會員設咗順豐站/智能櫃就自動帶入，客人照樣可以改）
+ * ② 付款：orders.create → 收款資料卡（2026-08-08 起由 siteSettings「payment_methods」讀，
+ *    同 /payment 頁同一來源；後台業務分析 → 收款方式改一次全網同步）
  *    + dropzone 上傳付款截圖（fetch POST /api/upload，Bearer token）→ orders.attachPaymentProof
  * ③ 完成：許願星著燈 + 訂單編號 + 「職員審核中」+ 去會員中心 CTA
  * 未登入：玻璃卡提示（同 Cart）
@@ -24,34 +27,6 @@ import { getToken } from '@/lib/auth';
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
-
-// RedCode 官方收款資料（同 /payment 頁一致）
-const PAYMENT_METHODS = [
-  {
-    label: '中銀香港',
-    account: '012-586-2-113136-9',
-    hint: '戶口名稱：RED CODE HK LIMITED',
-    copyValue: '012-586-2-113136-9',
-  },
-  {
-    label: 'PayMe',
-    account: '97083811',
-    hint: 'PayMe 過數',
-    copyValue: '97083811',
-  },
-  {
-    label: 'Alipay 支付寶',
-    account: '97083811',
-    hint: '支付寶香港',
-    copyValue: '97083811',
-  },
-  {
-    label: 'FPS 轉數快',
-    account: '120070784',
-    hint: '收款名稱：RED CODE HK LIMITED',
-    copyValue: '120070784',
-  },
-] as const;
 
 const STEP_LABELS = ['確認訂單', '付款', '完成'] as const;
 
@@ -259,6 +234,17 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
     const saved = user?.address;
     if (saved) setAddress((prev) => (prev.trim() ? prev : saved));
   }, [user?.address]);
+
+  // 預設取貨方式（2026-08-08 Glo 要求）：會員設咗順豐站/智能櫃就自動帶入（連站點）；
+  // 客人撳過其他方式就唔好再覆蓋（effect 只喺會員資料載入時跑一次）
+  useEffect(() => {
+    const m = user?.deliveryMethod;
+    if (m === 'sf_station' || m === 'sf_locker') {
+      setDeliveryMethod((prev) => (prev !== 'address' ? prev : m));
+      const pp = user?.pickupPoint;
+      if (pp) setPickupPoint((prev) => (prev.trim() ? prev : pp));
+    }
+  }, [user?.deliveryMethod, user?.pickupPoint]);
 
   // 會員已填嘅地址（註冊或會員中心填嘅）：埋單時可以一撳用返
   const savedAddress = user?.address?.trim() ?? '';
@@ -652,6 +638,10 @@ interface PaymentStepProps {
 function PaymentStep({ order, onDone }: PaymentStepProps) {
   const utils = trpc.useUtils();
   const attachProof = trpc.orders.attachPaymentProof.useMutation();
+  // 收款方式（2026-08-08 Glo 要求）：全網統一來源 siteSettings，後台改咗即時同步；冇設定用預設
+  const methodsQuery = trpc.settings.get.useQuery({ key: PAYMENT_METHODS_SETTING_KEY });
+  const methodsEntry = methodsQuery.data as { key: string; value: string } | null | undefined;
+  const paymentMethods = parsePaymentMethods(methodsEntry?.value);
 
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -732,9 +722,9 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
         </div>
 
         <ul className="mt-6 space-y-3">
-          {PAYMENT_METHODS.map((method) => (
+          {paymentMethods.map((method) => (
             <li
-              key={method.label}
+              key={method.id}
               className="flex items-center justify-between gap-4 rounded-xl border p-4"
               style={{
                 borderColor: 'var(--glass-border)',
@@ -745,9 +735,13 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
                 <p className="font-medium text-txt-1">{method.label}</p>
                 {/* mono 長帳號字串：break-all 等佢可以斷行，唔會撐爆手機闊度 */}
                 <p className="mt-1 break-all font-mono text-sm text-lavender">{method.account}</p>
-                <p className="mt-0.5 text-[13px] text-txt-3">{method.hint}</p>
+                <p className="mt-0.5 text-[13px] text-txt-3">
+                  {method.extraLabel && method.extraValue
+                    ? `${method.extraLabel}：${method.extraValue}`
+                    : method.subtitle}
+                </p>
               </div>
-              <CopyButton text={method.copyValue} />
+              <CopyButton text={method.account} />
             </li>
           ))}
         </ul>
