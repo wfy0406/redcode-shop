@@ -16,6 +16,9 @@ type AuthUser = {
   role: "member" | "staff" | "supervisor" | "admin";
   email?: string | null;
   address?: string | null;
+  // 預設取貨方式（2026-08-08 Glo 要求）：結帳自動帶入；會員中心可改
+  deliveryMethod?: 'address' | 'sf_station' | 'sf_locker';
+  pickupPoint?: string | null;
   age?: number | null;
   birthMonth?: number | null;
   // 已連結 Google 帳號（2026-08-04）：會員中心顯示連結狀態用
@@ -36,6 +39,9 @@ type RegisterInput = {
   // Email（2026-08-04 起必填，Glo 要求）
   email: string;
   address?: string;
+  // 預設取貨方式（2026-08-08 Glo 要求）：註冊可揀送貨上門／順豐站／智能櫃＋站點
+  deliveryMethod?: 'address' | 'sf_station' | 'sf_locker';
+  pickupPoint?: string;
   age?: number;
   birthMonth?: number;
   // 直接促銷同意（2026-08-05 Glo 要求）：註冊頁剔選格，冇剔＝undefined/false

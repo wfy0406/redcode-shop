@@ -9,8 +9,9 @@ import GoogleLoginButton from '@/components/account/GoogleLoginButton';
 /**
  * RedCode 設計系統 §P5 —— 會員註冊 /register
  * 玻璃卡表單：寶寶（買家）姓名、電話（登入帳號，亦係 WhatsApp 通知渠道）、
- * 密碼、確認密碼、Email（2026-08-03 加；2026-08-04 起改必填，Glo 要求）、地址（選填）、年齡（選填）、
- * 生日月份（選填，2026-07-29 加）。
+ * 密碼、確認密碼、Email（2026-08-03 加；2026-08-04 起改必填，Glo 要求）、地址（選填）、
+ * 預設取貨方式（2026-08-08 加，Glo 要求：送貨上門／順豐站／智能櫃，自取可填站點；結帳自動帶入）、
+ * 年齡（選填）、生日月份（選填，2026-07-29 加）。
  * 前端驗證：必填 / 電話 8 位數字起 / 密碼 ≥6 位 / 兩次密碼一致 / Email 格式；
  * 後端 CONFLICT（電話已註冊／Email 已綁定）友善顯示。成功自動登入 → /account。
  */
@@ -56,6 +57,9 @@ export default function Register() {
   const [confirm, setConfirm] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
+  // 預設取貨方式（2026-08-08 Glo 要求）：結帳自動帶入；送貨上門用上面嘅地址欄
+  const [deliveryMethod, setDeliveryMethod] = useState<'address' | 'sf_station' | 'sf_locker'>('address');
+  const [pickupPoint, setPickupPoint] = useState('');
   const [age, setAge] = useState('');
   const [birthMonth, setBirthMonth] = useState('');
   // 直接促銷同意（2026-08-05 Glo 要求，PDPO：唔可以預先剔選，要會員主動剔先算同意）
@@ -100,6 +104,10 @@ export default function Register() {
         password,
         email: email.trim(),
         ...(address.trim() ? { address: address.trim() } : {}),
+        deliveryMethod,
+        ...(deliveryMethod !== 'address' && pickupPoint.trim()
+          ? { pickupPoint: pickupPoint.trim() }
+          : {}),
         ...(age.trim() ? { age: Number(age) } : {}),
         ...(birthMonth ? { birthMonth: Number(birthMonth) } : {}),
         marketingOptIn: agreeMarketing,
@@ -202,6 +210,69 @@ export default function Register() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
           />
+          {/* 預設取貨方式（2026-08-08 Glo 要求）：結帳會自動帶入，客人到時照樣可以改；
+              揀送貨上門就用上面嘅地址欄 */}
+          <div className="w-full">
+            <span className="mb-2 flex items-baseline justify-between gap-2 text-sm text-txt-2">
+              <span>
+                預設取貨方式
+                <span className="ml-2 text-[13px] text-txt-3">（選填）</span>
+              </span>
+              <span className="text-[13px] text-txt-3">結帳嗰陣自動帶入</span>
+            </span>
+            <div className="grid grid-cols-3 gap-2" role="group" aria-label="預設取貨方式">
+              {(
+                [
+                  ['address', '送貨上門'],
+                  ['sf_station', '順豐站'],
+                  ['sf_locker', '智能櫃'],
+                ] as const
+              ).map(([value, label]) => {
+                const active = deliveryMethod === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setDeliveryMethod(value)}
+                    aria-pressed={active}
+                    className="h-12 rounded-xl border text-[14px] transition-[border-color,box-shadow] duration-200"
+                    style={
+                      active
+                        ? {
+                            borderColor: 'var(--pink)',
+                            background: 'var(--pink-haze)',
+                            color: 'var(--txt-1)',
+                            fontWeight: 600,
+                          }
+                        : {
+                            borderColor: 'var(--space-line)',
+                            background: 'var(--space-2)',
+                            color: 'var(--txt-3)',
+                          }
+                    }
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {deliveryMethod !== 'address' && (
+              <div className="mt-3">
+                <FormField
+                  id="reg-pickup"
+                  label={deliveryMethod === 'sf_station' ? '順豐站名稱／編號' : '智能櫃名稱／編號'}
+                  optional
+                  placeholder={
+                    deliveryMethod === 'sf_station'
+                      ? '例如：大埔廣場順豐站'
+                      : '例如：852L110 大埔超級城智能櫃'
+                  }
+                  value={pickupPoint}
+                  onChange={(e) => setPickupPoint(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
           <FormField
             id="reg-age"
             label="年齡"

@@ -119,6 +119,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS "marketingOptInAt" timestamp;
 -- 舊會員（2026-08-05 或之前註冊）未表態登入會彈一次窗逼揀，揀完寫入時間唔再彈
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "marketingPromptedAt" timestamp;
 
+-- 會員預設取貨方式（2026-08-08 Glo 要求）：送貨上門／順豐站／智能櫃＋站點（選填）；
+-- 註冊同會員中心可設，結帳自動帶入。舊會員預設 address＝送貨上門，唔使 backfill
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "deliveryMethod" varchar(16) NOT NULL DEFAULT 'address';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "pickupPoint" varchar(255);
+
 CREATE TABLE IF NOT EXISTS "promoCodes" (
   id serial PRIMARY KEY,
   code varchar(32) NOT NULL UNIQUE,

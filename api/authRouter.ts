@@ -35,6 +35,9 @@ const publicUser = (u: typeof users.$inferSelect) => ({
   phone: u.phone,
   email: u.email,
   address: u.address,
+  // 預設取貨方式（2026-08-08 Glo 要求）：會員中心顯示＋結帳自動帶入用
+  deliveryMethod: u.deliveryMethod,
+  pickupPoint: u.pickupPoint,
   age: u.age,
   birthMonth: u.birthMonth,
   // 直接促銷同意（2026-08-05）：會員中心開關顯示用；後台列表由 membersRouter 自己 select
@@ -63,6 +66,9 @@ export const authRouter = createRouter({
         phone: z.string().min(4).max(32),
         password: z.string().min(6),
         address: z.string().optional(),
+        // 預設取貨方式（2026-08-08 Glo 要求）：選填；揀自取可以順手填站點名稱/編號
+        deliveryMethod: z.enum(["address", "sf_station", "sf_locker"]).optional(),
+        pickupPoint: z.string().max(255).optional(),
         age: z.number().int().min(0).max(150).optional(),
         // 生日月份（選填，1–12；舊會員留空）
         birthMonth: z.number().int().min(1).max(12).optional(),
@@ -104,6 +110,12 @@ export const authRouter = createRouter({
           passwordHash: hashPassword(input.password),
           email,
           address: input.address ?? null,
+          // 預設取貨方式：揀自取先會存站點（送貨上門唔存，唔好留殘舊資料）
+          deliveryMethod: input.deliveryMethod ?? "address",
+          pickupPoint:
+            input.deliveryMethod && input.deliveryMethod !== "address"
+              ? input.pickupPoint?.trim() || null
+              : null,
           age: input.age ?? null,
           birthMonth: input.birthMonth ?? null,
           // 直接促銷同意：剔咗先記 true＋時間；冇剔＝false（預設），促銷電郵唔會寄畀佢
@@ -405,6 +417,9 @@ export const authRouter = createRouter({
         // Email（2026-08-03 加）：傳 null 或空字串＝清除；有值要撞檢查
         email: z.string().trim().email("Email 格式唔啱").max(255).nullable().optional(),
         address: z.string().nullable().optional(),
+        // 預設取貨方式（2026-08-08 Glo 要求）：送貨上門／順豐站／智能櫃；站點傳 null／空＝清除
+        deliveryMethod: z.enum(["address", "sf_station", "sf_locker"]).optional(),
+        pickupPoint: z.string().max(255).nullable().optional(),
         age: z.number().int().min(1).max(120).nullable().optional(),
       }),
     )
@@ -467,6 +482,14 @@ export const authRouter = createRouter({
         data.phone = phone;
       }
       if (input.address !== undefined) data.address = input.address;
+      if (input.deliveryMethod !== undefined) {
+        data.deliveryMethod = input.deliveryMethod;
+        // 改做送貨上門又冇一併傳站點 → 清走舊站點，唔好留殘舊資料
+        if (input.deliveryMethod === "address" && input.pickupPoint === undefined) {
+          data.pickupPoint = null;
+        }
+      }
+      if (input.pickupPoint !== undefined) data.pickupPoint = input.pickupPoint?.trim() || null;
       if (input.age !== undefined) data.age = input.age;
       if (Object.keys(data).length > 0) {
         await db.update(users).set(data).where(eq(users.id, ctx.user.userId));

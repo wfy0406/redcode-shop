@@ -46,6 +46,11 @@ export const users = pgTable("users", {
   googleName: varchar("googleName", { length: 255 }),
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
   address: text("address"),
+  // 預設取貨方式（2026-08-08 Glo 要求）：address 送貨上門（用上面 address 欄）／
+  // sf_station 順豐站／sf_locker 智能櫃（站點名稱/編號落 pickupPoint，選填）。
+  // 註冊同會員中心可設，結帳自動帶入（客人照樣可以改）；舊會員預設 address＝送貨上門。
+  deliveryMethod: varchar("deliveryMethod", { length: 16 }).notNull().default("address"),
+  pickupPoint: varchar("pickupPoint", { length: 255 }),
   age: integer("age"),
   // 生日月份（1–12，選填；2026-07-29 加。舊會員留空＝NULL，之後可以補填）
   birthMonth: integer("birthMonth"),

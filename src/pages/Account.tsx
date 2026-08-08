@@ -6,6 +6,7 @@ import { trpc } from '@/providers/trpc';
 import WishingStar from '@/components/account/WishingStar';
 import OrderCard from '@/components/account/OrderCard';
 import ProfileCard from '@/components/account/ProfileCard';
+import DeliveryPrefCard from '@/components/account/DeliveryPrefCard';
 import CompleteProfileCard from '@/components/account/CompleteProfileCard';
 import GoogleLinkCard from '@/components/account/GoogleLinkCard';
 import MarketingPrefCard from '@/components/account/MarketingPrefCard';
@@ -99,6 +100,11 @@ export default function Account() {
       {/* 會員資料卡（逐行 inline edit） */}
       <div className="mt-8">
         <ProfileCard user={user} onLogout={logout} pushToast={pushToast} />
+      </div>
+
+      {/* 預設取貨方式卡（2026-08-08 Glo 要求）：送貨上門／順豐站／智能櫃，結帳自動帶入 */}
+      <div className="mt-6">
+        <DeliveryPrefCard user={user} pushToast={pushToast} />
       </div>
 
       {/* 優惠資訊接收設定卡（2026-08-05 Glo 要求）：會員自己開/關直接促銷同意 */}
