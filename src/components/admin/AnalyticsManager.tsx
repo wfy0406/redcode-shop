@@ -5,6 +5,7 @@ import { fmtHKD } from './format';
 import { LoadingBlock } from './WishingStar';
 import ExportCard from './ExportCard';
 import SettingsCard from './SettingsCard';
+import PaymentMethodsCard from './PaymentMethodsCard';
 import SiteAssetsCard from './SiteAssetsCard';
 import type { ToastKind } from './useToasts';
 
@@ -369,6 +370,9 @@ export default function AnalyticsManager({
 
       {/* 商品頁介紹設定（F-C） */}
       <SettingsCard toast={toast} />
+
+      {/* 收款方式（2026-08-08 Glo 要求）：全網統一來源，呢度（admin 限定區）改一次，/payment＋結帳頁同步 */}
+      <PaymentMethodsCard toast={toast} />
 
       {/* 網站資產上傳（empty-cart.png / ops-template.xlsx） */}
       <SiteAssetsCard toast={toast} />

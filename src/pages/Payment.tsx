@@ -4,12 +4,28 @@ import { Check, Copy, Landmark, Lock, LogIn, Receipt, Smartphone, Zap } from 'lu
 import { useAuth } from '@/hooks/useAuth';
 import { useReveal } from '@/hooks/useReveal';
 import WishingStar from '@/components/shop/WishingStar';
+import { trpc } from '@/providers/trpc';
+import {
+  DEFAULT_PAYMENT_METHODS,
+  PAYMENT_METHODS_SETTING_KEY,
+  parsePaymentMethods,
+} from '@contracts/paymentMethods';
 
 /**
  * 付款方式 /payment（會員限定）
  * 登入會員先睇到 RedCode 收款資料：中銀／PayMe／Alipay／FPS 識別碼
  * 每項資料一撳複製；底部提示付款後留低收據或截圖。
+ * 2026-08-08（Glo 要求）：收款資料改由 siteSettings「payment_methods」讀（後台業務分析 → 收款方式，
+ * 管理員限定），同結帳頁同一來源全網同步；冇設定就用 contracts 入面嘅預設值。
  */
+
+/** 4 個固定 id 嘅 icon＋色映射（資料可以改，icon 款式跟 id） */
+const ICON_MAP: Record<string, { icon: React.ReactNode; color: string }> = {
+  boc: { icon: <Landmark size={22} aria-hidden="true" />, color: 'var(--gold)' },
+  payme: { icon: <Smartphone size={22} aria-hidden="true" />, color: 'var(--pink-soft)' },
+  alipay: { icon: <Zap size={22} aria-hidden="true" />, color: 'var(--lavender)' },
+  fps: { icon: <Receipt size={22} aria-hidden="true" />, color: 'var(--success)' },
+};
 
 interface CopyButtonProps {
   value: string;
@@ -110,6 +126,10 @@ function MethodCard({ icon, iconColor, title, subtitle, rows, delay }: MethodCar
 export default function Payment() {
   const { user, isLoading } = useAuth();
   const gridRef = useReveal<HTMLDivElement>();
+  // 收款方式（全網統一來源）：後台改咗呢度同結帳頁一齊更新；冇設定用預設
+  const methodsQuery = trpc.settings.get.useQuery({ key: PAYMENT_METHODS_SETTING_KEY });
+  const methodsEntry = methodsQuery.data as { key: string; value: string } | null | undefined;
+  const methods = methodsEntry?.value ? parsePaymentMethods(methodsEntry.value) : DEFAULT_PAYMENT_METHODS;
 
   /* ---------- Loading：核實緊會員身份 ---------- */
   if (isLoading) {
@@ -170,51 +190,28 @@ export default function Payment() {
       </header>
 
       <div ref={gridRef} className="mx-auto mt-12 grid max-w-4xl gap-6 md:grid-cols-2">
-        {/* 中銀 */}
-        <MethodCard
-          icon={<Landmark size={22} aria-hidden="true" />}
-          iconColor="var(--gold)"
-          title="中銀香港 🌟"
-          subtitle="銀行轉帳"
-          delay={0}
-          rows={[
-            { label: '戶口號碼', value: '012-586-2-113136-9' },
-            { label: '戶口名稱', value: 'RED CODE HK LIMITED', copyable: false },
-          ]}
-        />
-
-        {/* PayMe */}
-        <MethodCard
-          icon={<Smartphone size={22} aria-hidden="true" />}
-          iconColor="var(--pink-soft)"
-          title="PayMe 🌟"
-          subtitle="HSBC PayMe 過數"
-          delay={80}
-          rows={[{ label: 'PayMe 號碼', value: '97083811' }]}
-        />
-
-        {/* Alipay */}
-        <MethodCard
-          icon={<Zap size={22} aria-hidden="true" />}
-          iconColor="var(--lavender)"
-          title="Alipay 支付寶 🌟"
-          subtitle="支付寶香港"
-          delay={160}
-          rows={[{ label: '支付寶號碼', value: '97083811' }]}
-        />
-
-        {/* FPS 轉數快 */}
-        <MethodCard
-          icon={<Receipt size={22} aria-hidden="true" />}
-          iconColor="var(--success)"
-          title="FPS 轉數快 🌟"
-          subtitle="識別碼過數，即時到賬"
-          delay={240}
-          rows={[
-            { label: 'FPS 識別碼', value: '120070784' },
-            { label: '收款名稱', value: 'RED CODE HK LIMITED', copyable: false },
-          ]}
-        />
+        {methods.map((m, i) => {
+          const meta = ICON_MAP[m.id] ?? {
+            icon: <Receipt size={22} aria-hidden="true" />,
+            color: 'var(--gold)',
+          };
+          return (
+            <MethodCard
+              key={m.id}
+              icon={meta.icon}
+              iconColor={meta.color}
+              title={`${m.label} 🌟`}
+              subtitle={m.subtitle}
+              delay={i * 80}
+              rows={[
+                { label: m.accountLabel, value: m.account },
+                ...(m.extraLabel && m.extraValue
+                  ? [{ label: m.extraLabel, value: m.extraValue, copyable: false }]
+                  : []),
+              ]}
+            />
+          );
+        })}
       </div>
 
       {/* 付款後提示 */}
