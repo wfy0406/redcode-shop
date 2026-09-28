@@ -109,6 +109,25 @@ function sameLocalDay(d: Date | string, ymd: string): boolean {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` === ymd;
 }
 
+/** 收款時間細字格式（Airwallex 網上付款）：HH:mm dd/MM（本地時間） */
+function fmtPaidAt(d: Date | string): string {
+  const date = d instanceof Date ? d : new Date(d);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())} ${pad(date.getDate())}/${pad(date.getMonth() + 1)}`;
+}
+
+/** Airwallex 已收款 badge（細粒、唔搶戲；跟現有 rounded-full border chip 風格） */
+function AirwallexPaidBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[11px] text-success"
+      style={{ borderColor: 'var(--success)' }}
+    >
+      💳 Airwallex 已收款
+    </span>
+  );
+}
+
 /** 可以手動改單嘅狀態：已出貨／已完成以外都改得（已取消嘅單改動只更新記錄，唔郁庫存） */
 const EDITABLE: OrderStatus[] = ['pending_payment', 'payment_review', 'rejected', 'approved', 'cancelled'];
 
@@ -282,6 +301,7 @@ export default function OrderList({
                     {fmtHKD(order.total)}
                   </span>
                   <StatusBadge status={order.status} />
+                  {order.paymentChannel === 'airwallex' && <AirwallexPaidBadge />}
                   <span className="hidden font-mono text-[12px] text-txt-3 lg:inline">
                     {fmtDateTime(order.createdAt)}
                   </span>
@@ -374,6 +394,12 @@ export default function OrderList({
                             <dt className="w-16 shrink-0 text-txt-3">落單時間</dt>
                             <dd className="font-mono text-[13px] text-txt-2">
                               {fmtDateTime(order.createdAt)}
+                              {/* Airwallex 網上付款：收款時間跟喺落單時間隔籬細字顯示 */}
+                              {order.paidAt && (
+                                <span className="ml-3 text-[12px] text-txt-3">
+                                  收款時間 {fmtPaidAt(order.paidAt)}
+                                </span>
+                              )}
                             </dd>
                           </div>
                         </dl>
