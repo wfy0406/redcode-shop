@@ -151,6 +151,13 @@ export const orders = pgTable("orders", {
   // 取貨方式：address（送貨，預設）／sf_station（順豐站）／sf_locker（智能櫃）；自取時 pickupPoint 填站點名稱/編號（選填）
   deliveryMethod: varchar("deliveryMethod", { length: 16 }).notNull().default("address"),
   pickupPoint: varchar("pickupPoint", { length: 255 }),
+  // 付款渠道（2026-09 Airwallex 網上付款）：'manual'＝手動過數上傳截圖（舊有全部訂單自動係呢個）；
+  // 'airwallex'＝經 Airwallex Hosted Payment Page 網上已付款（webhook 確認後寫入）
+  paymentChannel: varchar("paymentChannel", { length: 16 }).notNull().default("manual"),
+  // Airwallex PaymentIntent ID（同內部系統對單／查數用；淨係 airwallex 單先有值）
+  airwallexIntentId: varchar("airwallexIntentId", { length: 64 }),
+  // 網上付款收款時間（Airwallex webhook payment_intent.succeeded 確認嗰刻寫入；手動過數單留空＝NULL）
+  paidAt: timestamp("paidAt"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   // PostgreSQL 冇 ON UPDATE CURRENT_TIMESTAMP，updatedAt 由應用層更新時一併 set
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),

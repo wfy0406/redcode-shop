@@ -12,9 +12,12 @@ import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback } from "./wmsSync";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { productImageArchive, products } from "@db/schema";
+import { orders, productImageArchive, products, users } from "@db/schema";
+import { getAirwallexConfig, verifyWebhookSignature } from "./airwallex";
+import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail } from "./email";
+import { logAudit } from "./audit";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -35,6 +38,138 @@ app.get("/api/export/daily", exportDaily);
 
 // WMS → 官網審批回調（shared secret 驗證；同樣喺 tRPC mount 前註冊）
 app.post("/api/wms/review-callback", wmsReviewCallback);
+
+// Airwallex 網上付款（2026-09 F5）——兩條 route 都喺 tRPC mount 前註冊：
+// ① HPP 回跳中轉：Airwallex 俾完錢會 GET 跳返呢度；因為前端係 HashRouter，
+//    外層 query 到唔到 React，所以 server 302 轉去 #/payment?orderId=X&ap=done。
+app.get("/api/airwallex/return", (c) => {
+  const orderId = c.req.query("orderId") ?? "";
+  // 只收純數字 orderId，防 open redirect／query 注入
+  if (!/^\d+$/.test(orderId)) {
+    return c.redirect("/#/", 302);
+  }
+  return c.redirect(`/#/payment?orderId=${orderId}&ap=done`, 302);
+});
+
+// ② Webhook 收款確認：Airwallex 會 retry，所以全程冪等——conditional update
+//    淨郁 status='pending_payment' 嘅單，郁到（第一次）先寄 email。
+app.post("/api/airwallex/webhook", async (c) => {
+  // env 未配置都照註冊：回 503 JSON，唔好冧 server
+  const cfg = getAirwallexConfig();
+  if (!cfg) {
+    return c.json({ ok: false, error: "Airwallex 未配置" }, 503);
+  }
+  // 簽名驗證必須用**未經 parse** 嘅原始 body（官方文件：re-serialized JSON 會改 bytes 夾唔到簽名）
+  const timestamp = c.req.header("x-timestamp") ?? "";
+  const signature = c.req.header("x-signature") ?? "";
+  const rawBody = await c.req.text();
+  if (!verifyWebhookSignature(cfg.webhookSecret, timestamp, signature, rawBody)) {
+    console.error("[airwallex] webhook 簽名驗證失敗");
+    return c.json({ ok: false, error: "簽名驗證失敗" }, 401);
+  }
+  let event: { name?: string; data?: { object?: Record<string, unknown> } };
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return c.json({ ok: false, error: "body 要係 JSON" }, 400);
+  }
+  // 只處理收款成功；其他事件照回 200（唔理嘅事件唔應該畀 Airwallex 無限 retry）
+  if (event?.name !== "payment_intent.succeeded") {
+    return c.json({ ok: true, ignored: true });
+  }
+  const intent = event.data?.object ?? {};
+  const merchantOrderId =
+    typeof intent.merchant_order_id === "string" ? intent.merchant_order_id : "";
+  const intentId = typeof intent.id === "string" ? intent.id : null;
+  if (!merchantOrderId) {
+    return c.json({ ok: true, ignored: true });
+  }
+  const db = getDb();
+  const paidAt = new Date();
+  // 冪等核心：where 埋 status='pending_payment'，retry／重複 event 會郁 0 行 → 唔會重複寄信
+  const updated = await db
+    .update(orders)
+    .set({
+      status: "payment_review",
+      paymentChannel: "airwallex",
+      airwallexIntentId: intentId,
+      paidAt,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(orders.orderNo, merchantOrderId), eq(orders.status, "pending_payment")))
+    .returning({ id: orders.id, orderNo: orders.orderNo });
+  if (updated.length === 0) {
+    // 唔存在嘅單／已處理過嘅 retry：照回 200 收檔
+    return c.json({ ok: true, alreadyHandled: true });
+  }
+  const [paid] = updated;
+  void logAudit({
+    actorRole: "system",
+    action: "order.paidOnline",
+    targetType: "order",
+    targetId: paid.orderNo,
+    detail: `Airwallex 網上付款成功（訂單 ${paid.orderNo}${intentId ? `，intent ${intentId}` : ""}），訂單轉待審批`,
+  });
+  // 第一次確認先寄 email：客人「已收款」＋內部「待審批」；背景執行，失敗淨係 log，唔阻 200
+  void (async () => {
+    try {
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.id, paid.id),
+        with: { items: true },
+      });
+      if (!order) return;
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, order.userId),
+      });
+      if (!user) return;
+      const items = order.items.map((it) => ({
+        productName: it.productName,
+        size: it.size,
+        price: it.price,
+        quantity: it.quantity,
+      }));
+      const delivery = {
+        method: order.deliveryMethod,
+        pickupPoint: order.pickupPoint,
+        address: order.address,
+      };
+      // 客人通知（有綁 email 先寄）
+      if (user.email) {
+        const r = await sendOrderPaidOnlineEmail({
+          to: user.email,
+          orderNo: order.orderNo,
+          items,
+          total: order.total,
+          delivery,
+          paidAt,
+        });
+        if (!r.ok) {
+          console.error(`[email] 網上收款通知寄唔出（訂單 ${order.orderNo}）：`, r.error);
+        }
+      }
+      // 內部待審批通知（同截圖流程匯合：同事照舊人手確認）
+      const r2 = await sendOrderReviewAlertEmail({
+        orderNo: order.orderNo,
+        createdAt: order.createdAt,
+        customerName: user.name,
+        customerPhone: user.phone,
+        customerEmail: user.email,
+        delivery,
+        note: order.note,
+        promoCode: order.promoCode,
+        items,
+        total: order.total,
+        discountAmount: order.discountAmount,
+      });
+      if (!r2.ok) {
+        console.error(`[email] 待審批通知寄唔出（訂單 ${order.orderNo}）：`, r2.error);
+      }
+    } catch (e) {
+      console.error("[airwallex] webhook 寄信出錯:", e);
+    }
+  })().catch((e) => console.error("[airwallex] webhook 寄信出錯:", e));
+  return c.json({ ok: true });
+});
 
 // 網站資產管理（staff/admin）—— 後台直接上傳 empty-cart.png / ops-template.xlsx / gloglo-3.jpg
 app.get("/api/admin/site-assets", siteAssetsStatus);

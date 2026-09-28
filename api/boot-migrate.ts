@@ -153,6 +153,12 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS "delistAt" timestamp;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS "deliveryMethod" varchar(16) NOT NULL DEFAULT 'address';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS "pickupPoint" varchar(255);
 
+-- Airwallex 網上付款（2026-09）：付款渠道（manual＝手動過數，舊單自動落入；
+-- airwallex＝網上已付款）＋ PaymentIntent ID＋收款時間（webhook 確認後寫入）
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "paymentChannel" varchar(16) NOT NULL DEFAULT 'manual';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "airwallexIntentId" varchar(64);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "paidAt" timestamp;
+
 CREATE TABLE IF NOT EXISTS "praiseWall" (
   id serial PRIMARY KEY,
   image varchar(512) NOT NULL,
