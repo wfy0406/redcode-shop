@@ -2,7 +2,21 @@ import { useState } from 'react';
 import { trpc } from '@/providers/trpc';
 import type { AdminOrder } from './types';
 import { fmtHKD } from './format';
+import { PAYMENT_CHANNEL_LABELS } from './statusMeta';
+import type { PaymentChannel } from './statusMeta';
 import WishingStar from './WishingStar';
+
+/** 收款時間格式（Airwallex 網上付款唯讀顯示）：HH:mm dd/MM（本地時間） */
+function fmtPaidAt(d: Date | string): string {
+  const date = d instanceof Date ? d : new Date(d);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())} ${pad(date.getDate())}/${pad(date.getMonth() + 1)}`;
+}
+
+/** 付款渠道顯示 label：已知值用 PAYMENT_CHANNEL_LABELS，未知值原樣顯示（唔會冧） */
+function paymentChannelLabel(channel: string): string {
+  return PAYMENT_CHANNEL_LABELS[channel as PaymentChannel] ?? channel;
+}
 
 interface EditLine {
   productId: number;
@@ -148,6 +162,28 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
           呢張訂單已確認：如果已送 WMS／已執貨，改動後請同倉務跟進。
         </p>
       )}
+
+      {/* 付款資料（唯讀，2026-09 Airwallex 網上付款）：渠道／交易編號／收款時間——改單唔郁得呢啲 */}
+      <dl className="mt-3 flex flex-col gap-1.5 border-b pb-3 text-[13px]" style={{ borderColor: 'var(--space-line)' }}>
+        <div className="flex gap-2">
+          <dt className="w-28 shrink-0 text-txt-3">付款渠道</dt>
+          <dd className="text-txt-2">{paymentChannelLabel(order.paymentChannel)}</dd>
+        </div>
+        {order.airwallexIntentId && (
+          <div className="flex gap-2">
+            <dt className="w-28 shrink-0 text-txt-3">Airwallex 交易編號</dt>
+            <dd className="min-w-0 break-all font-mono text-[12px] text-txt-2">
+              {order.airwallexIntentId}
+            </dd>
+          </div>
+        )}
+        {order.paidAt && (
+          <div className="flex gap-2">
+            <dt className="w-28 shrink-0 text-txt-3">收款時間</dt>
+            <dd className="font-mono text-[12px] text-txt-2">{fmtPaidAt(order.paidAt)}</dd>
+          </div>
+        )}
+      </dl>
 
       {/* 貨品行：數量 stepper + 移除 */}
       <ul className="mt-3 flex flex-col gap-2">
