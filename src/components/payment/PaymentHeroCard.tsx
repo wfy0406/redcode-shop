@@ -19,14 +19,19 @@ import { Download, FileText, Loader2 } from 'lucide-react';
  * html2canvas 同 jspdf 都係 dynamic import()，唔會塞首屏 bundle。
  */
 
-/* ---------- 設計常數（全卡統一口徑） ---------- */
-const PAPER = '#F5EEDF'; // 象牙紙主色
-const PAPER_LIGHT = '#FBF7EC'; // 紙面高光
-const INK = '#44392C'; // 暖褐墨色（正文）
-const INK_SOFT = '#8A7D6B'; // 淡墨（輔助文字）
-const CARMINE = '#9C1B32'; // 深胭脂紅（品牌 accent，夜色粉紅嘅紙本演繹）
-const GOLD_LINE = '#B3905A'; // 金色 hairline
-const GOLD_FAINT = 'rgba(179, 144, 90, 0.4)';
+/* ---------- 設計常數（全卡統一口徑；Wave 2 對齊 WMS BillPage §0 設計錨） ---------- */
+const PAPER = '#fcfcf8'; // cream 底（§0）
+const PAPER_LIGHT = '#fffefb'; // 紙面高光（§0）
+const INK = '#2a160d'; // 深棕墨（§0）
+const INK_SOFT = 'rgba(42, 22, 13, 0.62)'; // 淡墨 ink-soft（§0）
+const INK_FAINT = 'rgba(42, 22, 13, 0.42)'; // 更淡墨 ink-faint（§0）
+const SEAL_RED = '#9C1B32'; // 火漆／郵戳實物紅（非文字色；文字一律 ink/gold）
+const GOLD_LINE = '#ab8c52'; // 青銅金（§0）
+const GOLD_FAINT = 'rgba(171, 140, 82, 0.45)'; // gold hairline（§0）
+
+/** 全網統一手續費免責聲明（F7 §0 逐字，唔准改） */
+const ONLINE_PAYMENT_FEE_NOTE =
+  '以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準';
 
 const SERIF = `'Cormorant Garamond', 'Noto Serif TC', serif`;
 const MONO = `'DM Mono', ui-monospace, 'SFMono-Regular', monospace`;
@@ -118,7 +123,7 @@ function WaxSeal() {
         height: 74,
         borderRadius: '48% 52% 51% 49% / 52% 47% 53% 48%',
         background:
-          'radial-gradient(circle at 36% 30%, #C23A54 0%, #9C1B32 46%, #7A1227 78%, #5F0D1F 100%)',
+          `radial-gradient(circle at 36% 30%, #C23A54 0%, ${SEAL_RED} 46%, #7A1227 78%, #5F0D1F 100%)`,
         boxShadow:
           'inset 0 0 0 2px rgba(255, 232, 214, 0.28), inset 0 0 0 5px rgba(122, 18, 39, 0.85), inset 0 -8px 14px rgba(70, 6, 18, 0.55), inset 0 6px 10px rgba(255, 190, 170, 0.25), 0 4px 10px rgba(68, 57, 44, 0.35)',
       }}
@@ -266,9 +271,9 @@ export default function PaymentHeroCard(props: {
           position: 'relative',
           backgroundColor: PAPER,
           backgroundImage: `
-            repeating-linear-gradient(45deg, rgba(179, 144, 90, 0.045) 0px, rgba(179, 144, 90, 0.045) 1px, transparent 1px, transparent 9px),
+            repeating-linear-gradient(45deg, rgba(171, 140, 82, 0.045) 0px, rgba(171, 140, 82, 0.045) 1px, transparent 1px, transparent 9px),
             radial-gradient(ellipse 120% 90% at 50% 0%, ${PAPER_LIGHT} 0%, transparent 60%),
-            radial-gradient(ellipse 140% 120% at 50% 50%, transparent 62%, rgba(138, 112, 72, 0.14) 100%)
+            radial-gradient(ellipse 140% 120% at 50% 50%, transparent 62%, rgba(171, 140, 82, 0.16) 100%)
           `,
           border: `1px solid ${GOLD_LINE}`,
           boxShadow:
@@ -323,7 +328,7 @@ export default function PaymentHeroCard(props: {
                   letterSpacing: '0.3em',
                   margin: '10px 0 0 -0.3em', // letterSpacing 補正，視覺置中
                   textIndent: '0.3em',
-                  color: CARMINE,
+                  color: INK,
                 }}
               >
                 RED CODE
@@ -374,7 +379,7 @@ export default function PaymentHeroCard(props: {
                         fontFamily: SERIF,
                         fontWeight: 700,
                         fontSize: 15,
-                        color: label.startsWith('訂單狀態') ? CARMINE : INK,
+                        color: INK,
                         textAlign: 'right',
                       }}
                     >
@@ -417,7 +422,12 @@ export default function PaymentHeroCard(props: {
                       </span>
                       <span
                         className="shrink-0 text-right"
-                        style={{ fontFamily: MONO, fontSize: 12, color: INK }}
+                        style={{
+                          fontFamily: MONO,
+                          fontSize: 12,
+                          color: INK,
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
                       >
                         <span style={{ color: INK_SOFT, marginRight: 12 }}>
                           {item.quantity} × {fmtMoney(item.price)}
@@ -437,7 +447,7 @@ export default function PaymentHeroCard(props: {
                   <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
                     折扣 Discount
                   </span>
-                  <span style={{ fontFamily: MONO, fontSize: 13, color: CARMINE }}>
+                  <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
                     −{fmtMoney(discountAmount)}
                   </span>
                 </div>
@@ -473,7 +483,8 @@ export default function PaymentHeroCard(props: {
                     fontWeight: 600,
                     fontSize: 30,
                     lineHeight: 1,
-                    color: CARMINE,
+                    color: INK,
+                    fontVariantNumeric: 'tabular-nums',
                   }}
                 >
                   {fmtMoney(total)}
@@ -493,6 +504,21 @@ export default function PaymentHeroCard(props: {
                 </span>
               </div>
             )}
+
+            {/* ---- 全網統一手續費免責聲明（§0 逐字，唔准改） ---- */}
+            <p
+              className="text-center"
+              style={{
+                fontFamily: SERIF,
+                fontSize: 10.5,
+                lineHeight: 1.9,
+                letterSpacing: '0.05em',
+                color: INK_FAINT,
+                marginTop: 18,
+              }}
+            >
+              {ONLINE_PAYMENT_FEE_NOTE}
+            </p>
 
             {/* ---- 卡尾：火漆印 + 謝語 + 條碼 ---- */}
             <div

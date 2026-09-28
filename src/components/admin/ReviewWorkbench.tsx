@@ -173,6 +173,29 @@ export default function ReviewWorkbench({
             className="rounded-2xl border p-5 backdrop-blur-xl md:p-6"
             style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
           >
+            {/* F7 退款狀態 banner（頂部）：審批中黃色；已退款／人手退款灰色 */}
+            {selected.refundStatus === 'pending' && (
+              <p
+                role="status"
+                className="mb-4 rounded-xl border px-4 py-3 text-[13px]"
+                style={{
+                  borderColor: 'var(--gold)',
+                  color: 'var(--gold)',
+                  background: 'color-mix(in srgb, var(--gold) 8%, transparent)',
+                }}
+              >
+                ⏳ 退款審批中（WMS 主管處理緊）
+              </p>
+            )}
+            {(selected.refundStatus === 'refunded' || selected.refundStatus === 'manual') && (
+              <p
+                role="status"
+                className="mb-4 rounded-xl border px-4 py-3 text-[13px] text-txt-3"
+                style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+              >
+                {selected.refundStatus === 'refunded' ? '已取消 · 已退款' : '已取消 · 人手退款'}
+              </p>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="font-mono text-[16px] text-txt-1">{selected.orderNo}</h3>
               <span className="flex items-center gap-2">

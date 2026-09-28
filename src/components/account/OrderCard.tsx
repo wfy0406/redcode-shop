@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { Receipt, Ticket } from 'lucide-react';
+import { trpc } from '@/providers/trpc';
 import StatusBadge from './StatusBadge';
 import OrderTimeline from './OrderTimeline';
 import PaymentProofDropzone from './PaymentProofDropzone';
@@ -10,12 +12,83 @@ import type { MyOrder, MyOrderItem } from './types';
  * 會員中心訂單卡（§P8）
  * 玻璃列：DM Mono 單號 + 日期 + 狀態 badge + 商品明細（圖/名/貨號/size/數量/價）
  * + 總計 + 取貨方式（順豐站/智能櫃）+ 金星狀態時間線；待付款／被拒絕訂單附付款資料提示卡 + 截圖上傳 dropzone。
+ * 2026-09 F7：待付款單加「💳 即時網上支付」（Airwallex HPP，寫法跟 Payment.tsx）；
+ * 退款狀態 badge（審批中／已退款／人手退款／失敗），已退款／人手退款嘅卡整體灰化。
  */
 
 interface OrderCardProps {
   order: MyOrder;
   /** productId → 商品圖 URL（orderItems 無快照圖，經 products.list 對照） */
   productImages: Record<number, string>;
+}
+
+/** 全網統一手續費提示（F7 §1.8 逐字，唔准改） */
+const ONLINE_PAYMENT_FEE_NOTE =
+  '以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準。';
+
+/**
+ * 退款狀態 badge（客人側口徑）：'none'／'rejected' 唔顯示；
+ * refunded／manual 連同成張卡灰化（同 WMS 灰卡做法呼應）。
+ */
+const REFUND_BADGES: Record<string, { text: string; className: string }> = {
+  pending: { text: '⏳ 退款審批中', className: 'border-gold/70 text-gold' },
+  refunded: { text: '❌ 已取消 · 已退款', className: 'border-space-line text-txt-3' },
+  manual: { text: '❌ 已取消 · 人手退款處理中', className: 'border-space-line text-txt-3' },
+  failed: { text: '⚠️ 退款失敗 · 請聯絡客服', className: 'border-pink/70 text-pink-soft' },
+};
+
+/**
+ * 「💳 即時網上支付」（F7）：trpc.airwallex.createPayment →
+ * { enabled:true, url } 跳去 Airwallex Hosted Payment Page；
+ * { enabled:false }（未配置）→ 成個區收起，淨返手動過數（寫法跟 Payment.tsx）。
+ */
+function OnlinePaySection({ orderId, total }: { orderId: number; total: number }) {
+  const createPayment = trpc.airwallex.createPayment.useMutation();
+  const [airwallexUnavailable, setAirwallexUnavailable] = useState(false);
+  const [payOnlineError, setPayOnlineError] = useState<string | null>(null);
+
+  if (airwallexUnavailable) return null;
+
+  const onPayOnline = async () => {
+    setPayOnlineError(null);
+    try {
+      // A1 契約：{ enabled:true, url } → 跳 HPP；{ enabled:false } → 收區
+      const result = (await createPayment.mutateAsync({ orderId })) as {
+        enabled: boolean;
+        url?: string;
+      };
+      if (result.enabled && result.url) {
+        window.location.href = result.url;
+        return;
+      }
+      setAirwallexUnavailable(true);
+    } catch (err) {
+      // 後端會擲中文 TRPCError（唔係自己嘅單／唔係 pending_payment 等），照原樣顯示
+      setPayOnlineError(err instanceof Error ? err.message : '未能開啟網上付款，請稍後再試');
+    }
+  };
+
+  return (
+    <div
+      className="rounded-xl border px-4 py-4"
+      style={{ borderColor: 'var(--gold)', background: 'var(--space-2)' }}
+    >
+      <button
+        type="button"
+        onClick={() => void onPayOnline()}
+        disabled={createPayment.isPending}
+        className="btn btn-primary w-full disabled:opacity-70"
+      >
+        {createPayment.isPending ? '正在開啟安全付款頁…' : `💳 即時網上支付 ${formatHKD(total)}`}
+      </button>
+      {payOnlineError && (
+        <p role="alert" className="mt-2 text-[12px] leading-relaxed text-pink-soft">
+          {payOnlineError}
+        </p>
+      )}
+      <p className="mt-2 text-[12px] leading-relaxed text-txt-3">{ONLINE_PAYMENT_FEE_NOTE}</p>
+    </div>
+  );
 }
 
 function ItemRow({ item, image }: { item: MyOrderItem; image?: string }) {
@@ -58,6 +131,10 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
       : undefined;
   const latestProof = order.proofs.length > 0 ? order.proofs[order.proofs.length - 1] : undefined;
 
+  // F7 退款：badge（'none'／'rejected' 唔顯示）；refunded／manual 成張卡灰化（同 WMS 灰卡呼應）
+  const refundBadge = REFUND_BADGES[order.refundStatus];
+  const refundGrayed = order.refundStatus === 'refunded' || order.refundStatus === 'manual';
+
   return (
     <article
       className="rounded-2xl border p-5 md:p-6"
@@ -66,6 +143,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         borderColor: 'var(--glass-border)',
+        ...(refundGrayed ? { opacity: 0.6, filter: 'grayscale(0.5)' } : {}),
       }}
       aria-label={`訂單 ${order.orderNo}`}
     >
@@ -73,6 +151,13 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="font-mono text-sm text-txt-2">{order.orderNo}</span>
         <span className="text-[13px] text-txt-3">{formatOrderDate(order.createdAt)}</span>
+        {refundBadge && (
+          <span
+            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[12px] ${refundBadge.className}`}
+          >
+            {refundBadge.text}
+          </span>
+        )}
         <span className="ml-auto flex items-center gap-3">
           <Link
             to={`/receipt/${order.id}`}
@@ -164,9 +249,12 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         </div>
       )}
 
-      {/* 待付款／被拒絕：付款資料提示 + 上傳 */}
+      {/* 待付款／被拒絕：即時網上支付（待付款先有，喺上傳截圖區上面）+ 付款資料提示 + 上傳 */}
       {needsPayment && (
         <div className="mt-5 flex flex-col gap-4 border-t border-space-line pt-5">
+          {order.status === 'pending_payment' && (
+            <OnlinePaySection orderId={order.id} total={order.total} />
+          )}
           <div className="rounded-xl border border-space-line bg-space-3 px-4 py-3 text-[13px] leading-relaxed text-txt-2">
             <p className="font-medium text-txt-1">付款資料</p>
             <p className="mt-1">

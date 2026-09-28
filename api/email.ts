@@ -1,5 +1,5 @@
 /**
- * RedCode 寄信基建（2026-08-04 第三版：安靜奢華風＋訂單單據附件）
+ * RedCode 寄信基建（2026-09 Wave 2 第四版：WMS 出單同款「英式精裝紙單」）
  * --------------------------------
  * 用 Resend REST API 直 call（fetch），零新 npm dependency，唔會影響 Docker build。
  *
@@ -15,31 +15,33 @@
  * 訂單確認信會附上「訂單單據」HTML 附件（base64，經 Resend attachments 寄出），
  * 客人打開可以睇返成張單，仲可以列印或另存 PDF。
  *
- * 2026-08-04 第三版設計方向（安靜奢華 quiet luxury）：
- * 暖白紙底＋白卡配髮絲線框（去圓角、去陰影）；近黑暖調墨色；雙字體系統——
- * sans 做正文、serif（宋體系）做標題同金額等品牌時刻；品牌粉紅只留小面積點綴
- * （kicker／狀態字／連結）；用留白、字距同髮絲線代替色塊同卡片疊卡片。
- * 中文唔用 italic（中文冇真斜體，機械斜體會影響閱讀）。
+ * 2026-09 第四版設計方向（跟 WMS BillPage v2.0.0「英式優雅精裝紙單」）：
+ * 奶油底 #fcfcf8／紙面 #fffefb／深棕墨 #2a160d／青銅金 #ab8c52；hairline 金線；
+ * 零圓角；serif 雙字體（拉丁 Playfair Display／中文宋體系）；mono 單號；
+ * 標題闊字距＋標題下雙金線；明細表 hairline 金線；總計行 3px double 金線封口；
+ * 金實底墨字 CTA。中文永遠唔用 italic（中文冇真斜體）。
+ * Email client 兼容：table 排版＋全部 inline CSS，唔用 flex/grid/@import。
  */
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
-const BRAND_PINK = "#e6007e"; // 品牌粉紅：只做小面積點綴（kicker／狀態字／連結）
-const INK = "#17140f"; // 近黑（暖調）：標題／總額／主掣／表頭墨線
-const BODY = "#3f3a33"; // 正文墨色
-const MUTED = "#8d857a"; // 次要文字
-const FAINT = "#b3aa9c"; // 極次要（表頭／footer）
-const HAIRLINE = "#e7e1d6"; // 髮絲分隔線（暖灰）
-const PAPER = "#f5f2ec"; // 外層暖白紙底
-const BOX_BG = "#faf8f2"; // 提示盒極淺暖底
-const WARN_BG = "#fbf6ea";
-const WARN_LINE = "#eadfc2";
-const WARN_TEXT = "#7a6520";
+/* ── 精裝紙單色板（同 WMS BillPage §0 設計錨逐字對齊） ── */
+const CREAM = "#fcfcf8"; // 外層奶油底
+const PAPER = "#fffefb"; // 內層紙面
+const INK = "#2a160d"; // 深棕墨：標題／總額／主字
+const GOLD = "#ab8c52"; // 青銅金：金線／強調／CTA 底
+const GOLD_HAIR = "rgba(171,140,82,.45)"; // hairline 金線
+const GOLD_FAINT = "rgba(171,140,82,.22)"; // faint 金線（行間）
+const GOLD_TINT = "rgba(171,140,82,.07)"; // 極淺金底（提示盒）
+const INK_SOFT = "rgba(42,22,13,.62)"; // 次要文字
+const INK_FAINT = "rgba(42,22,13,.42)"; // 極次要（表頭／footer／免責聲明）
+const ERROR = "#8c3b2e"; // 錯誤／取消原因強調
 
-const FONT_STACK =
-  "-apple-system,BlinkMacSystemFont,'PingFang HK','PingFang TC','Microsoft JhengHei','Noto Sans TC',sans-serif";
-// 標題／金額用 serif：拉丁 Georgia，中文宋體系（宋體先係中文嘅「編輯奢華」字腔）
+// 精裝紙單 serif 字腔：拉丁 Playfair Display，中文宋體系；webfont 唔保證載到，
+// fallback 順序 Georgia → Songti TC → serif，邊個 client 都睇得順
 const SERIF_STACK =
-  "Georgia,'Times New Roman','Songti SC','STSong','Noto Serif TC','Noto Serif CJK TC','SimSun',serif";
+  "'Playfair Display','Noto Serif TC',Georgia,'Songti TC','Songti SC','STSong',serif";
+// 單號用 monospace（BillPage 用 JetBrains Mono；email client fallback Courier New）
+const MONO_STACK = "'JetBrains Mono','Courier New',monospace";
 
 /** email 入面訂單明細嘅統一格式 */
 export type OrderEmailItem = {
@@ -151,10 +153,12 @@ export async function sendEmail(opts: {
 /* ───────────────────────── 品牌模板＋內容小組件 ───────────────────────── */
 
 /**
- * 品牌模板（每封 email 共用，2026-08-04 安靜奢華版）：
- * 暖白紙底＋白卡（髮絲線框、無圓角、無陰影）；卡頂 logo；
- * 內文頂有粉紅 kicker（闊字距）＋serif 大標題＋髮絲線；卡尾免責聲明＋署名。
- * Email client 兼容做法：table 排版＋全部 inline CSS。
+ * 品牌模板（每封 email 共用，2026-09 WMS 精裝紙單版）：
+ * 奶油外底 → 白紙卡（1px gold-hair 外框）→ 雙金線內框（1px gold-faint）；
+ * 卡頂置中 logo＋公司名（uppercase 闊字距）；
+ * 內文頂有金 kicker（闊字距）＋serif 闊字距大標題（置中）＋標題下雙金線
+ * （table row 做 1px gold＋1px gold-hair 兩條）；卡尾免責聲明＋署名。
+ * Email client 兼容做法：table 排版＋全部 inline CSS，零圓角。
  * 免責聲明（老闆要求）：每封都有「如非本人操作，則不用理會本電郵。」
  */
 function brandedEmail(opts: { preheader: string; kicker: string; title: string; contentHtml: string }): string {
@@ -166,33 +170,44 @@ function brandedEmail(opts: { preheader: string; kicker: string; title: string; 
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(opts.title)}</title>
 </head>
-<body style="margin:0;padding:0;background:${PAPER};">
+<body style="margin:0;padding:0;background:${CREAM};">
 <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(opts.preheader)}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAPER};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${CREAM};">
 <tr><td align="center" style="padding:44px 16px 40px;">
   <table role="presentation" width="580" cellpadding="0" cellspacing="0" style="width:100%;max-width:580px;">
     <tr>
-      <td align="center" style="padding:0 0 28px;">
-        <img src="${site}/logo.png" alt="RedCode Fashion Design" width="190"
-          style="display:block;width:190px;max-width:60%;height:auto;" />
+      <td align="center" style="padding:0 0 26px;">
+        <img src="${site}/logo.png" alt="RedCode Fashion Design" width="150"
+          style="display:block;width:150px;max-width:52%;height:auto;margin:0 auto;" />
+        <p style="margin:14px 0 0;font-family:${SERIF_STACK};font-size:13px;font-weight:600;letter-spacing:5px;text-indent:5px;color:${INK};">REDCODE HK直播台</p>
       </td>
     </tr>
     <tr>
-      <td style="background:#ffffff;border:1px solid ${HAIRLINE};padding:42px 38px 36px;font-family:${FONT_STACK};">
-        <p style="margin:0 0 12px;font-size:11px;font-weight:700;letter-spacing:4px;color:${BRAND_PINK};">${escapeHtml(opts.kicker)}</p>
-        <h1 style="margin:0;font-family:${SERIF_STACK};font-size:26px;line-height:1.4;letter-spacing:1.5px;color:${INK};font-weight:700;">${escapeHtml(opts.title)}</h1>
-        <div style="margin:20px 0 28px;border-top:1px solid ${HAIRLINE};"></div>
-        <div style="font-size:15px;line-height:1.95;color:${BODY};">
-          ${opts.contentHtml}
-        </div>
+      <td style="background:${PAPER};border:1px solid ${GOLD_HAIR};padding:8px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="border:1px solid ${GOLD_FAINT};padding:36px 30px 30px;font-family:${SERIF_STACK};">
+              <p style="margin:0 0 14px;text-align:center;font-size:10.5px;font-weight:700;letter-spacing:3px;text-indent:3px;color:${GOLD};">${escapeHtml(opts.kicker)}</p>
+              <h1 style="margin:0;text-align:center;font-family:${SERIF_STACK};font-size:24px;line-height:1.5;letter-spacing:7px;text-indent:7px;color:${INK};font-weight:700;">${escapeHtml(opts.title)}</h1>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 26px;">
+                <tr><td style="border-top:1px solid ${GOLD};font-size:0;line-height:0;height:0;">&nbsp;</td></tr>
+                <tr><td style="height:3px;font-size:0;line-height:0;">&nbsp;</td></tr>
+                <tr><td style="border-top:1px solid ${GOLD_HAIR};font-size:0;line-height:0;height:0;">&nbsp;</td></tr>
+              </table>
+              <div style="font-size:15px;line-height:1.95;color:${INK};">
+                ${opts.contentHtml}
+              </div>
+            </td>
+          </tr>
+        </table>
       </td>
     </tr>
     <tr>
       <td style="padding:26px 8px 0;">
-        <p style="margin:0;text-align:center;font-family:${FONT_STACK};font-size:12.5px;line-height:1.9;color:${MUTED};">如非本人操作，則不用理會本電郵。</p>
-        <p style="margin:12px 0 0;text-align:center;font-family:${FONT_STACK};font-size:12px;line-height:1.9;color:${FAINT};">
+        <p style="margin:0;text-align:center;font-family:${SERIF_STACK};font-size:12.5px;line-height:1.9;color:${INK_SOFT};">如非本人操作，則不用理會本電郵。</p>
+        <p style="margin:12px 0 0;text-align:center;font-family:${SERIF_STACK};font-size:12px;line-height:1.9;color:${INK_FAINT};">
           呢封電郵由系統自動發出，請唔好直接回覆。<br />
-          RedCode Fashion Design · <a href="${site}" style="color:${BRAND_PINK};text-decoration:none;">redcode.red</a>
+          RedCode Fashion Design · <a href="${site}" style="color:${GOLD};text-decoration:none;">redcode.red</a>
         </p>
       </td>
     </tr>
@@ -203,91 +218,107 @@ function brandedEmail(opts: { preheader: string; kicker: string; title: string; 
 </html>`;
 }
 
-/** 內容小組件：資料列（訂單編號／金額嗰類）——去咗色盒，用上下髮絲線框住，行間幼線 */
+/** 內容小組件：單號用 monospace（BillPage 嘅 mono 單號感） */
+function mono(s: string): string {
+  return `<span style="font-family:${MONO_STACK};letter-spacing:1px;">${s}</span>`;
+}
+
+/** 內容小組件：資料列（訂單編號／金額嗰類）——上下 hairline 金線框住，行間 faint 金線；dt 細字闊字距 */
 function infoBox(rows: [string, string][]): string {
   const trs = rows
     .map(
       ([k, v], i) => `<tr>
-        <td style="padding:11px 0;font-size:11px;letter-spacing:2px;color:${MUTED};vertical-align:top;width:104px;${i > 0 ? `border-top:1px solid ${HAIRLINE};` : ""}">${k}</td>
-        <td style="padding:11px 0;font-size:14.5px;color:${INK};font-weight:600;${i > 0 ? `border-top:1px solid ${HAIRLINE};` : ""}">${v}</td>
+        <td style="padding:11px 0;font-size:11px;letter-spacing:2px;color:${INK_FAINT};vertical-align:top;width:104px;${i > 0 ? `border-top:1px solid ${GOLD_FAINT};` : ""}">${k}</td>
+        <td style="padding:11px 0;font-size:14.5px;color:${INK};font-weight:600;${i > 0 ? `border-top:1px solid ${GOLD_FAINT};` : ""}">${v}</td>
       </tr>`,
     )
     .join("");
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-    style="margin:22px 0;border-top:1px solid ${HAIRLINE};border-bottom:1px solid ${HAIRLINE};">${trs}</table>`;
+    style="margin:22px 0;border-top:1px solid ${GOLD_HAIR};border-bottom:1px solid ${GOLD_HAIR};">${trs}</table>`;
 }
 
-/** 內容小組件：訂單明細表（商品／尺碼／數量／小計）——表頭用墨線，行間髮絲線，似名店收據 */
+/** 內容小組件：訂單明細表（商品／尺碼／數量／小計）——表頭上下金線，行間 faint 金線，金額右對齊 tabular-nums */
 function itemsTable(items: OrderEmailItem[]): string {
+  const th = `padding:8px 0;font-size:10.5px;font-weight:500;letter-spacing:2px;color:${INK_SOFT};border-top:1px solid ${GOLD};border-bottom:1px solid ${GOLD_HAIR};white-space:nowrap;`;
+  const td = `padding:11px 0;border-bottom:1px solid ${GOLD_FAINT};vertical-align:top;`;
   const rows = items
     .map(
       (it) => `<tr>
-        <td style="padding:11px 0;font-size:14px;color:${INK};border-top:1px solid ${HAIRLINE};">${escapeHtml(it.productName)}</td>
-        <td style="padding:11px 8px;font-size:13.5px;color:${MUTED};border-top:1px solid ${HAIRLINE};white-space:nowrap;">${it.size ? escapeHtml(it.size) : "—"}</td>
-        <td align="center" style="padding:11px 8px;font-size:14px;color:${BODY};border-top:1px solid ${HAIRLINE};white-space:nowrap;">× ${it.quantity}</td>
-        <td align="right" style="padding:11px 0;font-size:14px;color:${INK};font-weight:600;border-top:1px solid ${HAIRLINE};white-space:nowrap;">${fmtMoney(it.price * it.quantity)}</td>
+        <td style="${td}font-size:14px;color:${INK};">${escapeHtml(it.productName)}</td>
+        <td style="${td}padding:11px 8px;font-size:13.5px;color:${INK_SOFT};white-space:nowrap;">${it.size ? escapeHtml(it.size) : "—"}</td>
+        <td align="center" style="${td}padding:11px 8px;font-size:14px;color:${INK_SOFT};white-space:nowrap;font-variant-numeric:tabular-nums;">× ${it.quantity}</td>
+        <td align="right" style="${td}font-size:14px;color:${INK};font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;">${fmtMoney(it.price * it.quantity)}</td>
       </tr>`,
     )
     .join("");
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 4px;">
     <tr>
-      <td style="padding:0 0 9px;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${FAINT};border-bottom:1px solid ${INK};">商品</td>
-      <td style="padding:0 8px 9px;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${FAINT};border-bottom:1px solid ${INK};">尺碼</td>
-      <td align="center" style="padding:0 8px 9px;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${FAINT};border-bottom:1px solid ${INK};">數量</td>
-      <td align="right" style="padding:0 0 9px;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${FAINT};border-bottom:1px solid ${INK};">小計</td>
+      <td style="${th}">商品</td>
+      <td style="${th}padding:8px 8px;">尺碼</td>
+      <td align="center" style="${th}padding:8px 8px;">數量</td>
+      <td align="right" style="${th}">小計</td>
     </tr>
     ${rows}
   </table>`;
 }
 
-/** 內容小組件：金額總結（小計／折扣／總額）——總額用 serif 墨字，墨線封口 */
+/** 內容小組件：金額總結（小計／折扣／總額）——總計行上 1px 金線＋下 3px double 金線，大字粗體 serif */
 function totalsBlock(total: number, discountAmount: number): string {
   const subtotal = total + discountAmount;
   const discountRow =
     discountAmount > 0
       ? `<tr>
-          <td style="padding:4px 0;font-size:13.5px;color:${MUTED};">優惠碼折扣</td>
-          <td align="right" style="padding:4px 0;font-size:13.5px;color:${MUTED};">−${fmtMoney(discountAmount)}</td>
+          <td style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};">優惠碼折扣</td>
+          <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};font-variant-numeric:tabular-nums;">−${fmtMoney(discountAmount)}</td>
         </tr>`
       : "";
   const subtotalRow =
     discountAmount > 0
       ? `<tr>
-          <td style="padding:4px 0;font-size:13.5px;color:${MUTED};">小計</td>
-          <td align="right" style="padding:4px 0;font-size:13.5px;color:${MUTED};">${fmtMoney(subtotal)}</td>
+          <td style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};">小計</td>
+          <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};font-variant-numeric:tabular-nums;">${fmtMoney(subtotal)}</td>
         </tr>`
       : "";
+  const grand = `padding:14px 2px;border-top:1px solid ${GOLD};border-bottom:3px double ${GOLD};`;
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0 6px;">
     ${subtotalRow}
     ${discountRow}
     <tr>
-      <td style="padding:14px 0 2px;font-size:12px;font-weight:700;letter-spacing:2.5px;color:${INK};border-top:1px solid ${INK};">應付總額</td>
-      <td align="right" style="padding:14px 0 2px;font-family:${SERIF_STACK};font-size:23px;font-weight:700;color:${INK};border-top:1px solid ${INK};">${fmtMoney(total)}</td>
+      <td style="${grand}font-size:12px;font-weight:700;letter-spacing:3px;color:${INK};">應付總額</td>
+      <td align="right" style="${grand}font-family:${SERIF_STACK};font-size:23px;font-weight:700;color:${INK};font-variant-numeric:tabular-nums;white-space:nowrap;">${fmtMoney(total)}</td>
     </tr>
   </table>`;
 }
 
-/** 內容小組件：主掣——墨底白字方掣（闊字距），名店式克制 */
+/** 內容小組件：主掣——金實底、墨字、零圓角、闊字距（padded anchor，email-safe） */
 function ctaButton(label: string, href: string): string {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px auto 10px;">
-    <tr><td align="center" style="background:${INK};">
-      <a href="${href}" style="display:inline-block;padding:15px 44px;font-family:${FONT_STACK};font-size:12.5px;font-weight:700;letter-spacing:3px;color:#ffffff;text-decoration:none;">${escapeHtml(label)}</a>
+    <tr><td align="center" bgcolor="${GOLD}" style="background:${GOLD};">
+      <a href="${href}" style="display:inline-block;padding:15px 40px;font-family:${SERIF_STACK};font-size:13px;font-weight:700;letter-spacing:4px;text-indent:4px;color:${INK};text-decoration:none;">${escapeHtml(label)}</a>
     </td></tr>
   </table>`;
 }
 
-/** 內容小組件：溫馨提示（細字、暖灰） */
+/** 內容小組件：溫馨提示（細字、墨灰） */
 function note(text: string): string {
-  return `<p style="margin:18px 0 0;font-size:13px;line-height:1.9;color:${MUTED};">${text}</p>`;
+  return `<p style="margin:18px 0 0;font-size:13px;line-height:1.9;color:${INK_SOFT};">${text}</p>`;
 }
 
-/** 內容小組件：警告盒（自動取消嗰類要醒目嘅提示）——淺暖底＋髮絲線，去圓角 */
+/** 內容小組件：警告盒（自動取消嗰類要醒目嘅提示）——極淺金底＋hairline 金框，零圓角 */
 function warnBox(text: string): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;">
-    <tr><td style="background:${WARN_BG};border:1px solid ${WARN_LINE};padding:14px 18px;">
-      <p style="margin:0;font-size:13px;line-height:1.85;color:${WARN_TEXT};">${text}</p>
+    <tr><td style="background:${GOLD_TINT};border:1px solid ${GOLD_HAIR};padding:14px 18px;">
+      <p style="margin:0;font-size:13px;line-height:1.85;color:${INK};">${text}</p>
     </td></tr>
   </table>`;
+}
+
+/**
+ * 內容小組件：支付手續費免責聲明（涉及付款嘅信尾部用，一字唔准改）：
+ * 「以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準」
+ */
+function feeDisclaimer(): string {
+  return `<p style="margin:20px 0 0;text-align:center;font-size:11px;line-height:1.9;letter-spacing:1px;color:${INK_FAINT};">以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準。</p>`;
 }
 
 /* ───────────────────────── 訂單單據（確認信附件） ───────────────────────── */
@@ -295,7 +326,8 @@ function warnBox(text: string): string {
 /**
  * 獨立訂單單據 HTML（經瀏覽器打開，現代 CSS 用得）：
  * 頂部工具條（列印／存 PDF）→ logo＋訂單單據 → 訂單資料 → 收件資料 → 明細表 →
- * 總額 → 出貨說明 → 免責聲明。列印時工具條自動收埋。同 email 同一套安靜奢華語言。
+ * 總額 → 出貨說明 → 免責聲明。列印時工具條自動收埋。同 email 同一套精裝紙單語言
+ * （cream／白紙／棕墨／青銅金 hairline，零圓角，mono 單號）。
  */
 function buildInvoiceHtml(args: {
   orderNo: string;
@@ -334,40 +366,45 @@ function buildInvoiceHtml(args: {
 <title>RedCode 訂單單據 ${orderNo}</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin:0; padding:28px 16px; background:${PAPER}; color:${BODY};
-    font-family:${FONT_STACK}; font-size:14px; line-height:1.85; }
+  body { margin:0; padding:28px 16px; background:${CREAM}; color:${INK};
+    font-family:${SERIF_STACK}; font-size:14px; line-height:1.85; }
   .toolbar { max-width:680px; margin:0 auto 16px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
-  .toolbar p { margin:0; font-size:13px; color:${MUTED}; }
-  .toolbar button { background:${INK}; color:#fff; border:none;
+  .toolbar p { margin:0; font-size:13px; color:${INK_SOFT}; }
+  .toolbar button { background:${GOLD}; color:${INK}; border:none; border-radius:0;
     padding:11px 26px; font-size:12.5px; font-weight:700; letter-spacing:2.5px; cursor:pointer; font-family:inherit; }
-  .card { max-width:680px; margin:0 auto; background:#fff; border:1px solid ${HAIRLINE}; padding:42px 40px; }
-  .head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
-  .head img { width:160px; height:auto; }
-  .head .doc { text-align:right; }
-  .head .doc h1 { margin:0; font-family:${SERIF_STACK}; font-size:26px; letter-spacing:3px; color:${INK}; }
-  .head .doc p { margin:5px 0 0; font-size:10.5px; letter-spacing:4px; color:${FAINT}; }
-  hr { border:none; border-top:1px solid ${HAIRLINE}; margin:24px 0; }
+  .card { max-width:680px; margin:0 auto; background:${PAPER}; border:1px solid ${GOLD_HAIR}; padding:8px; }
+  .frame { border:1px solid ${GOLD_FAINT}; padding:34px 32px 28px; }
+  .head { text-align:center; }
+  .head img { width:140px; height:auto; }
+  .head .doc h1 { margin:14px 0 0; font-family:${SERIF_STACK}; font-size:24px; letter-spacing:7px; text-indent:7px; color:${INK}; }
+  .head .doc p { margin:6px 0 0; font-size:10.5px; letter-spacing:4px; text-indent:4px; color:${INK_FAINT}; }
+  .rule { border:none; border-top:1px solid ${GOLD}; margin:20px 0 0; }
+  .rule2 { border:none; border-top:1px solid ${GOLD_HAIR}; margin:3px 0 24px; }
+  hr { border:none; border-top:1px solid ${GOLD_FAINT}; margin:24px 0; }
   .meta { display:grid; grid-template-columns:1fr 1fr; gap:8px 24px; }
-  .meta .k { font-size:10.5px; letter-spacing:2px; color:${MUTED}; }
+  .meta .k { font-size:10.5px; letter-spacing:2px; color:${INK_FAINT}; }
   .meta .v { font-weight:600; color:${INK}; }
-  .pink { color:${BRAND_PINK}; font-weight:700; }
+  .mono { font-family:${MONO_STACK}; letter-spacing:1px; }
+  .gold { color:${GOLD}; font-weight:700; }
   table.items { width:100%; border-collapse:collapse; margin-top:8px; }
-  table.items th { text-align:left; font-size:10.5px; letter-spacing:2.5px; color:${FAINT};
-    padding:0 6px 9px; border-bottom:1px solid ${INK}; }
-  table.items td { padding:11px 6px; border-bottom:1px solid ${HAIRLINE}; vertical-align:top; }
-  .num { text-align:right; white-space:nowrap; }
+  table.items th { text-align:left; font-size:10.5px; font-weight:500; letter-spacing:2px; color:${INK_SOFT};
+    padding:8px 6px; border-top:1px solid ${GOLD}; border-bottom:1px solid ${GOLD_HAIR}; }
+  table.items td { padding:11px 6px; border-bottom:1px solid ${GOLD_FAINT}; vertical-align:top; }
+  .num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
   table.totals { width:100%; border-collapse:collapse; margin-top:14px; }
   table.totals td { padding:4px 6px; }
-  table.totals .grand td { border-top:1px solid ${INK}; padding-top:14px;
+  table.totals .grand td { border-top:1px solid ${GOLD}; border-bottom:3px double ${GOLD}; padding:14px 6px;
     font-family:${SERIF_STACK}; font-size:19px; font-weight:700; color:${INK}; }
-  table.totals .grand td:first-child { font-family:${FONT_STACK}; font-size:12px; letter-spacing:2.5px; }
-  .box { background:${BOX_BG}; border:1px solid ${HAIRLINE}; padding:14px 18px; margin-top:20px; }
-  .foot { margin-top:28px; padding-top:18px; border-top:1px solid ${HAIRLINE};
-    text-align:center; font-size:12px; color:${FAINT}; }
+  table.totals .grand td:first-child { font-size:12px; letter-spacing:2.5px; }
+  .box { background:${GOLD_TINT}; border:1px solid ${GOLD_HAIR}; padding:14px 18px; margin-top:20px; }
+  .foot { margin-top:28px; padding-top:18px; border-top:1px solid ${GOLD_HAIR};
+    text-align:center; font-size:12px; color:${INK_FAINT}; }
+  a { color:${GOLD}; text-decoration:none; }
   @media print {
     body { background:#fff; padding:0; }
     .toolbar { display:none; }
     .card { border:none; padding:0; max-width:none; }
+    .frame { border:none; padding:0; }
   }
 </style>
 </head>
@@ -377,44 +414,47 @@ function buildInvoiceHtml(args: {
     <button onclick="window.print()">列印 / 存 PDF</button>
   </div>
   <div class="card">
-    <div class="head">
-      <img src="${site}/logo.png" alt="RedCode Fashion Design" />
-      <div class="doc">
-        <h1>訂單單據</h1>
-        <p>ORDER INVOICE</p>
+    <div class="frame">
+      <div class="head">
+        <img src="${site}/logo.png" alt="RedCode Fashion Design" />
+        <div class="doc">
+          <h1>訂單單據</h1>
+          <p>ORDER INVOICE</p>
+        </div>
       </div>
-    </div>
-    <hr />
-    <div class="meta">
-      <div><div class="k">訂單編號</div><div class="v">${orderNo}</div></div>
-      <div><div class="k">落單日期</div><div class="v">${fmtDateHK(args.createdAt)}</div></div>
-      <div><div class="k">訂單狀態</div><div class="v"><span class="pink">已確認 ✓</span></div></div>
-      <div><div class="k">付款狀態</div><div class="v">已確認付款</div></div>
-    </div>
-    <div class="box">
-      <div class="k" style="font-size:10.5px;letter-spacing:2px;color:${MUTED};">收件資料</div>
-      <div style="font-weight:600;color:${INK};">${escapeHtml(args.name)}${args.phone ? ` · ${escapeHtml(args.phone)}` : ""}</div>
-      <div>${fmtDelivery(args.delivery)}</div>
-    </div>
-    <hr />
-    <table class="items">
-      <tr><th>商品</th><th>尺碼</th><th class="num">數量</th><th class="num">單價</th><th class="num">小計</th></tr>
-      ${itemRows}
-    </table>
-    <table class="totals">
-      ${args.discountAmount > 0 ? `<tr><td>小計</td><td class="num">${fmtMoney(subtotal)}</td></tr>` : ""}
-      ${discountRow}
-      <tr class="grand"><td>應付總額</td><td class="num">${fmtMoney(args.total)}</td></tr>
-    </table>
-    <hr />
-    <p style="margin:0;font-size:13px;color:${MUTED};">
-      同事會安排出貨，一般情況下會喺 <b>7-10 個工作天</b>內寄出，請留意收件。<br />
-      如有疑問，請到 <a href="${site}" style="color:${BRAND_PINK};text-decoration:none;">redcode.red</a> 「我的訂單」揾返呢張單。
-    </p>
-    <div class="foot">
-      如非本人操作，則不用理會本電郵。<br />
-      呢封電郵由系統自動發出，請唔好直接回覆。<br />
-      RedCode Fashion Design · redcode.red
+      <hr class="rule" />
+      <hr class="rule2" />
+      <div class="meta">
+        <div><div class="k">訂單編號</div><div class="v mono">${orderNo}</div></div>
+        <div><div class="k">落單日期</div><div class="v">${fmtDateHK(args.createdAt)}</div></div>
+        <div><div class="k">訂單狀態</div><div class="v"><span class="gold">已確認 ✓</span></div></div>
+        <div><div class="k">付款狀態</div><div class="v">已確認付款</div></div>
+      </div>
+      <div class="box">
+        <div class="k" style="font-size:10.5px;letter-spacing:2px;color:${INK_FAINT};">收件資料</div>
+        <div style="font-weight:600;color:${INK};">${escapeHtml(args.name)}${args.phone ? ` · ${escapeHtml(args.phone)}` : ""}</div>
+        <div>${fmtDelivery(args.delivery)}</div>
+      </div>
+      <hr />
+      <table class="items">
+        <tr><th>商品</th><th>尺碼</th><th class="num">數量</th><th class="num">單價</th><th class="num">小計</th></tr>
+        ${itemRows}
+      </table>
+      <table class="totals">
+        ${args.discountAmount > 0 ? `<tr><td>小計</td><td class="num">${fmtMoney(subtotal)}</td></tr>` : ""}
+        ${discountRow}
+        <tr class="grand"><td>應付總額</td><td class="num">${fmtMoney(args.total)}</td></tr>
+      </table>
+      <hr />
+      <p style="margin:0;font-size:13px;color:${INK_SOFT};">
+        同事會安排出貨，一般情況下會喺 <b>7-10 個工作天</b>內寄出，請留意收件。<br />
+        如有疑問，請到 <a href="${site}">redcode.red</a> 「我的訂單」揾返呢張單。
+      </p>
+      <div class="foot">
+        如非本人操作，則不用理會本電郵。<br />
+        呢封電郵由系統自動發出，請唔好直接回覆。<br />
+        RedCode Fashion Design · redcode.red
+      </div>
     </div>
   </div>
 </body>
@@ -447,9 +487,9 @@ export async function sendPasswordResetEmail(
       <p style="margin:0 0 14px;">${greeting}</p>
       <p style="margin:0 0 6px;">我哋收到你重設密碼嘅要求，你嘅 6 位驗證碼係：</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
-        <tr><td align="center" style="background:${BOX_BG};border:1px solid ${HAIRLINE};padding:30px 12px 24px;">
+        <tr><td align="center" style="background:${GOLD_TINT};border:1px solid ${GOLD_HAIR};padding:30px 12px 24px;">
           <span style="font-family:${SERIF_STACK};font-size:38px;font-weight:700;letter-spacing:14px;text-indent:14px;color:${INK};">${escapeHtml(code)}</span>
-          <p style="margin:14px 0 0;font-size:12.5px;letter-spacing:1px;color:${MUTED};">有效時間 <b style="color:${BRAND_PINK};">10 分鐘</b></p>
+          <p style="margin:14px 0 0;font-size:12.5px;letter-spacing:1px;color:${INK_SOFT};">有效時間 <b style="color:${GOLD};">10 分鐘</b></p>
         </td></tr>
       </table>
       <p style="margin:0;">請返到登入頁輸入驗證碼同設定新密碼；過咗時效就要撳「重新寄出」攞新碼（新碼會作廢晒舊碼）。</p>
@@ -460,7 +500,7 @@ export async function sendPasswordResetEmail(
       subject: "【RedCode】重設密碼驗證碼",
       html: brandedEmail({
         preheader: `你嘅 RedCode 重設密碼驗證碼：${escapeHtml(code)}（10 分鐘內有效）`,
-        kicker: "REDCODE · 帳號安全",
+        kicker: "REDCODE HK直播台 · 帳號安全",
         title: "重設密碼驗證碼",
         contentHtml: content,
       }),
@@ -471,11 +511,13 @@ export async function sendPasswordResetEmail(
   }
 }
 
-/** ② 落單後：待付款通知（48 小時內付款＋上傳截圖指引） */
+/** ② 落單後：待付款通知（48 小時內付款＋上傳截圖指引；2026-09 F7 加即時網上付款主 CTA） */
 export async function sendOrderPendingEmail(args: {
   to: string;
   name: string;
   orderNo: string;
+  /** 訂單 id：即時網上付款 CTA 嘅 #/payment?orderId= 連結用 */
+  orderId: number;
   total: number;
   discountAmount: number;
   createdAt: Date | string;
@@ -487,9 +529,9 @@ export async function sendOrderPendingEmail(args: {
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
       <p style="margin:0;">多謝你喺 RedCode 落單！你嘅訂單已經建立，而家等緊你付款：</p>
       ${infoBox([
-        ["訂單編號", orderNo],
+        ["訂單編號", mono(orderNo)],
         ["落單時間", fmtDateHK(args.createdAt)],
-        ["付款期限", `<span style="color:${BRAND_PINK};">48 小時內</span>`],
+        ["付款期限", `<span style="color:${GOLD};">48 小時內</span>`],
       ])}
       ${itemsTable(args.items)}
       ${totalsBlock(args.total, args.discountAmount)}
@@ -503,14 +545,16 @@ export async function sendOrderPendingEmail(args: {
           .map(
             (t, i) => `<tr>
               <td style="width:34px;vertical-align:top;padding:5px 0;">
-                <span style="font-family:${SERIF_STACK};font-size:16px;font-weight:700;color:${INK};">${i + 1}.</span>
+                <span style="font-family:${SERIF_STACK};font-size:16px;font-weight:700;color:${GOLD};">${i + 1}.</span>
               </td>
-              <td style="padding:4px 0;font-size:14.5px;line-height:1.75;color:${BODY};">${t}</td>
+              <td style="padding:4px 0;font-size:14.5px;line-height:1.75;color:${INK_SOFT};">${t}</td>
             </tr>`,
           )
           .join("")}
       </table>
-      ${ctaButton("前往「我的訂單」", `${siteUrl()}/#/orders`)}
+      ${ctaButton("💳 立即網上付款", `${siteUrl()}/#/payment?orderId=${args.orderId}`)}
+      <p style="margin:4px 0 0;text-align:center;font-size:12.5px;line-height:1.9;color:${INK_SOFT};">支援信用卡／AlipayHK／FPS／PayMe，由 Airwallex 安全處理，本站唔會儲存你嘅卡資料。<br />以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準。</p>
+      ${ctaButton("前往「我的訂單」上傳截圖", `${siteUrl()}/#/orders`)}
       ${warnBox("溫馨提示：落單後 <b>2 天（48 小時）</b>仍未付款上傳截圖，訂單會自動取消，貨品會放返出嚟賣。")}
     `;
     return await sendEmail({
@@ -518,7 +562,7 @@ export async function sendOrderPendingEmail(args: {
       subject: `【RedCode】訂單 ${args.orderNo} 待付款 — 請於 48 小時內付款`,
       html: brandedEmail({
         preheader: `訂單 ${orderNo} 待付款，請於 48 小時內付款`,
-        kicker: "REDCODE · 訂單通知",
+        kicker: "REDCODE HK直播台 · 待付款通知",
         title: "訂單待付款",
         contentHtml: content,
       }),
@@ -547,16 +591,16 @@ export async function sendOrderApprovedEmail(args: {
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
       <p style="margin:0;">好消息！你嘅訂單付款已經確認，多謝你支持 RedCode：</p>
       ${infoBox([
-        ["訂單編號", orderNo],
+        ["訂單編號", mono(orderNo)],
         ["確認時間", fmtDateHK(new Date())],
-        ["訂單狀態", `<span style="color:${BRAND_PINK};">已確認 ✓</span>`],
+        ["訂單狀態", `<span style="color:${GOLD};">已確認 ✓</span>`],
         ["送貨方式", fmtDelivery(args.delivery)],
       ])}
       ${itemsTable(args.items)}
       ${totalsBlock(args.total, args.discountAmount)}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;">
-        <tr><td style="background:${BOX_BG};border:1px solid ${HAIRLINE};padding:14px 18px;">
-          <p style="margin:0;font-size:13px;line-height:1.85;color:${BODY};">
+        <tr><td style="background:${GOLD_TINT};border:1px solid ${GOLD_HAIR};padding:14px 18px;">
+          <p style="margin:0;font-size:13px;line-height:1.85;color:${INK};">
             <b>附件：</b>呢封電郵附埋你嘅<b>訂單單據</b>（HTML 檔案），打開可以睇返成張單，仲可以列印或另存 PDF 收藏。
           </p>
         </td></tr>
@@ -569,7 +613,7 @@ export async function sendOrderApprovedEmail(args: {
       subject: `【RedCode】訂單 ${args.orderNo} 已確認 ✓`,
       html: brandedEmail({
         preheader: `訂單 ${orderNo} 已確認，訂單單據已附上`,
-        kicker: "REDCODE · 訂單通知",
+        kicker: "REDCODE HK直播台 · 訂單確認",
         title: "訂單已確認 ✓",
         contentHtml: content,
       }),
@@ -598,7 +642,7 @@ export async function sendOrderApprovedEmail(args: {
  * （預設 leader@ows.redcode.red，可用 REVIEW_ALERT_EMAIL 環境變數改）。
  * 內含完整客戶資料＋訂單內容（編號／時間／姓名／電話／Email／取貨／明細／總額／備註）。
  * 2026-08-04（Glo 更新）：唔再放「前往後台審批」按鈕——信內文字提示主管到內部系統嘅
- * 「官網訂單審批」處理；跟返官網統一信件格式（brandedEmail 安靜奢華模板）。
+ * 「官網訂單審批」處理；跟返官網統一信件格式（brandedEmail 精裝紙單模板）。
  */
 export async function sendOrderReviewAlertEmail(args: {
   orderNo: string;
@@ -619,7 +663,7 @@ export async function sendOrderReviewAlertEmail(args: {
     const content = `
       <p style="margin:0;">有會員啱啱上傳咗付款截圖，以下訂單而家<b>待審批</b>，請主管到內部系統嘅「官網訂單審批」處理：</p>
       ${infoBox([
-        ["訂單編號", orderNo],
+        ["訂單編號", mono(orderNo)],
         ["落單時間", fmtDateHK(args.createdAt)],
         ["客戶姓名", escapeHtml(args.customerName)],
         ["客戶電話", escapeHtml(args.customerPhone)],
@@ -638,7 +682,7 @@ export async function sendOrderReviewAlertEmail(args: {
       subject: `【RedCode 後台】訂單 ${args.orderNo} 待審批 — ${args.customerName}`,
       html: brandedEmail({
         preheader: `訂單 ${orderNo}（${escapeHtml(args.customerName)}）有待審批付款截圖`,
-        kicker: "REDCODE · 訂單審批通知",
+        kicker: "REDCODE HK直播台 · 訂單審批通知",
         title: "訂單待審批",
         contentHtml: content,
       }),
@@ -667,17 +711,17 @@ export async function sendWelcomeEmail(args: {
         style="display:block;width:100%;max-width:100%;height:auto;margin:22px 0;" />
       <p style="margin:0;">第一次見面，Glo Glo 一早準備咗份迎新小禮物俾你 ✨</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
-        <tr><td align="center" style="background:${BOX_BG};border:1px solid ${HAIRLINE};padding:30px 18px 26px;">
-          <p style="margin:0;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${FAINT};">新會員限定 · 迎新優惠碼</p>
+        <tr><td align="center" style="background:${GOLD_TINT};border:1px solid ${GOLD_HAIR};padding:30px 18px 26px;">
+          <p style="margin:0;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${INK_FAINT};">新會員限定 · 迎新優惠碼</p>
           <span style="display:block;margin:14px 0 10px;font-family:${SERIF_STACK};font-size:34px;font-weight:700;letter-spacing:8px;text-indent:8px;color:${INK};">WELLCOMEYOU</span>
-          <p style="margin:0 0 8px;font-size:15px;color:${BODY};">全單 <b style="color:${BRAND_PINK};">92 折</b> · 無消費金額門檻</p>
-          <p style="margin:0;font-size:12.5px;line-height:1.8;color:${MUTED};">買幾多錢都用得 ✦ 每個帳號限用一次<br />結帳時喺「優惠碼」一欄輸入，折扣即時自動扣減。</p>
+          <p style="margin:0 0 8px;font-size:15px;color:${INK};">全單 <b style="color:${GOLD};">92 折</b> · 無消費金額門檻</p>
+          <p style="margin:0;font-size:12.5px;line-height:1.8;color:${INK_SOFT};">買幾多錢都用得 ✦ 每個帳號限用一次<br />結帳時喺「優惠碼」一欄輸入，折扣即時自動扣減。</p>
         </td></tr>
       </table>
       ${ctaButton("去揀今日嘅靚衫", `${site}/#/products`)}
       <img src="${site}/email/welcome-dress.jpg" alt="今晚直播見" width="390"
         style="display:block;width:78%;max-width:390px;height:auto;margin:26px auto 6px;" />
-      ${note(`以後有咩唔明，隨時 WhatsApp <a href="https://wa.me/85254835368" style="color:${BRAND_PINK};text-decoration:none;">5483 5368</a> 或者 E-Mail 去 <a href="mailto:service.support@ows.redcode.red" style="color:${BRAND_PINK};text-decoration:none;">service.support@ows.redcode.red</a> 搵我哋，Glo Glo 同小幫手會好快覆你 💕`)}
+      ${note(`以後有咩唔明，隨時 WhatsApp <a href="https://wa.me/85254835368" style="color:${GOLD};text-decoration:none;">5483 5368</a> 或者 E-Mail 去 <a href="mailto:service.support@ows.redcode.red" style="color:${GOLD};text-decoration:none;">service.support@ows.redcode.red</a> 搵我哋，Glo Glo 同小幫手會好快覆你 💕`)}
       <p style="margin:18px 0 0;">期待喺直播間見到你 ✦<br />Glo Glo 上</p>
     `;
     return await sendEmail({
@@ -685,7 +729,7 @@ export async function sendWelcomeEmail(args: {
       subject: "【RedCode】寶寶，歡迎你加入我哋嘅小星球 💕",
       html: brandedEmail({
         preheader: "你嘅迎新優惠碼 WELLCOMEYOU 已經準備好——全單 92 折，無消費金額門檻",
-        kicker: "REDCODE · 歡迎加入",
+        kicker: "REDCODE HK直播台 · 歡迎加入",
         title: "寶寶，歡迎你呀 ✦",
         contentHtml: content,
       }),
@@ -700,7 +744,7 @@ export async function sendWelcomeEmail(args: {
  * 優惠促銷電郵（2026-08-05 Glo 要求）：後台「促銷電郵」頁用，
  * 只寄畀註冊時剔咗同意接收推廣嘅會員（promo.sendMarketingEmail 把關）。
  *
- * 款同官網其他電郵一樣（brandedEmail 安靜奢華模板）：
+ * 款同官網其他電郵一樣（brandedEmail 精裝紙單模板）：
  * 內文由員工喺後台撰寫（純文字；空行分段、單行換行變 <br>），
  * 可選加圖（最多 3 張，顯示喺內文下面、優惠碼之前；2026-08-05 Glo 要求），
  * 可選優惠碼用品牌盒突出（同歡迎信嘅優惠碼盒同款），主旨會自動加「【RedCode】」前綴。
@@ -728,19 +772,19 @@ export async function sendMarketingEmail(args: {
       )
       .join("");
     // 圖片（選填，最多 3 張）：順序顯示喺內文下面、優惠碼之前；
-    // 電郵 client 要用絕對 URL 先載入到（site + /uploads/xxx）
+    // 電郵 client 要用絕對 URL 先載入到（site + /uploads/xxx）；零圓角（精裝紙單規矩）
     const images = (args.imageUrls ?? [])
       .map(
         (u) =>
-          `<div style="margin:20px 0 0;"><img src="${site}${escapeHtml(u)}" alt="RedCode 推廣圖片" width="560" style="display:block;width:100%;max-width:560px;height:auto;border-radius:10px;" /></div>`,
+          `<div style="margin:20px 0 0;"><img src="${site}${escapeHtml(u)}" alt="RedCode 推廣圖片" width="560" style="display:block;width:100%;max-width:560px;height:auto;" /></div>`,
       )
       .join("");
     const promoBox = args.promoCode
       ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
-        <tr><td align="center" style="background:${BOX_BG};border:1px solid ${HAIRLINE};padding:26px 18px 22px;">
-          <p style="margin:0;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${FAINT};">今期優惠碼</p>
+        <tr><td align="center" style="background:${GOLD_TINT};border:1px solid ${GOLD_HAIR};padding:26px 18px 22px;">
+          <p style="margin:0;font-size:10.5px;font-weight:700;letter-spacing:2.5px;color:${INK_FAINT};">今期優惠碼</p>
           <span style="display:block;margin:12px 0 8px;font-family:${SERIF_STACK};font-size:30px;font-weight:700;letter-spacing:6px;text-indent:6px;color:${INK};">${escapeHtml(args.promoCode)}</span>
-          <p style="margin:0;font-size:12.5px;line-height:1.8;color:${MUTED};">結帳時喺「優惠碼」一欄輸入，折扣即時自動扣減。</p>
+          <p style="margin:0;font-size:12.5px;line-height:1.8;color:${INK_SOFT};">結帳時喺「優惠碼」一欄輸入，折扣即時自動扣減。</p>
         </td></tr>
       </table>`
       : "";
@@ -750,7 +794,7 @@ export async function sendMarketingEmail(args: {
       ${images}
       ${promoBox}
       ${ctaButton("去官網睇新貨", `${site}/#/products`)}
-      ${note(`呢封係推廣電郵，你喺註冊時同意咗接收 RedCode 嘅優惠資訊先會收到。如果唔想再收到，隨時可以去我哋官網<a href="${site}/#/account" style="color:${BRAND_PINK};text-decoration:none;">會員中心</a>嘅「優惠資訊」停用咗佢，系統會將你喺推廣名單剔除（訂單相關嘅電郵唔受影響）。`)}
+      ${note(`呢封係推廣電郵，你喺註冊時同意咗接收 RedCode 嘅優惠資訊先會收到。如果唔想再收到，隨時可以去我哋官網<a href="${site}/#/account" style="color:${GOLD};text-decoration:none;">會員中心</a>嘅「優惠資訊」停用咗佢，系統會將你喺推廣名單剔除（訂單相關嘅電郵唔受影響）。`)}
       <p style="margin:18px 0 0;">期待喺直播間見到你 ✦<br />Glo Glo 上</p>
     `;
     return await sendEmail({
@@ -758,7 +802,7 @@ export async function sendMarketingEmail(args: {
       subject: `【RedCode】${args.subject}`,
       html: brandedEmail({
         preheader: args.bodyText.replace(/\s+/g, " ").slice(0, 90),
-        kicker: "REDCODE · 優惠速遞",
+        kicker: "REDCODE HK直播台 · 優惠速遞",
         title: args.subject,
         contentHtml: content,
       }),
@@ -785,9 +829,9 @@ export async function sendOrderCancelledEmail(args: {
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
       <p style="margin:0;">你嘅訂單因為落單後超過 <b>48 小時</b>仍未收到付款截圖，系統已經自動取消，貨品已放返出嚟發售：</p>
       ${infoBox([
-        ["訂單編號", orderNo],
+        ["訂單編號", mono(orderNo)],
         ["落單時間", fmtDateHK(args.createdAt)],
-        ["取消原因", `<span style="color:${BRAND_PINK};">超過 48 小時未收到付款截圖</span>`],
+        ["取消原因", `<span style="color:${ERROR};">超過 48 小時未收到付款截圖</span>`],
       ])}
       ${itemsTable(args.items)}
       ${totalsBlock(args.total, args.discountAmount)}
@@ -800,7 +844,7 @@ export async function sendOrderCancelledEmail(args: {
       subject: `【RedCode】訂單 ${args.orderNo} 已取消 — 超過 48 小時未收到付款截圖`,
       html: brandedEmail({
         preheader: `訂單 ${orderNo} 已取消（超過 48 小時未收到付款截圖）`,
-        kicker: "REDCODE · 訂單通知",
+        kicker: "REDCODE HK直播台 · 訂單取消",
         title: "訂單已取消",
         contentHtml: content,
       }),
@@ -831,28 +875,86 @@ export async function sendOrderPaidOnlineEmail(args: {
       <p style="margin:0 0 14px;">你好：</p>
       <p style="margin:0;">多謝你喺 RedCode 購物！我哋已透過網上付款安全收到你嘅款項 <b>${fmtMoney(args.total)}</b>（付款時間：${fmtDateHK(args.paidAt)}）。同事而家正確認你嘅訂單，確認後你會再收到確認電郵（附訂單單據）。</p>
       ${infoBox([
-        ["訂單編號", orderNo],
+        ["訂單編號", mono(orderNo)],
         ["付款時間", fmtDateHK(args.paidAt)],
-        ["訂單狀態", `<span style="color:${BRAND_PINK};">已收款，確認中</span>`],
+        ["訂單狀態", `<span style="color:${GOLD};">已收款，確認中</span>`],
         ["取貨方式", fmtDelivery(args.delivery)],
       ])}
       ${itemsTable(args.items)}
       ${totalsBlock(args.total, 0)}
       ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
       ${note("你嘅付款資料由安全支付平台處理，本站不會儲存信用卡資料，請放心使用。")}
+      ${feeDisclaimer()}
     `;
     return await sendEmail({
       to: args.to,
       subject: `【RedCode】訂單 ${args.orderNo} 已收到網上付款 ✓`,
       html: brandedEmail({
         preheader: `訂單 ${orderNo} 已收到你嘅網上付款（${fmtMoney(args.total)}），同事確認中`,
-        kicker: "REDCODE · 付款確認",
+        kicker: "REDCODE HK直播台 · 付款確認",
         title: "已收到你嘅網上付款",
         contentHtml: content,
       }),
     });
   } catch (e) {
     console.error(`[email] 砌網上付款確認信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/**
+ * ⑧ 退款通知（2026-09 F7 WMS↔官網原路退款）：WMS 主管批准退款、官網執行完嗰刻寄畀客人。
+ * channel='airwallex'＝已原路退回（信用卡／電子錢包，一般 3–10 個工作天到賬）；
+ * channel='manual'＝手動過數單，同事會用原付款方式（FPS／PayMe 等）人手退回。
+ * 金額單位：total／refundAmount 都係整數港元（同全站一致，唔乘除 100）。
+ * never-throw：任何失敗淨係 console.error 兼回 SendResult（同 sendOrderPaidOnlineEmail 同款），
+ * 唔會阻到 refund-callback 主流程。
+ */
+export async function sendOrderRefundedEmail(args: {
+  to: string;
+  name: string;
+  orderNo: string;
+  items: OrderEmailItem[];
+  total: number;
+  refundAmount: number;
+  channel: "airwallex" | "manual";
+  refundedAt: Date;
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const refundText = fmtMoney(args.refundAmount);
+    const refundLine =
+      args.channel === "airwallex"
+        ? `你嘅退款 <b>${refundText}</b> 已經原路退回（信用卡／電子錢包），款項一般 3–10 個工作天到賬，實際時間以發卡行／電子錢包為準。`
+        : `同事會盡快以你原來嘅付款方式（FPS／PayMe 等）人手退回 <b>${refundText}</b>，請留意收款通知。`;
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">你嘅訂單 ${mono(orderNo)} 已經取消，我哋已為你安排退款：</p>
+      ${infoBox([
+        ["訂單編號", mono(orderNo)],
+        ["退款金額", `<span style="color:${GOLD};">${refundText}</span>`],
+        ["退款方式", args.channel === "airwallex" ? "原路退回（信用卡／電子錢包）" : "人手退款（FPS／PayMe 等）"],
+        ["退款時間", fmtDateHK(args.refundedAt)],
+      ])}
+      <p style="margin:0;">${refundLine}</p>
+      ${itemsTable(args.items)}
+      ${totalsBlock(args.total, 0)}
+      ${ctaButton("查看訂單", `${siteUrl()}/#/orders`)}
+      ${note("如有疑問，請到 redcode.red 「我的訂單」揾返呢張單，或者聯絡我哋客服跟進。")}
+      ${feeDisclaimer()}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】訂單 ${args.orderNo} 退款通知`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo} 已為你安排退款 ${refundText}`,
+        kicker: "REDCODE HK直播台 · 退款通知",
+        title: "已為你安排退款",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌退款通知信出錯 → ${args.to}`, e);
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }

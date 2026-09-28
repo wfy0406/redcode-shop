@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { trpc } from '@/providers/trpc';
 import type { AdminOrder } from './types';
 import { fmtHKD } from './format';
-import { PAYMENT_CHANNEL_LABELS } from './statusMeta';
+import { PAYMENT_CHANNEL_LABELS, refundStatusMeta } from './statusMeta';
 import type { PaymentChannel } from './statusMeta';
 import WishingStar from './WishingStar';
 
@@ -12,6 +12,8 @@ function fmtPaidAt(d: Date | string): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(date.getHours())}:${pad(date.getMinutes())} ${pad(date.getDate())}/${pad(date.getMonth() + 1)}`;
 }
+
+/** F7 退款金額格式：refundAmount 係整數港元（同訂單 total 一樣），直接用 fmtHKD */
 
 /** 付款渠道顯示 label：已知值用 PAYMENT_CHANNEL_LABELS，未知值原樣顯示（唔會冧） */
 function paymentChannelLabel(channel: string): string {
@@ -184,6 +186,47 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
           </div>
         )}
       </dl>
+
+      {/* F7 退款資料（唯讀）：refundStatus==='none' 就唔顯示——退款由 WMS 主管審批，後台呢度睇唔郁得 */}
+      {order.refundStatus !== 'none' && (
+        <div className="mt-3 border-b pb-3" style={{ borderColor: 'var(--space-line)' }}>
+          <p className="text-[12px] font-bold tracking-[0.08em] text-txt-3">退款資料（唯讀）</p>
+          <dl className="mt-1.5 flex flex-col gap-1.5 text-[13px]">
+            <div className="flex gap-2">
+              <dt className="w-28 shrink-0 text-txt-3">退款狀態</dt>
+              <dd className="text-txt-2">
+                {refundStatusMeta(order.refundStatus)?.label ?? order.refundStatus}
+              </dd>
+            </div>
+            {order.refundAmount != null && (
+              <div className="flex gap-2">
+                <dt className="w-28 shrink-0 text-txt-3">退款金額</dt>
+                <dd className="font-mono text-[12px] text-txt-2">{fmtHKD(order.refundAmount)}</dd>
+              </div>
+            )}
+            {order.refundedAt && (
+              <div className="flex gap-2">
+                <dt className="w-28 shrink-0 text-txt-3">退款時間</dt>
+                <dd className="font-mono text-[12px] text-txt-2">{fmtPaidAt(order.refundedAt)}</dd>
+              </div>
+            )}
+            {order.airwallexRefundId && (
+              <div className="flex gap-2">
+                <dt className="w-28 shrink-0 text-txt-3">Airwallex 退款編號</dt>
+                <dd className="min-w-0 break-all font-mono text-[12px] text-txt-2">
+                  {order.airwallexRefundId}
+                </dd>
+              </div>
+            )}
+            {order.refundNote && (
+              <div className="flex gap-2">
+                <dt className="w-28 shrink-0 text-txt-3">退款備註</dt>
+                <dd className="text-txt-2">{order.refundNote}</dd>
+              </div>
+            )}
+          </dl>
+        </div>
+      )}
 
       {/* 貨品行：數量 stepper + 移除 */}
       <ul className="mt-3 flex flex-col gap-2">

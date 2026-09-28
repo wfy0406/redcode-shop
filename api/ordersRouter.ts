@@ -283,6 +283,7 @@ export const ordersRouter = createRouter({
             to: member.email,
             name: member.name,
             orderNo: created.orderNo,
+            orderId: created.id,
             total: created.total,
             discountAmount: created.discountAmount,
             createdAt: created.createdAt,

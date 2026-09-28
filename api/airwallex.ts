@@ -253,6 +253,54 @@ export async function createHostedPayment(args: {
   return { url: session.url, intentId: intent.id };
 }
 
+// ─── 退款（原路退回，2026-09 F7 WMS↔官網退款）────────────────────────────
+
+/**
+ * 經 Airwallex 原路退款（欄位名跟足 WMS 已驗證嘅 createRefund 實作，
+ * wfy0406/red-code-wms api/airwallex.ts）：POST /api/v1/pa/refunds/create，
+ * body { request_id, payment_intent_id, amount, reason? }，回應攞 id ＋ status。
+ * - amount 係整數港元（major unit，同本站 orders.total 一個單位），直接傳，唔乘除 100。
+ * - requestId 係 idempotency key：調用方用 `refund-order-${orderId}`（deterministic），
+ *   retry／重複批准唔會退兩次。
+ * token 用返本檔嘅 cache 機制（getAirwallexConfig 係 async，記得 await）。
+ * 失敗會 throw（Error message 截咗 300 字）——調用方（wmsRefund.ts）負責 catch
+ * 兼將 refundStatus 標做 'failed'。
+ */
+export async function createAirwallexRefund(opts: {
+  paymentIntentId: string;
+  amount: number;
+  requestId: string;
+  reason?: string;
+}): Promise<{ id: string; status: string }> {
+  const cfg = await getAirwallexConfig();
+  if (!cfg) {
+    throw new Error("Airwallex 未配置，唔可以原路退款");
+  }
+  const token = await getAccessToken(cfg);
+  const res = await fetch(`${cfg.baseUrl}/api/v1/pa/refunds/create`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      request_id: opts.requestId,
+      payment_intent_id: opts.paymentIntentId,
+      amount: opts.amount,
+      ...(opts.reason ? { reason: opts.reason } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 300);
+    throw new Error(`Airwallex 退款失敗（HTTP ${res.status}）：${detail}`);
+  }
+  const json = (await res.json()) as { id?: string; status?: string };
+  if (!json.id) {
+    throw new Error("Airwallex 退款回應缺 refund id");
+  }
+  return { id: json.id, status: json.status ?? "" };
+}
+
 // ─── Webhook 簽名驗證 ──────────────────────────────────────────────────────
 
 /**

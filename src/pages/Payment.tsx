@@ -556,6 +556,9 @@ export default function Payment() {
               </>
             )}
           </button>
+          <p className="mt-3 text-[12px] leading-relaxed text-txt-3">
+            以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準。
+          </p>
           <p className="mt-3 flex items-center justify-center gap-1.5 text-[12px] text-txt-3">
             <ShieldCheck size={13} aria-hidden="true" className="shrink-0" />
             全程經 Airwallex 加密處理，卡資料唔會經我哋伺服器

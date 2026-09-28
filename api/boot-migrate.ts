@@ -159,6 +159,15 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS "paymentChannel" varchar(16) NOT NUL
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS "airwallexIntentId" varchar(64);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS "paidAt" timestamp;
 
+-- WMS↔官網原路退款（2026-09 F7）：退款狀態機（none＝冇退款，舊單自動落入；
+-- pending 審批中／refunded Airwallex 已退／manual 人手退款／rejected／failed）＋
+-- 退款金額（整數港元，同 total 一個單位）＋退款時間＋Airwallex Refund ID＋原因／失敗訊息
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "refundStatus" varchar(16) NOT NULL DEFAULT 'none';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "refundAmount" integer;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "refundedAt" timestamp;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "airwallexRefundId" varchar(64);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "refundNote" text;
+
 CREATE TABLE IF NOT EXISTS "praiseWall" (
   id serial PRIMARY KEY,
   image varchar(512) NOT NULL,

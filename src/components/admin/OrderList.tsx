@@ -4,7 +4,7 @@ import { trpc } from '@/providers/trpc';
 import type { AdminOrder, OrderStatus, ReviewHandler, StatusHandler } from './types';
 import { fmtDateTime, fmtHKD } from './format';
 import StatusBadge from './StatusBadge';
-import { STATUS_FILTERS } from './statusMeta';
+import { STATUS_FILTERS, refundStatusMeta } from './statusMeta';
 import ProofSection from './ProofSection';
 import ProofUpload from './ProofUpload';
 import WishingStar from './WishingStar';
@@ -124,6 +124,19 @@ function AirwallexPaidBadge() {
       style={{ borderColor: 'var(--success)' }}
     >
       💳 Airwallex 已收款
+    </span>
+  );
+}
+
+/** F7 退款狀態 badge（refundStatus!=='none' 先顯示；label＋色跟 statusMeta REFUND_STATUS_META） */
+function RefundBadge({ refundStatus }: { refundStatus: string }) {
+  const meta = refundStatusMeta(refundStatus);
+  if (!meta) return null;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[11px] ${meta.className}`}
+    >
+      {meta.label}
     </span>
   );
 }
@@ -293,6 +306,8 @@ export default function OrderList({
                   className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5 text-left transition-colors hover:bg-space-4 md:flex-nowrap"
                 >
                   <span className="font-mono text-[14px] text-txt-1">{order.orderNo}</span>
+                  {/* F7：有退款進度／紀錄嘅單，單號隔籬顯示退款 badge */}
+                  {order.refundStatus !== 'none' && <RefundBadge refundStatus={order.refundStatus} />}
                   <span className="min-w-0 truncate text-[14px] text-txt-2">
                     {order.user.name}
                     <span className="ml-2 font-mono text-[13px] text-txt-3">{order.user.phone}</span>

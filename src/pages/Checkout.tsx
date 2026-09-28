@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { Check, Copy, MapPin, MessageCircle, TicketPercent, X } from 'lucide-react';
+import { Check, Copy, CreditCard, MapPin, MessageCircle, TicketPercent, X } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
 import LoginPrompt from '@/components/cart/LoginPrompt';
 import PaymentDropzone from '@/components/cart/PaymentDropzone';
@@ -18,7 +18,8 @@ import { PAYMENT_METHODS_SETTING_KEY, parsePaymentMethods } from '@contracts/pay
  * 三步玻璃進度條（步驟點 = 四角星，完成步驟填金）：
  * ① 確認訂單：cart 項目 + 優惠碼 + 總計；收貨地址 textarea（預填 user.address）+ 備註
  *    ＋預設取貨方式（2026-08-08 Glo 要求：會員設咗順豐站/智能櫃就自動帶入，客人照樣可以改）
- * ② 付款：orders.create → 收款資料卡（2026-08-08 起由 siteSettings「payment_methods」讀，
+ * ② 付款：orders.create → 網上即時付款（Airwallex HPP，未配置成區收起）
+ *    → 手動過數收款資料卡（2026-08-08 起由 siteSettings「payment_methods」讀，
  *    同 /payment 頁同一來源；後台業務分析 → 收款方式改一次全網同步）
  *    + dropzone 上傳付款截圖（fetch POST /api/upload，Bearer token）→ orders.attachPaymentProof
  * ③ 完成：許願星著燈 + 訂單編號 + 「職員審核中」+ 去會員中心 CTA
@@ -29,6 +30,13 @@ import { PAYMENT_METHODS_SETTING_KEY, parsePaymentMethods } from '@contracts/pay
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 
 const STEP_LABELS = ['確認訂單', '付款', '完成'] as const;
+
+/** 網上付款支援方式 badges（細粒 pill，同 /payment 頁同一套） */
+const ONLINE_PAYMENT_BADGES = ['VISA', 'Mastercard', 'AlipayHK', 'FPS 轉數快', 'PayMe', 'Apple Pay'] as const;
+
+/** 網上付款手續費提示（全網支付位統一口徑，逐字唔好改） */
+const ONLINE_PAYMENT_FEE_NOTE =
+  '以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準。';
 
 /** 上傳／attach 錯誤翻譯（api/boot.ts / ordersRouter 嘅英文訊息 → 中文提示） */
 function friendlyUploadError(err: unknown): string {
@@ -629,7 +637,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   );
 }
 
-/* ---------- ② 付款（收款資料 + 截圖上傳） ---------- */
+/* ---------- ② 付款（網上即時付款 + 手動過數收款資料 + 截圖上傳） ---------- */
 interface PaymentStepProps {
   order: CreatedOrder;
   onDone: () => void;
@@ -647,6 +655,30 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /* ---------- 網上即時付款（Airwallex HPP）：mutation 話未配置（enabled:false）就成區收起 ---------- */
+  const createPayment = trpc.airwallex.createPayment.useMutation();
+  const [airwallexUnavailable, setAirwallexUnavailable] = useState(false);
+  const [payOnlineError, setPayOnlineError] = useState<string | null>(null);
+
+  const onPayOnline = async () => {
+    setPayOnlineError(null);
+    try {
+      // A1 契約：{ enabled:true, url } → 跳 HPP；{ enabled:false } → 收區
+      const result = (await createPayment.mutateAsync({ orderId: order.id })) as {
+        enabled: boolean;
+        url?: string;
+      };
+      if (result.enabled && result.url) {
+        window.location.href = result.url;
+        return;
+      }
+      setAirwallexUnavailable(true);
+    } catch (err) {
+      // 後端會擲中文 TRPCError，照原樣顯示（同 /payment 頁 payOnlineError 做法）
+      setPayOnlineError(err instanceof Error ? err.message : '未能開啟網上付款，請稍後再試');
+    }
+  };
 
   // preview object URL 要記得 revoke
   useEffect(() => {
@@ -699,9 +731,85 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
   };
 
   return (
-    /* mobile 單欄要 minmax(0,1fr)：auto track 會用 max-content，長檔名/mono 字串會撐爆 */
-    <div className="mt-10 grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-      {/* 左：收款資料卡 */}
+    <>
+      {/* 網上即時付款（主角，喺手動過數之前；Airwallex 未配置 → 成區唔 render） */}
+      {!airwallexUnavailable && (
+        <div
+          className="mx-auto mt-10 max-w-2xl rounded-2xl border p-6 text-center md:p-8"
+          style={{
+            background: 'var(--glass-bg-strong)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            borderColor: 'var(--gold)',
+            boxShadow: '0 0 48px color-mix(in srgb, var(--gold) 12%, transparent)',
+          }}
+        >
+          <span
+            className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border"
+            style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
+          >
+            <CreditCard size={22} aria-hidden="true" />
+          </span>
+          <h2 className="mt-4 font-serif-tc text-xl font-semibold leading-[1.3] text-txt-1">
+            網上即時付款
+          </h2>
+          <p className="mx-auto mt-2 max-w-md text-[14px] leading-[1.75] text-txt-2">
+            信用卡 / AlipayHK / FPS / PayMe，由 Airwallex 安全處理
+          </p>
+          <ul
+            className="mt-4 flex flex-wrap items-center justify-center gap-2"
+            aria-label="支援嘅網上付款方式"
+          >
+            {ONLINE_PAYMENT_BADGES.map((badge) => (
+              <li
+                key={badge}
+                className="rounded-full border px-3 py-1 font-mono text-[11px] leading-none tracking-[0.08em] text-txt-2"
+                style={{ borderColor: 'var(--glass-border)', background: 'rgba(255,255,255,.03)' }}
+              >
+                {badge}
+              </li>
+            ))}
+          </ul>
+
+          {payOnlineError && (
+            <p role="alert" className="mt-4 text-[13px] leading-relaxed text-pink-soft">
+              {payOnlineError}
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void onPayOnline()}
+            disabled={createPayment.isPending}
+            className="btn btn-primary mt-6 w-full disabled:opacity-70"
+          >
+            {createPayment.isPending ? (
+              <>
+                <WishStarSpinner size={16} />
+                正在開啟安全付款頁…
+              </>
+            ) : (
+              <>💳 網上即時付款 {formatHKD(order.total)}</>
+            )}
+          </button>
+          <p className="mt-3 text-[12px] leading-relaxed text-txt-3">
+            {ONLINE_PAYMENT_FEE_NOTE}
+          </p>
+        </div>
+      )}
+
+      {/* 「或」分隔線（網上付款區收咗就唔使分隔） */}
+      {!airwallexUnavailable && (
+        <div className="mt-10 flex items-center gap-4" aria-hidden="true">
+          <span className="h-px min-w-4 flex-1" style={{ background: 'var(--space-line)' }} />
+          <span className="font-mono text-xs tracking-[0.2em] text-txt-3">或</span>
+          <span className="h-px min-w-4 flex-1" style={{ background: 'var(--space-line)' }} />
+        </div>
+      )}
+
+      {/* mobile 單欄要 minmax(0,1fr)：auto track 會用 max-content，長檔名/mono 字串會撐爆 */}
+      <div className="mt-10 grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      {/* 左：手動過數收款資料卡 */}
       <div
         className="h-fit rounded-2xl border p-6"
         style={{
@@ -711,7 +819,10 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
           borderColor: 'var(--glass-border)',
         }}
       >
-        <p className="text-sm text-txt-2">應付金額</p>
+        <h2 className="font-serif-tc text-xl font-semibold text-txt-1">
+          手動過數（FPS／PayMe／AlipayHK）
+        </h2>
+        <p className="mt-4 text-sm text-txt-2">應付金額</p>
         <p className="mt-1 font-mono text-[32px] leading-[1.2] text-pink">
           {formatHKD(order.total)}
         </p>
@@ -801,7 +912,8 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
           </button>
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 

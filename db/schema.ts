@@ -158,6 +158,14 @@ export const orders = pgTable("orders", {
   airwallexIntentId: varchar("airwallexIntentId", { length: 64 }),
   // 網上付款收款時間（Airwallex webhook payment_intent.succeeded 確認嗰刻寫入；手動過數單留空＝NULL）
   paidAt: timestamp("paidAt"),
+  // 退款欄（2026-09 F7 WMS↔官網原路退款）：舊單 refundStatus 自動落入 'none'；
+  // refundAmount 係整數港元（同 orders.total 一個單位，全鏈唔乘除 100）
+  refundStatus: varchar("refundStatus", { length: 16 }).notNull().default("none"),
+  // 'none'|'pending'（審批中）|'refunded'（Airwallex 已退）|'manual'（人手退款）|'rejected'|'failed'
+  refundAmount: integer("refundAmount"),
+  refundedAt: timestamp("refundedAt"),
+  airwallexRefundId: varchar("airwallexRefundId", { length: 64 }),
+  refundNote: text("refundNote"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   // PostgreSQL 冇 ON UPDATE CURRENT_TIMESTAMP，updatedAt 由應用層更新時一併 set
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),

@@ -57,6 +57,53 @@ export const PAYMENT_CHANNEL_LABELS: Record<'airwallex' | 'manual', string> = {
 /** 付款渠道 key（order.paymentChannel 嘅已知值；未知值顯示層 fallback 原字串） */
 export type PaymentChannel = keyof typeof PAYMENT_CHANNEL_LABELS;
 
+/**
+ * 退款狀態（2026-09 F7 WMS↔官網原路退款）：
+ * none＝冇退款；pending＝員工已申請、WMS 主管審批中；refunded＝Airwallex 原路已退；
+ * manual＝手動過數單，同事人手退款；rejected＝主管拒絕；failed＝Airwallex 退款失敗（可重試）。
+ */
+export type RefundStatus = 'none' | 'pending' | 'refunded' | 'manual' | 'rejected' | 'failed';
+
+/**
+ * 退款狀態顯示設定（跟 PAYMENT_CHANNEL_LABELS 風格；色調跟 ORDER_STATUS_META 語義色）。
+ * 'none' 唔使顯示，所以唔喺度；rejected 後台先見到（客人側唔顯示）。
+ */
+export const REFUND_STATUS_META: Record<Exclude<RefundStatus, 'none'>, StatusMeta> = {
+  pending: {
+    label: '⏳ 退款審批中',
+    className: 'border-gold/70 text-gold',
+    dot: 'var(--gold)',
+  },
+  refunded: {
+    label: '已退款',
+    className: 'border-space-line text-txt-3',
+    dot: 'var(--text-3)',
+  },
+  manual: {
+    label: '人手退款',
+    className: 'border-space-line text-txt-3',
+    dot: 'var(--text-3)',
+  },
+  rejected: {
+    label: '退款已拒絕',
+    className: 'border-lavender/50 text-lavender',
+    dot: 'var(--lavender)',
+  },
+  failed: {
+    label: '退款失敗',
+    className: 'border-pink/70 text-pink-soft',
+    dot: 'var(--pink-soft)',
+  },
+};
+
+/**
+ * 退款狀態 lookup（order.refundStatus 喺 DB 係 varchar → TS 推斷做 string）：
+ * 未知值／'none' 回 undefined，顯示層就唔 render badge，唔會冧。
+ */
+export function refundStatusMeta(status: string): StatusMeta | undefined {
+  return (REFUND_STATUS_META as Record<string, StatusMeta>)[status];
+}
+
 export const STATUS_FILTERS: { key: OrderStatus | 'all'; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'pending_payment', label: '待付款' },
