@@ -1,42 +1,69 @@
+import type { OrderStatus } from './types';
+
+/** 訂單狀態顯示設定（§P8 色碼延伸；語義色只行 粉→紫→金→薄荷綠 四線） */
+export interface StatusMeta {
+  label: string;
+  className: string;
+  dot?: string; // 狀態點顏色（CSS 色值）
+}
+
+export const ORDER_STATUS_META: Record<OrderStatus, StatusMeta> = {
+  pending_payment: {
+    label: '待付款',
+    className: 'border-lavender/50 text-lavender',
+    dot: 'var(--lavender)',
+  },
+  payment_review: {
+    label: '審核中',
+    className: 'border-gold/70 text-gold',
+    dot: 'var(--gold)',
+  },
+  approved: {
+    label: '已確認',
+    className: 'border-success/60 text-success',
+    dot: 'var(--success)',
+  },
+  rejected: {
+    label: '已拒絕',
+    className: 'border-pink/70 text-pink-soft',
+    dot: 'var(--pink-soft)',
+  },
+  // F-D：shipped＝進行出貨（完成終態）；completed 係 legacy 值，顯示層映射去同一終態
+  shipped: {
+    label: '進行出貨',
+    className: 'border-success bg-success text-space-1 font-bold',
+  },
+  completed: {
+    label: '進行出貨',
+    className: 'border-success bg-success text-space-1 font-bold',
+  },
+  cancelled: {
+    label: '已取消',
+    className: 'border-space-line text-txt-3',
+    dot: 'var(--text-3)',
+  },
+};
+
 /**
- * 訂單狀態 metadata（label + 顏色）——StatusBadge、Orders、Members 共用。
- * 用 CSS var 色，唔好用實色 class，深淺色主題都啱。
+ * 付款渠道顯示 label（2026-09 Airwallex 網上付款）：
+ * 唔係新訂單狀態——airwallex 單收款後照舊行 payment_review 流程，淨係多個渠道標記。
+ * manual＝手動過數上傳截圖；airwallex＝Airwallex 網上付款（webhook 已確認收款）。
  */
-
-export const ORDER_STATUS_LABELS: Record<string, string> = {
-  pending_payment: '待付款',
-  payment_review: '審核中',
-  approved: '已確認',
-  rejected: '已退回',
-  shipped: '已出貨',
-  completed: '已完成',
-  cancelled: '已取消',
+export const PAYMENT_CHANNEL_LABELS: Record<'airwallex' | 'manual', string> = {
+  airwallex: 'Airwallex 網上付款',
+  manual: '手動過數',
 };
 
-export const ORDER_STATUS_COLORS: Record<string, string> = {
-  pending_payment: 'var(--gold)',
-  payment_review: 'var(--lavender)',
-  approved: 'var(--success)',
-  rejected: 'var(--pink)',
-  shipped: 'var(--gold)',
-  completed: 'var(--success)',
-  cancelled: 'var(--txt-3)',
-};
+/** 付款渠道 key（order.paymentChannel 嘅已知值；未知值顯示層 fallback 原字串） */
+export type PaymentChannel = keyof typeof PAYMENT_CHANNEL_LABELS;
 
-/** 狀態篩選 pills（「全部」+ 七個狀態） */
-export const STATUS_FILTERS: { key: string; label: string }[] = [
+export const STATUS_FILTERS: { key: OrderStatus | 'all'; label: string }[] = [
   { key: 'all', label: '全部' },
-  ...Object.entries(ORDER_STATUS_LABELS).map(([key, label]) => ({ key, label })),
+  { key: 'pending_payment', label: '待付款' },
+  { key: 'payment_review', label: '審核中' },
+  { key: 'approved', label: '已確認' },
+  { key: 'rejected', label: '已拒絕' },
+  // F-D：進行出貨＝完成終態；legacy completed 歸入「全部」（badge 同樣顯示進行出貨）
+  { key: 'shipped', label: '進行出貨' },
+  { key: 'cancelled', label: '取消' },
 ];
-
-/**
- * 付款渠道 metadata（2026-09 Airwallex 網上付款）：
- * 'manual'＝手動過數（上傳截圖，舊有全部訂單自動係呢個）
- * 'airwallex'＝Airwallex 網上已付款
- */
-export type PaymentChannel = 'manual' | 'airwallex';
-
-export const PAYMENT_CHANNEL_LABELS: Record<PaymentChannel, string> = {
-  manual: '手動過數（截圖）',
-  airwallex: 'Airwallex 網上已付款',
-};
