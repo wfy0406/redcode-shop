@@ -810,3 +810,49 @@ export async function sendOrderCancelledEmail(args: {
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
+
+/**
+ * ⑦ 網上付款成功確認（2026-09 Airwallex 網上付款新增）：
+ * webhook 確認收款成功、訂單轉 payment_review 嗰刻即寄畀客人。
+ * 同截圖流程匯合——同事照舊人手確認，確認後會再收到 sendOrderApprovedEmail。
+ * never-throw：任何失敗淨係 console.error 兼回 SendResult，唔會阻到 webhook 主流程。
+ */
+export async function sendOrderPaidOnlineEmail(args: {
+  to: string;
+  orderNo: string;
+  items: OrderEmailItem[];
+  total: number;
+  delivery: OrderEmailDelivery;
+  paidAt: Date;
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好：</p>
+      <p style="margin:0;">多謝你喺 RedCode 購物！我哋已透過網上付款安全收到你嘅款項 <b>${fmtMoney(args.total)}</b>（付款時間：${fmtDateHK(args.paidAt)}）。同事而家正確認你嘅訂單，確認後你會再收到確認電郵（附訂單單據）。</p>
+      ${infoBox([
+        ["訂單編號", orderNo],
+        ["付款時間", fmtDateHK(args.paidAt)],
+        ["訂單狀態", `<span style="color:${BRAND_PINK};">已收款，確認中</span>`],
+        ["取貨方式", fmtDelivery(args.delivery)],
+      ])}
+      ${itemsTable(args.items)}
+      ${totalsBlock(args.total, 0)}
+      ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
+      ${note("你嘅付款資料由安全支付平台處理，本站不會儲存信用卡資料，請放心使用。")}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】訂單 ${args.orderNo} 已收到網上付款 ✓`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo} 已收到你嘅網上付款（${fmtMoney(args.total)}），同事確認中`,
+        kicker: "REDCODE · 付款確認",
+        title: "已收到你嘅網上付款",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌網上付款確認信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
