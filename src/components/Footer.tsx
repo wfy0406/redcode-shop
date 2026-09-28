@@ -10,7 +10,13 @@ import MessengerIcon from '@/components/MessengerIcon';
  * 2026-08-06（Glo 要求）：「搵我哋」加 Messenger 私訊，一撳直開 m.me 對話
  * 2026-08-06（Glo 要求）：刪走底欄「員工內部系統」連結——放上網擔心被攻擊或資料外洩，
  * 唔俾外部見到員工入口（員工自己記住網址直接用，唔經官網）
+ * 2026-09（Glo 要求）：配合 Airwallex 網上付款上線，加「支援付款方式」strip——
+ * 文字 pill badge（VISA／Mastercard／AlipayHK／FPS 轉數快／PayMe／Apple Pay）＋
+ * Airwallex 安全處理聲明（本站不儲存信用卡資料）
  */
+
+// 支援付款方式 badge（文字 pill，hairline border）
+const PAYMENT_METHODS = ['VISA', 'Mastercard', 'AlipayHK', 'FPS 轉數快', 'PayMe', 'Apple Pay'];
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
@@ -89,6 +95,25 @@ export default function Footer() {
               </li>
             </ul>
           </div>
+        </div>
+
+        {/* 支援付款方式（2026-09：配合 Airwallex 網上付款） */}
+        <div className="mt-12 border-t pt-8" style={{ borderColor: 'var(--space-line)' }}>
+          <p className="font-mono text-[11px] tracking-[0.22em] text-txt-3">支援付款方式</p>
+          <ul className="mt-4 flex flex-wrap items-center gap-2" aria-label="支援付款方式">
+            {PAYMENT_METHODS.map((method) => (
+              <li
+                key={method}
+                className="rounded-full border px-3.5 py-1 text-[11px] tracking-[0.1em] text-txt-2"
+                style={{ borderColor: 'var(--glass-border)' }}
+              >
+                {method}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-[12px] leading-[1.7] text-txt-3">
+            網上付款由 Airwallex 安全處理 · 本站不儲存信用卡資料
+          </p>
         </div>
 
         <div
