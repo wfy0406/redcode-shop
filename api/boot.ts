@@ -54,8 +54,8 @@ app.get("/api/airwallex/return", (c) => {
 // ② Webhook 收款確認：Airwallex 會 retry，所以全程冪等——conditional update
 //    淨郁 status='pending_payment' 嘅單，郁到（第一次）先寄 email。
 app.post("/api/airwallex/webhook", async (c) => {
-  // env 未配置都照註冊：回 503 JSON，唔好冧 server
-  const cfg = getAirwallexConfig();
+  // 後台設定／env 未配置都照註冊：回 503 JSON，唔好冧 server
+  const cfg = await getAirwallexConfig();
   if (!cfg) {
     return c.json({ ok: false, error: "Airwallex 未配置" }, 503);
   }

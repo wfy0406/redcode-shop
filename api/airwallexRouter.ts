@@ -17,8 +17,8 @@ export const airwallexRouter = createRouter({
   createPayment: authedProcedure
     .input(z.object({ orderId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
-      // 未配置 Airwallex（env 未齊）：畀前端知唔好顯示網上付款區，個站照常用手動過數
-      const cfg = getAirwallexConfig();
+      // 未配置 Airwallex（後台設定／env 未齊）：畀前端知唔好顯示網上付款區，個站照常用手動過數
+      const cfg = await getAirwallexConfig();
       if (!cfg) {
         return { enabled: false as const };
       }

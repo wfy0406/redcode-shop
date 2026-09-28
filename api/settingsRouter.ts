@@ -6,6 +6,11 @@ import { siteSettings } from "@db/schema";
 import { createRouter, publicQuery, staffProcedure, adminProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { PAYMENT_METHOD_IDS, PAYMENT_METHODS_SETTING_KEY } from "@contracts/paymentMethods";
+import {
+  AIRWALLEX_CONFIG_SETTING_KEY,
+  resetAirwallexConfigCache,
+} from "./airwallex";
+import type { AirwallexStoredConfig } from "./airwallex";
 
 /**
  * 全站設定（key-value）——
@@ -113,4 +118,118 @@ export const settingsRouter = createRouter({
       });
       return { ok: true as const };
     }),
+
+  /**
+   * Airwallex 網上付款設定（2026-09 F6 Glo 要求）：後台管理員頁直接填
+   * Client ID／API Key／Webhook Secret，存 siteSettings key="airwallex_config"（JSON）。
+   * **admin 專用**；絕對唔可以加入上面嘅 public READ_KEYS（secret 會外洩）。
+   */
+
+  /**
+   * 讀現況（admin）：**只讀 DB**，唔顯示 env 後備值——畀管理員睇到嘅係「後台真正存咗咩」；
+   * 冇存過 DB 就回未配置（即使 env 有，runtime 都仲用到，見 airwallex.ts fallback）。
+   * secret 只回 masked（尾 4 位），明文唔出 API。
+   */
+  getAirwallexConfig: adminProcedure.query(async () => {
+    const stored = await readAirwallexStoredConfig();
+    const clientId = stored?.clientId?.trim() ?? "";
+    const apiKey = stored?.apiKey?.trim() ?? "";
+    const webhookSecret = stored?.webhookSecret?.trim() ?? "";
+    const baseUrl = (stored?.baseUrl?.trim() || AIRWALLEX_DEFAULT_BASE_URL).replace(
+      /\/+$/,
+      "",
+    );
+    return {
+      configured: Boolean(clientId && apiKey && webhookSecret),
+      clientId,
+      apiKeyMasked: maskSecret(apiKey),
+      webhookSecretMasked: maskSecret(webhookSecret),
+      baseUrl,
+    };
+  }),
+
+  /**
+   * 寫入（admin）：apiKey／webhookSecret 傳空字串或唔傳＝**保留舊值**
+   * （配合前端 masked 顯示，管理員唔使次次重貼）；clientId／baseUrl 就照寫（trim），
+   * baseUrl 傳空字串＝清走用返 default。audit 只記邊啲欄位郁過，唔記任何明文。
+   */
+  setAirwallexConfig: adminProcedure
+    .input(
+      z.object({
+        clientId: z.string().trim().max(200).optional(),
+        apiKey: z.string().trim().max(500).optional(),
+        webhookSecret: z.string().trim().max(500).optional(),
+        baseUrl: z.string().trim().max(200).optional(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const existing = (await readAirwallexStoredConfig()) ?? {};
+      const next: AirwallexStoredConfig = { ...existing };
+      const updatedFields: string[] = [];
+      if (input.clientId !== undefined) {
+        next.clientId = input.clientId;
+        updatedFields.push("clientId");
+      }
+      if (input.baseUrl !== undefined) {
+        next.baseUrl = input.baseUrl;
+        updatedFields.push("baseUrl");
+      }
+      // 空字串／undefined 嘅 secret 欄位＝保留舊值，唔覆寫
+      if (input.apiKey) {
+        next.apiKey = input.apiKey;
+        updatedFields.push("apiKey");
+      }
+      if (input.webhookSecret) {
+        next.webhookSecret = input.webhookSecret;
+        updatedFields.push("webhookSecret");
+      }
+      const value = JSON.stringify(next);
+      const db = getDb();
+      await db
+        .insert(siteSettings)
+        .values({ key: AIRWALLEX_CONFIG_SETTING_KEY, value, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: siteSettings.key,
+          set: { value, updatedAt: new Date() },
+        });
+      // 即時生效，唔使等 60 秒 cache 過期
+      resetAirwallexConfigCache();
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "setting.airwallexConfig",
+        targetType: "setting",
+        targetId: AIRWALLEX_CONFIG_SETTING_KEY,
+        detail: `更新 Airwallex 網上付款設定（欄位：${updatedFields.join("、") || "冇"}）`,
+      });
+      const configured = Boolean(
+        next.clientId?.trim() && next.apiKey?.trim() && next.webhookSecret?.trim(),
+      );
+      return { ok: true as const, configured };
+    }),
 });
+
+// ─── Airwallex 設定 helper（呢個檔專用；runtime 讀取邏輯喺 airwallex.ts）──────
+
+const AIRWALLEX_DEFAULT_BASE_URL = "https://api-demo.airwallex.com";
+
+/** 只讀 DB 嘅 airwallex_config JSON；冇列／JSON 壞咗當 null（唔讀 env，見 getAirwallexConfig 註解） */
+async function readAirwallexStoredConfig(): Promise<AirwallexStoredConfig | null> {
+  const db = getDb();
+  const row = await db.query.siteSettings.findFirst({
+    where: eq(siteSettings.key, AIRWALLEX_CONFIG_SETTING_KEY),
+  });
+  if (!row) return null;
+  try {
+    const parsed = JSON.parse(row.value) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as AirwallexStoredConfig) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** secret 最多顯示尾 4 位（例如 ••••1234）；冇值回空字串 */
+function maskSecret(value: string): string {
+  if (!value) return "";
+  return `••••${value.slice(-4)}`;
+}

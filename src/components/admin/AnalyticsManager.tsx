@@ -6,6 +6,7 @@ import { LoadingBlock } from './WishingStar';
 import ExportCard from './ExportCard';
 import SettingsCard from './SettingsCard';
 import PaymentMethodsCard from './PaymentMethodsCard';
+import AirwallexConfigCard from './AirwallexConfigCard';
 import SiteAssetsCard from './SiteAssetsCard';
 import type { ToastKind } from './useToasts';
 
@@ -373,6 +374,9 @@ export default function AnalyticsManager({
 
       {/* 收款方式（2026-08-08 Glo 要求）：全網統一來源，呢度（admin 限定區）改一次，/payment＋結帳頁同步 */}
       <PaymentMethodsCard toast={toast} />
+
+      {/* Airwallex 設定（Glo 要求）：後台直填 Client ID／API Key／Webhook Secret，開通網上付款 */}
+      <AirwallexConfigCard toast={toast} />
 
       {/* 網站資產上傳（empty-cart.png / ops-template.xlsx） */}
       <SiteAssetsCard toast={toast} />

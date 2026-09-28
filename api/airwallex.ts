@@ -1,4 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { getDb } from "./queries/connection";
+import { siteSettings } from "@db/schema";
 
 /**
  * Airwallex 網上付款（2026-09 F5）：Hosted Payment Page 整合。
@@ -37,24 +40,94 @@ export type AirwallexConfig = {
   publicBaseUrl: string;
 };
 
+// ─── 設定來源：siteSettings（後台可改）＋ env 後備 ──────────────────────────
+
+/** siteSettings 入面存 Airwallex 配置嘅 key（後台管理員頁填寫，見 settingsRouter.setAirwallexConfig） */
+export const AIRWALLEX_CONFIG_SETTING_KEY = "airwallex_config";
+
+/** 存落 siteSettings 嘅 JSON 結構（全部欄位 optional，唔齊嘅欄位會用 env 補） */
+export type AirwallexStoredConfig = {
+  clientId?: string;
+  apiKey?: string;
+  webhookSecret?: string;
+  baseUrl?: string;
+};
+
+const DEFAULT_BASE_URL = "https://api-demo.airwallex.com";
+
 /**
- * 讀 env 配置；client id / api key 未齊 → 回 null（功能視為「未啟用」，
- * tRPC 回 { enabled:false }，webhook 回 503，網站照舊用截圖流程，唔會冧）。
- * webhook secret 缺咗都當未配置（收唔到款確認嘅 HPP 冇意義）。
+ * 讀 siteSettings 嘅 airwallex_config JSON。
+ * 冇列／JSON.parse 壞咗／DB 讀唔到都當 null（之後照跌落 env 後備，網站唔會冧）。
  */
-export function getAirwallexConfig(): AirwallexConfig | null {
-  const clientId = process.env.AIRWALLEX_CLIENT_ID?.trim();
-  const apiKey = process.env.AIRWALLEX_API_KEY?.trim();
-  const webhookSecret = process.env.AIRWALLEX_WEBHOOK_SECRET?.trim();
+async function readStoredConfig(): Promise<AirwallexStoredConfig | null> {
+  try {
+    const db = getDb();
+    const row = await db.query.siteSettings.findFirst({
+      where: eq(siteSettings.key, AIRWALLEX_CONFIG_SETTING_KEY),
+    });
+    if (!row) return null;
+    const parsed = JSON.parse(row.value) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as AirwallexStoredConfig;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Config cache（TTL 60 秒，避免每個 request 都打 DB）────────────────────
+
+const CONFIG_CACHE_TTL_MS = 60_000;
+let configCache: { value: AirwallexConfig | null; expiresAtMs: number } | null = null;
+let pendingConfigLoad: Promise<AirwallexConfig | null> | null = null;
+
+/** 後台改完設定即時生效用（settingsRouter.setAirwallexConfig 會叫）；測試亦可用 */
+export function resetAirwallexConfigCache(): void {
+  configCache = null;
+  pendingConfigLoad = null;
+}
+
+async function loadAirwallexConfig(): Promise<AirwallexConfig | null> {
+  const stored = await readStoredConfig();
+  // DB 優先；逐欄睇，DB 冇／唔齊嘅欄位先跌落 process.env 後備（保留原有 env 部署方式）
+  const clientId = stored?.clientId?.trim() || process.env.AIRWALLEX_CLIENT_ID?.trim() || "";
+  const apiKey = stored?.apiKey?.trim() || process.env.AIRWALLEX_API_KEY?.trim() || "";
+  const webhookSecret =
+    stored?.webhookSecret?.trim() || process.env.AIRWALLEX_WEBHOOK_SECRET?.trim() || "";
   if (!clientId || !apiKey || !webhookSecret) return null;
   const baseUrl = (
-    process.env.AIRWALLEX_BASE_URL || "https://api-demo.airwallex.com"
+    stored?.baseUrl?.trim() ||
+    process.env.AIRWALLEX_BASE_URL ||
+    DEFAULT_BASE_URL
   ).replace(/\/+$/, "");
   const publicBaseUrl = (process.env.PUBLIC_BASE_URL || "https://redcode.red").replace(
     /\/+$/,
     "",
   );
   return { clientId, apiKey, webhookSecret, baseUrl, publicBaseUrl };
+}
+
+/**
+ * 讀 Airwallex 配置（**async**，先查 siteSettings 再跌落 env，60 秒 in-memory cache）；
+ * client id / api key / webhook secret 三樣未齊 → 回 null（功能視為「未啟用」，
+ * tRPC 回 { enabled:false }，webhook 回 503，網站照舊用截圖流程，唔會冧）。
+ * webhook secret 缺咗都當未配置（收唔到款確認嘅 HPP 冇意義）。
+ */
+export function getAirwallexConfig(): Promise<AirwallexConfig | null> {
+  if (configCache && configCache.expiresAtMs > Date.now()) {
+    return Promise.resolve(configCache.value);
+  }
+  // concurrent 請求共用同一個 load promise，唔會一齊打 DB
+  if (!pendingConfigLoad) {
+    pendingConfigLoad = loadAirwallexConfig()
+      .then((value) => {
+        configCache = { value, expiresAtMs: Date.now() + CONFIG_CACHE_TTL_MS };
+        return value;
+      })
+      .finally(() => {
+        pendingConfigLoad = null;
+      });
+  }
+  return pendingConfigLoad;
 }
 
 // ─── Access token cache ────────────────────────────────────────────────────
