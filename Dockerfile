@@ -12,7 +12,7 @@ COPY package.json package-lock.json ./
 RUN sed -i -e 's#https://npm\.mirrors\.msh\.team#https://registry.npmjs.org#g' \
            -e 's#https://registry\.npmmirror\.com#https://registry.npmjs.org#g' \
            package-lock.json \
-  && npm ci --no-audit --no-fund
+  && npm install --no-audit --no-fund  # F5: 用 install 唔係 ci——lockfile 暫未含 html2canvas/jspdf，build 時自動補齊同步
 
 # 拷貝源碼、還原圖片/影片（assets-b64 → public/），然後 build
 COPY . .
