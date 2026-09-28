@@ -537,6 +537,76 @@ export const ordersRouter = createRouter({
       return { emailNote };
     }),
 
+  // 2026-09-29（Glo 指示）：Airwallex 網上已收款嘅訂單冇付款截圖，
+  // 待審批工作枱一樣要見到兼可以一掣批准；批准＝確認款項無誤，訂單轉已確認＋寄確認信。
+  // （拒絕／退款唔喺度做——錢已經收咗，要退嘅話去 WMS 官網中心申請退款，原路退回。）
+  reviewOnlinePayment: staffProcedure
+    .input(z.object({ orderId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.id, input.orderId),
+        with: { items: true },
+      });
+      if (!order) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
+      }
+      if (order.paymentChannel !== "airwallex") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "呢張唔係網上付款訂單" });
+      }
+      // 冪等轉態：只有第一個將 payment_review 轉走嘅請求生效（防兩個員工同時撳批准）
+      const claimed = await db
+        .update(orders)
+        .set({ status: "approved", updatedAt: new Date() })
+        .where(and(eq(orders.id, order.id), eq(orders.status, "payment_review")))
+        .returning({ id: orders.id });
+      if (claimed.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "訂單已經處理咗" });
+      }
+      // 已確認通知 email：同截圖批准一致，批准嗰刻寄出，附訂單單據 HTML 附件
+      let emailNote = "";
+      const member = await db.query.users.findFirst({
+        where: eq(users.id, order.userId),
+        columns: { name: true, email: true, phone: true },
+      });
+      if (member?.email) {
+        const result = await sendOrderApprovedEmail({
+          to: member.email,
+          name: member.name,
+          phone: member.phone,
+          orderNo: order.orderNo,
+          createdAt: order.createdAt,
+          items: order.items.map((it) => ({
+            productName: it.productName,
+            size: it.size,
+            price: it.price,
+            quantity: it.quantity,
+          })),
+          total: order.total,
+          discountAmount: order.discountAmount,
+          delivery: {
+            method: order.deliveryMethod,
+            pickupPoint: order.pickupPoint,
+            address: order.address,
+          },
+        });
+        emailNote = result.ok
+          ? `；確認信＋單據已寄出至 ${member.email}`
+          : `；確認信寄出失敗（${result.error ?? "未知原因"}）`;
+      } else {
+        emailNote = "；會員冇綁 Email，冇寄確認信";
+      }
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.approve",
+        targetType: "order",
+        targetId: order.orderNo,
+        detail: `批准網上付款訂單（訂單 ${order.orderNo}，Airwallex 已收款）${emailNote}`,
+      });
+      return { emailNote };
+    }),
+
   updateStatus: staffProcedure
     .input(
       z.object({

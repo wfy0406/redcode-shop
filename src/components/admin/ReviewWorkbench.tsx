@@ -15,6 +15,10 @@ import StatusBadge from './StatusBadge';
 interface ReviewWorkbenchProps {
   queue: AdminOrder[];
   onReview: ReviewHandler;
+  /** 批准 Airwallex 網上已收款訂單（冇截圖嗰啲，2026-09-29 新增） */
+  onApproveOnline: (order: AdminOrder) => void;
+  /** 網上付款批准進行中嘅訂單 id（防重複撳） */
+  onlineBusyId: number | null;
   reviewingProofId: number | null;
   onOpenLightbox: (src: string) => void;
   /** 審批完成後 300ms 內向右飛出嘅訂單 */
@@ -47,9 +51,20 @@ function AirwallexPaidBadge() {
   );
 }
 
+/** Airwallex 網上已收款、對數中、冇待審批截圖嘅訂單（行「批准網上收款」路徑，唔係截圖審批） */
+function isOnlinePending(o: AdminOrder): boolean {
+  return (
+    o.paymentChannel === 'airwallex' &&
+    o.status === 'payment_review' &&
+    !o.proofs.some((p) => p.status === 'pending')
+  );
+}
+
 export default function ReviewWorkbench({
   queue,
   onReview,
+  onApproveOnline,
+  onlineBusyId,
   reviewingProofId,
   onOpenLightbox,
   leavingIds,
@@ -71,9 +86,17 @@ export default function ReviewWorkbench({
       const firstPending = current?.proofs.find((p) => p.status === 'pending');
 
       if (e.key === 'a' || e.key === 'A') {
-        if (!current || !firstPending || reviewingProofId != null) return;
-        e.preventDefault();
-        onReview(firstPending.id, true, undefined, current);
+        if (!current) return;
+        if (firstPending) {
+          if (reviewingProofId != null) return;
+          e.preventDefault();
+          onReview(firstPending.id, true, undefined, current);
+        } else if (isOnlinePending(current)) {
+          // Airwallex 網上已收款單：A 一樣係批准（行 reviewOnlinePayment）
+          if (onlineBusyId != null) return;
+          e.preventDefault();
+          onApproveOnline(current);
+        }
       } else if (e.key === 'r' || e.key === 'R') {
         if (!firstPending) return;
         e.preventDefault();
@@ -90,7 +113,7 @@ export default function ReviewWorkbench({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [queue, selectedId, reviewingProofId, onReview]);
+  }, [queue, selectedId, reviewingProofId, onlineBusyId, onReview, onApproveOnline]);
 
   if (queue.length === 0) {
     return (
@@ -99,7 +122,7 @@ export default function ReviewWorkbench({
         style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
       >
         <p className="script text-3xl">All wishes cleared ✦</p>
-        <p className="mt-3 text-[15px] text-txt-2">冇待審批嘅付款截圖，飲杯茶先。</p>
+        <p className="mt-3 text-[15px] text-txt-2">冇待審批嘅訂單，飲杯茶先。</p>
       </div>
     );
   }
@@ -244,16 +267,46 @@ export default function ReviewWorkbench({
               </p>
             )}
 
-            <div className="mt-5">
-              <ProofSection
-                ref={proofRef}
-                order={selected}
-                onReview={onReview}
-                reviewingProofId={reviewingProofId}
-                onOpenLightbox={onOpenLightbox}
-                large
-              />
-            </div>
+            {isOnlinePending(selected) ? (
+              /* Airwallex 網上已收款（冇截圖）：確認款項無誤一掣批准；
+                 要拒絕／退款唔喺度做——錢已收咗，去 WMS 官網中心申請退款原路退回 */
+              <div
+                className="mt-5 rounded-xl border p-5"
+                style={{ borderColor: 'var(--success)', background: 'color-mix(in srgb, var(--success) 6%, transparent)' }}
+              >
+                <p className="text-[14px] leading-relaxed text-txt-2">
+                  💳 Airwallex 已收款 <span className="font-mono text-success">{fmtHKD(selected.total)}</span>
+                  ，冇付款截圖需要核對。確認 Airwallex 後台款項無誤，就可以批准。
+                </p>
+                <p className="mt-2 text-[12px] leading-relaxed text-txt-3">
+                  要拒絕或退款？錢已經收咗，請去 WMS 官網中心申請退款（原路退回），唔好喺度拒絕。
+                </p>
+                <button
+                  type="button"
+                  disabled={onlineBusyId === selected.id}
+                  onClick={() => onApproveOnline(selected)}
+                  className="mt-4 w-full rounded-xl border px-4 py-3 text-[14px] font-semibold tracking-[0.18em] transition-opacity disabled:opacity-50"
+                  style={{
+                    borderColor: 'var(--success)',
+                    color: 'var(--success)',
+                    background: 'color-mix(in srgb, var(--success) 10%, transparent)',
+                  }}
+                >
+                  {onlineBusyId === selected.id ? '批准緊…' : '批准訂單（確認已收款）'}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-5">
+                <ProofSection
+                  ref={proofRef}
+                  order={selected}
+                  onReview={onReview}
+                  reviewingProofId={reviewingProofId}
+                  onOpenLightbox={onOpenLightbox}
+                  large
+                />
+              </div>
+            )}
 
             {selected.note && (
               <p className="mt-4 border-t pt-4 text-[14px] text-txt-2" style={{ borderColor: 'var(--space-line)' }}>

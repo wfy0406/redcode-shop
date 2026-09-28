@@ -45,10 +45,18 @@ type ViewKey =
   | 'staff'
   | 'audit';
 
-/** 有待審批付款截圖嘅訂單（舊單優先，FIFO 隊列） */
+/**
+ * 待審批隊列（舊單優先，FIFO）：
+ * ① 有待審批付款截圖嘅手動過數訂單；
+ * ② Airwallex 網上已收款、對數中嘅訂單（冇截圖，2026-09-29 Glo 指示一樣要喺度批）。
+ */
 function buildQueue(orders: AdminOrder[]): AdminOrder[] {
   return orders
-    .filter((o) => o.proofs.some((p) => p.status === 'pending'))
+    .filter(
+      (o) =>
+        o.proofs.some((p) => p.status === 'pending') ||
+        (o.paymentChannel === 'airwallex' && o.status === 'payment_review'),
+    )
     .slice()
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
@@ -98,6 +106,7 @@ function AdminConsole() {
   const todayCount = useMemo(() => orders.filter((o) => isToday(o.createdAt)).length, [orders]);
 
   const reviewProof = trpc.orders.reviewProof.useMutation();
+  const reviewOnlinePayment = trpc.orders.reviewOnlinePayment.useMutation();
   const updateStatus = trpc.orders.updateStatus.useMutation();
 
   const errMsg = (err: unknown) => (err instanceof Error ? err.message : '操作失敗，請再試');
@@ -126,6 +135,27 @@ function AdminConsole() {
       }
     },
     [reviewProof, pushToast, utils],
+  );
+
+  /** 批准 Airwallex 網上已收款訂單（冇截圖嗰啲）：同截圖批准一樣 toast＋飛出＋invalidate */
+  const handleApproveOnline = useCallback(
+    async (order: AdminOrder) => {
+      setStatusBusyId(order.id);
+      try {
+        const r = await reviewOnlinePayment.mutateAsync({ orderId: order.id });
+        pushToast(`已批准 ${order.orderNo}，訂單轉做已確認${r?.emailNote ?? ''}`, 'success');
+        setLeavingIds((prev) => new Set(prev).add(order.id));
+        window.setTimeout(() => {
+          setLeavingIds(new Set());
+          void utils.orders.adminList.invalidate();
+        }, 300);
+      } catch (err) {
+        pushToast(errMsg(err), 'error');
+      } finally {
+        setStatusBusyId(null);
+      }
+    },
+    [reviewOnlinePayment, pushToast, utils],
   );
 
   /** 訂單狀態操作（F-D）：已確認 → 進行出貨（完成終態）／取消訂單 */
@@ -191,6 +221,8 @@ function AdminConsole() {
       <ReviewWorkbench
         queue={queue}
         onReview={(pid, approve, note, order) => void handleReview(pid, approve, note, order)}
+        onApproveOnline={(order) => void handleApproveOnline(order)}
+        onlineBusyId={statusBusyId}
         reviewingProofId={reviewingProofId}
         onOpenLightbox={setLightboxSrc}
         leavingIds={leavingIds}
@@ -218,7 +250,7 @@ function AdminConsole() {
   };
 
   const STATS: { label: string; value: number; color: string }[] = [
-    { label: '待審核截圖', value: queue.length, color: 'var(--gold)' },
+    { label: '待審批', value: queue.length, color: 'var(--gold)' },
     { label: '今日訂單', value: todayCount, color: 'var(--starlight)' },
     { label: '總訂單數', value: orders.length, color: 'var(--lavender)' },
   ];
