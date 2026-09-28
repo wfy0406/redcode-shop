@@ -182,14 +182,29 @@ function getAccessToken(cfg: AirwallexConfig): Promise<string> {
 // ─── Hosted Payment Page 開單 ──────────────────────────────────────────────
 
 export type HostedPaymentResult = {
-  /** 客人要跳轉去嘅 Airwallex 託管付款頁 URL */
-  url: string;
-  /** PaymentIntent id（int_xxx），webhook 對單／寫落訂單用 */
+  /** PaymentIntent id（int_xxx），前端 redirectToCheckout＋webhook 對單用 */
   intentId: string;
+  /**
+   * intent 嘅 client_secret——官方設計本身就係交畀前端（客人瀏覽器）用嚟開付款頁
+   * （Airwallex.js redirectToCheckout 必填欄位），唔係 server 機密。
+   */
+  clientSecret: string;
+  /** Airwallex.js SDK 環境（由 baseUrl 推斷）：api-demo.* → demo；其餘 → prod */
+  env: "demo" | "prod";
+  /** 付款完跳返嚟嘅 URL（同 intent return_url 一致，前端 successUrl 用同一個） */
+  returnUrl: string;
+  currency: string;
 };
 
 /**
- * 開 PaymentIntent ＋ HPP payment_session，回傳付款頁 URL。
+ * 開 PaymentIntent，回傳 intent id＋client_secret 畀前端用官方 Airwallex.js
+ * redirectToCheckout 跳去託管付款頁（2026-09-29 hotfix）。
+ *
+ * 背景：舊版 Step 2 打 server-side `POST /api/v1/pa/payment_session/create` 攞付款頁
+ * URL，實測 Airwallex gateway 回 openresty HTML 錯誤頁（endpoint 唔可用），客人見到
+ * 「開網上付款單失敗」，但 intent 已建（後台見「已創建」）。官方現行 HPP 做法係：
+ * 後端淨建 intent → 前端 SDK `payments.redirectToCheckout({ intent_id, client_secret,
+ * currency, successUrl })`——唔再需要 server 打第二個 API，成個失敗點直接消失。
  * amount 單位係港元「元」（major unit，見檔頭核實紀錄）——本站 orders.total 本身就係
  * integer 港元，直接傳入，唔使乘 100。
  */
@@ -201,13 +216,18 @@ export async function createHostedPayment(args: {
   returnUrl: string;
 }): Promise<HostedPaymentResult> {
   const { cfg } = args;
+  const env: "demo" | "prod" = cfg.baseUrl.includes("demo") ? "demo" : "prod";
+  // 逐步日誌（Glo 要求每步有日誌）：唔記 token／apiKey／client_secret，只記對單用嘅欄位
+  console.log(
+    `[airwallex] 開網上付款單：訂單 ${args.orderNo}（id ${args.orderId}），金額 HK$${args.amount}，環境 ${env}`,
+  );
   const token = await getAccessToken(cfg);
   const headers = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
 
-  // Step 1：開 PaymentIntent（merchant_order_id 用訂單編號，webhook 同內部系統靠佢對單）
+  // 開 PaymentIntent（merchant_order_id 用訂單編號，webhook 同內部系統靠佢對單）
   const intentRes = await fetch(`${cfg.baseUrl}/api/v1/pa/payment_intents/create`, {
     method: "POST",
     headers,
@@ -223,34 +243,24 @@ export async function createHostedPayment(args: {
   });
   if (!intentRes.ok) {
     const detail = (await intentRes.text().catch(() => "")).slice(0, 300);
+    console.error(
+      `[airwallex] 開 intent 失敗：訂單 ${args.orderNo}，HTTP ${intentRes.status}：${detail}`,
+    );
     throw new Error(`Airwallex 開 PaymentIntent 失敗（HTTP ${intentRes.status}）：${detail}`);
   }
   const intent = (await intentRes.json()) as { id?: string; client_secret?: string };
   if (!intent.id || !intent.client_secret) {
+    console.error(`[airwallex] intent 回應缺欄位：訂單 ${args.orderNo}`, intent);
     throw new Error("Airwallex PaymentIntent 回應缺 id / client_secret");
   }
-
-  // Step 2：開 HPP payment_session，拎託管付款頁 URL
-  const sessionRes = await fetch(`${cfg.baseUrl}/api/v1/pa/payment_session/create`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      request_id: randomUUID(),
-      payment_intent_id: intent.id,
-      client_secret: intent.client_secret,
-      currency: "HKD",
-      return_url: args.returnUrl,
-    }),
-  });
-  if (!sessionRes.ok) {
-    const detail = (await sessionRes.text().catch(() => "")).slice(0, 300);
-    throw new Error(`Airwallex 開 payment_session 失敗（HTTP ${sessionRes.status}）：${detail}`);
-  }
-  const session = (await sessionRes.json()) as { url?: string };
-  if (!session.url) {
-    throw new Error("Airwallex payment_session 回應冇付款頁 url");
-  }
-  return { url: session.url, intentId: intent.id };
+  console.log(`[airwallex] intent 已建立：${intent.id}（訂單 ${args.orderNo}），等待客人跳轉付款頁`);
+  return {
+    intentId: intent.id,
+    clientSecret: intent.client_secret,
+    env,
+    returnUrl: args.returnUrl,
+    currency: "HKD",
+  };
 }
 
 // ─── 退款（原路退回，2026-09 F7 WMS↔官網退款）────────────────────────────

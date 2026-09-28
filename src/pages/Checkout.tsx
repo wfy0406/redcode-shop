@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Check, Copy, CreditCard, MapPin, MessageCircle, TicketPercent, X } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
 import LoginPrompt from '@/components/cart/LoginPrompt';
@@ -11,6 +11,7 @@ import type { CartLine, CreatedOrder } from '@/components/cart/types';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { getToken } from '@/lib/auth';
+import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
 import { PAYMENT_METHODS_SETTING_KEY, parsePaymentMethods } from '@contracts/paymentMethods';
 
 /**
@@ -664,13 +665,31 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
   const onPayOnline = async () => {
     setPayOnlineError(null);
     try {
-      // A1 契約：{ enabled:true, url } → 跳 HPP；{ enabled:false } → 收區
+      // 契約（2026-09-29 hotfix）：{ enabled:true, intentId, clientSecret, env, currency, returnUrl }
+      // → 官方 SDK redirectToCheckout 跳 HPP；{ enabled:false } → 收區
       const result = (await createPayment.mutateAsync({ orderId: order.id })) as {
         enabled: boolean;
-        url?: string;
+        intentId?: string;
+        clientSecret?: string;
+        env?: 'demo' | 'prod';
+        currency?: string;
+        returnUrl?: string;
       };
-      if (result.enabled && result.url) {
-        window.location.href = result.url;
+      if (
+        result.enabled &&
+        result.intentId &&
+        result.clientSecret &&
+        result.env &&
+        result.currency &&
+        result.returnUrl
+      ) {
+        await redirectToAirwallexCheckout({
+          intentId: result.intentId,
+          clientSecret: result.clientSecret,
+          env: result.env,
+          currency: result.currency,
+          returnUrl: result.returnUrl,
+        });
         return;
       }
       setAirwallexUnavailable(true);
@@ -970,6 +989,18 @@ export default function Checkout() {
   const [step, setStep] = useState(0);
   const [order, setOrder] = useState<CreatedOrder | null>(null);
 
+  // refresh 還原（2026-09-29 hotfix）：建立訂單後 orderId 會寫落 URL query；
+  // 如果客人喺付款步驟 refresh，頁面 state 冇咗、購物車又已清空——與其顯示
+  // 「購物車係空嘅」令客人迷失，直接送佢去付款頁（/#/payment?orderId=）繼續畀錢
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const resumeOrderId = Number(searchParams.get('orderId') || 0);
+
+  useEffect(() => {
+    if (authLoading || !user || order || !(resumeOrderId > 0)) return;
+    navigate(`/payment?orderId=${resumeOrderId}`, { replace: true });
+  }, [authLoading, user, order, resumeOrderId, navigate]);
+
   const items = (cartQuery.data ?? []) as CartLine[];
 
   const renderStep = () => {
@@ -1011,6 +1042,8 @@ export default function Checkout() {
         onCreated={(created) => {
           setOrder(created);
           setStep(1);
+          // 寫低 orderId 落 URL——refresh 之後上面個 effect 會送客人返去付款頁繼續
+          setSearchParams({ orderId: String(created.id) }, { replace: true });
         }}
       />
     );

@@ -17,6 +17,7 @@ import {
 import { useAuth } from '@/hooks/useAuth';
 import { useReveal } from '@/hooks/useReveal';
 import { getToken } from '@/lib/auth';
+import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
 import WishingStar from '@/components/shop/WishingStar';
 import PaymentDropzone from '@/components/cart/PaymentDropzone';
 import { WishStarSpinner } from '@/components/cart/WishingStar';
@@ -260,13 +261,31 @@ export default function Payment() {
     if (orderId === null) return;
     setPayOnlineError(null);
     try {
-      // A1 契約（SPEC §3.2）：{ enabled:true, url } → 跳 HPP；{ enabled:false } → 收區
+      // 契約（2026-09-29 hotfix）：{ enabled:true, intentId, clientSecret, env, currency, returnUrl }
+      // → 官方 SDK redirectToCheckout 跳 HPP；{ enabled:false } → 收區
       const result = (await createPayment.mutateAsync({ orderId })) as {
         enabled: boolean;
-        url?: string;
+        intentId?: string;
+        clientSecret?: string;
+        env?: 'demo' | 'prod';
+        currency?: string;
+        returnUrl?: string;
       };
-      if (result.enabled && result.url) {
-        window.location.href = result.url;
+      if (
+        result.enabled &&
+        result.intentId &&
+        result.clientSecret &&
+        result.env &&
+        result.currency &&
+        result.returnUrl
+      ) {
+        await redirectToAirwallexCheckout({
+          intentId: result.intentId,
+          clientSecret: result.clientSecret,
+          env: result.env,
+          currency: result.currency,
+          returnUrl: result.returnUrl,
+        });
         return;
       }
       setAirwallexUnavailable(true);

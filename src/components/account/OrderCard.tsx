@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { Receipt, Ticket } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
 import StatusBadge from './StatusBadge';
 import OrderTimeline from './OrderTimeline';
 import PaymentProofDropzone from './PaymentProofDropzone';
@@ -38,9 +39,9 @@ const REFUND_BADGES: Record<string, { text: string; className: string }> = {
 };
 
 /**
- * 「💳 即時網上支付」（F7）：trpc.airwallex.createPayment →
- * { enabled:true, url } 跳去 Airwallex Hosted Payment Page；
- * { enabled:false }（未配置）→ 成個區收起，淨返手動過數（寫法跟 Payment.tsx）。
+ * 「💳 即時網上支付」（F7；2026-09-29 hotfix 改官方 SDK 契約）：trpc.airwallex.createPayment →
+ * { enabled:true, intentId, clientSecret, env, currency, returnUrl } → redirectToAirwallexCheckout
+ * 跳去 Airwallex Hosted Payment Page；{ enabled:false }（未配置）→ 成個區收起（寫法跟 Payment.tsx）。
  */
 function OnlinePaySection({ orderId, total }: { orderId: number; total: number }) {
   const createPayment = trpc.airwallex.createPayment.useMutation();
@@ -52,13 +53,29 @@ function OnlinePaySection({ orderId, total }: { orderId: number; total: number }
   const onPayOnline = async () => {
     setPayOnlineError(null);
     try {
-      // A1 契約：{ enabled:true, url } → 跳 HPP；{ enabled:false } → 收區
       const result = (await createPayment.mutateAsync({ orderId })) as {
         enabled: boolean;
-        url?: string;
+        intentId?: string;
+        clientSecret?: string;
+        env?: 'demo' | 'prod';
+        currency?: string;
+        returnUrl?: string;
       };
-      if (result.enabled && result.url) {
-        window.location.href = result.url;
+      if (
+        result.enabled &&
+        result.intentId &&
+        result.clientSecret &&
+        result.env &&
+        result.currency &&
+        result.returnUrl
+      ) {
+        await redirectToAirwallexCheckout({
+          intentId: result.intentId,
+          clientSecret: result.clientSecret,
+          env: result.env,
+          currency: result.currency,
+          returnUrl: result.returnUrl,
+        });
         return;
       }
       setAirwallexUnavailable(true);

@@ -7,9 +7,11 @@ import { createRouter, authedProcedure } from "./middleware";
 import { createHostedPayment, getAirwallexConfig } from "./airwallex";
 
 /**
- * Airwallex 網上付款 tRPC（2026-09 F5，SPEC §3.2 契約）：
+ * Airwallex 網上付款 tRPC（2026-09 F5；2026-09-29 hotfix 改官方 SDK 契約）：
  * trpc.airwallex.createPayment.useMutation({ orderId })
- *   成功回傳 { enabled: true, url }  → 前端 window.location.href = url 跳去 Airwallex 付款頁
+ *   成功回傳 { enabled: true, intentId, clientSecret, env, currency, returnUrl, orderNo, amount }
+ *     → 前端用 src/lib/airwallexCheckout.ts 嘅 redirectToAirwallexCheckout()
+ *     → 官方 Airwallex.js redirectToCheckout 跳去託管付款頁
  *   env 未配置        回傳 { enabled: false } → 前端成個「網上付款」區唔 render
  *   訂單唔係自己嘅／唔係 pending_payment → throw TRPCError（中文訊息）
  */
@@ -47,7 +49,16 @@ export const airwallexRouter = createRouter({
           amount: order.total,
           returnUrl,
         });
-        return { enabled: true as const, url: session.url };
+        return {
+          enabled: true as const,
+          intentId: session.intentId,
+          clientSecret: session.clientSecret,
+          env: session.env,
+          currency: session.currency,
+          returnUrl: session.returnUrl,
+          orderNo: order.orderNo,
+          amount: order.total,
+        };
       } catch (e) {
         console.error(`[airwallex] 開付款單失敗（訂單 ${order.orderNo}）：`, e);
         throw new TRPCError({
