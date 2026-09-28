@@ -6,6 +6,8 @@ import { Link } from 'react-router';
  * 排版跟 About 頁嘅安靜奢華語言：花體 kicker＋serif 標題＋髮絲線分節。
  * 2026-08-06：聯絡途徑加入 Facebook Messenger（m.me/redcodexhk）；
  * 直接促銷拒收方法補返會員中心「優惠資訊」自助開關。
+ * 2026-09：配合 Airwallex 網上付款上線——更新第 2.3 節表述、
+ * 新增第 2.4 節「網上付款資料」，並喺第 6 節披露對象加入 Airwallex。
  */
 
 function Section({
@@ -73,7 +75,7 @@ export default function Privacy() {
           私隱政策
         </h1>
         <p className="mt-3 font-mono text-[13px] tracking-[0.08em] text-txt-3">
-          RedCode Fashion Design · 最近更新：2026 年 8 月 6 日
+          RedCode Fashion Design · 最近更新：2026 年 9 月
         </p>
       </header>
 
@@ -146,10 +148,40 @@ export default function Privacy() {
               items={[
                 <>
                   <b className="text-txt-1">信用卡或銀行卡號碼</b>
-                  ：本網站不設網上刷卡。你經銀行轉帳或電子支付付款後上傳截圖，整個過程卡資料唔會經過我哋嘅系統。
+                  ：無論你揀上傳付款截圖，定係經 Airwallex 安全付款頁網上付款，你嘅卡號碼同敏感付款資料都
+                  <b className="text-txt-1">唔會經過、唔會儲存喺</b>
+                  我哋嘅系統（詳見第 2.4 節）。
                 </>,
               ]}
             />
+          </Sub>
+          <Sub title="2.4 網上付款資料（Airwallex）">
+            <p>
+              如你揀用網上付款，交易會跳去第三方支付處理商{' '}
+              <b className="text-txt-1">Airwallex</b>{' '}
+              嘅安全付款頁完成。就每筆網上交易，我哋只會接收到：
+            </p>
+            <UL
+              items={[
+                <>
+                  <b className="text-txt-1">付款狀態</b>（成功／失敗）
+                </>,
+                <>
+                  <b className="text-txt-1">交易參考編號</b>
+                </>,
+                <>
+                  <b className="text-txt-1">交易金額</b>
+                </>,
+              ]}
+            />
+            <p>
+              你嘅信用卡及其他付款資料，全程由 Airwallex 按照其私隱政策及{' '}
+              <b className="text-txt-1">PCI DSS</b>{' '}
+              支付卡行業資料安全標準處理，本網站唔會接觸、處理或儲存。
+            </p>
+            <p>
+              我哋唔會將上述付款相關資料，用於訂單處理、客戶服務同法律要求以外嘅任何用途。
+            </p>
           </Sub>
         </Section>
 
@@ -233,6 +265,9 @@ export default function Privacy() {
               </>,
               <>
                 <b className="text-txt-1">雲端託管及系統服務商</b>：Render（網站及資料庫託管）、Resend（交易電郵寄出服務）——用於營運本網站及發送電郵
+              </>,
+              <>
+                <b className="text-txt-1">第三方支付處理商</b>：Airwallex——你揀用網上付款時，用於處理該筆交易（訂單編號及應付金額）；你嘅卡資料直接由 Airwallex 按其私隱政策收取，唔經我哋（詳見第 2.4 節）
               </>,
               <>
                 <b className="text-txt-1">Google</b>：你選擇 Google 登入或連結帳號時，用作身份驗證
