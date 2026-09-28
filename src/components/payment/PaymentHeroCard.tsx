@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { Download, FileText, Loader2 } from 'lucide-react';
 
@@ -13,7 +13,7 @@ import { Download, FileText, Loader2 } from 'lucide-react';
  * - 期刊式刊頭（刊號＝訂單編號、日期行、中縫 hairline 規線）
  * - 純 SVG 圓形郵戳（弧形文字 + 雙圈）＋ 純 CSS 火漆印（RC 花押字）
  * - 收據式明細：dotted leader 虛線、金額右對齊、總計用會計式雙 hairline
- * - 條碼風 SVG 裝飾（由訂單編號 deterministic 生成，唔係真條碼）
+ * - 卡尾真二維碼（qrcode 包生成，掃完開返張單嘅單據頁；2026-09-29 由裝飾條碼改做真 QR）
  *
  * 兩個下載掣喺卡外（永遠唔會入鏡），並加 data-html2canvas-ignore 雙重保險；
  * html2canvas 同 jspdf 都係 dynamic import()，唔會塞首屏 bundle。
@@ -145,7 +145,9 @@ function WaxSeal() {
   );
 }
 
-/* ---------- 條碼風裝飾（由訂單編號 deterministic 生成嘅 SVG 幼條） ---------- */
+/* ---------- 條碼風裝飾（由訂單編號 deterministic 生成嘅 SVG 幼條） ----------
+ * 2026-09-29 起改做真 QR code（見 OrderQr）：呢個假條碼只係 fallback——
+ * 冇傳 receiptUrl／QR 仲生成緊／生成失敗嗰陣先用，卡片唔會空住個位。 */
 function FauxBarcode({ seedText }: { seedText: string }) {
   const bars: { x: number; w: number }[] = [];
   let x = 0;
@@ -161,6 +163,44 @@ function FauxBarcode({ seedText }: { seedText: string }) {
         <rect key={i} x={b.x} y="0" width={b.w} height="30" fill={INK} opacity="0.82" />
       ))}
     </svg>
+  );
+}
+
+/* ---------- 真二維碼（2026-09-29 hotfix：掃完開返張單嘅單據頁） ----------
+ * qrcode 包 dynamic import()，唔會塞首屏 bundle（同 html2canvas/jspdf 一個做法）；
+ * 輸出 PNG dataURL 用 <img> 顯示——html2canvas 對 <img> 最穩陣，下載 PNG/PDF 都入到鏡。
+ * 墨色用卡片統一 INK、透明底襯米白紙；margin 1 留 quiet zone 好掃啲；
+ * 仲生成緊／生成失敗就跌落 FauxBarcode 頂住，卡片個位唔會空。 */
+function OrderQr({ url, orderNo }: { url: string; orderNo: string }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    import('qrcode')
+      .then((QRCode) =>
+        QRCode.toDataURL(url, {
+          margin: 1,
+          width: 264,
+          errorCorrectionLevel: 'M',
+          color: { dark: INK, light: '#00000000' },
+        }),
+      )
+      .then((u) => {
+        if (alive) setDataUrl(u);
+      })
+      .catch((e) => console.error('[PaymentHeroCard] QR 生成失敗', e));
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+  if (!dataUrl) return <FauxBarcode seedText={orderNo || 'REDCODE'} />;
+  return (
+    <img
+      src={dataUrl}
+      width={88}
+      height={88}
+      alt={`訂單 ${orderNo} 二維碼（掃描查閱訂單）`}
+      style={{ display: 'block' }}
+    />
   );
 }
 
@@ -193,8 +233,10 @@ export default function PaymentHeroCard(props: {
   discountAmount?: number;
   items?: { name: string; quantity: number; price: number }[];
   deliveryLabel?: string;
+  /** 張單嘅單據頁完整 URL——有傳就喺卡尾出真二維碼，掃完開返張單（2026-09-29） */
+  receiptUrl?: string;
 }): JSX.Element {
-  const { orderNo, createdAt, statusLabel, total, discountAmount, items, deliveryLabel } = props;
+  const { orderNo, createdAt, statusLabel, total, discountAmount, items, deliveryLabel, receiptUrl } = props;
   const cardRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState<'png' | 'pdf' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -547,11 +589,29 @@ export default function PaymentHeroCard(props: {
               </div>
               <div className="text-right">
                 <div className="flex justify-end">
-                  <FauxBarcode seedText={orderNo || 'REDCODE'} />
+                  {receiptUrl ? (
+                    <OrderQr url={receiptUrl} orderNo={orderNo} />
+                  ) : (
+                    <FauxBarcode seedText={orderNo || 'REDCODE'} />
+                  )}
                 </div>
                 <p style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.2em', color: INK_SOFT, marginTop: 5 }}>
                   {orderNo}
                 </p>
+                {receiptUrl && (
+                  <p
+                    style={{
+                      fontFamily: MONO,
+                      fontSize: 8,
+                      letterSpacing: '0.24em',
+                      color: INK_FAINT,
+                      marginTop: 3,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    掃碼查單 · Scan
+                  </p>
+                )}
               </div>
             </div>
 

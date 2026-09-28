@@ -298,6 +298,11 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     const item = order.items[i];
     const remark = [
       `官網訂單 ${order.orderNo}${lineCount > 1 ? `（共 ${lineCount} 件，第 ${i + 1} 件）` : ""}`,
+      // 2026-09-29 三 bug hotfix：Airwallex 網上收款嘅單冇付款截圖——寫明收款已確認＋intent 單號，
+      // 同事審批時唔使等截圖，直接去 Airwallex 後台對 merchant_order_id（＝官網單號）
+      order.paymentChannel === "airwallex"
+        ? `Airwallex 網上收款已確認${order.airwallexIntentId ? `（${order.airwallexIntentId}）` : ""}，無需付款截圖`
+        : null,
       order.promoCode ? `優惠碼 ${order.promoCode}（全單減 HK$${order.discountAmount}）` : null,
       order.note ? `客人備註：${order.note}` : null,
       !screenshot && proof ? `截圖：${publicBaseUrl()}${proof.imagePath}` : null,

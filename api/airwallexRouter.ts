@@ -49,6 +49,17 @@ export const airwallexRouter = createRouter({
           amount: order.total,
           returnUrl,
         });
+        // 記低 intent id（2026-09-29 三 bug hotfix）：客人俾完錢跳返 /api/airwallex/return
+        // 嗰陣如果 webhook 仲未到，server 就靠呢個 id 主動向 Airwallex 查證收款補狀態。
+        // 失敗唔影響跳轉（webhook 到咗一樣會寫返），所以淨係 log。
+        try {
+          await db
+            .update(orders)
+            .set({ airwallexIntentId: session.intentId })
+            .where(eq(orders.id, order.id));
+        } catch (e) {
+          console.error(`[airwallex] 記低 intent id 失敗（訂單 ${order.orderNo}）：`, e);
+        }
         return {
           enabled: true as const,
           intentId: session.intentId,

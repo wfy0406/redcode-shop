@@ -9,14 +9,14 @@ import { appRouter } from "./router";
 import { createContext } from "./context";
 import { userFromAuthHeader } from "./auth";
 import { exportDaily } from "./exportDaily";
-import { wmsReviewCallback } from "./wmsSync";
+import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, productImageArchive, products, users } from "@db/schema";
-import { getAirwallexConfig, verifyWebhookSignature } from "./airwallex";
+import { getAirwallexConfig, retrievePaymentIntent, verifyWebhookSignature } from "./airwallex";
 import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail } from "./email";
 import { logAudit } from "./audit";
 
@@ -46,51 +46,59 @@ app.post("/api/wms/refund-callback", wmsRefundCallback);
 // Airwallex 網上付款（2026-09 F5）——兩條 route 都喺 tRPC mount 前註冊：
 // ① HPP 回跳中轉：Airwallex 俾完錢會 GET 跳返呢度；因為前端係 HashRouter，
 //    外層 query 到唔到 React，所以 server 302 轉去 #/payment?orderId=X&ap=done。
+//    2026-09-29 三 bug hotfix：回跳同時背景向 Airwallex 主動查證 intent 狀態——
+//    webhook 正常幾秒內到，但萬一遲到／漏咗（未開 webhook、設定錯、網絡抖下），
+//    客人跳返嚟呢刻已經即時補狀態＋轉 WMS；唔阻跳轉，失敗淨係 log，webhook 照舊兜底。
 app.get("/api/airwallex/return", (c) => {
   const orderId = c.req.query("orderId") ?? "";
   // 只收純數字 orderId，防 open redirect／query 注入
   if (!/^\d+$/.test(orderId)) {
     return c.redirect("/#/", 302);
   }
+  void (async () => {
+    try {
+      const cfg = await getAirwallexConfig();
+      if (!cfg) return;
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.id, Number(orderId)),
+      });
+      // webhook 先到（已轉態）／唔係待付款 → 唔使查
+      if (!order || order.status !== "pending_payment") return;
+      if (!order.airwallexIntentId) {
+        console.log(`[airwallex] return 查證：訂單 ${order.orderNo} 未記 intent id，等 webhook 處理`);
+        return;
+      }
+      const intent = await retrievePaymentIntent(cfg, order.airwallexIntentId);
+      console.log(
+        `[airwallex] return 查證：訂單 ${order.orderNo}，intent ${order.airwallexIntentId} 狀態 ${intent.status}`,
+      );
+      if (intent.status === "SUCCEEDED") {
+        const handled = await handlePaidOnline(order.orderNo, intent.id, "return-verify");
+        if (handled) {
+          console.log(`[airwallex] return 查證確認收款：訂單 ${order.orderNo}（webhook 未到，主動補咗）`);
+        }
+      }
+    } catch (e) {
+      console.error("[airwallex] return 主動查證出錯:", e);
+    }
+  })().catch(() => {});
   return c.redirect(`/#/payment?orderId=${orderId}&ap=done`, 302);
 });
 
-// ② Webhook 收款確認：Airwallex 會 retry，所以全程冪等——conditional update
-//    淨郁 status='pending_payment' 嘅單，郁到（第一次）先寄 email。
-app.post("/api/airwallex/webhook", async (c) => {
-  // 後台設定／env 未配置都照註冊：回 503 JSON，唔好冧 server
-  const cfg = await getAirwallexConfig();
-  if (!cfg) {
-    return c.json({ ok: false, error: "Airwallex 未配置" }, 503);
-  }
-  // 簽名驗證必須用**未經 parse** 嘅原始 body（官方文件：re-serialized JSON 會改 bytes 夾唔到簽名）
-  const timestamp = c.req.header("x-timestamp") ?? "";
-  const signature = c.req.header("x-signature") ?? "";
-  const rawBody = await c.req.text();
-  if (!verifyWebhookSignature(cfg.webhookSecret, timestamp, signature, rawBody)) {
-    console.error("[airwallex] webhook 簽名驗證失敗");
-    return c.json({ ok: false, error: "簽名驗證失敗" }, 401);
-  }
-  let event: { name?: string; data?: { object?: Record<string, unknown> } };
-  try {
-    event = JSON.parse(rawBody);
-  } catch {
-    return c.json({ ok: false, error: "body 要係 JSON" }, 400);
-  }
-  // 只處理收款成功；其他事件照回 200（唔理嘅事件唔應該畀 Airwallex 無限 retry）
-  if (event?.name !== "payment_intent.succeeded") {
-    return c.json({ ok: true, ignored: true });
-  }
-  const intent = event.data?.object ?? {};
-  const merchantOrderId =
-    typeof intent.merchant_order_id === "string" ? intent.merchant_order_id : "";
-  const intentId = typeof intent.id === "string" ? intent.id : null;
-  if (!merchantOrderId) {
-    return c.json({ ok: true, ignored: true });
-  }
+/**
+ * 網上收款確認嘅統一入口（2026-09-29 三 bug hotfix）——webhook 同 return 主動查證都用：
+ * 冪等核心：conditional update 淨郁 status='pending_payment' 嘅單，郁到（第一次）先做後續
+ * （審計日誌＋背景轉 WMS 官網中心＋背景寄 email）；Airwallex retry／兩路撞單郁 0 行 → 收檔。
+ * source 淨係日誌標記來源。回傳 true＝今次係第一次確認（做咗嘢）。
+ */
+async function handlePaidOnline(
+  merchantOrderId: string,
+  intentId: string | null,
+  source: "webhook" | "return-verify",
+): Promise<boolean> {
   const db = getDb();
   const paidAt = new Date();
-  // 冪等核心：where 埋 status='pending_payment'，retry／重複 event 會郁 0 行 → 唔會重複寄信
   const updated = await db
     .update(orders)
     .set({
@@ -103,8 +111,7 @@ app.post("/api/airwallex/webhook", async (c) => {
     .where(and(eq(orders.orderNo, merchantOrderId), eq(orders.status, "pending_payment")))
     .returning({ id: orders.id, orderNo: orders.orderNo });
   if (updated.length === 0) {
-    // 唔存在嘅單／已處理過嘅 retry：照回 200 收檔
-    return c.json({ ok: true, alreadyHandled: true });
+    return false;
   }
   const [paid] = updated;
   void logAudit({
@@ -112,9 +119,19 @@ app.post("/api/airwallex/webhook", async (c) => {
     action: "order.paidOnline",
     targetType: "order",
     targetId: paid.orderNo,
-    detail: `Airwallex 網上付款成功（訂單 ${paid.orderNo}${intentId ? `，intent ${intentId}` : ""}），訂單轉待審批`,
+    detail: `Airwallex 網上付款成功（訂單 ${paid.orderNo}${intentId ? `，intent ${intentId}` : ""}，來源：${source === "webhook" ? "webhook" : "return 主動查證"}），訂單轉待審批，已排程轉 WMS 官網中心`,
   });
-  // 第一次確認先寄 email：客人「已收款」＋內部「待審批」；背景執行，失敗淨係 log，唔阻 200
+  // 背景轉單去 WMS 官網中心（hotfix 主因：之前得截圖流程有轉，即時支付單漏咗，
+  // WMS 審批中心永遠見唔到）。做法同截圖流程一致：唔阻回應；失敗淨係 log＋寫 wmsSyncLog，
+  // 官網後台可以一掣重試。
+  void forwardOrderToWms(paid.id)
+    .then((r) =>
+      console.log(
+        `[airwallex] ${paid.orderNo} 轉 WMS：${r.status}（${r.okCount}/${r.lineCount}）${r.lastError ? `，${r.lastError}` : ""}`,
+      ),
+    )
+    .catch((e) => console.error(`[airwallex] ${paid.orderNo} 轉 WMS 出錯:`, e));
+  // 第一次確認先寄 email：客人「已收款」＋內部「待審批」；背景執行，失敗淨係 log，唔阻回應
   void (async () => {
     try {
       const order = await db.query.orders.findFirst({
@@ -169,9 +186,52 @@ app.post("/api/airwallex/webhook", async (c) => {
         console.error(`[email] 待審批通知寄唔出（訂單 ${order.orderNo}）：`, r2.error);
       }
     } catch (e) {
-      console.error("[airwallex] webhook 寄信出錯:", e);
+      console.error("[airwallex] 收款後寄信出錯:", e);
     }
-  })().catch((e) => console.error("[airwallex] webhook 寄信出錯:", e));
+  })().catch((e) => console.error("[airwallex] 收款後寄信出錯:", e));
+  return true;
+}
+
+// ② Webhook 收款確認：Airwallex 會 retry，所以全程冪等——conditional update
+//    淨郁 status='pending_payment' 嘅單，郁到（第一次）先寄 email。
+app.post("/api/airwallex/webhook", async (c) => {
+  // 後台設定／env 未配置都照註冊：回 503 JSON，唔好冧 server
+  const cfg = await getAirwallexConfig();
+  if (!cfg) {
+    return c.json({ ok: false, error: "Airwallex 未配置" }, 503);
+  }
+  // 簽名驗證必須用**未經 parse** 嘅原始 body（官方文件：re-serialized JSON 會改 bytes 夾唔到簽名）
+  const timestamp = c.req.header("x-timestamp") ?? "";
+  const signature = c.req.header("x-signature") ?? "";
+  const rawBody = await c.req.text();
+  if (!verifyWebhookSignature(cfg.webhookSecret, timestamp, signature, rawBody)) {
+    console.error("[airwallex] webhook 簽名驗證失敗");
+    return c.json({ ok: false, error: "簽名驗證失敗" }, 401);
+  }
+  let event: { name?: string; data?: { object?: Record<string, unknown> } };
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return c.json({ ok: false, error: "body 要係 JSON" }, 400);
+  }
+  // 只處理收款成功；其他事件照回 200（唔理嘅事件唔應該畀 Airwallex 無限 retry）
+  if (event?.name !== "payment_intent.succeeded") {
+    return c.json({ ok: true, ignored: true });
+  }
+  const intent = event.data?.object ?? {};
+  const merchantOrderId =
+    typeof intent.merchant_order_id === "string" ? intent.merchant_order_id : "";
+  const intentId = typeof intent.id === "string" ? intent.id : null;
+  if (!merchantOrderId) {
+    return c.json({ ok: true, ignored: true });
+  }
+  // 收款確認（冪等轉態＋審計＋轉 WMS 官網中心＋寄信）統一走 handlePaidOnline，
+  // 同 /api/airwallex/return 嘅主動查證匯合；Airwallex retry 撞單會郁 0 行 → alreadyHandled
+  const handled = await handlePaidOnline(merchantOrderId, intentId, "webhook");
+  if (!handled) {
+    // 唔存在嘅單／已處理過嘅 retry：照回 200 收檔
+    return c.json({ ok: true, alreadyHandled: true });
+  }
   return c.json({ ok: true });
 });
 

@@ -461,6 +461,7 @@ export default function Payment() {
             createdAt={order.createdAt}
             statusLabel={statusLabel}
             total={order.total}
+            receiptUrl={`${window.location.origin}/#/receipt/${order.id}`}
             {...(order.discountAmount > 0 ? { discountAmount: order.discountAmount } : {})}
             {...(heroItems ? { items: heroItems } : {})}
             {...(deliveryLabel ? { deliveryLabel } : {})}

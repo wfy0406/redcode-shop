@@ -263,6 +263,50 @@ export async function createHostedPayment(args: {
   };
 }
 
+// ─── 查 PaymentIntent 狀態（return 回跳主動查證用，2026-09-29 三 bug hotfix）────────────
+
+export type RetrievedIntent = {
+  id: string;
+  /** Airwallex intent 狀態字串：SUCCEEDED / REQUIRES_PAYMENT_METHOD / CANCELLED 等 */
+  status: string;
+  merchantOrderId: string | null;
+};
+
+/**
+ * GET /api/v1/pa/payment_intents/{id}——server-to-server 查 intent 最新狀態。
+ * 用途：客人俾完錢跳返 /api/airwallex/return 嗰陣，webhook 可能遲到／漏咗
+ * （Airwallex 後台未開 webhook、設定錯咗、網絡抖下），呢度主動查一次補狀態。
+ * 官方文件：Payments Acceptance > PaymentIntents > Retrieve a PaymentIntent。
+ */
+export async function retrievePaymentIntent(
+  cfg: AirwallexConfig,
+  intentId: string,
+): Promise<RetrievedIntent> {
+  const token = await getAccessToken(cfg);
+  const res = await fetch(
+    `${cfg.baseUrl}/api/v1/pa/payment_intents/${encodeURIComponent(intentId)}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 300);
+    throw new Error(`Airwallex 查 intent 失敗（HTTP ${res.status}）：${detail}`);
+  }
+  const json = (await res.json()) as {
+    id?: string;
+    status?: string;
+    merchant_order_id?: unknown;
+  };
+  if (!json.id || !json.status) {
+    throw new Error("Airwallex 查 intent 回應缺 id / status");
+  }
+  return {
+    id: json.id,
+    status: json.status,
+    merchantOrderId:
+      typeof json.merchant_order_id === "string" ? json.merchant_order_id : null,
+  };
+}
+
 // ─── 退款（原路退回，2026-09 F7 WMS↔官網退款）────────────────────────────
 
 /**
