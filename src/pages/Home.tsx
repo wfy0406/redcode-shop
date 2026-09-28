@@ -39,7 +39,7 @@ function mapDbProduct(p: {
  * 1. Hero：動態星空 + radial burst + 花體襯字 + 主標 + CTA + 散佈浮卡
  * 2. WhatsApp 群組 Banner（sticky，加入群組 CTA）
  * 3. 今晚精選：2 大 4 細不對稱格網
- * 4. 新品上架：4 欄商品卡 + scroll reveal stagger
+ * 4. 新品上架：最新 8 件（4 欄商品卡）+ scroll reveal stagger
  * 5. Facebook 直播專區（page plugin + CTA panel）
  * 5.5 公司宣傳影片回顧（promo-1 橫片 + promo-2 直片）
  * 6. 品牌故事條 + Glo Glo 主播介紹
@@ -173,6 +173,9 @@ export default function Home() {
   const allProducts =
     productsError || !dbProducts ? PRODUCTS : dbProducts.map(mapDbProduct);
   const featured = allProducts.slice(0, 4);
+  // 2026-09（Glo 要求）：新品上架只顯示最新 8 件，唔再成版碌極未完；
+  // 其餘商品經「睇全部商品 →」去 /products 睇晒
+  const newArrivals = allProducts.slice(0, 8);
 
   // 客戶打卡牆：API 失敗或空陣列 → 靜態 6 張預設相
   const { data: praiseData, isError: praiseError } = trpc.praise.list.useQuery(undefined, {
@@ -390,7 +393,7 @@ export default function Home() {
             </Link>
           </div>
           <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6 xl:grid-cols-4">
-            {allProducts.map((product, i) => (
+            {newArrivals.map((product, i) => (
               <div
                 key={product.id}
                 className="reveal"
