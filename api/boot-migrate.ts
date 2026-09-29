@@ -340,11 +340,9 @@ ALTER TABLE "sfStations" ADD COLUMN IF NOT EXISTS "serviceTime" varchar(255);
 -- v2.2.0（門檻凍結＋金會員 $8000，老闆 2026-09-30 指令）：
 -- users 加「升級嗰刻嘅消費門檻快照」欄（證書凍結用；nullable，降級／過期唔清）
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "vipThresholdCents" integer;
--- backfill：v2.2.0 前只有銀 $3000／金 $5000 呢個歷史門檻，舊 VIP 會員補返快照
-UPDATE users SET "vipThresholdCents" = 300000 WHERE "vipTier" = 'SILVER' AND "vipThresholdCents" IS NULL;
-UPDATE users SET "vipThresholdCents" = 500000 WHERE "vipTier" = 'GOLD' AND "vipThresholdCents" IS NULL;
--- 一次性將金門檻 $5000 → $8000：只郁仲係預設值嘅設定（老闆自己改過其他數就唔郁）
-UPDATE siteSettings SET value = (value::jsonb || '{"goldThresholdCents":800000}'::jsonb)::text, "updatedAt" = now() WHERE key = 'vip_rules' AND (value::jsonb ->> 'goldThresholdCents')::int = 500000;
+-- 注意：backfill UPDATE 同 vip_rules $5000→$8000 一次性更新已搬落 ensureDatabase() 逐條獨立跑
+-- （2026-09-30 hotfix：呢度原本有條 UPDATE siteSettings 表名漏引號＋jsonb 全表 cast，
+--   pg 多語句＝implicit transaction，一句炸成批 rollback，v2.2.0 全部新欄位建唔到 → 會員登入 500）
 
 -- v2.2.0（直播開播推送通知，老闆 2026-09-30 指令）：
 -- users 加「接收直播開播通知」同意欄（預設 false，沉默唔當同意；舊會員自動落入未同意）
@@ -389,6 +387,36 @@ CREATE TABLE IF NOT EXISTS "pushCampaigns" (
 CREATE INDEX IF NOT EXISTS pushcampaigns_status_sent ON "pushCampaigns" (status, "sentAt" DESC);
 `;
 
+// 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：
+// 2026-09-30 hotfix 教訓——pg 一個 query 行多句 SQL＝implicit transaction，
+// 任何一句炸會令**成批 rollback**（當日一條 UPDATE 表名漏引號 → v2.2.0 全部新欄位建唔到）。
+// 逐條獨立跑＋各自 try/catch：一句失敗唔會拖冧其他，失敗語句會喺 log 大聲列出。
+function splitStatements(sqlText: string): string[] {
+  const stmts: string[] = [];
+  let buf = "";
+  let inDollar = false;
+  for (let i = 0; i < sqlText.length; i++) {
+    const two = sqlText.slice(i, i + 2);
+    if (two === "$$") {
+      inDollar = !inDollar;
+      buf += two;
+      i++;
+      continue;
+    }
+    if (sqlText[i] === ";" && !inDollar) {
+      stmts.push(buf);
+      buf = "";
+      continue;
+    }
+    buf += sqlText[i];
+  }
+  if (buf.trim()) stmts.push(buf);
+  // 過濾純註解／空白「語句」（empty query 會令 pg 報錯）
+  return stmts.filter((s) =>
+    s.split("\n").some((l) => l.replace(/--.*$/, "").trim().length > 0),
+  );
+}
+
 export async function ensureDatabase(): Promise<void> {
   const pool = new Pool({
     connectionString: env.databaseUrl,
@@ -401,8 +429,79 @@ export async function ensureDatabase(): Promise<void> {
     // 三級員工制（2026-08-06 Glo 要求）：role enum 加 supervisor。
     // ADD VALUE 唔可以同其他 SQL 夾埋一個 query（implicit transaction 會炸），要獨立跑。
     await pool.query(`ALTER TYPE role ADD VALUE IF NOT EXISTS 'supervisor';`);
-    await pool.query(DDL);
-    console.log("[boot-migrate] tables ok");
+    const statements = splitStatements(DDL);
+    let failed = 0;
+    for (const stmt of statements) {
+      try {
+        await pool.query(stmt);
+      } catch (e) {
+        failed++;
+        console.error(
+          `[boot-migrate] ⚠️ 語句失敗（已跳過，唔會拖冧其他語句）: ${(e as Error).message}\n----- 失敗語句 -----\n${stmt.trim().slice(0, 400)}\n-------------------`,
+        );
+      }
+    }
+    if (failed > 0) {
+      console.error(`[boot-migrate] ⚠️ 共 ${failed} 條語句失敗，請即檢查以上 log`);
+    } else {
+      console.log("[boot-migrate] tables ok");
+    }
+
+    // ===== 數據修補（全部獨立 try/catch，失敗淨係 log，絕唔拖冧結構 migration）=====
+    // v2.2.0 門檻凍結 backfill：v2.2.0 前只有銀 $3000／金 $5000 呢個歷史門檻，舊 VIP 會員補返快照
+    try {
+      await pool.query(`UPDATE users SET "vipThresholdCents" = 300000 WHERE "vipTier" = 'SILVER' AND "vipThresholdCents" IS NULL;`);
+      await pool.query(`UPDATE users SET "vipThresholdCents" = 500000 WHERE "vipTier" = 'GOLD' AND "vipThresholdCents" IS NULL;`);
+    } catch (e) {
+      console.error("[boot-migrate] vipThresholdCents backfill 失敗（唔影響開機）:", (e as Error).message);
+    }
+
+    // 一次性金門檻 $5000 → $8000（老闆 2026-09-30 指令）：喺 JS 做，唔用 SQL jsonb cast——
+    // siteSettings 其他行可能係純文字，SQL 全表 value::jsonb 會炸（當日第二個隱藏炸彈）。
+    // 只郁仲係預設值嘅設定（老闆自己改過其他數就唔郁）。
+    try {
+      const r = await pool.query(`SELECT value FROM "siteSettings" WHERE key = 'vip_rules' LIMIT 1;`);
+      const raw = r.rows[0]?.value;
+      if (typeof raw === "string") {
+        const rules = JSON.parse(raw) as Record<string, unknown>;
+        if (rules && rules.goldThresholdCents === 500000) {
+          rules.goldThresholdCents = 800000;
+          await pool.query(
+            `UPDATE "siteSettings" SET value = $1, "updatedAt" = now() WHERE key = 'vip_rules';`,
+            [JSON.stringify(rules)],
+          );
+          console.log("[boot-migrate] 金會員門檻已由 $5000 一次性更新為 $8000");
+        }
+      }
+    } catch (e) {
+      console.error("[boot-migrate] vip_rules 門檻更新失敗（唔影響開機）:", (e as Error).message);
+    }
+
+    // 開機自檢：users 核心欄位齊唔齊，缺就喺 log 大聲叫（Render logs 一眼睇到，唔使等客人報）
+    try {
+      const chk = await pool.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = 'users';`,
+      );
+      const cols = new Set(chk.rows.map((x: { column_name: string }) => x.column_name));
+      const required = [
+        "vipTier",
+        "vipEffectiveAt",
+        "vipExpiresAt",
+        "vipThresholdCents",
+        "livePushOptIn",
+        "livePushOptInAt",
+        "defaultRegion",
+        "defaultStationId",
+      ];
+      const missing = required.filter((c) => !cols.has(c));
+      if (missing.length > 0) {
+        console.error(`[boot-migrate] ⚠️ users 表缺欄位：${missing.join(", ")}`);
+      } else {
+        console.log("[boot-migrate] users 核心欄位齊全");
+      }
+    } catch (e) {
+      console.error("[boot-migrate] 自檢失敗:", (e as Error).message);
+    }
   } finally {
     await pool.end();
   }

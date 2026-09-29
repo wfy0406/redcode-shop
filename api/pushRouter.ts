@@ -27,6 +27,12 @@ import {
 } from "./middleware";
 import { logAudit } from "./audit";
 import { PUSH_TITLE, buildLivePushBody, sendLivePush } from "./livePush";
+import { forwardMemberToWms } from "./wmsMemberSync";
+
+/** v2.2.1（合約 §9）：直播推送同意狀態有變 → 即推最新狀態去 WMS（fire-and-forget，失敗淨 log） */
+function syncPushStateToWms(userId: number): void {
+  void forwardMemberToWms(userId).catch((e) => console.error("[wms] member sync error:", e));
+}
 
 /** 直播推送「進行中」窗口：sent 後 90 分鐘內前台展示 */
 const LIVE_WINDOW_MS = 90 * 60 * 1000;
@@ -131,6 +137,7 @@ export const pushRouter = createRouter({
         targetId: sub.id,
         detail: `綁定直播開播推送裝置（訂閱 #${sub.id}）`,
       });
+      syncPushStateToWms(ctx.user.userId);
       return { ok: true, id: sub.id };
     }),
 
@@ -170,6 +177,7 @@ export const pushRouter = createRouter({
           ? `取消綁定 1 部直播推送裝置；剩餘有效裝置 ${remaining.length} 部`
           : `取消全部直播推送裝置綁定；剩餘有效裝置 0 部`,
       });
+      syncPushStateToWms(ctx.user.userId);
       return { ok: true, activeDevices: remaining.length };
     }),
 
@@ -265,6 +273,7 @@ export const pushRouter = createRouter({
         targetId: input.id,
         detail: `推送裝置移除（訂閱 #${input.id}，用戶 #${ctx.user.userId}）；剩餘有效裝置 ${remaining.length} 部`,
       });
+      syncPushStateToWms(ctx.user.userId);
       return { ok: true as const };
     }),
 

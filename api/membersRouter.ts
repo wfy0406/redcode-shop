@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { cartItems, orderItems, orders, paymentProofs, users, wmsSyncLog } from "@db/schema";
+import { cartItems, orderItems, orders, paymentProofs, pushSubscriptions, users, wmsSyncLog } from "@db/schema";
 import { createRouter, adminProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { hashPassword } from "./auth";
@@ -11,6 +11,71 @@ import { forwardMemberToWms } from "./wmsMemberSync";
 import { sendVipUpgradeEmail, siteUrl } from "./email";
 import { buildVipVerifyUrl } from "./vipCert";
 import { getVipRules } from "./vip";
+
+/**
+ * v2.2.0（合約 §9）：userAgent → 裝置描述（「iPhone・Safari」款）。
+ * server 端統一 parse（官網後台 adminGetPushStatus 同 WMS member-admin 共用，口徑一致）；
+ * 純字串比對，永遠唔會 throw；唔識分就回「不明裝置」。
+ */
+export function deviceLabelFromUserAgent(ua: string | null): string {
+  if (!ua) return "不明裝置";
+  let device = "電腦";
+  if (/iPhone/i.test(ua)) device = "iPhone";
+  else if (/iPad/i.test(ua)) device = "iPad";
+  else if (/Android/i.test(ua)) device = /Mobile/i.test(ua) ? "Android 手機" : "Android 平板";
+  else if (/Windows/i.test(ua)) device = "Windows 電腦";
+  else if (/Macintosh|Mac OS X/i.test(ua)) device = "Mac 電腦";
+  else if (/Linux/i.test(ua)) device = "Linux 電腦";
+  // 次序有講究：Edge／Chrome UA 都帶 "Safari" 字樣，要先排除
+  let browser = "瀏覽器";
+  if (/Edg(e|A|iOS)?\//i.test(ua)) browser = "Edge";
+  else if (/CriOS|Chrome\//i.test(ua)) browser = "Chrome";
+  else if (/FxiOS|Firefox\//i.test(ua)) browser = "Firefox";
+  else if (/Safari\//i.test(ua)) browser = "Safari";
+  return `${device}・${browser}`;
+}
+
+/**
+ * v2.2.0（合約 §9）：會員直播推送狀態（membersRouter.adminGetPushStatus 同
+ * api/wmsMemberAdmin.ts get action 共用，兩邊睇到嘅嘢一致）。
+ * 淨回 id／deviceLabel／綁定時間／最近推送；endpoint／p256dh／auth 永遠唔回前端、唔落 log。
+ */
+export async function getMemberPushStatus(userId: number): Promise<{
+  optIn: boolean;
+  devices: { id: number; deviceLabel: string; boundAt: string; lastSentAt: string | null }[];
+}> {
+  const db = getDb();
+  const [me] = await db
+    .select({ livePushOptIn: users.livePushOptIn })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const rows = await db.query.pushSubscriptions.findMany({
+    where: and(eq(pushSubscriptions.userId, userId), eq(pushSubscriptions.active, true)),
+    columns: { id: true, userAgent: true, createdAt: true, lastSentAt: true },
+    orderBy: [desc(pushSubscriptions.createdAt)],
+  });
+  return {
+    optIn: me?.livePushOptIn ?? false,
+    devices: rows.map((r) => ({
+      id: r.id,
+      deviceLabel: deviceLabelFromUserAgent(r.userAgent),
+      boundAt: r.createdAt.toISOString(),
+      lastSentAt: r.lastSentAt ? r.lastSentAt.toISOString() : null,
+    })),
+  };
+}
+
+/** 由 userId 攞顯示名（audit detail 要落管理員名；搵唔到就「#id」兜底） */
+async function userNameOf(userId: number): Promise<string> {
+  const db = getDb();
+  const [u] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return u?.name ?? `#${userId}`;
+}
 
 /**
  * 會員列表 —— staff（員工）＋ admin 可用（2026-07-29 起：員工都可以睇同改會員資料）
@@ -45,6 +110,8 @@ export const membersRouter = createRouter({
           // v2.1.0（VIP+免運）：列表直接睇到級別＋到期（後台會員列表「級別」欄用）
           vipTier: users.vipTier,
           vipExpiresAt: users.vipExpiresAt,
+          // v2.2.0（合約 §9）：列表睇埋會員有無接收直播開播推播通知
+          livePushOptIn: users.livePushOptIn,
           orderCount: sql<number>`count(${orders.id})::int`,
           totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,
         })
@@ -92,6 +159,8 @@ export const membersRouter = createRouter({
           vipTier: users.vipTier,
           vipEffectiveAt: users.vipEffectiveAt,
           vipExpiresAt: users.vipExpiresAt,
+          // v2.2.0（合約 §9）：會員詳情睇埋直播推送同意狀態
+          livePushOptIn: users.livePushOptIn,
         })
         .from(users)
         .where(eq(users.id, input.id))
@@ -467,5 +536,124 @@ export const membersRouter = createRouter({
         detail: `刪除會員「${target.name}」${orderRows.length > 0 ? `（連埋 ${orderRows.length} 張訂單）` : ""}`,
       });
       return { ok: true, id: input.id, deletedOrders: orderRows.length };
+    }),
+
+  // ─── v2.2.1（合約 §9）：會員直播推送管理（admin 專用）────────────────────
+  // 官網後台會員卡「直播推送」段用；WMS 嗰邊行 /api/wms/member-admin（共用 getMemberPushStatus）。
+  // 安全鐵律：endpoint／p256dh／auth 永遠唔回前端、唔落 log。
+
+  /** 睇會員有無接收直播推播通知＋已綁定裝置清單 */
+  adminGetPushStatus: adminProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const [target] = await db
+        .select({ id: users.id, role: users.role })
+        .from(users)
+        .where(eq(users.id, input.userId))
+        .limit(1);
+      if (!target || target.role !== "member") {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      }
+      return getMemberPushStatus(input.userId);
+    }),
+
+  /** 幫會員踢走一部已綁定裝置（where id＋userId＋active，唔會郁到別人嘅機） */
+  adminRemovePushDevice: adminProcedure
+    .input(
+      z.object({
+        userId: z.number().int().positive(),
+        deviceId: z.number().int().positive(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [target] = await db
+        .select({ id: users.id, role: users.role, name: users.name })
+        .from(users)
+        .where(eq(users.id, input.userId))
+        .limit(1);
+      if (!target || target.role !== "member") {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      }
+      const updated = await db
+        .update(pushSubscriptions)
+        .set({ active: false })
+        .where(
+          and(
+            eq(pushSubscriptions.id, input.deviceId),
+            eq(pushSubscriptions.userId, input.userId),
+            eq(pushSubscriptions.active, true),
+          ),
+        )
+        .returning({ id: pushSubscriptions.id });
+      if (updated.length === 0) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "裝置唔存在或已移除" });
+      }
+      // 冇 active 裝置就 optIn=false（同意狀態跟實際綁定走，同客戶自己踢機同款規則）
+      const remaining = await db.query.pushSubscriptions.findMany({
+        where: and(
+          eq(pushSubscriptions.userId, input.userId),
+          eq(pushSubscriptions.active, true),
+        ),
+        columns: { id: true },
+      });
+      if (remaining.length === 0) {
+        await db
+          .update(users)
+          .set({ livePushOptIn: false })
+          .where(eq(users.id, input.userId));
+      }
+      // audit：淨落 id，endpoint 明文永遠唔准落 log
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "member.adminRemovePushDevice",
+        targetType: "member",
+        targetId: input.userId,
+        detail: `管理員移除會員「${target.name}」嘅直播推送裝置（訂閱 #${input.deviceId}）；剩餘有效裝置 ${remaining.length} 部`,
+      });
+      // 同意狀態有機會變咗 → 同步去 WMS（fire-and-forget，失敗淨 log）
+      void forwardMemberToWms(input.userId).catch((e) => console.error("[wms] member sync error:", e));
+      return { ok: true, remainingDevices: remaining.length };
+    }),
+
+  /** 幫會員「拒絕接收」直播推送：optIn=false＋全部裝置註銷 */
+  adminUnsubscribePush: adminProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [target] = await db
+        .select({ id: users.id, role: users.role, name: users.name })
+        .from(users)
+        .where(eq(users.id, input.userId))
+        .limit(1);
+      if (!target || target.role !== "member") {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      }
+      await db
+        .update(users)
+        .set({ livePushOptIn: false, livePushOptInAt: new Date() })
+        .where(eq(users.id, input.userId));
+      const deactivated = await db
+        .update(pushSubscriptions)
+        .set({ active: false })
+        .where(
+          and(
+            eq(pushSubscriptions.userId, input.userId),
+            eq(pushSubscriptions.active, true),
+          ),
+        )
+        .returning({ id: pushSubscriptions.id });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "member.adminUnsubscribePush",
+        targetType: "member",
+        targetId: input.userId,
+        detail: `管理員幫會員「${target.name}」拒絕接收直播推送；註銷咗 ${deactivated.length} 部裝置`,
+      });
+      void forwardMemberToWms(input.userId).catch((e) => console.error("[wms] member sync error:", e));
+      return { ok: true, removedDevices: deactivated.length };
     }),
 });

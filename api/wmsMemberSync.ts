@@ -63,6 +63,8 @@ export async function forwardMemberToWms(userId: number): Promise<WmsMemberSyncR
       name: user.name,
       registeredAt: hktDate(user.createdAt),
       marketingOptIn: user.marketingOptIn ?? false,
+      // v2.2.1（合約 §9）：直播推送訂閱狀態都推埋（WMS receiveMember 已加 livePushOptIn nullish 欄）
+      livePushOptIn: user.livePushOptIn ?? false,
       // v2.2.0：VIP 級別推送（WMS receiveMember 已加 vipTier／vipExpiresAt optional 欄）
       vipTier: user.vipTier ?? "NONE",
       vipExpiresAt: user.vipExpiresAt ? user.vipExpiresAt.toISOString() : null,

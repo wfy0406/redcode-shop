@@ -32,6 +32,10 @@ import type { ToastKind } from './useToasts';
  * - 列表加「級別」欄（會員／VIP銀／VIP金 badge＋到期日細字）
  *   （members.list 後端已回 vipTier/vipExpiresAt，型別已對齊）
  * - 會員詳情加 VIP 級別＋管理員手動改級 UI（members.setVipTier：NONE 清級別；升級必填將來到期日）
+ * 2026-09-30 更新（v2.2.0 §9 會員管理升級）：
+ * - 詳情卡加「直播推送」段（admin 專用）：members.adminGetPushStatus 顯示已訂閱狀態＋
+ *   裝置清單（deviceLabel／綁定日期／最近推送），逐部「移除」（members.adminRemovePushDevice）
+ *   ＋「全部拒絕接收」（members.adminUnsubscribePush）；全部動作 confirm 後先執行
  */
 
 /** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
@@ -555,6 +559,154 @@ function VipTierForm({
   );
 }
 
+/** v2.2.0 §9：adminGetPushStatus 契約（endpoint/keys 永遠唔會返落前端） */
+type PushDeviceRow = {
+  id: number;
+  deviceLabel: string;
+  boundAt: Date | string;
+  lastSentAt: Date | string | null;
+};
+type AdminPushStatus = { optIn: boolean; devices: PushDeviceRow[] };
+
+/** DD/MM/YYYY（裝置綁定／最近推送日期用，跟會員中心 LivePushCard 款） */
+function fmtDMY(d: Date | string): string {
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return '—';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+}
+
+/**
+ * 直播推送管理段（v2.2.0 §9，admin 專用——三個 procedure 都係 adminProcedure）
+ * 展開詳情先 fetch（component 只喺詳情展開時 mount）；已訂閱顯示綠款徽章＋裝置清單，
+ * 逐部「移除」底線掣＋「全部拒絕接收」；未訂閱淨係灰字，唔使掣。
+ */
+function LivePushSection({
+  userId,
+  memberName,
+  toast,
+}: {
+  userId: number;
+  memberName: string;
+  toast: (text: string, kind?: ToastKind) => void;
+}) {
+  const utils = trpc.useUtils();
+  const statusQuery = trpc.members.adminGetPushStatus.useQuery({ userId }, { retry: false });
+  const status = statusQuery.data as AdminPushStatus | undefined;
+  const devices = status?.devices ?? [];
+  const optedIn = !!status?.optIn && devices.length > 0;
+
+  const invalidatePush = () => {
+    void utils.members.adminGetPushStatus.invalidate();
+    // list/detail 有 livePushOptIn，順手更新埋
+    void utils.members.list.invalidate();
+    void utils.members.detail.invalidate();
+  };
+
+  const removeDeviceMutation = trpc.members.adminRemovePushDevice.useMutation({
+    onSuccess: () => {
+      toast('已移除該部裝置 ✓', 'success');
+      invalidatePush();
+    },
+    onError: (err) => toast(err.message || '移除裝置失敗，請再試', 'error'),
+  });
+
+  const unsubscribeMutation = trpc.members.adminUnsubscribePush.useMutation({
+    onSuccess: () => {
+      toast('已幫會員拒絕接收直播通知 ✓', 'success');
+      invalidatePush();
+    },
+    onError: (err) => toast(err.message || '設定失敗，請再試', 'error'),
+  });
+
+  const busy = removeDeviceMutation.isPending || unsubscribeMutation.isPending;
+
+  const askRemoveDevice = (d: PushDeviceRow) => {
+    if (!window.confirm(`確定移除會員「${memberName}」嘅裝置「${d.deviceLabel}」？\n該裝置之後收唔到直播開播通知。`))
+      return;
+    removeDeviceMutation.mutate({ userId, deviceId: d.id });
+  };
+
+  const askUnsubscribe = () => {
+    if (
+      !window.confirm(
+        `確定幫會員「${memberName}」全部拒絕接收直播開播通知？\n所有已綁定裝置會即時停止接收；會員日後可以喺會員中心自己再綁定返。`,
+      )
+    )
+      return;
+    unsubscribeMutation.mutate({ userId });
+  };
+
+  return (
+    <div
+      className="mt-2 rounded-xl border p-3"
+      style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+    >
+      <p className="flex flex-wrap items-center gap-2 text-[12px] text-txt-3">
+        直播推送：
+        {statusQuery.isLoading ? (
+          <span className="text-txt-3">載入中…</span>
+        ) : statusQuery.isError ? (
+          <span className="text-pink-soft">載入失敗：{statusQuery.error.message}</span>
+        ) : optedIn ? (
+          <span
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium"
+            style={{
+              borderColor: 'var(--success)',
+              color: 'var(--success)',
+              background: 'rgba(94, 224, 160, 0.12)',
+            }}
+          >
+            📺 已接收直播通知（{devices.length} 部裝置）
+          </span>
+        ) : (
+          <span className="text-txt-2">未訂閱直播通知</span>
+        )}
+      </p>
+
+      {/* 裝置清單：deviceLabel＋綁定日期＋最近推送，逐部「移除」底線掣 */}
+      {optedIn && (
+        <>
+          <ul className="mt-2 flex flex-col">
+            {devices.map((d) => (
+              <li
+                key={d.id}
+                className="flex items-center gap-2 border-t py-2 text-[12px]"
+                style={{ borderColor: 'var(--space-line)' }}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-txt-1">{d.deviceLabel}</p>
+                  <p className="mt-0.5 font-mono text-[11px] text-txt-3">
+                    綁定 {fmtDMY(d.boundAt)}
+                    {d.lastSentAt ? ` · 最近推送 ${fmtDMY(d.lastSentAt)}` : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => askRemoveDevice(d)}
+                  className="ml-auto shrink-0 text-[11px] text-txt-3 underline underline-offset-2 transition-colors hover:text-pink-soft disabled:opacity-50"
+                >
+                  移除
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={askUnsubscribe}
+            className="mt-1.5 inline-flex items-center rounded-lg border px-2 py-1 text-[11px] text-txt-2 transition-colors hover:text-pink-soft disabled:opacity-60"
+            style={{ borderColor: 'var(--space-line)', background: 'var(--space-1)' }}
+          >
+            {busy ? '處理緊…' : '全部拒絕接收'}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function MemberList({
   toast,
 }: {
@@ -916,6 +1068,10 @@ export default function MemberList({
                             設為唔接受
                           </button>
                         </p>
+                        {/* 直播推送（v2.2.0 §9，admin 專用）：已訂閱狀態＋裝置清單＋移除/拒絕接收 */}
+                        {canSetVip && (
+                          <LivePushSection userId={m.id} memberName={m.name} toast={toast} />
+                        )}
                         {/* 修改資料／重設密碼（員工＋管理員）；改 VIP 級別（admin 專用，v2.1.0） */}
                         {editingId === m.id ? (
                           <MemberEditForm
@@ -1283,6 +1439,15 @@ export default function MemberList({
                     </button>
                   </p>
                 </div>
+
+                {/* 直播推送（v2.2.0 §9，admin 專用）：已訂閱狀態＋裝置清單＋移除/拒絕接收 */}
+                {canSetVip && (
+                  <LivePushSection
+                    userId={detail.user.id}
+                    memberName={detail.user.name}
+                    toast={toast}
+                  />
+                )}
 
                 {/* 修改資料／重設密碼（員工＋管理員）；改 VIP 級別（admin 專用，v2.1.0） */}
                 {editingId === detail.user.id ? (
