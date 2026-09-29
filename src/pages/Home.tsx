@@ -263,51 +263,76 @@ const TIER_HOME_VARS: Record<VipTier, CSSProperties> = {
   },
 };
 
-const TIER_BADGE: Record<VipTier, { label: string; color: string; border: string; bg: string }> = {
+const TIER_BADGE: Record<VipTier, { label: string; color: string; border: string; bg: string; shimmer: boolean }> = {
   NONE: {
-    label: '普通會員',
+    label: '寶寶會員',
     color: 'var(--pink-tint)',
     border: 'rgba(255, 143, 191, 0.4)',
     bg: 'rgba(255, 0, 84, 0.12)',
+    shimmer: false,
   },
   SILVER: {
     label: '銀會員 SILVER',
-    color: '#E6EDF6',
-    border: 'rgba(203, 214, 228, 0.55)',
-    bg: 'rgba(203, 214, 228, 0.14)',
+    color: '#1B1336',
+    border: 'rgba(230, 237, 246, 0.85)',
+    bg: 'linear-gradient(100deg, #E6EDF6 0%, #B9C6D8 100%)',
+    shimmer: true,
   },
   GOLD: {
     label: '金會員 GOLD ✦',
     color: '#0A0614',
-    border: 'rgba(255, 210, 74, 0.9)',
-    bg: 'linear-gradient(90deg, #FFD24A 0%, #F5C518 100%)',
+    border: 'rgba(255, 210, 74, 0.95)',
+    bg: 'linear-gradient(100deg, #FFE28F 0%, #F5C518 55%, #D9A40E 100%)',
+    shimmer: true,
   },
 };
 
-/** 會員招呼（v2.2.2 老闆指令）：「xxx寶寶，歡迎嚟到RedCode！」＋級別徽章＋到期日 */
+/**
+ * 會員招呼（v2.2.2 老闆指令；v2.2.3 排版修正）
+ * 老闆 feedback：唔好累贅、有效期唔洗喺主頁寫、要強調會員等級。
+ * → 級別徽章做主角（金/銀金屬漸層＋掃光 shimmer），旁邊一句短招呼，到期日唔顯示。
+ */
 function MemberGreeting() {
   const { user } = useAuth();
   if (!user) return null;
   const tier = (user.vipTier ?? 'NONE') as VipTier;
   const badge = TIER_BADGE[tier];
   const firstName = user.name?.trim() || '寶寶';
-  const expiry = user.vipExpiresAt
-    ? new Date(user.vipExpiresAt).toLocaleDateString('zh-HK', { timeZone: 'Asia/Hong_Kong' })
-    : null;
   return (
-    <div className="hero-enter mb-6 flex flex-wrap items-center gap-3" style={{ animationDelay: '0.35s' }}>
-      <p className="font-serif-tc text-lg font-semibold text-starlight md:text-xl">
-        {firstName}寶寶，歡迎嚟到 RedCode！
-      </p>
+    <div
+      className="hero-enter mb-5 flex items-center gap-3"
+      style={{ animationDelay: '0.35s' }}
+    >
+      {/* 級別徽章：主角位。金銀係金屬漸層＋掃光（淨 transform/opacity，合鐵律） */}
       <span
-        className="inline-flex items-center rounded-full border px-3 py-1 font-mono text-[11px] font-semibold tracking-[0.12em]"
+        className="tier-badge relative inline-flex shrink-0 items-center overflow-hidden rounded-full border px-3.5 py-1.5 font-mono text-[12px] font-bold tracking-[0.14em]"
         style={{ color: badge.color, borderColor: badge.border, background: badge.bg }}
       >
         {badge.label}
+        {badge.shimmer && (
+          <span
+            aria-hidden="true"
+            className="tier-badge-shine pointer-events-none absolute inset-y-0 w-1/3"
+            style={{
+              background:
+                'linear-gradient(105deg, transparent 0%, rgba(255,255,255,0.55) 50%, transparent 100%)',
+            }}
+          />
+        )}
       </span>
-      {tier !== 'NONE' && expiry && (
-        <span className="font-mono text-[11px] text-txt-3">有效期至 {expiry}</span>
-      )}
+      <p className="font-serif-tc text-[15px] font-semibold text-starlight md:text-base">
+        {firstName}寶寶，歡迎返嚟 ✦
+      </p>
+      <style>{`
+        .tier-badge-shine { animation: tier-shine 3.2s ease-in-out infinite; }
+        @keyframes tier-shine {
+          0% { transform: translateX(-160%) skewX(-12deg); opacity: 0; }
+          25% { opacity: 1; }
+          60% { transform: translateX(360%) skewX(-12deg); opacity: 1; }
+          75%, 100% { transform: translateX(360%) skewX(-12deg); opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) { .tier-badge-shine { animation: none; opacity: 0; } }
+      `}</style>
     </div>
   );
 }
