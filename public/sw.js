@@ -4,7 +4,7 @@
  *
  * 職責（得兩樣，通知內容全部後端砌好）：
  * 1. push event → JSON.parse(payload) → showNotification(title, { body, icon, badge, data: { url } })
- *    icon：/push-icon.png（192² 方形深底 RedCode logo，Android 大圖示）
+ *    icon：/push-icon.png（192² 透明底 RedCode logo，Android 大圖示，v2.2.4 起透明）
  *    badge：/push-badge.png（96² 白色剪影，Android 狀態欄小圖）
  *    —— v2.2.1 之前用 /logo.png（1242×698 闊幅），Android 睇唔過直接跌返 Chrome logo。
  * 2. notificationclick → 關通知 → clients.openWindow(data.url)（冇 url 就開 '/'）

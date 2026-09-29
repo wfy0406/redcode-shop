@@ -6,9 +6,13 @@
 <meta name="robots" content="noindex">
 <title>RedCode 直播｜正在帶你入 Facebook…</title>
 <!--
-  RedCode 直播跳板頁（v2.2.2，2026-09-30 老闆指令）
-  用途：推播通知撳入嚟 → 即刻試 fb:// 深鏈開 Facebook app；
+  RedCode 直播跳板頁（v2.2.4，2026-09-30 老闆指令）
+  用途：推播通知撳入嚟 → 即刻試開 Facebook app；
         開唔到（冇裝 app／桌面機）→ 自動落返 facebook.com 網頁版。
+  v2.2.4：Android 改用 intent:// 深鏈 —— Chrome 會自動交畀 FB app，
+          冇裝 app 就由 S.browser_fallback_url 自動落網頁版，
+          唔使靠用户手勢（舊版 fb:// 自動跳會被 Chrome 靜音擋，先會誤落網頁版）。
+          iOS 維持隱形 iframe 試 fb://facewebmodal。
   安全：?u= 只准 facebook.com／fb.watch／fb.me 連結，其他一律踢返首頁（擋 open-redirect）。
 -->
 <style>
@@ -66,15 +70,14 @@
   } catch (e) { u = ''; }
 
   if (!u) { window.location.replace('/'); return; }
-  manual.href = u;
 
-  // ② 手機先試 fb:// 深鏈（facewebmodal：FB app 內開任意 https 連結）；
-  //    桌面機直接開網頁版新分頁。
+  // ② 分平台：桌面機直接開網頁版；Android 用 intent://；iOS 用 fb:// iframe。
   var ua = navigator.userAgent || '';
-  var isMobile = /iPhone|iPad|iPod|Android/i.test(ua);
-  if (!isMobile) { window.location.replace(u); return; }
+  var isAndroid = /Android/i.test(ua);
+  var isIOS = /iPhone|iPad|iPod/i.test(ua);
+  if (!isAndroid && !isIOS) { manual.href = u; window.location.replace(u); return; }
 
-  var deep = 'fb://facewebmodal/f?href=' + encodeURIComponent(u);
+  var parsed2 = new URL(u);
   var started = Date.now();
   var fellBack = false;
 
@@ -84,26 +87,38 @@
     window.location.href = u;
   }
 
-  // 如果 FB app 成功開咗，呢頁會入背景（visibilitychange），fallback 就唔會觸發
+  if (isAndroid) {
+    // Android Chrome：intent:// 唔使用戶手勢，Chrome 會直接交畀 FB app；
+    // 冇裝 app → 自動行 S.browser_fallback_url 去網頁版（唔使猜 timer）。
+    var intentUrl = 'intent://' + parsed2.host + parsed2.pathname + parsed2.search +
+      '#Intent;scheme=https;package=com.facebook.katana;action=android.intent.action.VIEW;' +
+      'S.browser_fallback_url=' + encodeURIComponent(u) + ';end';
+    manual.href = intentUrl;
+    try {
+      window.location.href = intentUrl;
+      // 保險：極端情況（舊 WebView 唔識 intent://）1.8s 後仲喺度就行網頁版
+      setTimeout(function () {
+        if (!document.hidden && Date.now() - started < 5000) toWeb();
+      }, 1800);
+    } catch (e) { toWeb(); }
+    return;
+  }
+
+  // iOS：手動掣去網頁版最穩（冇裝 app 撳 fb:// 會彈系統錯誤框）；
+  // 自動流程用隱形 iframe 靜音試 fb://facewebmodal，1.6s 開唔到就落網頁版。
+  manual.href = u;
+  var deep = 'fb://facewebmodal/f?href=' + encodeURIComponent(u);
   setTimeout(function () {
     if (!document.hidden && Date.now() - started < 4000) toWeb();
   }, 1600);
-
-  // iOS 對 location.href = scheme 會彈「打唔開」提示 → 用隱形 iframe 靜音試開；
-  // Android Chrome 直接 location 撞就得（冇 app 會靜音留喺原頁）。
-  var isIOS = /iPhone|iPad|iPod/i.test(ua);
   try {
-    if (isIOS) {
-      var iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      iframe.src = deep;
-      document.body.appendChild(iframe);
-      setTimeout(function () {
-        if (document.body.contains(iframe)) document.body.removeChild(iframe);
-      }, 1500);
-    } else {
-      window.location.href = deep;
-    }
+    var iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = deep;
+    document.body.appendChild(iframe);
+    setTimeout(function () {
+      if (document.body.contains(iframe)) document.body.removeChild(iframe);
+    }, 1500);
   } catch (e) {
     toWeb();
   }
