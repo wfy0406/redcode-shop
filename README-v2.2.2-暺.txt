@@ -17,6 +17,9 @@ RedCode 官網 v2.2.2（2026-09-30）點放說明
     ② Nominatim（原有，街道地標）
     ③ Photon（模糊匹配後備）
     澳門關鍵字會自動跳過 ALS（佢淨係香港庫）。
+  ・中英文地址都打得：ALS 官方 API 雙語，中文 query 回中文 label、英文 query 回英文 label
+    （例如打 "Sky Tower To Kwa Wan" → "To Kwa Wan Substation, 82 To Kwa Wan Road, Kowloon City District"）；
+    Nominatim／Photon 嘅語言參數亦跟 query 自動轉。
   ・每日定時同步照舊（開機後 30 秒跑一次，之後每 24 小時）；
     同步寫入坐標／電話／營業時間，新站點同步完即刻可以按 GPS／打地址搵到。
   ・認親邏輯修正：以往簡轉繁異體字（葵涌→葵湧、皇后→皇後、里→裏）對唔上種子名會

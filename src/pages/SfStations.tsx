@@ -323,7 +323,7 @@ export default function SfStations() {
       if (geo.results.length === 0) {
         setNearest({
           status: 'error',
-          message: `搵唔到「${q}」呢個地址，試下寫詳細少少（例如加返地區或街道名）`,
+          message: `搵唔到「${q}」呢個地址，試下寫詳細少少（例如加返地區或街道名；中文／英文地址都打得）`,
         });
         return;
       }
@@ -440,7 +440,7 @@ export default function SfStations() {
                   if (e.key === 'Enter') void findByAddress();
                 }}
                 aria-label="輸入地址搵最近站點"
-                placeholder="打你嘅地址，例如：大埔同茂坊 / 旺角彌敦道…"
+                placeholder="打地址（中／英都得），例如：土瓜灣傲雲峰 / Nathan Road Mong Kok…"
                 className="h-12 w-full border bg-space-2 pl-11 pr-4 text-[15px] text-txt-1 placeholder:text-txt-disabled focus:border-gold"
                 style={{ borderColor: 'var(--space-line)' }}
               />

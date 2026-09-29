@@ -104,7 +104,8 @@ function geocodeCacheSet(q: string, v: GeocodeHit[]): void {
 
 /* ─────────── v2.2.2 多源 geocode 引擎（私隱：呢啲函式永遠唔准 log query 明文）─────────── */
 
-/** ① 香港政府 ALS：官方屋邨／屋苑／大廈地址庫，XML 回傳，lat/lng 直接係 WGS84 */
+/** ① 香港政府 ALS：官方屋邨／屋苑／大廈地址庫，XML 回傳，lat/lng 直接係 WGS84。
+ *  中英文 query 都食（官方 API 雙語）；label 跟 query 語言砌：中文查攞中文段，英文查攞英文段。 */
 async function geocodeViaAls(q: string): Promise<GeocodeHit[]> {
   const res = await fetch(`https://www.als.gov.hk/lookup?q=${encodeURIComponent(q)}&n=5`, {
     headers: { "User-Agent": "Mozilla/5.0", Accept: "application/xml" },
@@ -113,40 +114,62 @@ async function geocodeViaAls(q: string): Promise<GeocodeHit[]> {
   if (!res.ok) throw new Error(`ALS HTTP ${res.status}`);
   const xml = await res.text();
   const hits: GeocodeHit[] = [];
-  // 逐個 <SuggestedAddress> block 拆：lat/lng＋中文地址部件砌 label
+  const hasCJK = /[\u4e00-\u9fff]/.test(q);
+  // 逐個 <SuggestedAddress> block 拆：lat/lng＋按 query 語言攞相應地址段砌 label
   for (const block of xml.split("<SuggestedAddress>").slice(1)) {
     const lat = Number(/<Latitude>([\d.]+)<\/Latitude>/.exec(block)?.[1]);
     const lng = Number(/<Longitude>([\d.]+)<\/Longitude>/.exec(block)?.[1]);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-    // 只喺 <ChiPremisesAddress> 入面攞中文部件（英文段排前面，直接攞會攞錯英文）
-    const chi = /<ChiPremisesAddress>([\s\S]*?)<\/ChiPremisesAddress>/.exec(block)?.[1] ?? "";
-    const grab = (tag: string) =>
-      new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(chi)?.[1]?.trim() ?? "";
-    const district = grab("DcDistrict");
-    const estate = grab("EstateName");
-    const building = grab("BuildingName");
-    const street = grab("StreetName");
-    const noFrom = grab("BuildingNoFrom");
-    const core = estate || building || street || q;
-    const addrBits = [street && noFrom ? `${street}${noFrom}號` : street].filter(Boolean).join("");
-    const label = [district, core, addrBits && !core.includes(street) ? addrBits : ""]
-      .filter(Boolean)
-      .join(" ");
-    hits.push({ lat, lng, label: label || q });
+    if (hasCJK) {
+      // 只喺 <ChiPremisesAddress> 入面攞中文部件（英文段排前面，直接攞會攞錯英文）
+      const chi = /<ChiPremisesAddress>([\s\S]*?)<\/ChiPremisesAddress>/.exec(block)?.[1] ?? "";
+      const grab = (tag: string) =>
+        new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(chi)?.[1]?.trim() ?? "";
+      const district = grab("DcDistrict");
+      const estate = grab("EstateName");
+      const building = grab("BuildingName");
+      const street = grab("StreetName");
+      const noFrom = grab("BuildingNoFrom");
+      const core = estate || building || street || q;
+      const addrBits = [street && noFrom ? `${street}${noFrom}號` : street].filter(Boolean).join("");
+      const label = [district, core, addrBits && !core.includes(street) ? addrBits : ""]
+        .filter(Boolean)
+        .join(" ");
+      hits.push({ lat, lng, label: label || q });
+    } else {
+      // 英文查詢：攞 <EngPremisesAddress> 段，官方全大寫轉返 Title Case 先好睇
+      const eng = /<EngPremisesAddress>([\s\S]*?)<\/EngPremisesAddress>/.exec(block)?.[1] ?? "";
+      const grab = (tag: string) =>
+        new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(eng)?.[1]?.trim() ?? "";
+      const titleCase = (s: string) =>
+        s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+      const district = titleCase(grab("DcDistrict"));
+      const estate = titleCase(grab("EstateName"));
+      const building = titleCase(grab("BuildingName"));
+      const street = titleCase(grab("StreetName"));
+      const noFrom = grab("BuildingNoFrom");
+      const core = estate || building || street || q;
+      const addrBits = [noFrom && street ? `${noFrom} ${street}` : street].filter(Boolean).join("");
+      const label = [core, addrBits && !core.includes(street) ? addrBits : "", district]
+        .filter(Boolean)
+        .join(", ");
+      hits.push({ lat, lng, label: label || q });
+    }
   }
   return hits.slice(0, 5);
 }
 
-/** ② Nominatim（OSM）：v2.2.0 原有路線，HK＋MO，街道／地標穩 */
+/** ② Nominatim（OSM）：v2.2.0 原有路線，HK＋MO，街道／地標穩；label 語言跟 query 走 */
 async function geocodeViaNominatim(q: string): Promise<GeocodeHit[]> {
+  const lang = /[\u4e00-\u9fff]/.test(q) ? "zh-HK" : "en";
   const url =
     `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}` +
-    `&format=jsonv2&countrycodes=hk,mo&limit=5&accept-language=zh-HK`;
+    `&format=jsonv2&countrycodes=hk,mo&limit=5&accept-language=${lang}`;
   const res = await fetch(url, {
     headers: {
       // Nominatim 使用條款要求可識別 UA（寫明 RedCode/1.0＋聯絡網址）
       "User-Agent": "RedCode/1.0 (https://redcode.red; contact@redcode.red)",
-      "Accept-Language": "zh-HK",
+      "Accept-Language": lang,
     },
     signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
   });
@@ -163,10 +186,11 @@ async function geocodeViaNominatim(q: string): Promise<GeocodeHit[]> {
     .filter((r): r is GeocodeHit => r !== null);
 }
 
-/** ③ Photon（OSM 系）：模糊匹配強；過濾返 HK／MO 地理範圍先回（佢係全球引擎） */
+/** ③ Photon（OSM 系）：模糊匹配強；過濾返 HK／MO 地理範圍先回（佢係全球引擎）；lang 跟 query */
 async function geocodeViaPhoton(q: string): Promise<GeocodeHit[]> {
+  const lang = /[\u4e00-\u9fff]/.test(q) ? "zh" : "en";
   const res = await fetch(
-    `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=zh`,
+    `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=${lang}`,
     {
       headers: { "User-Agent": "RedCode/1.0 (https://redcode.red; contact@redcode.red)" },
       signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
