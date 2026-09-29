@@ -54,6 +54,9 @@ type ListingItemIn = {
   sizes?: string;
   category?: string;
   imageUrl: string;
+  // v2.2.2（老闆指示 2026-09-29）：上架日期 override（YYYY-MM-DD，選填）—
+  // 有值＝product.listedDate 跟呢日，liveDate/liveSession 唔 set（唔入「直播日期→場次」分類，淨係按類別分）
+  listedDate?: string;
 };
 
 type ListingBatchIn = {
@@ -162,6 +165,10 @@ function validateBatch(b: Partial<ListingBatchIn>): string | null {
     if (!it.sku || typeof it.sku !== "string") return `第 ${i + 1} 件冇貨號`;
     if (!it.imageUrl || typeof it.imageUrl !== "string") return `第 ${i + 1} 件（${it.sku}）冇圖`;
     if (it.category && !CATEGORY_SET.has(it.category)) return `第 ${i + 1} 件（${it.sku}）類別唔啱`;
+    // v2.2.2：上架日期 override 格式檢查（選填；有就一定要係 YYYY-MM-DD）
+    if (it.listedDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(it.listedDate)) {
+      return `第 ${i + 1} 件（${it.sku}）上架日期格式係 YYYY-MM-DD`;
+    }
     for (const k of ["price", "discountPrice", "stock"] as const) {
       const v = it[k];
       if (v !== undefined && (!Number.isInteger(v) || v < 0)) {
@@ -323,6 +330,15 @@ export async function wmsListingBatch(c: Context) {
       finalImageUrl = localImage.slice(0, 512);
 
       // ② 商品 upsert（by sku）
+      // v2.2.2（老闆指示 2026-09-29）：件貨有自訂上架日期 →
+      //   listedDate 跟嗰日（訂單/出貨表嘅「上架日期」就跟呢日，唔再跟直播日期）；
+      //   liveDate/liveSession ＝ NULL → 唔入「商品→直播日期→場次」分類，淨係按類別分。
+      // 冇自訂 → 照舊跟批次直播日期場次；新貨 listedDate＝而家。
+      const overrideDate = typeof it.listedDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(it.listedDate) ? it.listedDate : null;
+      const liveFields = overrideDate
+        ? { liveDate: null, liveSession: null }
+        : { liveDate: b.liveDate, liveSession: b.liveSession };
+      const overrideListedDate = overrideDate ? new Date(`${overrideDate}T00:00:00.000Z`) : null;
       const existing = await db.query.products.findFirst({
         where: eq(products.sku, it.sku),
       });
@@ -332,10 +348,10 @@ export async function wmsListingBatch(c: Context) {
           image: localImage,
           photos: [localImage],
           category: it.category ?? existing.category,
-          liveDate: b.liveDate,
-          liveSession: b.liveSession,
+          ...liveFields,
           isActive: true,
         };
+        if (overrideListedDate) set.listedDate = overrideListedDate; // v2.2.2：改咗上架日期就跟上架日期
         if (delistAt) {
           set.delistEnabled = true;
           set.delistAt = delistAt;
@@ -369,11 +385,10 @@ export async function wmsListingBatch(c: Context) {
             sizes: it.sizes ?? null,
             sizeEnabled: Boolean(it.sizes),
             category: it.category ?? "other",
-            liveDate: b.liveDate,
-            liveSession: b.liveSession,
+            ...liveFields,
             delistEnabled: Boolean(delistAt),
             delistAt,
-            listedDate: new Date(),
+            listedDate: overrideListedDate ?? new Date(), // v2.2.2：有自訂就跟自訂
             isActive: true,
           })
           .returning({ id: products.id });
