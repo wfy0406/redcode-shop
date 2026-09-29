@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Radio, Send } from 'lucide-react';
+import { Radio, Send, Square } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import WishingStar from './WishingStar';
@@ -172,8 +172,63 @@ export default function LivePushPanel({
     approveMutation.mutate({ id, approve, ...(note ? { reviewNote: note } : {}) });
   };
 
+  // ─── v2.2.2（老闆指令）：而家官網顯示緊嘅直播＋一掣落畫 ───────────────
+  const nowLiveQuery = trpc.push.currentLive.useQuery(undefined, {
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const nowLive = nowLiveQuery.data?.live ?? null;
+  const endLiveMutation = trpc.push.endLiveNow.useMutation({
+    onSuccess: async (r) => {
+      if (r.ok) {
+        toast(`已落畫：${r.liveDate} ${r.liveSession} 唔會再喺首頁／直播頁顯示`, 'success');
+      } else {
+        toast(r.message ?? '而家冇顯示緊嘅直播', 'info');
+      }
+      await utils.push.currentLive.invalidate();
+    },
+    onError: (err) => toast(err.message || '落畫失敗，請再試', 'error'),
+  });
+  const endLive = () => {
+    if (endLiveMutation.isPending) return;
+    if (!window.confirm('確定落畫？首頁同直播頁會即刻唔再顯示呢場直播（已發出嘅通知唔受影響）。')) return;
+    endLiveMutation.mutate();
+  };
+
   return (
     <div className="space-y-8">
+      {/* ============ 而家顯示緊（v2.2.2）：有直播先見到，一掣落畫 ============ */}
+      {nowLive && (
+        <div
+          className="rounded-2xl border p-5 md:p-6"
+          style={{ borderColor: 'rgba(255, 0, 84, 0.45)', background: 'var(--space-1)' }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="push-live-dot inline-block h-2.5 w-2.5 rounded-full" style={{ background: 'var(--pink)' }} aria-hidden="true" />
+              <div>
+                <p className="font-serif-tc text-[15px] font-bold text-txt-1">
+                  官網而家顯示緊：{nowLive.liveDate}・{nowLive.liveSession}
+                </p>
+                <p className="mt-0.5 text-[12px] text-txt-3">
+                  首頁同直播頁會顯示到推播後 90 分鐘；想即刻收返就撳「立即落畫」。
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={endLive}
+              disabled={endLiveMutation.isPending}
+              className="inline-flex items-center gap-2 rounded-full border px-5 py-2 text-[13px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-60"
+              style={{ borderColor: 'rgba(255, 77, 141, 0.6)', color: 'var(--pink-soft)' }}
+            >
+              <Square size={14} aria-hidden="true" />
+              {endLiveMutation.isPending ? '落畫緊…' : '立即落畫'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ============ 發送表單＋通知預覽 ============ */}
       <div
         className="rounded-2xl border p-6 md:p-8"
@@ -274,15 +329,24 @@ export default function LivePushPanel({
             </button>
           </div>
 
-          {/* 右：即時通知預覽（睇落似真通知） */}
+          {/* 右：即時通知預覽（v2.2.2：撳預覽＝試真通知跳轉，一樣經 live-go 跳板開 FB app） */}
           <div>
-            <p className={labelCls}>通知預覽</p>
-            <div
-              className="rounded-2xl border p-4"
+            <p className={labelCls}>通知預覽（撳一下＝試真通知跳轉）</p>
+            <button
+              type="button"
+              onClick={() => {
+                const u = url.trim();
+                if (!/^https?:\/\/.+/.test(u)) return;
+                // 同真推播完全一致：FB 連結先經 /live-go.html 跳板（手機開 FB app，冇裝→網頁版）
+                const isFb = /^https:\/\/([^/]+\.)?(facebook\.com|fb\.watch|fb\.me)(\/|$)/i.test(u);
+                window.open(isFb ? `/live-go.html?u=${encodeURIComponent(u)}` : u, '_blank', 'noopener,noreferrer');
+              }}
+              className="block w-full rounded-2xl border p-4 text-left transition-opacity hover:opacity-85"
               style={{ borderColor: 'var(--glass-border)', background: 'var(--space-1)' }}
+              aria-label="試跳轉：撳通知會去嘅地方"
             >
               <div className="flex items-start gap-3">
-                <img src="/logo.png" alt="" className="mt-0.5 h-9 w-9 rounded-lg object-cover" />
+                <img src="/push-icon.png" alt="" className="mt-0.5 h-9 w-9 rounded-lg object-cover" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-3">
                     <p className="truncate text-[13px] font-semibold text-txt-1">
@@ -294,13 +358,14 @@ export default function LivePushPanel({
                     {`${message.trim() || '快啲入嚟睇啦！'}\n📅 ${liveDate || '（未揀日期）'} ${liveSession || '晚上場'}\n🕒 發送時間 ${hktNow()}`}
                   </p>
                   <p className="mt-2 truncate font-mono text-[11px] text-txt-3">
-                    {url.trim() || '（撳通知會開你填嘅 Facebook 網址）'}
+                    {url.trim() || '（撳通知會直接開 Facebook app；冇裝 app 就開網頁版）'}
                   </p>
                 </div>
               </div>
-            </div>
+            </button>
             <p className="mt-2 text-[12px] leading-[1.7] text-txt-3">
               預覽僅供參考，實際顯示跟唔同裝置/瀏覽器會有少少出入；發送時間係伺服器實際發出嗰刻。
+              撳預覽卡會試真通知嘅跳轉：手機有裝 Facebook 會直接開 app，冇裝就開網頁版。
             </p>
           </div>
         </div>
@@ -459,6 +524,13 @@ export default function LivePushPanel({
           </div>
         )}
       </div>
+
+      {/* 🔴 落畫卡紅點呼吸：淨 opacity（老闆鐵律）；reduced-motion 停 */}
+      <style>{`
+        .push-live-dot { animation: push-live-breathe 1.6s ease-in-out infinite; }
+        @keyframes push-live-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+        @media (prefers-reduced-motion: reduce) { .push-live-dot { animation: none; opacity: 1; } }
+      `}</style>
     </div>
   );
 }

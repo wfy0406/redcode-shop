@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>RedCode 直播｜正在帶你入 Facebook…</title>
+<!--
+  RedCode 直播跳板頁（v2.2.2，2026-09-30 老闆指令）
+  用途：推播通知撳入嚟 → 即刻試 fb:// 深鏈開 Facebook app；
+        開唔到（冇裝 app／桌面機）→ 自動落返 facebook.com 網頁版。
+  安全：?u= 只准 facebook.com／fb.watch／fb.me 連結，其他一律踢返首頁（擋 open-redirect）。
+-->
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 800px at 50% -10%, #1a2340 0%, #0b1020 60%);
+    color: #e8eaf2;
+    font-family: "Noto Serif TC", "PMingLiU", serif;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+  }
+  .card { padding: 32px 28px; max-width: 420px; }
+  img.logo { width: 168px; height: auto; opacity: 0.95; }
+  h1 { font-size: 20px; font-weight: 600; margin: 22px 0 8px; letter-spacing: 0.05em; }
+  p.sub { font-size: 14px; color: #9aa3c0; margin: 0 0 26px; line-height: 1.7; }
+  .dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: #ff0054; margin-right: 8px; vertical-align: middle;
+    animation: breathe 1.6s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+  a.btn {
+    display: inline-block; padding: 13px 34px; border-radius: 999px;
+    background: #f5c518; color: #0b1020; text-decoration: none;
+    font-size: 16px; font-weight: 700; letter-spacing: 0.03em;
+  }
+  a.btn:active { opacity: 0.85; }
+</style>
+</head>
+<body>
+<div class="card">
+  <img class="logo" src="/logo.png" alt="RedCode">
+  <h1><span class="dot"></span>正在帶你入 Facebook 直播…</h1>
+  <p class="sub">如果手機有裝 Facebook，會自動幫你開 app；<br>冇嘅話會去網頁版。</p>
+  <a class="btn" id="manual" href="/">立即入直播</a>
+</div>
+<script>
+(function () {
+  var manual = document.getElementById('manual');
+
+  // ① 攞 ?u= 目標連結，只准 FB 系域名（擋 open-redirect 濫用）
+  var u = '';
+  try {
+    var params = new URLSearchParams(window.location.search);
+    var raw = params.get('u') || '';
+    if (raw) {
+      var parsed = new URL(raw);
+      var host = parsed.hostname.toLowerCase();
+      var ok = parsed.protocol === 'https:' &&
+        (host === 'facebook.com' || host.endsWith('.facebook.com') ||
+         host === 'fb.watch' || host === 'fb.me' || host.endsWith('.fb.me'));
+      if (ok) u = raw;
+    }
+  } catch (e) { u = ''; }
+
+  if (!u) { window.location.replace('/'); return; }
+  manual.href = u;
+
+  // ② 手機先試 fb:// 深鏈（facewebmodal：FB app 內開任意 https 連結）；
+  //    桌面機直接開網頁版新分頁。
+  var ua = navigator.userAgent || '';
+  var isMobile = /iPhone|iPad|iPod|Android/i.test(ua);
+  if (!isMobile) { window.location.replace(u); return; }
+
+  var deep = 'fb://facewebmodal/f?href=' + encodeURIComponent(u);
+  var started = Date.now();
+  var fellBack = false;
+
+  function toWeb() {
+    if (fellBack) return;
+    fellBack = true;
+    window.location.href = u;
+  }
+
+  // 如果 FB app 成功開咗，呢頁會入背景（visibilitychange），fallback 就唔會觸發
+  setTimeout(function () {
+    if (!document.hidden && Date.now() - started < 4000) toWeb();
+  }, 1600);
+
+  // iOS 對 location.href = scheme 會彈「打唔開」提示 → 用隱形 iframe 靜音試開；
+  // Android Chrome 直接 location 撞就得（冇 app 會靜音留喺原頁）。
+  var isIOS = /iPhone|iPad|iPod/i.test(ua);
+  try {
+    if (isIOS) {
+      var iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = deep;
+      document.body.appendChild(iframe);
+      setTimeout(function () {
+        if (document.body.contains(iframe)) document.body.removeChild(iframe);
+      }, 1500);
+    } else {
+      window.location.href = deep;
+    }
+  } catch (e) {
+    toWeb();
+  }
+})();
+</script>
+</body>
+</html>

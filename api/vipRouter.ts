@@ -102,6 +102,102 @@ function geocodeCacheSet(q: string, v: GeocodeHit[]): void {
   }
 }
 
+/* ─────────── v2.2.2 多源 geocode 引擎（私隱：呢啲函式永遠唔准 log query 明文）─────────── */
+
+/** ① 香港政府 ALS：官方屋邨／屋苑／大廈地址庫，XML 回傳，lat/lng 直接係 WGS84 */
+async function geocodeViaAls(q: string): Promise<GeocodeHit[]> {
+  const res = await fetch(`https://www.als.gov.hk/lookup?q=${encodeURIComponent(q)}&n=5`, {
+    headers: { "User-Agent": "Mozilla/5.0", Accept: "application/xml" },
+    signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`ALS HTTP ${res.status}`);
+  const xml = await res.text();
+  const hits: GeocodeHit[] = [];
+  // 逐個 <SuggestedAddress> block 拆：lat/lng＋中文地址部件砌 label
+  for (const block of xml.split("<SuggestedAddress>").slice(1)) {
+    const lat = Number(/<Latitude>([\d.]+)<\/Latitude>/.exec(block)?.[1]);
+    const lng = Number(/<Longitude>([\d.]+)<\/Longitude>/.exec(block)?.[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    // 只喺 <ChiPremisesAddress> 入面攞中文部件（英文段排前面，直接攞會攞錯英文）
+    const chi = /<ChiPremisesAddress>([\s\S]*?)<\/ChiPremisesAddress>/.exec(block)?.[1] ?? "";
+    const grab = (tag: string) =>
+      new RegExp(`<${tag}>([^<]+)</${tag}>`).exec(chi)?.[1]?.trim() ?? "";
+    const district = grab("DcDistrict");
+    const estate = grab("EstateName");
+    const building = grab("BuildingName");
+    const street = grab("StreetName");
+    const noFrom = grab("BuildingNoFrom");
+    const core = estate || building || street || q;
+    const addrBits = [street && noFrom ? `${street}${noFrom}號` : street].filter(Boolean).join("");
+    const label = [district, core, addrBits && !core.includes(street) ? addrBits : ""]
+      .filter(Boolean)
+      .join(" ");
+    hits.push({ lat, lng, label: label || q });
+  }
+  return hits.slice(0, 5);
+}
+
+/** ② Nominatim（OSM）：v2.2.0 原有路線，HK＋MO，街道／地標穩 */
+async function geocodeViaNominatim(q: string): Promise<GeocodeHit[]> {
+  const url =
+    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}` +
+    `&format=jsonv2&countrycodes=hk,mo&limit=5&accept-language=zh-HK`;
+  const res = await fetch(url, {
+    headers: {
+      // Nominatim 使用條款要求可識別 UA（寫明 RedCode/1.0＋聯絡網址）
+      "User-Agent": "RedCode/1.0 (https://redcode.red; contact@redcode.red)",
+      "Accept-Language": "zh-HK",
+    },
+    signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Nominatim HTTP ${res.status}`);
+  const json: unknown = await res.json();
+  return (Array.isArray(json) ? json : [])
+    .map((r): GeocodeHit | null => {
+      const o = r as { lat?: string; lon?: string; display_name?: string };
+      const lat = Number(o?.lat);
+      const lng = Number(o?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { lat, lng, label: typeof o?.display_name === "string" ? o.display_name : q };
+    })
+    .filter((r): r is GeocodeHit => r !== null);
+}
+
+/** ③ Photon（OSM 系）：模糊匹配強；過濾返 HK／MO 地理範圍先回（佢係全球引擎） */
+async function geocodeViaPhoton(q: string): Promise<GeocodeHit[]> {
+  const res = await fetch(
+    `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=zh`,
+    {
+      headers: { "User-Agent": "RedCode/1.0 (https://redcode.red; contact@redcode.red)" },
+      signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
+    },
+  );
+  if (!res.ok) throw new Error(`Photon HTTP ${res.status}`);
+  const json: unknown = await res.json();
+  const features = (json as { features?: unknown[] })?.features;
+  if (!Array.isArray(features)) return [];
+  const hits: GeocodeHit[] = [];
+  for (const f of features) {
+    const o = f as {
+      geometry?: { coordinates?: number[] };
+      properties?: { name?: string; street?: string; district?: string; city?: string };
+    };
+    const coords = o?.geometry?.coordinates;
+    const lng = Number(coords?.[0]);
+    const lat = Number(coords?.[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    // HK：lat 22.13–22.57 lng 113.83–114.45；MO：lat 22.08–22.24 lng 113.52–113.66
+    const inHK = lat >= 22.13 && lat <= 22.57 && lng >= 113.83 && lng <= 114.45;
+    const inMO = lat >= 22.08 && lat <= 22.24 && lng >= 113.52 && lng <= 113.66;
+    if (!inHK && !inMO) continue;
+    const p = o.properties ?? {};
+    const label = [p.district, p.name ?? p.street, p.city].filter(Boolean).join(" ") || q;
+    hits.push({ lat, lng, label });
+    if (hits.length >= 5) break;
+  }
+  return hits;
+}
+
 /** Haversine 大圓距離（km） */
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371; // 地球半徑 km
@@ -353,52 +449,54 @@ export const vipRouter = createRouter({
     }),
 
   /**
-   * v2.2.0（順豐站點查詢頁）：地址 → 坐標（公開；Nominatim，限 HK/MO）。
-   * never-throw 回 { ok:true, results:[{lat,lng,label}] }（results 空＝搵唔到）或 { ok:false, reason }；
-   * in-memory LRU 100 條；timeout 10s；私隱——query 明文唔落 log（淨落長度／結果數）。
+   * v2.2.2（順豐站點查詢頁，老闆指令「打屋邨、屋苑、大廈名都要有資料」）：地址 → 坐標（公開）。
+   * 多源鏈（邊個先中就用邊個，全部 never-throw）：
+   *   ① 香港政府地址識別服務 ALS（www.als.gov.hk，免費免 key，官方覆蓋全港屋邨／屋苑／大廈，
+   *      回傳直接係 WGS84 lat/lng）——澳門關鍵字（澳門／氹仔／路環）跳過佢；
+   *   ② Nominatim（OSM，HK＋MO）——v2.2.0 原有路線，街道／地標穩；
+   *   ③ Photon（photon.komoot.io，OSM 系另一引擎，模糊匹配強）——過濾返 HK/MO 範圍先用。
+   * 私隱鐵律：query 明文永遠唔落 log（淨落長度／來源／結果數）；in-memory LRU 100 條；逐源 timeout。
    */
   geocodeAddress: publicQuery
     .input(z.object({ q: z.string().trim().min(1).max(200) }))
     .query(async ({ input }) => {
       const q = input.q;
-      try {
-        const cached = geocodeCacheGet(q);
-        if (cached) return { ok: true as const, results: cached };
-        const url =
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}` +
-          `&format=jsonv2&countrycodes=hk,mo&limit=5&accept-language=zh-HK`;
-        const res = await fetch(url, {
-          headers: {
-            // Nominatim 使用條款要求可識別 UA（寫明 RedCode/1.0＋聯絡網址）
-            "User-Agent": "RedCode/1.0 (https://redcode.red; contact@redcode.red)",
-            "Accept-Language": "zh-HK",
-          },
-          signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
-        });
-        if (!res.ok) {
-          console.warn(`[vip] geocodeAddress HTTP ${res.status}（query 長度 ${q.length}）`);
-          return { ok: false as const, reason: "地址服務暫時唔可用，請稍後再試" };
+      const cached = geocodeCacheGet(q);
+      if (cached) return { ok: true as const, results: cached };
+
+      const isMacau = /澳門|氹仔|路環|澳氹/.test(q);
+      const sources: Array<{ name: string; run: () => Promise<GeocodeHit[]> }> = [
+        ...(isMacau ? [] : [{ name: "ALS", run: () => geocodeViaAls(q) }]),
+        { name: "Nominatim", run: () => geocodeViaNominatim(q) },
+        { name: "Photon", run: () => geocodeViaPhoton(q) },
+      ];
+
+      let anyNetworkError = false;
+      for (const src of sources) {
+        try {
+          const results = await src.run();
+          if (results.length > 0) {
+            geocodeCacheSet(q, results);
+            console.log(
+              `[vip] geocodeAddress：來源 ${src.name}，query 長度 ${q.length}，結果 ${results.length} 條`,
+            );
+            return { ok: true as const, results };
+          }
+        } catch (e) {
+          anyNetworkError = true;
+          console.warn(
+            `[vip] geocodeAddress 來源 ${src.name} 失敗（query 長度 ${q.length}）：`,
+            e instanceof Error ? e.message : e,
+          );
         }
-        const json: unknown = await res.json();
-        const results: GeocodeHit[] = (Array.isArray(json) ? json : [])
-          .map((r): GeocodeHit | null => {
-            const o = r as { lat?: string; lon?: string; display_name?: string };
-            const lat = Number(o?.lat);
-            const lng = Number(o?.lon);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-            return { lat, lng, label: typeof o?.display_name === "string" ? o.display_name : q };
-          })
-          .filter((r): r is GeocodeHit => r !== null);
-        geocodeCacheSet(q, results);
-        console.log(`[vip] geocodeAddress：query 長度 ${q.length}，結果 ${results.length} 條`);
-        return { ok: true as const, results };
-      } catch (e) {
-        console.warn(
-          `[vip] geocodeAddress 失敗（query 長度 ${q.length}）：`,
-          e instanceof Error ? e.message : e,
-        );
-        return { ok: false as const, reason: "地址服務暫時唔可用，請稍後再試" };
       }
+      // 全部來源都係空結果 → 真係搵唔到；有來源炸過 → 提示稍後再試
+      if (!anyNetworkError) {
+        geocodeCacheSet(q, []);
+        console.log(`[vip] geocodeAddress：query 長度 ${q.length}，三源皆無結果`);
+        return { ok: true as const, results: [] };
+      }
+      return { ok: false as const, reason: "地址服務暫時唔可用，請稍後再試" };
     }),
 
   /**

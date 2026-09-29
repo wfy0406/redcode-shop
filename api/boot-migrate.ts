@@ -10,6 +10,9 @@ import { hashPassword } from "./auth";
 import { SF_STATIONS } from "./data/sfStations";
 // v2.1.0：全量官方清單（HK 1654／MO 51，2026-09-29 抽取）；表空時 seed 全量，樣例清單留作 fallback 參考
 import { SF_STATIONS_FULL } from "./data/sfStationsFull";
+// v2.2.2：順豐官方坐標快照（2026-09-30 抓取）——boot 時回填 lat IS NULL 嘅行，
+// 新部署唔使等每日 sfSync 先用到 GPS 最近站點（老闆投訴「按 GPS 完全搵唔到」）
+import { SF_STATION_COORDS } from "./data/sfStationCoords";
 
 const DDL = `
 DO $$ BEGIN CREATE TYPE role AS ENUM ('member', 'staff', 'admin');
@@ -382,9 +385,13 @@ CREATE TABLE IF NOT EXISTS "pushCampaigns" (
   "sentAt" timestamp,
   "sentCount" integer,
   "failCount" integer,
+  -- v2.2.2（老闆指令）：後台一掣落直播畫——endedAt 有值即唔再喺首頁/直播頁顯示
+  "endedAt" timestamp,
   "createdAt" timestamp NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS pushcampaigns_status_sent ON "pushCampaigns" (status, "sentAt" DESC);
+-- v2.2.2：舊庫補欄（CREATE TABLE IF NOT EXISTS 唔會幫現有表加欄）
+ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "endedAt" timestamp;
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：
@@ -475,6 +482,39 @@ export async function ensureDatabase(): Promise<void> {
       }
     } catch (e) {
       console.error("[boot-migrate] vip_rules 門檻更新失敗（唔影響開機）:", (e as Error).message);
+    }
+
+    // ===== v2.2.2：順豐站點坐標快照回填（老闆指令「我按 GPS 佢完全搵唔到」）=====
+    // 種子清單本身冇坐標，以往要等每日 sfSync 先補；新部署／同步未到時 GPS 會搵唔到任何站。
+    // 做法：快照 (region,type,name) VALUES join 回填 lat/lng（順手補 phone/serviceTime），
+    // 淨係填 NULL 位——sfSync 每日更新嘅 live 值永遠唔會被快照覆蓋。分 chunk 跑，一句炸唔拖冧其他。
+    try {
+      const CHUNK = 200;
+      let filled = 0;
+      for (let i = 0; i < SF_STATION_COORDS.length; i += CHUNK) {
+        const slice = SF_STATION_COORDS.slice(i, i + CHUNK);
+        const values: string[] = [];
+        const params: unknown[] = [];
+        slice.forEach((row, idx) => {
+          const b = idx * 7;
+          values.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7})`);
+          params.push(row[0], row[1], row[2], row[3], row[4], row[5] || null, row[6] || null);
+        });
+        const r = await pool.query(
+          `UPDATE "sfStations" s
+             SET lat = v.lat2::double precision, lng = v.lng2::double precision,
+                 phone = COALESCE(NULLIF(s.phone, ''), v.phone),
+                 "serviceTime" = COALESCE(NULLIF(s."serviceTime", ''), v.st)
+            FROM (VALUES ${values.join(",")}) AS v(region, type, name, lng2, lat2, phone, st)
+           WHERE s.region = v.region AND s.type = v.type AND s.name = v.name
+             AND s.lat IS NULL;`,
+          params,
+        );
+        filled += r.rowCount ?? 0;
+      }
+      console.log(`[boot-migrate] 順豐坐標快照回填完成：補咗 ${filled} 個站點`);
+    } catch (e) {
+      console.error("[boot-migrate] 順豐坐標回填失敗（唔影響開機）:", (e as Error).message);
     }
 
     // 開機自檢：users 核心欄位齊唔齊，缺就喺 log 大聲叫（Render logs 一眼睇到，唔使等客人報）

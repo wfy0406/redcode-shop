@@ -21,6 +21,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { pushCampaigns, pushSubscriptions } from "@db/schema";
 import { logAudit } from "./audit";
+import { siteUrl } from "./email";
 
 /** 通知標題（合約 §8 寫死模板） */
 export const PUSH_TITLE = "🔴 RedCode 直播開始啦！";
@@ -117,10 +118,16 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
     const subs = await db.query.pushSubscriptions.findMany({
       where: eq(pushSubscriptions.active, true),
     });
+    // v2.2.2（老闆指令）：推播撳入去要直接開 Facebook app。
+    // SW 開唔到 fb:// scheme，所以 FB 連結先指去 /live-go.html 跳板頁，
+    // 入面再試 fb:// 深鏈；開唔到（冇裝 app）先落返網頁版。非 FB 連結維持原樣。
+    const clickUrl = isFacebookUrl(campaign.url)
+      ? `${siteUrl()}/live-go.html?u=${encodeURIComponent(campaign.url)}`
+      : campaign.url;
     const payload = JSON.stringify({
       title: campaign.title,
       body: campaign.body,
-      data: { url: campaign.url },
+      data: { url: clickUrl },
     });
 
     let sentCount = 0;
@@ -197,4 +204,20 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
 /** reviewNote 追加（保留舊內容，分號分隔） */
 function appendNote(existing: string | null, note: string): string {
   return existing ? `${existing}；${note}` : note;
+}
+
+/** 係咪 Facebook 系連結（facebook.com／fb.watch／fb.me）——用嚟決定使唔使經 live-go 跳板 */
+function isFacebookUrl(raw: string): boolean {
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return (
+      host === "facebook.com" ||
+      host.endsWith(".facebook.com") ||
+      host === "fb.watch" ||
+      host === "fb.me" ||
+      host.endsWith(".fb.me")
+    );
+  } catch {
+    return false;
+  }
 }

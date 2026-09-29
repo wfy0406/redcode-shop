@@ -11,7 +11,8 @@ import AccountToastStack, { useAccountToasts } from '@/components/account/Toast'
  * 1. 頁頭：大寫闊字距英文 label「PICKUP POINTS」+ serif 中文大標 + hairline 金線
  * 2. 地址搵最近卡：vip.geocodeAddress → vip.nearestStations（top 5＋距離＋步行分鐘）；
  *    另有「用我而家嘅位置」（navigator.geolocation）副掣
- * 3. 篩選 bar：HK/MO pill tabs＋類型 chips（全部／順豐站／智能櫃／服務點）＋即時搜尋
+ * 3. 篩選 bar：HK/MO pill tabs＋地區下拉（v2.2.2 老闆指令：揀完香港/澳門可以再揀區）
+ *    ＋類型 chips（全部／順豐站／智能櫃／服務點）＋即時搜尋
  * 4. 列表：按 district 分組嘅 editorial hairline row（預設展開首 3 區）；
  *    搜尋／類型篩選中改平鋪（cap 200＋「顯示更多」）
  * 5. 會員每站「設為預設」底線文字掣 → auth.updateProfile → invalidate auth.me → toast；
@@ -203,6 +204,8 @@ export default function SfStations() {
   /* ---------- 篩選狀態 ---------- */
   const [region, setRegion] = useState<Region>('HK');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
+  // v2.2.2（老闆指令）：揀完 HK/MO 再下拉揀區（'ALL'＝全部區）
+  const [districtFilter, setDistrictFilter] = useState<string>('ALL');
   const [query, setQuery] = useState('');
 
   /* ---------- 分組摺疊狀態（預設展開首 3 區；toggled 記用戶手動覆蓋） ---------- */
@@ -229,20 +232,32 @@ export default function SfStations() {
   const isLoggedIn = !!user;
   const defaultStationId = user?.defaultStationId ?? null;
 
-  /* 類型 chips＋搜尋即時過濾（名／地址／編號／地區，唔分大細楷） */
+  /* 地區下拉選項：由當前 region 嘅站點衍生（去重＋中文排序＋站數），轉 region 自動重算 */
+  const districtOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of stations) {
+      const d = s.district?.trim();
+      if (!d) continue;
+      counts.set(d, (counts.get(d) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0], 'zh-HK'));
+  }, [stations]);
+
+  /* 類型 chips＋地區下拉＋搜尋即時過濾（名／地址／編號／地區，唔分大細楷） */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return stations.filter((s) => {
+      if (districtFilter !== 'ALL' && (s.district?.trim() ?? '') !== districtFilter) return false;
       if (typeFilter !== 'ALL' && s.type !== typeFilter) return false;
       if (!q) return true;
       return [s.name, s.address ?? '', s.officialCode ?? '', s.district ?? ''].some((f) =>
         f.toLowerCase().includes(q),
       );
     });
-  }, [stations, typeFilter, query]);
+  }, [stations, typeFilter, districtFilter, query]);
 
-  /* 搜尋或類型篩選中 → 平鋪；否則按 district 分組 */
-  const flatMode = query.trim() !== '' || typeFilter !== 'ALL';
+  /* 搜尋／類型篩選／揀咗區 → 平鋪；否則按 district 分組 */
+  const flatMode = query.trim() !== '' || typeFilter !== 'ALL' || districtFilter !== 'ALL';
 
   const groups = useMemo(() => {
     const map = new Map<string, Station[]>();
@@ -265,9 +280,10 @@ export default function SfStations() {
     }));
   };
 
-  /* 轉地區／類型／搜尋：重設摺疊同平鋪頁數 */
+  /* 轉地區／類型／搜尋：重設摺疊同平鋪頁數（轉 HK/MO 埋區下拉一齊重設） */
   const switchRegion = (r: Region) => {
     setRegion(r);
+    setDistrictFilter('ALL');
     setExpandAll(null);
     setToggled({});
     setFlatCap(FLAT_PAGE);
@@ -525,6 +541,35 @@ export default function SfStations() {
                   </button>
                 );
               })}
+            </div>
+
+            {/* 地區下拉（v2.2.2 老闆指令）：揀完香港/澳門再揀區；淨顯示有站嘅區 */}
+            <div className="relative">
+              <select
+                value={districtFilter}
+                onChange={(e) => {
+                  setDistrictFilter(e.target.value);
+                  setFlatCap(FLAT_PAGE);
+                }}
+                aria-label="揀地區"
+                className="h-10 w-full appearance-none rounded-full border bg-space-2 pl-4 pr-10 text-[13px] text-txt-1 focus:border-gold focus:outline-none sm:w-48"
+                style={{
+                  borderColor:
+                    districtFilter !== 'ALL' ? 'rgba(201, 163, 95, 0.65)' : 'var(--space-line)',
+                }}
+              >
+                <option value="ALL">全部地區</option>
+                {districtOptions.map(([d, n]) => (
+                  <option key={d} value={d}>
+                    {d}（{n}）
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                size={14}
+                aria-hidden="true"
+                className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-txt-disabled"
+              />
             </div>
 
             {/* 類型 pill chips（active 金框） */}

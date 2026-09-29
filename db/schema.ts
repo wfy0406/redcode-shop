@@ -357,6 +357,8 @@ export const pushCampaigns = pgTable("pushCampaigns", {
   sentAt: timestamp("sentAt"),
   sentCount: integer("sentCount"),
   failCount: integer("failCount"),
+  // v2.2.2（老闆指令）：後台「立即落畫」——有值即停止喺首頁／直播頁顯示（批次紀錄保留）
+  endedAt: timestamp("endedAt"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 

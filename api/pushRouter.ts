@@ -15,7 +15,7 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, isNull } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { pushCampaigns, pushSubscriptions, users } from "@db/schema";
 import {
@@ -282,7 +282,12 @@ export const pushRouter = createRouter({
     const db = getDb();
     const since = new Date(Date.now() - LIVE_WINDOW_MS);
     const live = await db.query.pushCampaigns.findFirst({
-      where: and(eq(pushCampaigns.status, "sent"), gte(pushCampaigns.sentAt, since)),
+      // v2.2.2（老闆指令）：endedAt 有值＝後台已落畫，即時唔再顯示
+      where: and(
+        eq(pushCampaigns.status, "sent"),
+        gte(pushCampaigns.sentAt, since),
+        isNull(pushCampaigns.endedAt),
+      ),
       orderBy: [desc(pushCampaigns.sentAt)],
     });
     if (!live || !live.sentAt) {
@@ -427,7 +432,41 @@ export const pushRouter = createRouter({
         sentCount: r.sentCount,
         failCount: r.failCount,
         createdAt: r.createdAt,
+        endedAt: r.endedAt,
       })),
     };
+  }),
+
+  // ─── endLiveNow（員工級）：一掣落直播畫（v2.2.2 老闆指令）─────────────
+  // 推播一出，首頁／直播頁會顯示 90 分鐘；老闆要可以即時取消顯示。
+  // 做法：最新一筆顯示緊嘅批次（sent＋90 分鐘內＋未落畫）寫 endedAt=now()，
+  // 批次紀錄保留（歷史清單照見「已發送」），唔影響已發出嘅通知本身。
+  endLiveNow: staffProcedure.mutation(async ({ ctx }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - LIVE_WINDOW_MS);
+    const live = await db.query.pushCampaigns.findFirst({
+      where: and(
+        eq(pushCampaigns.status, "sent"),
+        gte(pushCampaigns.sentAt, since),
+        isNull(pushCampaigns.endedAt),
+      ),
+      orderBy: [desc(pushCampaigns.sentAt)],
+    });
+    if (!live) {
+      return { ok: false as const, message: "而家冇顯示緊嘅直播" };
+    }
+    await db
+      .update(pushCampaigns)
+      .set({ endedAt: new Date() })
+      .where(eq(pushCampaigns.id, live.id));
+    void logAudit({
+      actorId: ctx.user.userId,
+      actorRole: ctx.user.role,
+      action: "push.endLiveNow",
+      targetType: "pushCampaign",
+      targetId: live.id,
+      detail: `落直播畫（批次 #${live.id}，${live.liveDate} ${live.liveSession}）：首頁／直播頁即時停止顯示`,
+    });
+    return { ok: true as const, id: live.id, liveDate: live.liveDate, liveSession: live.liveSession };
   }),
 });

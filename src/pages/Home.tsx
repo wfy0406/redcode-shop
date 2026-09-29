@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router';
 import { Clapperboard, Facebook, MessageCircle, Play } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
@@ -10,6 +10,7 @@ import { useReveal } from '@/hooks/useReveal';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import LiveNowSection from '@/components/push/LiveNowSection';
+import LiveTopBanner from '@/components/push/LiveTopBanner';
 import PushPermissionGuide from '@/components/push/PushPermissionGuide';
 
 /** DB 商品 row → ProductCard 用嘅 Product 形狀 */
@@ -242,7 +243,79 @@ function LivePushEntry() {
   );
 }
 
+/* ---------- v2.2.2（老闆指令）：VIP 三級首頁主題色 ----------
+   普通會員＝品牌原色；銀會員＝銀月色系；金會員＝璀璨金色系。
+   做法：淨係喺 Home 最外層 div 覆寫 CSS 變數（--gold 系），
+   全頁所有 var(--gold) 引用自動轉色，唔郁其他頁。 */
+type VipTier = 'NONE' | 'SILVER' | 'GOLD';
+
+const TIER_HOME_VARS: Record<VipTier, CSSProperties> = {
+  NONE: {},
+  SILVER: {
+    // 銀月：金位轉冷冽銀藍
+    ['--gold' as string]: '#CBD6E4',
+    ['--gold-soft' as string]: '#E6EDF6',
+  },
+  GOLD: {
+    // 璀璨金：金位再亮起啲，帶蜜糖暖意
+    ['--gold' as string]: '#FFD24A',
+    ['--gold-soft' as string]: '#FFE28F',
+  },
+};
+
+const TIER_BADGE: Record<VipTier, { label: string; color: string; border: string; bg: string }> = {
+  NONE: {
+    label: '普通會員',
+    color: 'var(--pink-tint)',
+    border: 'rgba(255, 143, 191, 0.4)',
+    bg: 'rgba(255, 0, 84, 0.12)',
+  },
+  SILVER: {
+    label: '銀會員 SILVER',
+    color: '#E6EDF6',
+    border: 'rgba(203, 214, 228, 0.55)',
+    bg: 'rgba(203, 214, 228, 0.14)',
+  },
+  GOLD: {
+    label: '金會員 GOLD ✦',
+    color: '#0A0614',
+    border: 'rgba(255, 210, 74, 0.9)',
+    bg: 'linear-gradient(90deg, #FFD24A 0%, #F5C518 100%)',
+  },
+};
+
+/** 會員招呼（v2.2.2 老闆指令）：「xxx寶寶，歡迎嚟到RedCode！」＋級別徽章＋到期日 */
+function MemberGreeting() {
+  const { user } = useAuth();
+  if (!user) return null;
+  const tier = (user.vipTier ?? 'NONE') as VipTier;
+  const badge = TIER_BADGE[tier];
+  const firstName = user.name?.trim() || '寶寶';
+  const expiry = user.vipExpiresAt
+    ? new Date(user.vipExpiresAt).toLocaleDateString('zh-HK', { timeZone: 'Asia/Hong_Kong' })
+    : null;
+  return (
+    <div className="hero-enter mb-6 flex flex-wrap items-center gap-3" style={{ animationDelay: '0.35s' }}>
+      <p className="font-serif-tc text-lg font-semibold text-starlight md:text-xl">
+        {firstName}寶寶，歡迎嚟到 RedCode！
+      </p>
+      <span
+        className="inline-flex items-center rounded-full border px-3 py-1 font-mono text-[11px] font-semibold tracking-[0.12em]"
+        style={{ color: badge.color, borderColor: badge.border, background: badge.bg }}
+      >
+        {badge.label}
+      </span>
+      {tier !== 'NONE' && expiry && (
+        <span className="font-mono text-[11px] text-txt-3">有效期至 {expiry}</span>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
+  const { user } = useAuth();
+  // v2.2.2：跟會員級別轉首頁色調（未登入／普通會員＝原色）
+  const homeTier = (user?.vipTier ?? 'NONE') as VipTier;
   // 後端連唔到（純前端預覽）時 fallback 用內建示範商品
   const { data: dbProducts, isError: productsError } = trpc.products.list.useQuery(
     {},
@@ -282,7 +355,10 @@ export default function Home() {
   const waRef = useReveal<HTMLDivElement>();
 
   return (
-    <div>
+    <div style={TIER_HOME_VARS[homeTier]}>
+      {/* ============ 0. 直播頂部 Banner（v2.2.2）：有直播先入嚟即見，撳咗落 #live-now ============ */}
+      <LiveTopBanner />
+
       {/* ============ 1. Hero（§4.3 全構圖） ============ */}
       <section className="relative flex min-h-[100dvh] items-center overflow-hidden">
         {/* v2.2.0：member-hero.jpg 絲綢珍珠 flat-lay 做底（左側留白，文字擺左）＋深色漸層保證可讀 */}
@@ -341,6 +417,8 @@ export default function Home() {
         {/* 文字區：左對齊，佔欄 1–7 */}
         <div className="relative z-10 mx-auto w-full max-w-[1280px] px-5 pb-24 pt-16 md:px-8 xl:px-12">
           <div className="max-w-2xl">
+            {/* v2.2.2（老闆指令）：會員一入首頁就見到「xxx寶寶，歡迎嚟到RedCode！」＋級別徽章 */}
+            <MemberGreeting />
             <p
               className="hero-enter font-mono text-[11px] uppercase tracking-[0.3em] text-gold"
               style={{ animationDelay: '0.45s' }}

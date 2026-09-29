@@ -69,10 +69,27 @@ function parseSfCoord(v: string | number | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * v2.2.2：站名異體字變體（涌↔湧、后↔後、里↔裏）。
+ * 順豐 API 用字同種子清單唔齊（例如「葵涌」vs 轉繁後「葵湧」）；
+ * 認親／去重時逐個變體試，唔試會誤當新站 insert，搞到一地重複行。
+ */
+function nameVariants(name: string): string[] {
+  const v = new Set<string>();
+  v.add(name.replaceAll("湧", "涌"));
+  v.add(name.replaceAll("後", "后"));
+  v.add(name.replaceAll("裏", "里"));
+  v.add(name.replaceAll("湧", "涌").replaceAll("後", "后").replaceAll("裏", "里"));
+  v.delete(name);
+  return [...v];
+}
+
 export interface SfSyncStats {
   added: number;
   updated: number;
   deactivated: number;
+  /** v2.2.2：異體字歷史重複行清尾（停用咁多個種子殘影行） */
+  deduped: number;
   total: number;
   /** 抓取完整成功嘅 (region,type) 類別（只有呢啲類別會做停用） */
   categoriesOk: string[];
@@ -190,7 +207,7 @@ let syncRunning = false; // 防重入：每日排程同後台手動唔會同時�
  * never-throw：每個類別獨立 try，失敗嘅類別記入 perTypeFailed（唔做停用），其餘照做。
  */
 export async function runSfSync(): Promise<SfSyncStats> {
-  const stats: SfSyncStats = { added: 0, updated: 0, deactivated: 0, total: 0, categoriesOk: [], perTypeFailed: [] };
+  const stats: SfSyncStats = { added: 0, updated: 0, deactivated: 0, deduped: 0, total: 0, categoriesOk: [], perTypeFailed: [] };
   if (syncRunning) {
     console.log("[sf-sync] 已經有同步緊，今次 skip");
     return stats;
@@ -286,6 +303,7 @@ export async function runSfSync(): Promise<SfSyncStats> {
       const byCode = new Map(existing.filter((s) => s.officialCode).map((s) => [s.officialCode as string, s]));
       const byName = new Map(existing.map((s) => [s.name, s]));
       const seenCodes = new Set<string>();
+      const insertedNames = new Set<string>(); // v2.2.2：今次新 insert 嘅名（清重用）
 
       for (const [code, item] of items) {
         seenCodes.add(code);
@@ -324,11 +342,23 @@ export async function runSfSync(): Promise<SfSyncStats> {
           continue;
         }
         // ② (region, type, 轉繁後 name) 認親種子行 → 補寫 officialCode
-        const hitByName = byName.get(name);
+        // v2.2.2：異體字變體都試埋（涌↔湧／后↔後／里↔裏）——順豐 API 用字同種子唔齊，
+        // 唔試變體會誤當新站 insert（一地重複行就係咁嚟）。
+        // 認到親嘅行保留種子原名（唔將「葵涌」改做「葵湧」呢類異體），其餘欄位照更新。
+        let hitByName = byName.get(name);
+        if (!hitByName) {
+          for (const v of nameVariants(name)) {
+            const h = byName.get(v);
+            if (h) {
+              hitByName = h;
+              break;
+            }
+          }
+        }
         if (hitByName) {
           await db
             .update(sfStations)
-            .set({ officialCode: code, name, address, district, lat, lng, phone, serviceTime, active: true })
+            .set({ officialCode: code, address, district, lat, lng, phone, serviceTime, active: true })
             .where(eq(sfStations.id, hitByName.id));
           byCode.set(code, hitByName);
           stats.updated += 1;
@@ -341,7 +371,23 @@ export async function runSfSync(): Promise<SfSyncStats> {
           .insert(sfStations)
           .values({ id: `${region}-O${code}`, region, type, name, district, address, lat, lng, phone, serviceTime, active: true, sortOrder: nextSort, officialCode: code })
           .onConflictDoNothing(); // 保險：id 撞咗（理論上唔會）就 skip，唔好冧成個 sync
+        insertedNames.add(name);
         stats.added += 1;
+      }
+
+      // v2.2.2 清尾：異體字歷史重複行——以往認親唔試變體，同一個站變咗
+      // 「種子行（冇 code、冇坐標）＋新入行（有 code、有坐標）」雙胞胎。
+      // 而家認親會試變體，唔會再添新重复；舊殘影呢度清：種子行嘅名（或異體變體）
+      // 同有 officialCode 嘅行一致 → 停用種子殘影（唔刪行，留底可追溯）。
+      const officialNames = new Set<string>();
+      for (const s of existing) if (s.officialCode) officialNames.add(s.name);
+      for (const n of insertedNames) officialNames.add(n);
+      for (const s of existing) {
+        if (s.officialCode || !s.active) continue;
+        if (officialNames.has(s.name) || nameVariants(s.name).some((v) => officialNames.has(v))) {
+          await db.update(sfStations).set({ active: false }).where(eq(sfStations.id, s.id));
+          stats.deduped += 1;
+        }
       }
 
       // 停用：只限今次抓取完整成功嘅類別；officialCode 非 null 而今次冇咗嘅行 → active=false。
@@ -369,10 +415,10 @@ export async function runSfSync(): Promise<SfSyncStats> {
       action: "station.sync",
       targetType: "setting",
       targetId: "sfStations",
-      detail: `順豐站點每日同步完成：新增 ${stats.added}、更新 ${stats.updated}、停用 ${stats.deactivated}、官方合計 ${stats.total} 個點${stats.perTypeFailed.length > 0 ? `；失敗類別（未停用）：${stats.perTypeFailed.join("、")}` : ""}`,
+      detail: `順豐站點每日同步完成：新增 ${stats.added}、更新 ${stats.updated}、停用 ${stats.deactivated}、異體字重複清尾 ${stats.deduped}、官方合計 ${stats.total} 個點${stats.perTypeFailed.length > 0 ? `；失敗類別（未停用）：${stats.perTypeFailed.join("、")}` : ""}`,
     });
     console.log(
-      `[sf-sync] 完成：+${stats.added} 更新 ${stats.updated} 停用 ${stats.deactivated}（官方 ${stats.total} 個點）${stats.perTypeFailed.length > 0 ? `；失敗類別 ${stats.perTypeFailed.join("/")}` : ""}`,
+      `[sf-sync] 完成：+${stats.added} 更新 ${stats.updated} 停用 ${stats.deactivated} 清重 ${stats.deduped}（官方 ${stats.total} 個點）${stats.perTypeFailed.length > 0 ? `；失敗類別 ${stats.perTypeFailed.join("/")}` : ""}`,
     );
     return stats;
   } catch (e) {
