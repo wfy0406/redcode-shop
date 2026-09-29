@@ -35,6 +35,12 @@ function greetingNow(): string {
   return '晚上好';
 }
 
+/** YYYYMMDD → 2026年9月29日（直播場次日期顯示；F8 2026-09-29） */
+function fmtLiveDate(d: string): string {
+  if (!/^\d{8}$/.test(d)) return d;
+  return `${d.slice(0, 4)}年${Number(d.slice(4, 6))}月${Number(d.slice(6, 8))}日`;
+}
+
 const NAV_LINKS = [
   { to: '/', label: '首頁' },
   { to: '/products', label: '商品' },
@@ -52,6 +58,9 @@ export default function Navbar() {
   const { pathname, search } = useLocation();
   // 當前商品類別（URL ?category=）：分類連結高亮判斷（NavLink 嘅 isActive 唔分 search param，所以要人手計）
   const currentCat = new URLSearchParams(search).get('category') ?? '';
+  // 當前直播場次（URL ?liveDate=&liveSession=，F8 2026-09-29）：場次連結高亮判斷
+  const currentLiveDate = new URLSearchParams(search).get('liveDate') ?? '';
+  const currentLiveSession = new URLSearchParams(search).get('liveSession') ?? '';
   const { user, isStaff, logout } = useAuth();
   // F4：badge 接通真購物車數量（未登入唔好 call，enabled 守住）
   const cartQuery = trpc.cart.list.useQuery(undefined, {
@@ -62,6 +71,15 @@ export default function Navbar() {
     (sum, line) => sum + line.quantity,
     0,
   );
+  // 直播場次（2026-09-29 F8）：商品選單底加「📺 直播場次」區——
+  // 日期可展開見場次；冇場次數據就唔顯示呢區。60s stale，導航唔使次次打。
+  const liveSessionsQuery = trpc.products.liveSessions.useQuery(undefined, {
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const liveGroups = liveSessionsQuery.data ?? [];
+  // 邊個直播日期展開緊（desktop dropdown 同手機選單共用——一個開另一個跟住開，冇壞處）
+  const [liveDateOpen, setLiveDateOpen] = useState<string | null>(null);
 
   // 手機選單連結（2026-08-04 抽出嚟：問候語＋登出掣嘅動畫 delay 要跟佢長度計）
   const mobileLinks = [
@@ -112,7 +130,7 @@ export default function Navbar() {
                 {/* pt-2 做橋位：mouse 由選單移落 dropdown 唔會閃走；group-focus-within 照顧鍵盤 Tab */}
                 <div className="invisible absolute left-1/2 top-full -translate-x-1/2 translate-y-1 pt-2 opacity-0 transition-all duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100">
                   <div
-                    className="min-w-[150px] rounded-2xl border px-1.5 py-2"
+                    className="min-w-[180px] rounded-2xl border px-1.5 py-2"
                     style={{
                       borderColor: 'var(--glass-border)',
                       background: 'var(--space-1)',
@@ -142,6 +160,49 @@ export default function Navbar() {
                         {c.label}
                       </Link>
                     ))}
+                    {/* 📺 直播場次（2026-09-29 F8）：有場次貨先顯示；撳日期展開場次 */}
+                    {liveGroups.length > 0 && (
+                      <>
+                        <div className="mx-2 my-1.5 border-t" style={{ borderColor: 'var(--space-line)' }} />
+                        <p className="px-3.5 pb-0.5 pt-1 text-[11px] font-bold tracking-[0.18em] text-txt-3">
+                          📺 直播場次
+                        </p>
+                        {liveGroups.map((g) => (
+                          <div key={g.liveDate}>
+                            <button
+                              type="button"
+                              onClick={() => setLiveDateOpen((v) => (v === g.liveDate ? null : g.liveDate))}
+                              aria-expanded={liveDateOpen === g.liveDate}
+                              className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-[13px] font-bold tracking-wide text-txt-2 transition-colors hover:bg-space-3"
+                            >
+                              {fmtLiveDate(g.liveDate)}
+                              <ChevronDown
+                                size={12}
+                                strokeWidth={2.5}
+                                aria-hidden="true"
+                                className="transition-transform duration-200"
+                                style={{ transform: liveDateOpen === g.liveDate ? 'rotate(180deg)' : 'none' }}
+                              />
+                            </button>
+                            {liveDateOpen === g.liveDate &&
+                              g.sessions.map((s) => (
+                                <Link
+                                  key={s}
+                                  to={`/products?liveDate=${g.liveDate}&liveSession=${encodeURIComponent(s)}`}
+                                  className={cn(
+                                    'block rounded-xl py-1.5 pl-8 pr-3.5 text-[12.5px] font-bold tracking-wide transition-colors hover:bg-space-3',
+                                    pathname === '/products' && currentLiveDate === g.liveDate && currentLiveSession === s
+                                      ? 'text-pink-soft'
+                                      : 'text-txt-2',
+                                  )}
+                                >
+                                  第{s}場
+                                </Link>
+                              ))}
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -346,6 +407,47 @@ export default function Navbar() {
                         {c.label}
                       </Link>
                     ))}
+                    {/* 📺 直播場次（2026-09-29 F8）：有場次貨先顯示；撳日期展開場次 */}
+                    {liveGroups.length > 0 && (
+                      <>
+                        <p className="pt-3 text-sm font-bold tracking-[0.18em] text-txt-3">📺 直播場次</p>
+                        {liveGroups.map((g) => (
+                          <div key={g.liveDate}>
+                            <button
+                              type="button"
+                              onClick={() => setLiveDateOpen((v) => (v === g.liveDate ? null : g.liveDate))}
+                              aria-expanded={liveDateOpen === g.liveDate}
+                              className="flex w-full items-center justify-between py-2 text-lg font-extrabold tracking-wide text-txt-2"
+                            >
+                              {fmtLiveDate(g.liveDate)}
+                              <ChevronDown
+                                size={18}
+                                strokeWidth={2.5}
+                                aria-hidden="true"
+                                className="transition-transform duration-200"
+                                style={{ transform: liveDateOpen === g.liveDate ? 'rotate(180deg)' : 'none' }}
+                              />
+                            </button>
+                            {liveDateOpen === g.liveDate &&
+                              g.sessions.map((s) => (
+                                <Link
+                                  key={s}
+                                  to={`/products?liveDate=${g.liveDate}&liveSession=${encodeURIComponent(s)}`}
+                                  onClick={() => setMenuOpen(false)}
+                                  className={cn(
+                                    'block py-2 pl-4 text-lg font-extrabold tracking-wide',
+                                    pathname === '/products' && currentLiveDate === g.liveDate && currentLiveSession === s
+                                      ? 'text-pink-soft'
+                                      : 'text-txt-2',
+                                  )}
+                                >
+                                  第{s}場
+                                </Link>
+                              ))}
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
                 )}
               </div>

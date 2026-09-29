@@ -13,6 +13,8 @@ import type { ToastKind } from './useToasts';
  * 編輯模式：撳行內「編輯」→ populate 表單 → submit 分流 products.update；
  * 編輯中表單標題轉「編輯商品」+ 出「取消編輯」掣。
  * 定時自動下架：開關 + datetime-local；到時前台自動消失（server 查詢時判斷，唔使 cron）。
+ * 📺 直播場次商品（2026-09-29 F8）：開關 + 直播日期（date→YYYYMMDD）+ 場次（≥1）；
+ * 開咗商品歸入該場直播（前台 /products?liveDate=…&liveSession=… 篩到），閂咗 payload 畀 null 清走。
  */
 
 const inputCls =
@@ -46,6 +48,8 @@ type ProductRow = {
   sizeEnabled: boolean;
   delistEnabled: boolean;
   delistAt: Date | null;
+  liveDate: string | null; // F8：直播日期 YYYYMMDD；null＝普通商品
+  liveSession: string | null; // F8：場次 '1','2'…（一定要配 liveDate，唔會單獨存在）
   note: string | null;
   category: string;
   listedDate: Date;
@@ -64,6 +68,18 @@ function toLocalInput(d: Date): string {
 function fmtDelist(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** F8 直播日期 chip 用：YYYYMMDD → M月D日 */
+function fmtLiveDate(yyyymmdd: string): string {
+  const m = Number.parseInt(yyyymmdd.slice(4, 6), 10);
+  const d = Number.parseInt(yyyymmdd.slice(6, 8), 10);
+  return `${m}月${d}日`;
+}
+
+/** F8 直播日期：DB 嘅 YYYYMMDD → date input 嘅 YYYY-MM-DD */
+function liveDateToInput(yyyymmdd: string): string {
+  return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
 }
 
 /** 上載日期 key（本地日曆日 YYYY-MM-DD）：每日新增款式分組＋篩選用 */
@@ -95,6 +111,10 @@ export default function ProductManager({
   // 定時自動下架：開關 + 下架時間（到時前台自動消失；開關開咗冇填時間＝唔會自動落）
   const [delistEnabled, setDelistEnabled] = useState(false);
   const [delistAt, setDelistAt] = useState('');
+  // 📺 直播場次商品（F8）：開關 + 直播日期（date input）+ 場次（≥1）；閂咗＝payload 畀 null 清走
+  const [liveEnabled, setLiveEnabled] = useState(false);
+  const [liveDate, setLiveDate] = useState('');
+  const [liveSession, setLiveSession] = useState('1');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
@@ -168,6 +188,9 @@ export default function ProductManager({
     setSizeEnabled(true);
     setDelistEnabled(false);
     setDelistAt('');
+    setLiveEnabled(false);
+    setLiveDate('');
+    setLiveSession('1');
   };
 
   const createMutation = trpc.products.create.useMutation({
@@ -275,6 +298,10 @@ export default function ProductManager({
     setSizeEnabled(p.sizeEnabled ?? true);
     setDelistEnabled(p.delistEnabled ?? false);
     setDelistAt(p.delistAt ? toLocalInput(new Date(p.delistAt)) : '');
+    // 📺 直播場次（F8）：有 liveDate 即開開關；DB YYYYMMDD → date input YYYY-MM-DD
+    setLiveEnabled(!!p.liveDate);
+    setLiveDate(p.liveDate ? liveDateToInput(p.liveDate) : '');
+    setLiveSession(p.liveSession ?? '1');
     setForm({
       name: p.name,
       sku: p.sku,
@@ -328,10 +355,23 @@ export default function ProductManager({
       setFormError('開咗定時下架就要揀下架時間（或者閂返個開關）');
       return;
     }
+    // 📺 直播場次（F8）：開咗就要揀日期；場次要係 ≥1 嘅整數
+    if (liveEnabled && !liveDate) {
+      setFormError('開咗直播場次商品就要揀直播日期（或者閂返個開關）');
+      return;
+    }
+    const liveSessionNum = Number.parseInt(liveSession, 10);
+    if (liveEnabled && (!Number.isInteger(liveSessionNum) || liveSessionNum < 1)) {
+      setFormError('直播場次要係 1 或以上嘅整數');
+      return;
+    }
     setFormError(null);
     const sizesValue = form.sizes.trim() || null;
     // datetime-local 值係本地時間；閂咗開關就畀 null 清走舊設定
     const delistAtValue = delistEnabled && delistAt ? new Date(delistAt) : null;
+    // date input 值 YYYY-MM-DD → DB YYYYMMDD；閂咗開關＝null（server 會連場次一齊清）
+    const liveDateValue = liveEnabled && liveDate ? liveDate.replaceAll('-', '') : null;
+    const liveSessionValue = liveEnabled && liveDate ? String(liveSessionNum) : null;
     if (editingId != null) {
       // 編輯模式：products.update 全欄位（可清空嘅欄用 null 覆寫）
       editMutation.mutate({
@@ -350,6 +390,8 @@ export default function ProductManager({
         sizeEnabled,
         delistEnabled,
         delistAt: delistAtValue,
+        liveDate: liveDateValue,
+        liveSession: liveSessionValue,
         description: form.description.trim() || null,
       });
       return;
@@ -369,6 +411,8 @@ export default function ProductManager({
       sizeEnabled,
       delistEnabled,
       delistAt: delistAtValue,
+      liveDate: liveDateValue,
+      liveSession: liveSessionValue,
       description: form.description.trim() || undefined,
     });
   };
@@ -624,6 +668,67 @@ export default function ProductManager({
               onChange={(e) => setDelistAt(e.target.value)}
               disabled={!delistEnabled}
               className={`${inputCls} font-mono disabled:opacity-50`}
+            />
+          </div>
+          {/* 📺 直播場次商品（F8）：開關 + 直播日期 + 場次。開咗商品會歸入該場直播，前台可以按場次篩 */}
+          <div>
+            <span className="mb-1.5 block text-[14px] text-txt-2">📺 直播場次商品</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={liveEnabled}
+              aria-label="直播場次商品開關"
+              onClick={() => setLiveEnabled((v) => !v)}
+              className="flex h-12 items-center gap-2.5"
+            >
+              <span
+                className="relative h-6 w-11 shrink-0 rounded-full border transition-colors"
+                style={{
+                  background: liveEnabled ? 'var(--gold)' : 'var(--space-4)',
+                  borderColor: liveEnabled ? 'var(--gold)' : 'var(--space-line)',
+                }}
+              >
+                <span
+                  className="absolute top-0.5 h-[18px] w-[18px] rounded-full transition-transform"
+                  style={{
+                    background: liveEnabled ? 'var(--space-1)' : 'var(--text-3)',
+                    transform: liveEnabled ? 'translateX(22px)' : 'translateX(2px)',
+                  }}
+                  aria-hidden="true"
+                />
+              </span>
+              <span className="text-[13px] text-txt-3">
+                {liveEnabled ? '開（歸入指定直播場次）' : '閂（普通商品）'}
+              </span>
+            </button>
+          </div>
+          <div>
+            <label htmlFor="np-livedate" className="mb-1.5 block text-[14px] text-txt-2">
+              直播日期
+            </label>
+            <input
+              id="np-livedate"
+              type="date"
+              value={liveDate}
+              onChange={(e) => setLiveDate(e.target.value)}
+              disabled={!liveEnabled}
+              className={`${inputCls} font-mono disabled:opacity-50`}
+            />
+          </div>
+          <div>
+            <label htmlFor="np-livesession" className="mb-1.5 block text-[14px] text-txt-2">
+              場次（第幾場）
+            </label>
+            <input
+              id="np-livesession"
+              type="number"
+              min={1}
+              step={1}
+              value={liveSession}
+              onChange={(e) => setLiveSession(e.target.value)}
+              disabled={!liveEnabled}
+              className={`${inputCls} font-mono disabled:opacity-50`}
+              placeholder="1"
             />
           </div>
           <div className="sm:col-span-2">
@@ -911,6 +1016,20 @@ export default function ProductManager({
                           {autoDelisted
                             ? '已到時自動下架（前台隱藏）'
                             : `${fmtDelist(new Date(p.delistAt))} 自動下架`}
+                        </span>
+                      )}
+                      {/* 📺 直播場次 badge（F8：有直播日期先顯示） */}
+                      {p.liveDate && (
+                        <span
+                          className="rounded-full border px-2.5 py-0.5 font-mono text-[11px]"
+                          style={{
+                            borderColor: 'var(--glass-border)',
+                            background: 'var(--glass-bg)',
+                            color: 'var(--pink-soft)',
+                          }}
+                        >
+                          📺 {fmtLiveDate(p.liveDate)}
+                          {p.liveSession ? `·第${p.liveSession}場` : ''}
                         </span>
                       )}
                       {/* 行內改類別（即時 update） */}

@@ -95,6 +95,42 @@ export const productImageArchive = pgTable("productImageArchive", {
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 });
 
+// ===== WMS 批量上架（2026-09-29 F8）：WMS 主管批准後成批推落官網嘅紀錄 =====
+// 一批＝一個直播日期＋場次；逐件記 created/updated/failed（rejected 批全部留 'pending'）。
+// 邊個申請、邊個批、批語，全部留底——後台「上架紀錄」卡同呢度對。
+export const listingBatches = pgTable("listingBatches", {
+  id: serial("id").primaryKey(),
+  batchNo: varchar("batchNo", { length: 32 }).notNull().unique(), // LB20260929-483
+  liveDate: varchar("liveDate", { length: 8 }), // YYYYMMDD
+  liveSession: varchar("liveSession", { length: 16 }), // '1','2'…
+  status: varchar("status", { length: 16 }).notNull(), // 'approved' | 'rejected'
+  itemCount: integer("itemCount").notNull().default(0),
+  requestedBy: varchar("requestedBy", { length: 255 }),
+  reviewedBy: varchar("reviewedBy", { length: 255 }),
+  reviewNote: text("reviewNote"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
+export const listingBatchItems = pgTable("listingBatchItems", {
+  id: serial("id").primaryKey(),
+  batchId: integer("batchId")
+    .notNull()
+    .references(() => listingBatches.id),
+  sku: varchar("sku", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  price: integer("price"),
+  discountPrice: integer("discountPrice"),
+  stock: integer("stock"),
+  sizes: varchar("sizes", { length: 255 }),
+  category: varchar("category", { length: 32 }),
+  imageUrl: varchar("imageUrl", { length: 512 }), // 最終落咗官網嘅本地 path（下載失敗就係原 URL）
+  productId: integer("productId"), // upsert 成功後寫返
+  status: varchar("status", { length: 16 }).notNull().default("pending"), // 'created'|'updated'|'failed'（rejected 批留 'pending'）
+  error: text("error"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
   sku: varchar("sku", { length: 64 }).notNull().unique(),
@@ -111,6 +147,10 @@ export const products = pgTable("products", {
   // 定時自動下架（開關＋時間）：delistEnabled=true 兼 delistAt 到咗 → 前台自動消失（唔使 cron，查詢時判斷）
   delistEnabled: boolean("delistEnabled").notNull().default(false),
   delistAt: timestamp("delistAt"),
+  // 直播場次商品（2026-09-29 F8）：liveDate＝YYYYMMDD、liveSession＝'1','2'…（顯示「第N場」）；
+  // 兩個都 NULL＝普通商品（非直播場次）。liveSession 唔會單獨存在——一定要配 liveDate。
+  liveDate: varchar("liveDate", { length: 8 }),
+  liveSession: varchar("liveSession", { length: 16 }),
   note: varchar("note", { length: 512 }),
   category: varchar("category", { length: 32 }).notNull().default("other"),
   listedDate: timestamp("listedDate").notNull(),
@@ -293,3 +333,5 @@ export type WmsSyncLog = typeof wmsSyncLog.$inferSelect;
 export type PasswordResetCode = typeof passwordResetCodes.$inferSelect;
 export type AuditLogEntry = typeof auditLog.$inferSelect;
 export type ProductImageArchive = typeof productImageArchive.$inferSelect;
+export type ListingBatch = typeof listingBatches.$inferSelect;
+export type ListingBatchItem = typeof listingBatchItems.$inferSelect;

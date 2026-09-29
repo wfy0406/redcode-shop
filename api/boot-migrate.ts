@@ -211,6 +211,45 @@ CREATE TABLE IF NOT EXISTS "auditLog" (
 );
 CREATE INDEX IF NOT EXISTS auditlog_created ON "auditLog" ("createdAt" DESC);
 
+-- 直播場次商品（2026-09-29 F8）：liveDate＝YYYYMMDD、liveSession＝'1','2'…
+ALTER TABLE products ADD COLUMN IF NOT EXISTS "liveDate" varchar(8);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS "liveSession" varchar(16);
+
+-- WMS 批量上架批次（2026-09-29 F8）：一次過上架成批直播貨，全程留底
+-- （欄位同 db/schema.ts 逐字對齊：liveDate/liveSession nullable——rejected 批都照記日期場次；
+--   定時下架落 products，batch 表唔留 delistAt）
+CREATE TABLE IF NOT EXISTS "listingBatches" (
+  id serial PRIMARY KEY,
+  "batchNo" varchar(32) NOT NULL UNIQUE,
+  "liveDate" varchar(8),
+  "liveSession" varchar(16),
+  status varchar(16) NOT NULL,
+  "itemCount" integer NOT NULL DEFAULT 0,
+  "requestedBy" varchar(255),
+  "reviewedBy" varchar(255),
+  "reviewNote" text,
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "updatedAt" timestamp NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS "listingBatchItems" (
+  id serial PRIMARY KEY,
+  "batchId" integer NOT NULL REFERENCES "listingBatches"(id),
+  sku varchar(64) NOT NULL,
+  name varchar(255),
+  price integer,
+  "discountPrice" integer,
+  stock integer,
+  sizes varchar(255),
+  category varchar(32),
+  "imageUrl" varchar(512),
+  "productId" integer,
+  status varchar(16) NOT NULL DEFAULT 'pending',
+  error text,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS listingbatchitems_batch ON "listingBatchItems" ("batchId");
+
 -- 忘記密碼 email 驗證碼（2026-08-04）：6 位碼存 hash，10 分鐘有效，最多試 5 次
 CREATE TABLE IF NOT EXISTS "passwordResetCodes" (
   id serial PRIMARY KEY,

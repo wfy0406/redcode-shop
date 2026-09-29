@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, eq, gt, isNull, like, or, desc } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, like, or, desc } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { cartItems, orderItems, productImageArchive, products } from "@db/schema";
+import { cartItems, listingBatchItems, listingBatches, orderItems, productImageArchive, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
 import { createRouter, publicQuery, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
@@ -30,7 +30,7 @@ function notAutoDelisted() {
  * 商品就算日後刪咗，/api/products/:sku/images 都可以喺檔案庫攞返最後嘅圖。
  * 歸檔失敗唔阻主流程（最壞情況＝回復未加保險前嘅行為），所以 catch 咗淨 log。
  */
-async function archiveProductImages(
+export async function archiveProductImages(
   sku: string,
   name: string | null,
   image: string | null,
@@ -70,6 +70,8 @@ const PRODUCT_FIELD_LABELS: Record<string, string> = {
   isActive: "上架狀態",
   delistEnabled: "定時下架",
   delistAt: "下架時間",
+  liveDate: "直播日期",
+  liveSession: "直播場次",
 };
 
 /** 長內容欄位（圖片網址、描述）：唔列新舊值，淨係講「已更新」 */
@@ -93,6 +95,12 @@ function fmtProductField(key: string, v: unknown): string {
   if (key === "delistAt")
     return v instanceof Date ? fmtDateHK(v, false) : String(v);
   if (key === "category") return productCategoryLabel(String(v));
+  // liveDate 存 YYYYMMDD，顯示返 YYYY-MM-DD 先易睇
+  if (key === "liveDate") {
+    const s = String(v);
+    return /^\d{8}$/.test(s) ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : s;
+  }
+  if (key === "liveSession") return `第${v}場`;
   return String(v);
 }
 
@@ -143,6 +151,9 @@ export const productsRouter = createRouter({
         .object({
           keyword: z.string().optional(),
           category: categorySchema.optional(),
+          // 直播場次篩選（2026-09-29 F8）：liveDate＝YYYYMMDD；liveSession 一定要配 liveDate 先用得
+          liveDate: z.string().regex(/^\d{8}$/).optional(),
+          liveSession: z.string().max(16).optional(),
         })
         .optional(),
     )
@@ -159,12 +170,69 @@ export const productsRouter = createRouter({
       if (input?.category) {
         conditions.push(eq(products.category, input.category));
       }
+      // 場次篩：liveDate 係主鍵；liveSession 淨係配住 liveDate 先有意義（唔單獨篩）
+      if (input?.liveDate) {
+        conditions.push(eq(products.liveDate, input.liveDate));
+        if (input?.liveSession) {
+          conditions.push(eq(products.liveSession, input.liveSession));
+        }
+      }
       return db
         .select()
         .from(products)
         .where(and(...conditions))
         .orderBy(desc(products.listedDate));
     }),
+
+  /**
+   * 直播場次目錄（2026-09-29 F8，Navbar「直播場次」區用）：
+   * 有邊啲直播日期＋每個日期有邊幾場（淨係計上架中＋未自動下架嘅貨）。
+   * 日期新→舊；場次數字序舊→新（第1場先開波）。
+   */
+  liveSessions: publicQuery.query(async () => {
+    const db = getDb();
+    const rows = await db
+      .select({ liveDate: products.liveDate, liveSession: products.liveSession })
+      .from(products)
+      .where(and(eq(products.isActive, true), notAutoDelisted(), isNotNull(products.liveDate)));
+    const byDate = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (!r.liveDate) continue;
+      const set = byDate.get(r.liveDate) ?? new Set<string>();
+      if (r.liveSession) set.add(r.liveSession);
+      byDate.set(r.liveDate, set);
+    }
+    return [...byDate.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0])) // 日期新→舊
+      .map(([liveDate, set]) => ({
+        liveDate,
+        sessions: [...set].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b)),
+      }));
+  }),
+
+  /**
+   * WMS 批量上架紀錄（2026-09-29 F8，後台「上架紀錄」卡用）：
+   * 全部批量（新→舊）連逐件結果——邊個申請、邊個批、每件 sku 成功/失敗都齊。
+   */
+  listingBatches: staffProcedure.query(async () => {
+    const db = getDb();
+    const batches = await db
+      .select()
+      .from(listingBatches)
+      .orderBy(desc(listingBatches.createdAt));
+    if (batches.length === 0) return [];
+    const items = await db
+      .select()
+      .from(listingBatchItems)
+      .where(inArray(listingBatchItems.batchId, batches.map((b) => b.id)));
+    const byBatch = new Map<number, typeof items>();
+    for (const it of items) {
+      const arr = byBatch.get(it.batchId) ?? [];
+      arr.push(it);
+      byBatch.set(it.batchId, arr);
+    }
+    return batches.map((b) => ({ ...b, items: byBatch.get(b.id) ?? [] }));
+  }),
 
   // staff 專用：全部商品（包括下架），俾管理後台用
   adminList: staffProcedure.query(async () => {
@@ -208,6 +276,9 @@ export const productsRouter = createRouter({
         // 定時自動下架：開關 + 時間（選填；開關開咗冇時間＝唔會自動落）
         delistEnabled: z.boolean().optional(),
         delistAt: z.coerce.date().nullable().optional(),
+        // 直播場次商品（2026-09-29 F8）：liveDate＝YYYYMMDD；null/唔填＝普通商品
+        liveDate: z.string().regex(/^\d{8}$/, "直播日期格式係 YYYYMMDD").nullable().optional(),
+        liveSession: z.string().min(1).max(16).nullable().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -217,6 +288,10 @@ export const productsRouter = createRouter({
       });
       if (dup) {
         throw new TRPCError({ code: "CONFLICT", message: "貨號已存在" });
+      }
+      // 場次配對：場次一定要配直播日期（2026-09-29 F8）
+      if (input.liveSession && !input.liveDate) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "直播場次要配埋直播日期" });
       }
       // 員工操作需審批（2026-08-06 Glo 要求）：staff 開審批單，主管/管理員批准先執行
       {
@@ -248,6 +323,8 @@ export const productsRouter = createRouter({
           stock: input.stock ?? 0,
           delistEnabled: input.delistEnabled ?? false,
           delistAt: input.delistAt ?? null,
+          liveDate: input.liveDate ?? null,
+          liveSession: input.liveDate ? (input.liveSession ?? null) : null,
         })
         .returning({ id: products.id });
       // 圖片歸檔：WMS 補舊單圖保險（商品日後刪咗都查得到）
@@ -283,6 +360,9 @@ export const productsRouter = createRouter({
         isActive: z.boolean().optional(),
         delistEnabled: z.boolean().optional(),
         delistAt: z.coerce.date().nullable().optional(),
+        // 直播場次商品（2026-09-29 F8）：liveDate＝YYYYMMDD；null＝清走場次標記（連場次一齊清）
+        liveDate: z.string().regex(/^\d{8}$/, "直播日期格式係 YYYYMMDD").nullable().optional(),
+        liveSession: z.string().min(1).max(16).nullable().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -293,6 +373,16 @@ export const productsRouter = createRouter({
       });
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在" });
+      }
+      // 場次配對（2026-09-29 F8）：liveDate＝null 連場次一齊清；場次唔可以冇日期
+      if (data.liveDate === null) {
+        data.liveSession = null;
+      } else if (
+        data.liveSession &&
+        data.liveDate === undefined &&
+        !existing.liveDate
+      ) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "直播場次要配埋直播日期" });
       }
       // 多相：畀咗 photos 就同步封面 image＝photos[0]（唔准空相簿）；冇畀就唔郁舊相
       if (data.photos !== undefined) {

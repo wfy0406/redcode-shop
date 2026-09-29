@@ -12,6 +12,7 @@ import ReviewWorkbench from '@/components/admin/ReviewWorkbench';
 import OrderList from '@/components/admin/OrderList';
 import PurchaseStats from '@/components/admin/PurchaseStats';
 import ProductManager from '@/components/admin/ProductManager';
+import ListingBatchesCard from '@/components/admin/ListingBatchesCard';
 import PraiseManager from '@/components/admin/PraiseManager';
 import PromoManager from '@/components/admin/PromoManager';
 import MarketingEmailCard from '@/components/admin/MarketingEmailCard';
@@ -158,14 +159,18 @@ function AdminConsole() {
     [reviewOnlinePayment, pushToast, utils],
   );
 
-  /** 訂單狀態操作（F-D）：已確認 → 進行出貨（完成終態）／取消訂單 */
+  /** 訂單狀態操作（F-D）：取消訂單（出貨步驟已移除，server updateStatus 淨係接受 cancelled） */
   const handleStatus = useCallback(
     async (orderId: number, status: 'shipped' | 'cancelled') => {
+      // shipped 係 dead path（UI 已冇出貨掣，server 都唔接受）——擋住唔出 API call
+      if (status !== 'cancelled') {
+        pushToast('出貨步驟已移除：訂單審批後即已確認', 'info');
+        return;
+      }
       setStatusBusyId(orderId);
       try {
         await updateStatus.mutateAsync({ orderId, status });
-        const label = status === 'shipped' ? '已轉做進行出貨' : '已取消訂單';
-        pushToast(label, status === 'cancelled' ? 'info' : 'success');
+        pushToast('已取消訂單', 'info');
         await utils.orders.adminList.invalidate();
       } catch (err) {
         pushToast(errMsg(err), 'error');
@@ -239,7 +244,13 @@ function AdminConsole() {
       />
     ),
     purchase: <PurchaseStats />,
-    products: <ProductManager toast={pushToast} />,
+    // F8：商品 view ＝ ProductManager（新增/編輯/📺直播場次）＋ 下面 ListingBatchesCard（WMS 上架紀錄，唯讀）
+    products: (
+      <div className="space-y-6">
+        <ProductManager toast={pushToast} />
+        <ListingBatchesCard />
+      </div>
+    ),
     praise: <PraiseManager toast={pushToast} />,
     promo: <PromoManager toast={pushToast} />,
     marketing: <MarketingEmailCard toast={pushToast} />,

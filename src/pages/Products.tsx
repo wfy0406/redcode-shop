@@ -95,18 +95,34 @@ export default function Products() {
       : 'all';
     setCategory((cur) => (cur === valid ? cur : valid));
   }, [searchParams]);
+  // 直播場次同網址 ?liveDate=&liveSession= 雙向同步（2026-09-29 F8）：
+  // Navbar「📺 直播場次」連結／直接貼網址都篩到嗰場貨。liveSession 一定要配 liveDate。
+  const [liveDate, setLiveDate] = useState(() => {
+    const d = searchParams.get('liveDate') ?? '';
+    return /^\d{8}$/.test(d) ? d : '';
+  });
+  const [liveSession, setLiveSession] = useState(() => searchParams.get('liveSession') ?? '');
+  useEffect(() => {
+    const d = searchParams.get('liveDate') ?? '';
+    const validD = /^\d{8}$/.test(d) ? d : '';
+    const validS = validD ? (searchParams.get('liveSession') ?? '') : '';
+    setLiveDate((cur) => (cur === validD ? cur : validD));
+    setLiveSession((cur) => (cur === validS ? cur : validS));
+  }, [searchParams]);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   // 指定日期（YYYY-MM-DD）：揀咗就蓋過上面嘅範圍 chips（今日/近3日嗰啲）
   const [pickedDate, setPickedDate] = useState('');
   const kw = keyword.trim();
 
-  // 主查詢：server 按 keyword 篩名稱/描述、按 category 篩類別；keepPreviousData 避免打字時格網閃爍重排
+  // 主查詢：server 按 keyword 篩名稱/描述、按 category 篩類別、按 liveDate+liveSession 篩場次（F8）；
+  // keepPreviousData 避免打字時格網閃爍重排
   const listInput = {
     ...(kw ? { keyword: kw } : {}),
     ...(category !== 'all' ? { category } : {}),
+    ...(liveDate ? { liveDate, ...(liveSession ? { liveSession } : {}) } : {}),
   };
   const listQuery = trpc.products.list.useQuery(
-    kw || category !== 'all' ? listInput : undefined,
+    kw || category !== 'all' || liveDate ? listInput : undefined,
     {
       placeholderData: keepPreviousData,
       retry: false,
@@ -135,9 +151,12 @@ export default function Products() {
         );
       }
       if (category !== 'all') demo = demo.filter((p) => p.category === category);
-      demo = demo.filter((p) =>
-        pickedDate ? sameLocalDay(p.listedDate, pickedDate) : matchDateFilter(p.listedDate, dateFilter),
-      );
+      // 場次篩選係 server 做（demo 模式冇場次數據，唔郁 demo 嘅日期篩）
+      if (!liveDate) {
+        demo = demo.filter((p) =>
+          pickedDate ? sameLocalDay(p.listedDate, pickedDate) : matchDateFilter(p.listedDate, dateFilter),
+        );
+      }
       if (sort === 'price-asc') demo.sort((a, b) => effectivePrice(a) - effectivePrice(b));
       else if (sort === 'price-desc') demo.sort((a, b) => effectivePrice(b) - effectivePrice(a));
       return demo;
@@ -153,19 +172,30 @@ export default function Products() {
       }
     }
     let list = [...merged.values()];
-    // 上架日期篩選（client-side，同類別篩選疊加；指定日期優先過範圍 chips）
-    list = list.filter((p) =>
-      pickedDate ? sameLocalDay(p.listedDate, pickedDate) : matchDateFilter(p.listedDate, dateFilter),
-    );
+    // 上架日期篩選（client-side，同類別篩選疊加；指定日期優先過範圍 chips）；
+    // 場次篩選生效時唔再疊上架日期篩（server 已按場次出貨，再篩會令人以為冇貨）
+    if (!liveDate) {
+      list = list.filter((p) =>
+        pickedDate ? sameLocalDay(p.listedDate, pickedDate) : matchDateFilter(p.listedDate, dateFilter),
+      );
+    }
     if (sort === 'price-asc') list.sort((a, b) => effectivePrice(a) - effectivePrice(b));
     else if (sort === 'price-desc') list.sort((a, b) => effectivePrice(b) - effectivePrice(a));
     // 'latest'：server 已按 listedDate desc 排
     return list;
-  }, [kw, sort, category, dateFilter, pickedDate, listQuery.data, listQuery.isError, allQuery.data]);
+  }, [kw, sort, category, dateFilter, pickedDate, liveDate, liveSession, listQuery.data, listQuery.isError, allQuery.data]);
 
   const isInitialLoading = listQuery.isLoading && !listQuery.data;
-  const gridRef = useRevealDep<HTMLDivElement>([kw, category, dateFilter, pickedDate, products.length]);
-  const filtering = kw || category !== 'all' || dateFilter !== 'all' || pickedDate !== '';
+  const gridRef = useRevealDep<HTMLDivElement>([kw, category, dateFilter, pickedDate, liveDate, liveSession, products.length]);
+  const filtering = kw || category !== 'all' || dateFilter !== 'all' || pickedDate !== '' || liveDate !== '';
+  // 場次篩選生效時嘅顯示（「📺 2026年9月29日 · 第1場」）
+  const liveDateLabel = liveDate
+    ? `${liveDate.slice(0, 4)}年${Number(liveDate.slice(4, 6))}月${Number(liveDate.slice(6, 8))}日`
+    : '';
+  const clearLiveFilter = () => {
+    // 「睇全部商品」：清走場次參數（類別篩選保留）
+    setSearchParams(category !== 'all' ? { category } : {}, { replace: true });
+  };
 
   return (
     <section className="mx-auto max-w-[1280px] px-5 py-16 md:px-8 md:py-24 xl:px-12">
@@ -176,6 +206,33 @@ export default function Products() {
           {introTitle}
         </h1>
       </header>
+
+      {/* 📺 直播場次 banner（2026-09-29 F8）：URL 有 liveDate 先顯示，附「睇全部商品」清除制 */}
+      {liveDate && (
+        <div
+          className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5"
+          style={{
+            background: 'var(--glass-bg)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            borderColor: 'var(--purple-text)',
+          }}
+          role="status"
+        >
+          <p className="font-serif-tc text-[17px] font-semibold text-txt-1">
+            📺 {liveDateLabel}
+            {liveSession ? ` · 第${liveSession}場` : ''} 直播商品
+          </p>
+          <button
+            type="button"
+            onClick={clearLiveFilter}
+            className="rounded-full border px-4 py-1.5 text-[13px] font-bold text-txt-2 transition-colors hover:border-pink-soft hover:text-txt-1"
+            style={{ borderColor: 'var(--glass-border)' }}
+          >
+            睇全部商品
+          </button>
+        </div>
+      )}
 
       {/* 玻璃工具列：搜尋框 + 排序 */}
       <div
@@ -344,14 +401,18 @@ export default function Products() {
           <p className="font-serif-tc text-xl font-semibold text-txt-1">
             {kw
               ? `搵唔到同「${kw}」相關嘅商品`
-              : filtering
-                ? '呢個篩選組合暫時冇商品'
-                : '暫時未有商品上架'}
+              : liveDate
+                ? '呢場暫未上架商品'
+                : filtering
+                  ? '呢個篩選組合暫時冇商品'
+                  : '暫時未有商品上架'}
           </p>
           <p className="max-w-sm text-sm text-txt-3">
-            {kw || filtering
-              ? '試下其他關鍵字，或者清除篩選睇返全部商品。'
-              : '遲啲再嚟睇下，Glo Glo 會繼續上架新貨。'}
+            {liveDate
+              ? '呢場直播嘅貨仲未上好，遲啲再嚟睇下。'
+              : kw || filtering
+                ? '試下其他關鍵字，或者清除篩選睇返全部商品。'
+                : '遲啲再嚟睇下，Glo Glo 會繼續上架新貨。'}
           </p>
           {filtering && (
             <button
@@ -361,6 +422,7 @@ export default function Products() {
                 setCategory('all');
                 setDateFilter('all');
                 setPickedDate('');
+                clearLiveFilter();
               }}
               className="btn btn-secondary mt-2 !py-2.5 text-sm"
             >
@@ -375,6 +437,7 @@ export default function Products() {
             {kw ? `（關鍵字「${kw}」）` : ''}
             {category !== 'all' ? `（${PRODUCT_CATEGORIES.find((c) => c.value === category)?.label ?? ''}）` : ''}
             {pickedDate ? `（${pickedDate} 上架）` : ''}
+            {liveDate ? `（📺 ${liveDateLabel}${liveSession ? ` 第${liveSession}場` : ''}）` : ''}
           </p>
 
           {/* 商品格網 §4.1：4 / 3 / 2 欄；篩選時 300ms opacity 過渡 */}

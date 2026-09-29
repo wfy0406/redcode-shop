@@ -11,6 +11,7 @@ import { userFromAuthHeader } from "./auth";
 import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
+import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
 import { and, eq } from "drizzle-orm";
@@ -42,6 +43,11 @@ app.post("/api/wms/review-callback", wmsReviewCallback);
 
 // WMS → 官網退款回調（2026-09 F7 原路退款；同樣 shared secret 驗證）
 app.post("/api/wms/refund-callback", wmsRefundCallback);
+
+// WMS → 官網批量上架（2026-09-29 F8 直播場次制；同樣 shared secret 驗證）：
+// 手動上傳貨圖（multipart）＋ 批量推送（批准 execute／拒絕 reject）
+app.post("/api/wms/listing-image", listingImageUpload);
+app.post("/api/wms/listing-batch", wmsListingBatch);
 
 // Airwallex 網上付款（2026-09 F5）——兩條 route 都喺 tRPC mount 前註冊：
 // ① HPP 回跳中轉：Airwallex 俾完錢會 GET 跳返呢度；因為前端係 HashRouter，
