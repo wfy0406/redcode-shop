@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { MapPin, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, MapPin, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { LoadingBlock } from './WishingStar';
 import type { ToastKind } from './useToasts';
@@ -33,6 +33,9 @@ const inputCls =
   'h-10 w-full rounded-lg border border-space-line bg-space-1 px-3 text-[13px] text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none';
 const labelCls = 'mb-1 block text-[11px] text-txt-3';
 const selectCls = inputCls;
+
+/** v2.1.1（2026-09-30 老闆指示）：列表 100 筆一頁 */
+const PAGE_SIZE = 100;
 
 /** 新增／編輯站點 inline form（編輯時 id 唯讀） */
 function StationForm({
@@ -214,6 +217,8 @@ export default function StationManager({
   const [q, setQ] = useState('');
   // formOpen：null＝收埋；'new'＝新增；StationRow＝編輯緊嗰個
   const [editing, setEditing] = useState<StationRow | 'new' | null>(null);
+  // 分頁（100 筆一頁）
+  const [page, setPage] = useState(1);
 
   const listQuery = trpc.vip.adminListStations.useQuery();
   const stations = useMemo(() => (listQuery.data ?? []) as StationRow[], [listQuery.data]);
@@ -231,6 +236,18 @@ export default function StationManager({
           (s.address ?? '').toLowerCase().includes(term)),
     );
   }, [stations, regionFilter, typeFilter, q]);
+
+  // 篩選／搜尋一變就返第 1 頁，唔會剩喺舊頁數
+  useEffect(() => {
+    setPage(1);
+  }, [regionFilter, typeFilter, q]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageSafe = Math.min(page, totalPages); // 資料縮水（停用/刪除）時夾返實
+  const pageRows = useMemo(
+    () => filtered.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE),
+    [filtered, pageSafe],
+  );
 
   const upsert = trpc.vip.upsertStation.useMutation({
     onSuccess: (r) => {
@@ -430,7 +447,7 @@ export default function StationManager({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((s) => (
+              {pageRows.map((s) => (
                 <tr
                   key={s.id}
                   className="border-b transition-colors last:border-0 hover:bg-white/5"
@@ -506,6 +523,42 @@ export default function StationManager({
               ))}
             </tbody>
           </table>
+          {/* 分頁列：100 筆一頁 */}
+          {totalPages > 1 && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="font-mono text-[12px] text-txt-3">
+                第 {(pageSafe - 1) * PAGE_SIZE + 1}–{Math.min(pageSafe * PAGE_SIZE, filtered.length)} 個
+                ・共 {filtered.length} 個站
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPage(pageSafe - 1)}
+                  disabled={pageSafe <= 1}
+                  aria-label="上一頁"
+                  className="inline-flex min-h-9 items-center gap-1 rounded-lg border px-3 text-[12px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-40"
+                  style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                >
+                  <ChevronLeft size={14} aria-hidden="true" />
+                  上一頁
+                </button>
+                <span className="min-w-[72px] text-center font-mono text-[12px] text-txt-2">
+                  {pageSafe} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage(pageSafe + 1)}
+                  disabled={pageSafe >= totalPages}
+                  aria-label="下一頁"
+                  className="inline-flex min-h-9 items-center gap-1 rounded-lg border px-3 text-[12px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-40"
+                  style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                >
+                  下一頁
+                  <ChevronRight size={14} aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </section>

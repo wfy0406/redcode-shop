@@ -267,7 +267,16 @@ export default function Vip() {
               <Link to="/register" className="btn btn-primary btn-pulse">
                 免費註冊做會員
               </Link>
-              <a href="#tiers" className="btn btn-secondary">
+              {/* v2.1.1 修正：本站係 HashRouter，href="#tiers" 會被當成路由跳轉（冇呢條 route → 黑屏），
+                  改用 preventDefault＋scrollIntoView 純捲動，唔郁 location.hash */}
+              <a
+                href="#tiers"
+                className="btn btn-secondary"
+                onClick={(e) => {
+                  e.preventDefault();
+                  document.getElementById('tiers')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+              >
                 睇三級會員福利
               </a>
             </div>

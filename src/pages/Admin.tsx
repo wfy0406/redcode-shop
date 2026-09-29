@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Crown, Images, LayoutList, ListChecks, LogIn, Mail, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Crown, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -45,8 +45,10 @@ type ViewKey =
   | 'promo'
   | 'marketing'
   | 'members'
-  // v2.1.0（VIP+免運，2026-09-29）：VIP/免運規則＋順豐站點管理（admin only）
+  // v2.1.0（VIP+免運，2026-09-29）：VIP/免運規則（admin only）
   | 'vip'
+  // v2.1.1（2026-09-30 老闆指示）：順豐站點維護由 VIP 頁拆出，獨立一頁（admin only）
+  | 'stations'
   | 'staff'
   | 'audit';
 
@@ -208,9 +210,13 @@ function AdminConsole() {
     // 會員列表（2026-08-06 三級制）：主管同員工都入得——員工改會員資料要主管/管理員審批；
     // 刪會員仍然 admin only（MemberList 入面 canDelete 擋）
     { key: 'members', label: '會員', icon: <Users size={17} aria-hidden="true" /> },
-    // VIP＋免運規則＋順豐站點管理只限最高管理員（admin；後端 settings/vip admin API 都係 adminProcedure）
+    // VIP＋免運規則只限最高管理員（admin；後端 settings/vip admin API 都係 adminProcedure）
     ...(isAdmin
       ? [{ key: 'vip' as ViewKey, label: 'VIP 設定', icon: <Crown size={17} aria-hidden="true" /> }]
+      : []),
+    // 順豐站點維護獨立一頁（2026-09-30 老闆指示：唔好放入 VIP 設定到）
+    ...(isAdmin
+      ? [{ key: 'stations' as ViewKey, label: '順豐站點維護', icon: <MapPin size={17} aria-hidden="true" /> }]
       : []),
     // 員工帳號管理只限最高管理員（admin）
     ...(isAdmin
@@ -264,13 +270,11 @@ function AdminConsole() {
     marketing: <MarketingEmailCard toast={pushToast} />,
     members: <MemberList toast={pushToast} />,
     vip: isAdmin ? (
-      <div className="space-y-6">
-        <VipSettingsPanel toast={pushToast} />
-        <StationManager toast={pushToast} />
-      </div>
+      <VipSettingsPanel toast={pushToast} />
     ) : (
       ADMIN_ONLY_HINT
     ),
+    stations: isAdmin ? <StationManager toast={pushToast} /> : ADMIN_ONLY_HINT,
     approvals: <ApprovalCenter toast={pushToast} />,
     staff: isAdmin ? <StaffManager toast={pushToast} /> : ADMIN_ONLY_HINT,
     audit: isAdmin ? <AuditLog /> : ADMIN_ONLY_HINT,
