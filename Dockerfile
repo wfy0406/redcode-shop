@@ -3,6 +3,12 @@ FROM node:20
 
 WORKDIR /app
 
+# v2.2.0：VIP 晉升恭賀信用 sharp 即場畫 SVG→JPG，容器要有中文字型
+# （fonts-noto-cjk 提供 Noto Serif/Sans CJK TC）；冇字型中文會變豆腐格
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fonts-noto-cjk \
+  && rm -rf /var/lib/apt/lists/*
+
 # node:20 自帶 npm 10.8 有「Exit handler never called」bug，先升級 npm
 RUN npm install -g npm@11 --no-audit --no-fund
 

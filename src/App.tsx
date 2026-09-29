@@ -17,6 +17,8 @@ import Privacy from '@/pages/Privacy';
 import Terms from '@/pages/Terms';
 import Admin from '@/pages/Admin';
 import Vip from '@/pages/Vip'; // v2.1.0：會員制度介紹頁
+import VipVerify from '@/pages/VipVerify'; // v2.2.0：公開會員證書驗證頁
+import SfStations from '@/pages/SfStations'; // v2.2.0：公開順豐站點查詢頁
 
 /**
  * Routing contract：Nested-route pattern（react-dev.md Pattern B）
@@ -33,6 +35,8 @@ export default function App() {
         <Route path="live" element={<Live />} />
         <Route path="about" element={<About />} />
         <Route path="vip" element={<Vip />} />
+        <Route path="/vip-verify" element={<VipVerify />} />
+        <Route path="/sf-stations" element={<SfStations />} />
         <Route path="login" element={<Login />} />
         <Route path="register" element={<Register />} />
         <Route path="cart" element={<Cart />} />

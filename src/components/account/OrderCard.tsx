@@ -3,7 +3,8 @@ import { Link } from 'react-router';
 import { Receipt, Ticket } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
-import VipBadge, { normalizeVipTier } from '@/components/VipBadge';
+import { normalizeVipTier } from '@/components/VipBadge';
+import { vipTierTheme } from '@/lib/vipTheme';
 import StatusBadge from './StatusBadge';
 import OrderTimeline from './OrderTimeline';
 import PaymentProofDropzone from './PaymentProofDropzone';
@@ -158,6 +159,8 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
 
   // v2.1.0：落單當刻嘅 VIP 級別（舊單冇呢個欄 → 當普通會員，唔出 badge）
   const vipTier = normalizeVipTier(order.vipTierAtPurchase);
+  // v2.2.0 級別格調：seal chip＋卡邊 accent tint 一律由 vipTheme.ts 出
+  const vipTheme = vipTierTheme(vipTier);
   // VIP 折扣（DB 存整數仙 → 顯示港元）；0 就唔顯示
   const vipDiscount = Math.round((order.vipDiscountCents ?? 0) / 100);
   // 運費標記：免運 ✓（金）；澳門／國外非免運 → 灰「順豐到付」；香港到付同舊單唔加，保持卡面簡潔
@@ -174,7 +177,8 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         background: 'var(--glass-bg)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        borderColor: 'var(--glass-border)',
+        // v2.2.0：VIP 單卡邊用級別 accent（55% 透明度，克制唔搶戲）；普通會員維持玻璃邊
+        borderColor: vipTheme.isVip ? `${vipTheme.accent}8c` : 'var(--glass-border)',
         ...(refundGrayed ? { opacity: 0.6, filter: 'grayscale(0.5)' } : {}),
       }}
       aria-label={`訂單 ${order.orderNo}`}
@@ -198,8 +202,12 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
             <Receipt size={13} aria-hidden="true" />
             單據
           </Link>
-          {/* v2.1.0：落單當刻 VIP 級別（普通會員唔出，唔逼版面） */}
-          {vipTier !== 'NONE' && <VipBadge tier={vipTier} size="sm" />}
+          {/* v2.2.0：落單當刻 VIP 級別 seal chip（vipTheme chipClass；普通會員唔出，唔逼版面） */}
+          {vipTheme.isVip && (
+            <span className={vipTheme.chipClass} title={`落單級別：${vipTheme.label}`}>
+              {vipTheme.seal} {vipTheme.shortLabel}
+            </span>
+          )}
           <StatusBadge status={order.status} />
         </span>
       </div>

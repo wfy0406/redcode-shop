@@ -25,6 +25,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { buildVipCertJpeg, buildVipVerifyUrl } from "./vipCert";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 /* ── 精裝紙單色板（同 WMS BillPage §0 設計錨逐字對齊） ── */
@@ -110,7 +111,8 @@ function fmtDeliveryWithVip(d: OrderEmailDelivery, label?: string | null): strin
   return fmtDelivery(d) + (label ? `（${escapeHtml(label)}）` : "");
 }
 
-function siteUrl(): string {
+/** 官網地址（email 連結／VIP 證書驗證 QR 都用呢個；export 畀 vip.ts／membersRouter.ts 砌 verifyUrl 用，口徑一致） */
+export function siteUrl(): string {
   return (process.env.SITE_URL || "https://redcode.red").replace(/\/+$/, "");
 }
 
@@ -1053,18 +1055,24 @@ export async function sendOrderRefundedEmail(args: {
   }
 }
 
-/* ───────────────────────── VIP 晉升恭賀信（v2.1.1 Wave 2，2026-09-30） ───────────────────────── */
+/* ──────────────────── VIP 晉升恭賀信（v2.2.0 個人化恭賀信，2026-09-30） ──────────────────── */
 
 /**
  * VIP 晉升恭賀信（老闆原話：「晉升為vip每一級要收到一封好靚既電郵，要有附件圖片，
- * 係晉升會員恭賀信，email要列明會員期限，簽署係係Gloria。內容要提及客人係有份成就redcode」）。
+ * 係晉升會員恭賀信，email要列明會員期限，簽署係係Gloria。內容要提及客人係有份成就redcode」；
+ * v2.2.0 追加：「張相要係一封晉升恭賀信，要有會員編號、客戶電話、客戶名、會員期限，
+ * 跟住要有gloria簽名（你整個潦草簽名）」）。
  *
  * ─ 觸發：vip.ts recomputeVipTier 真・升級（NONE→SILVER/GOLD、SILVER→GOLD）＋
  *   membersRouter setVipTier 手動升級；同級續期／降級唔寄。
  * ─ 模板：brandedEmail 精裝紙單；內嵌 ${site}/email/vip-upgrade-{silver,gold}.jpg
- *   （圖放 public/email/，vite build 會抄落 dist/public/email/）。
- * ─ 附件：同一張圖做 base64 附件（RedCode-VIP-silver.jpg / RedCode-VIP-gold.jpg）；
- *   runtime fs 讀唔到 → console.warn 照寄（唔准因附件失敗而唔寄）。
+ *   （圖放 public/email/，vite build 會抄落 dist/public/email/）；落款有
+ *   gloria-sign.png 手寫簽名圖＋「Gloria 上」。
+ * ─ 附件（v2.2.0 證書版）：個人化「會員證書」JPG（vipCert.ts 取代 vipLetter.ts——
+ *   證書底圖＋客戶名／會員編號／客戶電話／級別／消費成就／生效日期／有效期至／
+ *   會員期限／專屬禮遇＋左下 QR 驗證碼＋右下 Gloria 潦草簽名）；
+ *   生成失敗（冇 sharp／冇中文字型／回 null）→ 跌落靜態花咭附件；再失敗 → 唔附圖照寄。
+ *   無論如何唔准因附件失敗而唔寄。
  * ─ never-throw：同其他 sendXxxEmail 一致。
  */
 export async function sendVipUpgradeEmail(args: {
@@ -1073,13 +1081,22 @@ export async function sendVipUpgradeEmail(args: {
   tier: "SILVER" | "GOLD";
   effectiveAt: Date;
   expiresAt: Date;
+  memberNo: string; // v2.2.0：會員編號（RC-000128 款），寫入證書圖＋infoBox
+  phone: string | null; // v2.2.0：客戶電話，寫入證書圖
+  /** v2.2.0 證書版：呢級嘅年度消費門檻（整數仙，證書顯示時先除 100） */
+  thresholdCents: number;
+  /** v2.2.0 證書版：會籍期限（月，rules.durationMonths） */
+  durationMonths: number;
+  /** v2.2.0 證書版：驗證連結（QR 內容，caller 用 buildVipVerifyUrl(siteUrl(), memberNo) 砌） */
+  verifyUrl: string;
 }): Promise<SendResult> {
   try {
     const site = siteUrl();
     const isGold = args.tier === "GOLD";
     const tierLabel = isGold ? "VIP 金會員" : "VIP 銀會員";
     const imgFile = isGold ? "vip-upgrade-gold.jpg" : "vip-upgrade-silver.jpg";
-    const attachmentName = isGold ? "RedCode-VIP-gold.jpg" : "RedCode-VIP-silver.jpg";
+    // v2.2.0 證書版：附件檔名跟合約「RedCode-會員證書-{金會員|銀會員}-{memberNo}.jpg」
+    const attachmentName = `RedCode-會員證書-${isGold ? "金會員" : "銀會員"}-${args.memberNo}.jpg`;
     // 禮遇 recap（同後台 VIP 規則預設一致；改咗規則都係以結帳時為準，信內寫到明）
     const benefits = isGold
       ? ["全年所有訂單 <b>9 折</b>", "全年<b>免運</b>（一件都免，僅限順豐站及自提點）"]
@@ -1093,6 +1110,7 @@ export async function sendVipUpgradeEmail(args: {
         style="display:block;width:100%;max-width:100%;height:auto;margin:22px 0;" />
       ${infoBox([
         ["會員級別", `<span style="color:${GOLD};">${tierLabel} ✦</span>`],
+        ["會員編號", escapeHtml(args.memberNo)],
         ["生效日期", fmtDateHK(args.effectiveAt)],
         ["有效期至", fmtDateHK(args.expiresAt)],
         ["會員期限", "由生效日起計一年"],
@@ -1110,30 +1128,56 @@ export async function sendVipUpgradeEmail(args: {
       </table>
       ${note("期限內級別唔會降；到期後會按你嗰年嘅消費重新判定。實際折扣同免運規則以結帳時官網顯示為準。")}
       ${ctaButton("睇我嘅會員制度", `${site}/#/vip`)}
-      <p style="margin:22px 0 0;">多謝你 ♥<br />Gloria 上</p>
+      <p style="margin:22px 0 0;">多謝你 ♥</p>
+      <img src="${site}/email/gloria-sign.png" alt="Gloria 簽名" width="168"
+        style="display:block;width:168px;height:auto;margin:10px 0 2px;" />
+      <p style="margin:0;">Gloria 上</p>
     `;
 
-    // 恭賀圖做 base64 附件（唔係淨係內嵌連結——老闆要求「要有附件圖片」）。
-    // 候選路徑：production 靜態檔 serve 自 ./dist/public（見 api/lib/vite.ts serveStatic root），
-    // dev 就喺 ./public；再包兩個 import.meta.dirname 相對路徑做保險（bundle 後目錄結構唔同都攞到）。
-    // 讀唔到 → console.warn 照寄，唔准因附件失敗而唔寄。
+    // v2.2.0 證書版：附件 = 個人化「會員證書」（vipCert.ts 用 sharp 即場畫：客戶名／
+    // 會員編號／電話／級別／消費成就／生效／到期／期限／禮遇＋QR 驗證碼＋Gloria 潦草簽名）。
+    // buildVipCertJpeg never-throw（失敗回 null）；呢度照包 try 防意外，
+    // 證書返 null／出錯 → 跌落靜態花咭附件；再失敗 → 唔附圖照寄。
+    // 無論如何唔准因附件失敗而唔寄。
     let attachments: { filename: string; content: string }[] | undefined;
     try {
-      const candidates = [
-        path.resolve(process.cwd(), "dist/public/email", imgFile),
-        path.resolve(process.cwd(), "public/email", imgFile),
-        path.resolve(import.meta.dirname, "../dist/public/email", imgFile),
-        path.resolve(import.meta.dirname, "../../dist/public/email", imgFile),
-        path.resolve(import.meta.dirname, "../public/email", imgFile),
-      ];
-      const found = candidates.find((p) => fs.existsSync(p));
-      if (found) {
-        attachments = [{ filename: attachmentName, content: fs.readFileSync(found).toString("base64") }];
-      } else {
-        console.warn(`[email] VIP 恭賀圖附件搵唔到（${imgFile}），照寄唔附圖；試過嘅路徑：${candidates.join(" , ")}`);
+      const cert = await buildVipCertJpeg({
+        name: args.name,
+        memberNo: args.memberNo,
+        phone: args.phone,
+        tier: args.tier,
+        effectiveAt: args.effectiveAt,
+        expiresAt: args.expiresAt,
+        thresholdCents: args.thresholdCents,
+        durationMonths: args.durationMonths,
+        verifyUrl: args.verifyUrl || buildVipVerifyUrl(site, args.memberNo),
+      });
+      if (cert) {
+        attachments = [{ filename: attachmentName, content: cert.toString("base64") }];
       }
     } catch (e) {
-      console.warn(`[email] 讀 VIP 恭賀圖附件失敗（${imgFile}），照寄唔附圖:`, e);
+      console.warn("[email] 個人化會員證書生成出錯，試跌落靜態花咭:", e);
+    }
+    if (!attachments) {
+      try {
+        const candidates = [
+          path.resolve(process.cwd(), "dist/public/email", imgFile),
+          path.resolve(process.cwd(), "public/email", imgFile),
+          path.resolve(import.meta.dirname, "../dist/public/email", imgFile),
+          path.resolve(import.meta.dirname, "../../dist/public/email", imgFile),
+          path.resolve(import.meta.dirname, "../public/email", imgFile),
+        ];
+        const found = candidates.find((p) => fs.existsSync(p));
+        if (found) {
+          const fallbackName = isGold ? "RedCode-VIP-gold.jpg" : "RedCode-VIP-silver.jpg";
+          attachments = [{ filename: fallbackName, content: fs.readFileSync(found).toString("base64") }];
+          console.warn(`[email] 個人化會員證書整唔到，今次用靜態花咭附件（${imgFile}）`);
+        } else {
+          console.warn(`[email] VIP 恭賀圖附件搵唔到（${imgFile}），照寄唔附圖；試過嘅路徑：${candidates.join(" , ")}`);
+        }
+      } catch (e) {
+        console.warn(`[email] 讀 VIP 恭賀圖附件失敗（${imgFile}），照寄唔附圖:`, e);
+      }
     }
 
     return await sendEmail({

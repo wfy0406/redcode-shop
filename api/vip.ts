@@ -4,7 +4,7 @@
  * 業務規則（後台全部改得，存 siteSettings，見下面兩個 SETTING_KEY）：
  * ─ VIP：本年度（calendar year，香港時區 UTC+8）已付款訂單總額達門檻即升級——
  *    滿 silverThresholdCents（預設 $3000）→ 銀會員（全年 92 折，silverDiscountBps=9200）；
- *    滿 goldThresholdCents（預設 $5000）→ 金會員（全年 9 折，goldDiscountBps=9000 ＋
+ *    滿 goldThresholdCents（預設 $8000，v2.2.0 起）→ 金會員（全年 9 折，goldDiscountBps=9000 ＋
  *    全年免運，僅限順豐站及自提點，一件都免）。
  *    期限＝生效日起 durationMonths 個月（預設 12）；金蓋銀重新計期；期限內唔准降級；
  *    過期後按當年消費重新判定。每次訂單轉「已確認 approved」後重算（ordersRouter／wmsSync hook）。
@@ -26,7 +26,9 @@ import { and, eq, gte, lt, sql, notInArray } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { cartItems, orders, sfStations, siteSettings, users } from "@db/schema";
 import { resolvePromoDiscount } from "./promoRouter";
-import { sendVipUpgradeEmail } from "./email";
+import { sendVipUpgradeEmail, siteUrl } from "./email";
+import { buildVipVerifyUrl } from "./vipCert";
+import { forwardMemberToWms } from "./wmsMemberSync";
 
 // ───────────────────────────── 地區／取貨方式正規化 ─────────────────────────────
 
@@ -79,7 +81,7 @@ export const SHIPPING_RULES_SETTING_KEY = "shipping_rules";
 export interface VipRules {
   /** 銀會員年度消費門檻（仙）＝ $3000 */
   silverThresholdCents: number;
-  /** 金會員年度消費門檻（仙）＝ $5000 */
+  /** 金會員年度消費門檻（仙）＝ $8000（v2.2.0 起，老闆 2026-09-30 指令） */
   goldThresholdCents: number;
   /** 銀會員付款比率 bps：9200 ＝ 俾 92%（即 92 折） */
   silverDiscountBps: number;
@@ -100,7 +102,8 @@ export interface ShippingRules {
 
 export const DEFAULT_VIP_RULES: VipRules = {
   silverThresholdCents: 300000,
-  goldThresholdCents: 500000,
+  // v2.2.0：金會員門檻 $5000 → $8000（老闆 2026-09-30 指令，全網跟後台呢個預設）
+  goldThresholdCents: 800000,
   silverDiscountBps: 9200,
   goldDiscountBps: 9000,
   durationMonths: 12,
@@ -286,30 +289,51 @@ export async function recomputeVipTier(
     // 過期又唔夠標：落返普通會員（生效／到期時間留底做紀錄）
     if (current === "NONE") return { tier: "NONE", changed: false };
     await db.update(users).set({ vipTier: "NONE" }).where(eq(users.id, userId));
+    // v2.2.0：級別有變 → 推送最新 VIP 級別去 WMS（fire-and-forget，失敗淨 log 唔阻流程）
+    void forwardMemberToWms(userId).catch((e) => console.error("[wms] VIP 級別同步 error:", e));
     return { tier: "NONE", changed: true };
   }
   const expiresAt = addMonths(now, rules.durationMonths);
+  // v2.2.0 門檻凍結：發證書嘅升級 transition（rank 升：NONE→銀/金、銀→金）先寫
+  // 「升級嗰刻嘅門檻」快照（證書成就行用呢個，之後後台改門檻證書唔郁）；
+  // 同級續期唔郁舊快照，過期／降級落 NONE 亦唔清（歷史留念）。
+  const isUpgrade = rank(next) > rank(current);
   await db
     .update(users)
     .set({
       vipTier: next,
       vipEffectiveAt: now,
       vipExpiresAt: expiresAt,
+      ...(isUpgrade
+        ? {
+            vipThresholdCents:
+              next === "GOLD" ? rules.goldThresholdCents : rules.silverThresholdCents,
+          }
+        : {}),
     })
     .where(eq(users.id, userId));
   // v2.1.1（Wave 2）：真・升級（級別 rank 升：NONE→SILVER/GOLD、SILVER→GOLD）先寄恭賀信；
   // 同級續期（過期後重判返同級）唔准再寄；降級唔寄。DB commit 完先 void 寄，寄信失敗唔影響級別。
   if (rank(next) > rank(current) && user.email) {
+    const memberNo = `RC-${String(user.id).padStart(6, "0")}`;
     void sendVipUpgradeEmail({
       to: user.email,
       name: user.name,
       tier: next,
       effectiveAt: now,
       expiresAt,
+      memberNo,
+      phone: user.phone ?? null,
+      // v2.2.0 證書版：證書附件要齊門檻（呢級嘅年度消費門檻，整數仙）／期限／驗證連結
+      thresholdCents: next === "GOLD" ? rules.goldThresholdCents : rules.silverThresholdCents,
+      durationMonths: rules.durationMonths,
+      verifyUrl: buildVipVerifyUrl(siteUrl(), memberNo),
     }).then((r) => {
       if (!r.ok) console.error(`[vip] 晉升恭賀信寄唔出（會員 #${userId} → ${next}）：`, r.error);
     }).catch((e) => console.error("[vip] 晉升恭賀信寄送錯誤:", e));
   }
+  // v2.2.0：升級／金蓋銀成功 → 推送最新 VIP 級別去 WMS（fire-and-forget，失敗淨 log 唔阻流程）
+  void forwardMemberToWms(userId).catch((e) => console.error("[wms] VIP 級別同步 error:", e));
   return { tier: next, changed: true };
 }
 

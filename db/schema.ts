@@ -9,6 +9,7 @@ import {
   boolean,
   bigint,
   jsonb,
+  doublePrecision,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -72,6 +73,15 @@ export const users = pgTable("users", {
   vipTier: varchar("vipTier", { length: 8 }).notNull().default("NONE"),
   vipEffectiveAt: timestamp("vipEffectiveAt"),
   vipExpiresAt: timestamp("vipExpiresAt"),
+  // v2.2.0 門檻凍結（老闆 2026-09-30 指令）：升級嗰刻嘅年度消費門檻快照（整數仙），
+  // 證書成就行用呢個——之後後台改門檻，已升級會員嘅證書唔郁；
+  // 降級／過期落 NONE 唔清（歷史留念）；舊會員由 boot-migrate backfill。
+  vipThresholdCents: integer("vipThresholdCents"),
+  // ===== v2.2.0（直播開播推送通知，老闆 2026-09-30 指令）=====
+  // 會員主動剔選「接收直播開播通知」先算 true（沉默唔當同意，跟 marketingOptIn 同款做法）；
+  // 同意嗰刻記落 livePushOptInAt；會員中心／註銷訂閱後冇 active 裝置會落返 false。
+  livePushOptIn: boolean("livePushOptIn").notNull().default(false),
+  livePushOptInAt: timestamp("livePushOptInAt"),
   // 預設收件地區（2026-09-29 v2.1.0）：'HK' 香港｜'MO' 澳門｜'OVERSEAS' 國外；
   // 結帳自動帶入（客人照樣可以改）；舊會員預設 HK。
   defaultRegion: varchar("defaultRegion", { length: 8 }).notNull().default("HK"),
@@ -300,6 +310,54 @@ export const sfStations = pgTable("sfStations", {
   // v2.1.1（Wave 2，2026-09-30）：順豐官方網點 code（每日自動同步嘅穩定鍵，見 api/sfSync.ts）。
   // null＝後台手加／未認親嘅種子行，同步永遠唔會郁呢啲行。
   officialCode: text("officialCode"),
+  // v2.2.0（順豐站點查詢頁 /#/sf-stations）：經緯度（「打地址搵最近」Haversine 用）＋
+  // 電話＋營業時間（站點 row 顯示用）；每日同步 api/sfSync.ts 寫入，舊行／後台手加行留 NULL。
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  phone: varchar("phone", { length: 32 }),
+  serviceTime: varchar("serviceTime", { length: 255 }),
+});
+
+// ===== v2.2.0（直播開播推送通知，老闆 2026-09-30 指令，跨官網＋WMS）=====
+// Web Push 訂閱裝置：一個會員可以綁多部裝置（每部一個 endpoint）。
+// endpoint 係瀏覽器推送服務嘅私密地址——unique，**永遠唔准落 log／audit**（淨落 subscription id）。
+// active=false＝已註銷／推送服務回 404/410 失效（留底唔刪行）。
+export const pushSubscriptions = pgTable("pushSubscriptions", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId")
+    .notNull()
+    .references(() => users.id),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  userAgent: varchar("userAgent", { length: 255 }),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  lastSentAt: timestamp("lastSentAt"),
+});
+
+// 直播開播推送批次：staff 申請（pending）→ 主管/管理員批准即發送；
+// supervisor/admin 可以直接發送（唔經審批）。source：'SHOP'（官網後台）｜'WMS'（WMS 官網中心）。
+// 狀態機：pending → sending → sent／failed；rejected＝主管拒絕。
+// sentCount/failCount 係發送結果計數；失敗原因（例如未設 VAPID）落 reviewNote。
+export const pushCampaigns = pgTable("pushCampaigns", {
+  id: serial("id").primaryKey(),
+  title: varchar("title", { length: 128 }).notNull(),
+  body: text("body").notNull(),
+  liveDate: varchar("liveDate", { length: 32 }).notNull(),
+  liveSession: varchar("liveSession", { length: 32 }).notNull(),
+  url: text("url").notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("pending"),
+  source: varchar("source", { length: 8 }).notNull().default("SHOP"),
+  requestedBy: integer("requestedBy"),
+  requestedByName: varchar("requestedByName", { length: 128 }),
+  reviewedBy: integer("reviewedBy"),
+  reviewedByName: varchar("reviewedByName", { length: 128 }),
+  reviewNote: text("reviewNote"),
+  sentAt: timestamp("sentAt"),
+  sentCount: integer("sentCount"),
+  failCount: integer("failCount"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
 export const praiseWall = pgTable("praiseWall", {
@@ -384,3 +442,5 @@ export type ProductImageArchive = typeof productImageArchive.$inferSelect;
 export type ListingBatch = typeof listingBatches.$inferSelect;
 export type ListingBatchItem = typeof listingBatchItems.$inferSelect;
 export type SfStation = typeof sfStations.$inferSelect;
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+export type PushCampaign = typeof pushCampaigns.$inferSelect;

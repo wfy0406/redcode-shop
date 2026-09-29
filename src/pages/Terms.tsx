@@ -8,6 +8,8 @@ import { Link } from 'react-router';
  * 2026-08-06：聯絡途徑加入 Facebook Messenger（m.me/redcodexhk）。
  * 2026-09：配合 Airwallex 網上付款上線，新增第 6 節「網上付款」
  * （原第 6–14 節順延為第 7–15 節），並更新第 5.1／5.2 條付款方式表述。
+ * 2026-09-30（v2.2.0）：新增第 3.5 條「直播開播推送通知」（自願綁定、可隨時取消、
+ * 經瀏覽器供應商推送服務傳送、送達限制免責）。
  */
 
 function Section({
@@ -138,6 +140,18 @@ export default function Terms() {
           <p>
             3.4 你可以選擇用 Google
             帳號開戶、登入或連結帳號，相關安排同一般帳號一樣受本條款約束。
+          </p>
+          <p>
+            3.5 <b className="text-txt-1">直播開播推送通知</b>
+            ：你可以喺註冊時或會員中心，自願綁定你嘅裝置接收 Facebook
+            直播開播通知。呢項通知經你瀏覽器供應商嘅推送服務傳送，只用嚟話你知開播，
+            唔會用嚟發送其他推廣訊息。你可以隨時喺會員中心取消綁定，或喺瀏覽器設定撤銷通知權限；
+            取消唔影響你嘅會員帳號同訂單。相關訂閱資料嘅收集同處理，以
+            <Link to="/privacy" className="text-pink-soft underline underline-offset-4 hover:opacity-80">
+              《私隱政策》
+            </Link>
+            第 2.5 節為準。因瀏覽器、裝置系統或推送服務商嘅限制（例如 iPhone 需要先將本網站「加至主畫面」）
+            導致通知未能送達嘅，我哋概不負責。
           </p>
         </Section>
 

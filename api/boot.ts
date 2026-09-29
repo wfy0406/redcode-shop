@@ -12,6 +12,7 @@ import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
+import { wmsLivePushApprove, wmsLivePushList, wmsLivePushRequest } from "./wmsLivePush";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
 import { and, eq } from "drizzle-orm";
@@ -48,6 +49,12 @@ app.post("/api/wms/refund-callback", wmsRefundCallback);
 // 手動上傳貨圖（multipart）＋ 批量推送（批准 execute／拒絕 reject）
 app.post("/api/wms/listing-image", listingImageUpload);
 app.post("/api/wms/listing-batch", wmsListingBatch);
+
+// WMS → 官網直播開播推送（2026-09-30 v2.2.0 合約 §8；同樣 WMS_CALLBACK_SECRET 驗證）：
+// 申請／直接發送、審批（通過即發送）、近 50 筆紀錄
+app.post("/api/wms/live-push/request", wmsLivePushRequest);
+app.post("/api/wms/live-push/approve", wmsLivePushApprove);
+app.post("/api/wms/live-push/list", wmsLivePushList);
 
 // Airwallex 網上付款（2026-09 F5）——兩條 route 都喺 tRPC mount 前註冊：
 // ① HPP 回跳中轉：Airwallex 俾完錢會 GET 跳返呢度；因為前端係 HashRouter，

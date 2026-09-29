@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { Download, FileText, Loader2 } from 'lucide-react';
+import { vipTierTheme, type VipTierKey } from '@/lib/vipTheme';
 
 /**
  * PaymentHeroCard — 英倫風訂單確認卡（A5 設計，SPEC §3.5 契約）
@@ -238,8 +239,12 @@ export default function PaymentHeroCard(props: {
   deliveryLabel?: string;
   /** 張單嘅單據頁完整 URL——有傳就喺卡尾出真二維碼，掃完開返張單（2026-09-29） */
   receiptUrl?: string;
+  /** v2.2.0：落單當刻 VIP 級別——VIP 單刊頭下加級別絲綢帶＋accent 點綴；唔傳／NONE 保持原味 */
+  vipTier?: VipTierKey;
 }): JSX.Element {
-  const { orderNo, createdAt, statusLabel, total, discountAmount, vipDiscountAmount, vipTierLabel, items, deliveryLabel, receiptUrl } = props;
+  const { orderNo, createdAt, statusLabel, total, discountAmount, vipDiscountAmount, vipTierLabel, items, deliveryLabel, receiptUrl, vipTier = 'NONE' } = props;
+  // 級別主題（v2.2.0）：色一律來自 vipTheme.ts，唔准自己創色
+  const vipTheme = vipTierTheme(vipTier);
   const cardRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState<'png' | 'pdf' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -351,6 +356,37 @@ export default function PaymentHeroCard(props: {
               <span>{date.en}</span>
             </div>
             <div style={{ marginTop: 8, borderTop: `1px solid ${GOLD_LINE}`, borderBottom: `1px solid ${GOLD_FAINT}`, height: 3 }} />
+
+            {/* ---- v2.2.0 級別絲綢帶（VIP 單先出；bill/證書零圓角，帶係直角） ---- */}
+            {vipTheme.isVip && vipTheme.ribbonImg && (
+              <div
+                style={{
+                  marginTop: 16,
+                  height: 44,
+                  backgroundImage: `linear-gradient(rgba(252, 252, 248, 0.55), rgba(252, 252, 248, 0.55)), url(${vipTheme.ribbonImg})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  borderTop: `1px solid ${vipTheme.accent}`,
+                  borderBottom: `1px solid ${vipTheme.accent}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: MONO,
+                    fontSize: 9.5,
+                    letterSpacing: '0.4em',
+                    textIndent: '0.4em',
+                    color: vipTheme.accentDeep,
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {vipTheme.seal} {vipTheme.label} {vipTheme.seal}
+                </span>
+              </div>
+            )}
 
             {/* ---- 品牌字樣 ---- */}
             <div className="text-center" style={{ marginTop: 26 }}>
@@ -494,7 +530,8 @@ export default function PaymentHeroCard(props: {
                   <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
                     VIP 折扣{vipTierLabel ? `（${vipTierLabel}）` : ''}
                   </span>
-                  <span style={{ fontFamily: MONO, fontSize: 13, color: '#8a6d1f', fontVariantNumeric: 'tabular-nums' }}>
+                  {/* v2.2.0：折扣金額用級別 accentDeep 點綴（NONE/GOLD 同舊色 #8a6d1f 一致） */}
+                  <span style={{ fontFamily: MONO, fontSize: 13, color: vipTheme.accentDeep, fontVariantNumeric: 'tabular-nums' }}>
                     −{fmtMoney(vipDiscountAmount ?? 0)}
                   </span>
                 </div>

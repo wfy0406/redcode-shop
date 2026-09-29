@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Crown, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Crown, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, Radio, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -16,6 +16,7 @@ import ListingBatchesCard from '@/components/admin/ListingBatchesCard';
 import PraiseManager from '@/components/admin/PraiseManager';
 import PromoManager from '@/components/admin/PromoManager';
 import MarketingEmailCard from '@/components/admin/MarketingEmailCard';
+import LivePushPanel from '@/components/admin/LivePushPanel';
 import StaffManager from '@/components/admin/StaffManager';
 import AnalyticsManager from '@/components/admin/AnalyticsManager';
 import MemberList from '@/components/admin/MemberList';
@@ -44,6 +45,8 @@ type ViewKey =
   | 'praise'
   | 'promo'
   | 'marketing'
+  // v2.2.0（2026-09-30 老闆指令）：直播開播推送通知（staff 申請／supervisor・admin 直接發送＋審批）
+  | 'livepush'
   | 'members'
   // v2.1.0（VIP+免運，2026-09-29）：VIP/免運規則（admin only）
   | 'vip'
@@ -207,6 +210,8 @@ function AdminConsole() {
     { key: 'promo', label: '優惠碼', icon: <TicketPercent size={17} aria-hidden="true" /> },
     // 促銷電郵（2026-08-05 Glo 要求）：寫推廣 email 寄畀已同意接收嘅會員
     { key: 'marketing', label: '促銷電郵', icon: <Mail size={17} aria-hidden="true" /> },
+    // 直播開播推送（v2.2.0）：員工申請、主管/管理員審批或直接發送（面板內按 role 分掣）
+    { key: 'livepush', label: '直播推送', icon: <Radio size={17} aria-hidden="true" /> },
     // 會員列表（2026-08-06 三級制）：主管同員工都入得——員工改會員資料要主管/管理員審批；
     // 刪會員仍然 admin only（MemberList 入面 canDelete 擋）
     { key: 'members', label: '會員', icon: <Users size={17} aria-hidden="true" /> },
@@ -268,6 +273,7 @@ function AdminConsole() {
     praise: <PraiseManager toast={pushToast} />,
     promo: <PromoManager toast={pushToast} />,
     marketing: <MarketingEmailCard toast={pushToast} />,
+    livepush: <LivePushPanel toast={pushToast} />,
     members: <MemberList toast={pushToast} />,
     vip: isAdmin ? (
       <VipSettingsPanel toast={pushToast} />

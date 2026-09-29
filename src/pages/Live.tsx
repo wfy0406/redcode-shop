@@ -1,5 +1,6 @@
 import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Sun, Sunrise, Zap } from 'lucide-react';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
+import LiveNowSection from '@/components/push/LiveNowSection';
 import { useReveal } from '@/hooks/useReveal';
 
 /**
@@ -80,6 +81,9 @@ export default function Live() {
 
   return (
     <div>
+      {/* ============ 0. 直播進行中（v2.2.0）：開播嗰 90 分鐘最搶眼位，頁頂插入 ============ */}
+      <LiveNowSection />
+
       {/* ============ 1. Hero：live-banner.png 底 + LIVE 眨燈 badge ============ */}
       <section className="relative flex min-h-[70dvh] items-center overflow-hidden">
         <div

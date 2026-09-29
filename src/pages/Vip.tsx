@@ -14,6 +14,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { useReveal } from '@/hooks/useReveal';
+import { trpc } from '@/providers/trpc';
 import heroImg from '@/assets/vip/hero.jpg';
 import cardSilverImg from '@/assets/vip/card-silver.png';
 import cardGoldImg from '@/assets/vip/card-gold.png';
@@ -30,14 +31,34 @@ import cardGoldImg from '@/assets/vip/card-gold.png';
  * 動效只用到 opacity / transform（hero-enter、reveal、star-spin、vip-shine 掃光）。
  */
 
-// ===== VIP / 免運規則常數 =====
-// v2.1.0：之後會接 getPublicVipConfig 動態攞，而家先寫死做展示
-const SILVER_THRESHOLD_LABEL = '$3,000'; // 本年度消費滿額自動升銀
-const GOLD_THRESHOLD_LABEL = '$5,000'; // 本年度消費滿額自動升金
-const SILVER_DISCOUNT_NUM = '92'; // 全年全單折扣：92 折（bps 9200）
-const GOLD_DISCOUNT_NUM = '9'; // 全年全單折扣：9 折（bps 9000）
-const FREE_SHIP_THRESHOLD_LABEL = '$350'; // 順豐站自取免運門檻
-const VIP_DURATION_LABEL = '由生效日起計一年';
+// ===== VIP / 免運規則（v2.2.0：全部由 vip.getPublicVipConfig 動態攞，唔准寫死） =====
+// 老闆指令：後台改門檻／折扣，呢頁要即時跟；載入中顯示 skeleton，唔好閃舊數字。
+
+/** 整數仙 → HK$ 顯示字（300000 →「$3,000」；金額顯示先除 100） */
+function centsToDollarLabel(cents: number): string {
+  return `$${Math.round(cents / 100).toLocaleString('en-HK')}`;
+}
+
+/** 付款比率 bps → 折頭數字（9200 →「92」、9000 →「9」）：v=bps/100，v 整除 10 就除多一個 0 */
+function bpsToDiscountNum(bps: number): string {
+  const v = bps / 100;
+  return v % 10 === 0 ? `${v / 10}` : `${v}`;
+}
+
+/** 付款比率 bps → 中文折頭（9200 →「92 折」、9000 →「9 折」） */
+function bpsToDiscountLabel(bps: number): string {
+  return `${bpsToDiscountNum(bps)} 折`;
+}
+
+/** 規則數值載入中 skeleton（opacity 呼吸，唔准閃舊數字） */
+function RuleSkeleton({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`vip-rule-skeleton inline-block rounded-md bg-white/10 align-middle ${className ?? ''}`}
+    />
+  );
+}
 
 /* ===== 金屬色階（由深空金 --gold #F5C518 / --gold-soft #F7D774 推導出嘅明暗梯；
    銀色用同一明暗節奏轉冷調，保持同品牌星光色同溫） ===== */
@@ -180,6 +201,20 @@ export default function Vip() {
   const shipRef = useReveal<HTMLDivElement>();
   const stepsRef = useReveal<HTMLDivElement>();
   const fineRef = useReveal<HTMLDivElement>();
+
+  // v2.2.0：VIP＋免運全部規則數值由後台攞（publicQuery）；未返嚟之前數字位顯示 skeleton
+  const configQuery = trpc.vip.getPublicVipConfig.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const cfg = configQuery.data ?? null;
+  // 衍生顯示字（cfg 未返就 null → skeleton）
+  const silverThresholdLabel = cfg ? centsToDollarLabel(cfg.silverThresholdCents) : null;
+  const goldThresholdLabel = cfg ? centsToDollarLabel(cfg.goldThresholdCents) : null;
+  const silverDiscountLabel = cfg ? bpsToDiscountLabel(cfg.silverDiscountBps) : null;
+  const goldDiscountLabel = cfg ? bpsToDiscountLabel(cfg.goldDiscountBps) : null;
+  const freeShipThresholdLabel = cfg ? centsToDollarLabel(cfg.freeThresholdCents) : null;
+  const durationLabel = cfg ? `由生效日起計 ${cfg.durationMonths} 個月` : null;
 
   return (
     <div>
@@ -372,21 +407,29 @@ export default function Vip() {
                   </h3>
                   <p className="mt-2 text-sm text-txt-2">
                     本年度消費滿{' '}
-                    <MetalText metal={SILVER_METAL} className="font-mono text-base font-medium">
-                      {SILVER_THRESHOLD_LABEL}
-                    </MetalText>{' '}
+                    {silverThresholdLabel ? (
+                      <MetalText metal={SILVER_METAL} className="font-mono text-base font-medium">
+                        {silverThresholdLabel}
+                      </MetalText>
+                    ) : (
+                      <RuleSkeleton className="h-4 w-16" />
+                    )}{' '}
                     自動升級
                   </p>
                   <p className="mt-5 flex items-baseline gap-2">
-                    <MetalText metal={SILVER_METAL} className="font-display-en text-5xl font-semibold leading-none md:text-6xl">
-                      {SILVER_DISCOUNT_NUM}
-                    </MetalText>
+                    {cfg ? (
+                      <MetalText metal={SILVER_METAL} className="font-display-en text-5xl font-semibold leading-none md:text-6xl">
+                        {bpsToDiscountNum(cfg.silverDiscountBps)}
+                      </MetalText>
+                    ) : (
+                      <RuleSkeleton className="h-12 w-24 md:h-14" />
+                    )}
                     <span className="font-serif-tc text-xl font-semibold text-txt-1">折 · 全年全單</span>
                   </p>
                   <ul className="mt-5 space-y-3 text-sm leading-relaxed text-txt-2">
                     <li className="flex gap-2.5">
                       <Star size={15} className="mt-1 shrink-0" style={{ color: '#C7CBD9' }} aria-hidden="true" />
-                      全年買咩都 {SILVER_DISCOUNT_NUM} 折，仲可以同優惠碼疊加用
+                      全年買咩都 {silverDiscountLabel ?? <RuleSkeleton className="h-4 w-12" />}，仲可以同優惠碼疊加用
                     </li>
                     <li className="flex gap-2.5">
                       <Star size={15} className="mt-1 shrink-0" style={{ color: '#C7CBD9' }} aria-hidden="true" />
@@ -397,7 +440,7 @@ export default function Vip() {
                     className="mt-6 border-t pt-4 text-[13px] text-txt-3"
                     style={{ borderColor: SILVER_METAL.hairline }}
                   >
-                    會員期限：{VIP_DURATION_LABEL}
+                    會員期限：{durationLabel ?? <RuleSkeleton className="h-3.5 w-28" />}
                   </p>
                 </div>
               </MetalFrame>
@@ -435,15 +478,23 @@ export default function Vip() {
                   </h3>
                   <p className="mt-2 text-sm text-txt-2">
                     本年度消費滿{' '}
-                    <MetalText metal={GOLD_METAL} className="font-mono text-base font-medium">
-                      {GOLD_THRESHOLD_LABEL}
-                    </MetalText>{' '}
+                    {goldThresholdLabel ? (
+                      <MetalText metal={GOLD_METAL} className="font-mono text-base font-medium">
+                        {goldThresholdLabel}
+                      </MetalText>
+                    ) : (
+                      <RuleSkeleton className="h-4 w-16" />
+                    )}{' '}
                     自動升級
                   </p>
                   <p className="mt-5 flex items-baseline gap-2">
-                    <MetalText metal={GOLD_METAL} className="font-display-en text-6xl font-semibold leading-none md:text-7xl">
-                      {GOLD_DISCOUNT_NUM}
-                    </MetalText>
+                    {cfg ? (
+                      <MetalText metal={GOLD_METAL} className="font-display-en text-6xl font-semibold leading-none md:text-7xl">
+                        {bpsToDiscountNum(cfg.goldDiscountBps)}
+                      </MetalText>
+                    ) : (
+                      <RuleSkeleton className="h-14 w-20 md:h-16" />
+                    )}
                     <span className="font-serif-tc text-xl font-semibold text-txt-1">折 · 全年全單</span>
                   </p>
                   <p
@@ -456,7 +507,7 @@ export default function Vip() {
                   <ul className="mt-5 space-y-3 text-sm leading-relaxed text-txt-2">
                     <li className="flex gap-2.5">
                       <Star size={15} className="mt-1 shrink-0" style={{ color: '#F5C518', fill: '#F5C518' }} aria-hidden="true" />
-                      全年全單 {GOLD_DISCOUNT_NUM} 折，同優惠碼疊加都仲得
+                      全年全單 {goldDiscountLabel ?? <RuleSkeleton className="h-4 w-12" />}，同優惠碼疊加都仲得
                     </li>
                     <li className="flex gap-2.5">
                       <Star size={15} className="mt-1 shrink-0" style={{ color: '#F5C518', fill: '#F5C518' }} aria-hidden="true" />
@@ -471,7 +522,7 @@ export default function Vip() {
                     className="mt-6 border-t pt-4 text-[13px]"
                     style={{ borderColor: GOLD_METAL.hairline, color: 'rgba(252, 225, 182, 0.7)' }}
                   >
-                    會員期限：{VIP_DURATION_LABEL}
+                    會員期限：{durationLabel ?? <RuleSkeleton className="h-3.5 w-28" />}
                   </p>
                 </div>
               </MetalFrame>
@@ -502,12 +553,12 @@ export default function Vip() {
                   <MapPin size={22} className="text-pink-soft" aria-hidden="true" />
                 </span>
                 <span className="rounded-full bg-pink px-3 py-1 font-mono text-[11px] font-medium tracking-[0.14em] text-space-1">
-                  滿 {FREE_SHIP_THRESHOLD_LABEL} 免運
+                  滿 {freeShipThresholdLabel ?? <RuleSkeleton className="h-3 w-12" />} 免運
                 </span>
               </div>
               <h3 className="mt-5 font-serif-tc text-xl font-semibold text-txt-1">順豐站自取</h3>
               <p className="mt-2 text-sm leading-relaxed text-txt-2">
-                揀順豐站或自提點取貨，訂單滿 {FREE_SHIP_THRESHOLD_LABEL} 即免運費。
+                揀順豐站或自提點取貨，訂單滿 {freeShipThresholdLabel ?? <RuleSkeleton className="h-3.5 w-12" />} 即免運費。
                 未滿都唔緊要，順豐到付，幾多錢清清楚楚。
               </p>
             </div>
@@ -619,7 +670,13 @@ export default function Vip() {
                 no: '03',
                 icon: <PackageCheck size={20} aria-hidden="true" />,
                 title: '達標自動升級',
-                desc: `夠 ${SILVER_THRESHOLD_LABEL} 升銀、夠 ${GOLD_THRESHOLD_LABEL} 升金。即日生效，折扣即刻用得。`,
+                desc: (
+                  <>
+                    夠 {silverThresholdLabel ?? <RuleSkeleton className="h-3.5 w-14" />} 升銀、夠{' '}
+                    {goldThresholdLabel ?? <RuleSkeleton className="h-3.5 w-14" />} 升金。
+                    即日生效，折扣即刻用得。
+                  </>
+                ),
               },
             ].map((step, i) => (
               <div
@@ -668,7 +725,7 @@ export default function Vip() {
             <ul className="mt-5 space-y-2.5 text-[13px] leading-relaxed text-txt-3">
               <li>・ VIP 折扣可以同優惠碼同時使用，著數疊住嚟先係王道。</li>
               <li>・ 年度消費按「已付款」訂單計算，以每年 1 月 1 日至 12 月 31 日為一個年度。</li>
-              <li>・ 銀 / 金會員級別{VIP_DURATION_LABEL}；到期後會按你當年嘅消費重新判定，唔會無啦啦冇咗。</li>
+              <li>・ 銀 / 金會員級別{durationLabel ?? '由生效日起計算'}；到期後會按你當年嘅消費重新判定，唔會無啦啦冇咗。</li>
               <li>・ 金會員免運只適用於順豐站及自提點；送貨上門、澳門及海外訂單維持運費到付。</li>
               <li>
                 ・ 以上規則以官網最新公佈為準，如有爭議 RedCode 保留最終決定權 ——
@@ -704,9 +761,18 @@ export default function Vip() {
           45% { transform: translateX(420%) skewX(-16deg); }
           100% { transform: translateX(420%) skewX(-16deg); }
         }
+        /* 規則數值載入中 skeleton：opacity 呼吸（唔閃舊數字） */
+        .vip-rule-skeleton {
+          animation: vip-rule-skeleton-breathe 1.6s ease-in-out infinite;
+        }
+        @keyframes vip-rule-skeleton-breathe {
+          0%, 100% { opacity: 0.25; }
+          50% { opacity: 0.7; }
+        }
         @media (prefers-reduced-motion: reduce) {
           .hero-enter { opacity: 1; animation: none; }
           .vip-shine-strip { animation: none; opacity: 0; }
+          .vip-rule-skeleton { animation: none; opacity: 0.4; }
         }
       `}</style>
     </div>

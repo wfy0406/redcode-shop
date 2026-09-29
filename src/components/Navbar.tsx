@@ -7,7 +7,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import type { CartLine } from '@/components/cart/types';
 import MessengerIcon from '@/components/MessengerIcon';
-import VipBadge, { normalizeVipTier } from '@/components/VipBadge';
+import { normalizeVipTier } from '@/components/VipBadge';
+import { vipTierTheme } from '@/lib/vipTheme';
 import { PRODUCT_CATEGORIES } from '@contracts/types';
 
 /**
@@ -46,6 +47,8 @@ const NAV_LINKS = [
   { to: '/', label: '首頁' },
   { to: '/products', label: '商品' },
   { to: '/live', label: '直播' },
+  // v2.2.0：順豐站點查詢（公開頁，客人同員工都用）；desktop nav 同手機 drawer 共用 NAV_LINKS
+  { to: '/sf-stations', label: '順豐站點查詢' },
   { to: '/about', label: '關於我們' },
   // 2026-07-30：有客人唔識入會員中心搵訂單 → 主選單直接放「我的訂單」；
   // 未登入撳入去會見到「請先登入」提示，登入後自動返訂單頁
@@ -90,6 +93,8 @@ export default function Navbar() {
     refetchOnWindowFocus: false,
   });
   const vipTier = myVipQuery.data ? normalizeVipTier(myVipQuery.data.tier) : null;
+  // v2.2.0 級別格調：chip／色一律由 vipTheme.ts 出（NONE 低調——Navbar 唔出 chip）
+  const vipTheme = vipTierTheme(vipTier);
 
   // 手機選單連結（2026-08-04 抽出嚟：問候語＋登出掣嘅動畫 delay 要跟佢長度計）
   const mobileLinks = [
@@ -290,10 +295,12 @@ export default function Navbar() {
               <Link to="/account" className="nav-link">
                 {user.name}
               </Link>
-              {/* VIP 級別 badge（v2.1.0）：撳落去 /vip 會員制度介紹頁 */}
-              {vipTier && (
-                <Link to="/vip" aria-label={`會員級別：${vipTier === 'GOLD' ? 'VIP金會員' : vipTier === 'SILVER' ? 'VIP銀會員' : '會員'}，了解會員制度`}>
-                  <VipBadge tier={vipTier} size="sm" />
+              {/* VIP 級別 chip（v2.2.0 統一 vipTheme chipClass；NONE 低調唔出）：撳落去 /vip 會員制度介紹頁 */}
+              {vipTier && vipTheme.isVip && (
+                <Link to="/vip" aria-label={`會員級別：${vipTheme.label}，了解會員制度`}>
+                  <span className={vipTheme.chipClass}>
+                    {vipTheme.seal} {vipTheme.shortLabel}
+                  </span>
                 </Link>
               )}
               <button
@@ -358,8 +365,8 @@ export default function Navbar() {
               {user.name}寶寶，{greetingNow()}💕！
             </p>
           )}
-          {/* VIP 級別 badge（v2.1.0）：手機選單問候下面顯示，撳落去 /vip 介紹頁 */}
-          {user && vipTier && (
+          {/* VIP 級別 chip（v2.2.0 vipTheme；NONE 唔出）：手機選單問候下面顯示，撳落去 /vip 介紹頁 */}
+          {user && vipTier && vipTheme.isVip && (
             <div
               className="border-b pb-4 pt-3"
               style={{
@@ -373,7 +380,9 @@ export default function Navbar() {
                 className="inline-flex items-center gap-2"
                 aria-label="了解會員制度"
               >
-                <VipBadge tier={vipTier} size="md" />
+                <span className={vipTheme.chipClass}>
+                  {vipTheme.seal} {vipTheme.shortLabel}
+                </span>
                 <span className="text-[13px] text-txt-3 underline underline-offset-4">
                   了解會員制度 →
                 </span>

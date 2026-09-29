@@ -14,6 +14,8 @@ import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { getToken } from '@/lib/auth';
 import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
+import { normalizeVipTier } from '@/components/VipBadge';
+import VipTierBand from '@/components/VipTierBand';
 import { PAYMENT_METHODS_SETTING_KEY, parsePaymentMethods } from '@contracts/paymentMethods';
 
 /**
@@ -50,6 +52,12 @@ function friendlyUploadError(err: unknown): string {
   if (raw.includes('唔可以上傳付款證明') || raw.includes('訂單不存在')) return raw;
   if (raw === 'Failed to fetch' || raw.includes('NetworkError')) return '網絡唔穩定，請再試一次';
   return raw || '上傳失敗，請再試一次';
+}
+
+/** 付款比率 bps → 中文折頭（9200 →「92 折」、9000 →「9 折」）：v=bps/100，v 整除 10 就除多一個 0 */
+function bpsToDiscountLabel(bps: number): string {
+  const v = bps / 100;
+  return v % 10 === 0 ? `${v / 10} 折` : `${v} 折`;
 }
 
 /* ---------- 複製鈕（DM Mono 帳號 / 訂單編號用） ---------- */
@@ -327,11 +335,18 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   const couponDiscount = quote
     ? quote.couponDiscountCents / 100
     : (appliedPromo?.discountAmount ?? 0);
+  // v2.2.0 門檻凍結：VIP 折扣字由後台規則 derive（bps/100 整除 10 →「9 折」款，否則「92 折」款）；
+  // config 未返嚟之前淨顯示級別名，唔閃舊折扣數
+  const vipConfigQuery = trpc.vip.getPublicVipConfig.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const vipCfg = vipConfigQuery.data ?? null;
   const vipLabel =
     quote?.vipTier === 'GOLD'
-      ? 'VIP金會員 9 折'
+      ? `VIP金會員${vipCfg ? ` ${bpsToDiscountLabel(vipCfg.goldDiscountBps)}` : ''}`
       : quote?.vipTier === 'SILVER'
-        ? 'VIP銀會員 92 折'
+        ? `VIP銀會員${vipCfg ? ` ${bpsToDiscountLabel(vipCfg.silverDiscountBps)}` : ''}`
         : '';
   // 客戶端折扣只係顯示用途；落單時 server 會用 promoCode 重算，以 server 為準
   const displayTotal = quote
@@ -1161,6 +1176,14 @@ export default function Checkout() {
     retry: false,
   });
 
+  // v2.2.0 級別格調帶：同 Navbar 同一來源 vip.getMyVip；載入緊唔顯示
+  const myVipQuery = trpc.vip.getMyVip.useQuery(undefined, {
+    enabled: !!user,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const vipTier = myVipQuery.data ? normalizeVipTier(myVipQuery.data.tier) : null;
+
   const [step, setStep] = useState(0);
   const [order, setOrder] = useState<CreatedOrder | null>(null);
 
@@ -1230,6 +1253,9 @@ export default function Checkout() {
       <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">
         結帳
       </h1>
+
+      {/* v2.2.0 級別格調帶：VIP 出 hairline 金線＋淡底＋專屬短句；普通會員低調升級提示 */}
+      {user && vipTier && <VipTierBand tier={vipTier} />}
 
       {authLoading ? (
         <div className="mt-10 h-24 animate-pulse rounded-2xl bg-space-2" aria-label="載入中" />

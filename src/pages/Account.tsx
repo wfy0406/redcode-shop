@@ -5,12 +5,15 @@ import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar from '@/components/account/WishingStar';
 import VipCard from '@/components/account/VipCard';
+import VipCertCard from '@/components/account/VipCertCard';
+import { vipTierTheme, formatMemberNo } from '@/lib/vipTheme';
 import OrderCard from '@/components/account/OrderCard';
 import ProfileCard from '@/components/account/ProfileCard';
 import DeliveryPrefCard from '@/components/account/DeliveryPrefCard';
 import CompleteProfileCard from '@/components/account/CompleteProfileCard';
 import GoogleLinkCard from '@/components/account/GoogleLinkCard';
 import MarketingPrefCard from '@/components/account/MarketingPrefCard';
+import LivePushCard from '@/components/account/LivePushCard';
 import PasswordCard from '@/components/account/PasswordCard';
 import AccountToastStack, { useAccountToasts } from '@/components/account/Toast';
 
@@ -22,6 +25,28 @@ import AccountToastStack, { useAccountToasts } from '@/components/account/Toast'
  * 我的訂單：trpc.orders.myOrders，每張訂單一張玻璃卡（OrderCard）；
  * 訂單可以按日期搜尋（本地日子對照 createdAt）。
  */
+
+/**
+ * v2.2.0 英式 atelier 克制感 section label：
+ * 大寫闊字距英文小標（letter-spacing 0.3em）＋editorial serif 中文標題＋hairline 金線分隔
+ */
+function SectionLabel({ en, zh }: { en: string; zh: string }) {
+  return (
+    <div className="mt-16 md:mt-20">
+      <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-gold">{en}</p>
+      <div className="mt-3 flex items-center gap-5">
+        <h2 className="shrink-0 font-serif-tc text-xl font-semibold leading-[1.3] text-txt-1 md:text-2xl">
+          {zh}
+        </h2>
+        <span
+          aria-hidden="true"
+          className="h-px flex-1 opacity-30"
+          style={{ background: 'var(--gold)' }}
+        />
+      </div>
+    </div>
+  );
+}
 
 /** 本地日子（YYYY-MM-DD）對照：createdAt 係咪同一日 */
 function sameLocalDay(d: Date | string, ymd: string): boolean {
@@ -86,15 +111,59 @@ export default function Account() {
     ? orders.filter((o) => sameLocalDay(o.createdAt, orderDate))
     : orders;
 
+  // v2.2.0：頂部會員級別 hero 帶——銀／金用級別絲綢橫幅，普通會員用 member-hero.jpg
+  const tierTheme = vipTierTheme(user.vipTier);
+  const heroImg = tierTheme.ribbonImg ?? '/vip/member-hero.jpg';
+
   return (
     <section className="mx-auto w-full max-w-[1280px] px-5 py-12 md:px-8 md:py-16 xl:px-12">
-      <p className="script text-3xl">My little galaxy</p>
-      <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">會員中心</h1>
+      {/* 頂部會員級別 hero 帶（絲綢底＋深色漸層，文字擺左；hairline 金線框） */}
+      <header className={`relative overflow-hidden ${tierTheme.hairlineClass}`}>
+        <img
+          src={heroImg}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover object-right"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(90deg, rgba(10,6,20,.94) 0%, rgba(10,6,20,.78) 42%, rgba(10,6,20,.42) 72%, rgba(10,6,20,.55) 100%)',
+          }}
+        />
+        <div className="relative px-6 py-14 md:px-12 md:py-20">
+          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-gold">
+            RedCode Membership
+          </p>
+          <p className="script mt-5 text-3xl">My little galaxy</p>
+          <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">
+            會員中心
+          </h1>
+          <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3">
+            <span className={tierTheme.chipClass}>
+              {tierTheme.seal} {tierTheme.label}
+            </span>
+            <span className="font-mono text-[13px] tracking-[0.18em] text-txt-2">
+              {formatMemberNo(user.id)}
+            </span>
+          </div>
+        </div>
+      </header>
+
+      {/* 會員證書下載（v2.2.0）：JPG／PDF，歷史晉升都下載到 */}
+      <SectionLabel en="Membership Certificate" zh="會員證書" />
+      <div className="mt-8">
+        <VipCertCard />
+      </div>
 
       {/* VIP 級別區塊（v2.1.0，2026-09-29）：級別 badge＋有效期＋年度消費＋升級進度＋ /vip 入口 */}
+      <SectionLabel en="Tier & Privileges" zh="會員級別" />
       <div className="mt-8">
         <VipCard />
       </div>
+
+      <SectionLabel en="Profile & Settings" zh="會員資料" />
 
       {/* Google 開戶（電話仲係 g- 佔位）→ 頂置「完成會員資料」卡：Google 預填、可改、確認先儲存 */}
       {user.phone.startsWith('g-') && (
@@ -116,6 +185,11 @@ export default function Account() {
       {/* 優惠資訊接收設定卡（2026-08-05 Glo 要求）：會員自己開/關直接促銷同意 */}
       <div className="mt-6">
         <MarketingPrefCard optIn={!!user.marketingOptIn} pushToast={pushToast} />
+      </div>
+
+      {/* 直播開播通知卡（v2.2.0）：綁定/取消呢部裝置嘅 Web Push */}
+      <div className="mt-6">
+        <LivePushCard pushToast={pushToast} />
       </div>
 
       {/* Google 帳號連結卡（2026-08-04）：舊會員綁定 Google，之後一撳登入；未設 GOOGLE_CLIENT_ID 會自動隱藏 */}
@@ -155,14 +229,11 @@ export default function Account() {
       </Link>
 
       {/* 我的訂單 */}
-      <div className="mt-12 flex items-baseline justify-between">
-        <h2 className="font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">我的訂單</h2>
-        {orders.length > 0 && <span className="font-mono text-sm text-txt-3">{orders.length} 張</span>}
-      </div>
-
+      <SectionLabel en="Order History" zh="我的訂單" />
       {/* 按日期搜尋訂單 */}
       {orders.length > 0 && (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          <span className="font-mono text-sm text-txt-3">{orders.length} 張</span>
           <label
             className="flex h-11 items-center gap-2 rounded-full border px-4"
             style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}

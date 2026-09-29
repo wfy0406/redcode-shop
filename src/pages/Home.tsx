@@ -7,7 +7,10 @@ import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import { PRODUCTS } from '@/data/products';
 import type { Product } from '@/data/products';
 import { useReveal } from '@/hooks/useReveal';
+import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
+import LiveNowSection from '@/components/push/LiveNowSection';
+import PushPermissionGuide from '@/components/push/PushPermissionGuide';
 
 /** DB 商品 row → ProductCard 用嘅 Product 形狀 */
 function mapDbProduct(p: {
@@ -140,17 +143,35 @@ function PromoVideo({ src, poster, className }: { src: string; poster: string; c
   );
 }
 
-/* ---------- Section 標題 ---------- */
+/* ---------- Section 標題（v2.2.0 atelier：大寫闊字距 label＋serif 標題＋hairline 金線） ---------- */
 function SectionHeading({ en, zh, center }: { en: string; zh: string; center?: boolean }) {
   return (
-    <h2
-      className={`font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px] ${
-        center ? 'text-center' : ''
-      }`}
+    <div className={center ? 'flex flex-col items-center text-center' : ''}>
+      <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-gold">{en}</p>
+      <h2 className="mt-3 font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
+        {zh}
+      </h2>
+      <span
+        aria-hidden="true"
+        className="mt-4 block h-px w-24 opacity-40"
+        style={{ background: 'var(--gold)' }}
+      />
+    </div>
+  );
+}
+
+/* ---------- Section 之間嘅 hairline 金線分隔（唔准卡叠卡，用線唔用影） ---------- */
+function HairlineDivider() {
+  return (
+    <div
+      aria-hidden="true"
+      className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12"
     >
-      <span className="font-display-en mr-3 text-purple-text">{en}</span>
-      {zh}
-    </h2>
+      <span
+        className="block h-px w-full opacity-20"
+        style={{ background: 'var(--gold)' }}
+      />
+    </div>
   );
 }
 
@@ -163,6 +184,63 @@ const STATIC_WALL_PHOTOS = [
   { src: '/promo-1-poster.jpg', alt: '公司宣傳拍攝打卡' },
   { src: '/gloglo-2.jpg', alt: 'Glo Glo 同店狗合照二' },
 ];
+
+/* ---------- 直播開播通知常設入口（v2.2.0）：低調底線文字掣；冇直播都見到 ----------
+   未登入 → Link /login；登入未訂閱 → PushPermissionGuide；已訂閱 →「已開啟通知 ✓」 */
+function LivePushEntry() {
+  const { user } = useAuth();
+  const utils = trpc.useUtils();
+  const [showGuide, setShowGuide] = useState(false);
+  const statusQuery = trpc.push.myPushStatus.useQuery(undefined, {
+    enabled: !!user,
+    retry: false,
+  });
+  const subscribed =
+    !!statusQuery.data?.optIn && (statusQuery.data?.activeDevices ?? 0) > 0;
+
+  if (!user) {
+    return (
+      <Link
+        to="/login"
+        className="inline-flex w-fit items-center gap-2 border-b pb-1 text-sm font-medium text-txt-3 transition-opacity hover:opacity-70"
+        style={{ borderColor: 'var(--space-line)' }}
+      >
+        🔴 接收直播開播通知
+      </Link>
+    );
+  }
+
+  if (subscribed) {
+    return (
+      <span className="inline-flex w-fit items-center gap-2 pb-1 text-sm text-txt-3">
+        🔴 已開啟通知 ✓
+      </span>
+    );
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setShowGuide(true)}
+        className="inline-flex w-fit items-center gap-2 border-b pb-1 text-sm font-medium text-txt-3 transition-opacity hover:opacity-70"
+        style={{ borderColor: 'var(--space-line)' }}
+      >
+        🔴 接收直播開播通知
+      </button>
+      <PushPermissionGuide
+        open={showGuide}
+        onClose={(ok) => {
+          setShowGuide(false);
+          if (ok) {
+            void utils.push.myPushStatus.invalidate();
+            void utils.auth.me.invalidate();
+          }
+        }}
+      />
+    </>
+  );
+}
 
 export default function Home() {
   // 後端連唔到（純前端預覽）時 fallback 用內建示範商品
@@ -207,18 +285,18 @@ export default function Home() {
     <div>
       {/* ============ 1. Hero（§4.3 全構圖） ============ */}
       <section className="relative flex min-h-[100dvh] items-center overflow-hidden">
-        {/* hero-nebula.png 做底 + radial burst（§3.3：銀河核心喺頭頂） */}
+        {/* v2.2.0：member-hero.jpg 絲綢珍珠 flat-lay 做底（左側留白，文字擺左）＋深色漸層保證可讀 */}
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-cover bg-center opacity-60"
-          style={{ backgroundImage: 'url(/hero-nebula.jpg)' }}
+          className="absolute inset-0 bg-cover bg-right"
+          style={{ backgroundImage: 'url(/vip/member-hero.jpg)' }}
         />
         <div
           aria-hidden="true"
-          className="absolute inset-x-0 top-0 h-[70vh]"
+          className="absolute inset-0"
           style={{
             background:
-              'radial-gradient(ellipse 80% 60% at 50% 0%, var(--pink-haze) 0%, transparent 70%)',
+              'linear-gradient(90deg, rgba(10,6,20,.94) 0%, rgba(10,6,20,.80) 38%, rgba(10,6,20,.45) 68%, rgba(10,6,20,.30) 100%)',
           }}
         />
         {/* 底部漸隱返 space-1 */}
@@ -264,7 +342,13 @@ export default function Home() {
         <div className="relative z-10 mx-auto w-full max-w-[1280px] px-5 pb-24 pt-16 md:px-8 xl:px-12">
           <div className="max-w-2xl">
             <p
-              className="script hero-enter text-[28px] leading-[1.3] md:text-[40px]"
+              className="hero-enter font-mono text-[11px] uppercase tracking-[0.3em] text-gold"
+              style={{ animationDelay: '0.45s' }}
+            >
+              RedCode Atelier · Hong Kong
+            </p>
+            <p
+              className="script hero-enter mt-4 text-[28px] leading-[1.3] md:text-[40px]"
               style={{ animationDelay: '0.5s' }}
             >
               Tonight&apos;s picks, written in the stars ✦
@@ -288,22 +372,32 @@ export default function Home() {
               className="hero-enter mt-10 flex flex-col gap-4 sm:flex-row sm:items-center"
               style={{ animationDelay: '0.65s' }}
             >
-              <Link to="/live" className="btn btn-primary btn-pulse">
-                去最新直播款
+              <Link
+                to="/live"
+                className="inline-flex w-fit items-center gap-2 border-b pb-1 font-serif-tc text-lg font-semibold text-gold-soft transition-opacity hover:opacity-70"
+                style={{ borderColor: 'var(--gold)' }}
+              >
+                去最新直播款 →
               </Link>
               <a
                 href={WHATSAPP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-whatsapp"
+                className="inline-flex w-fit items-center gap-2 border-b pb-1 text-sm font-medium text-txt-2 transition-opacity hover:opacity-70"
+                style={{ borderColor: 'var(--space-line)' }}
               >
-                <MessageCircle size={18} aria-hidden="true" />
+                <MessageCircle size={16} aria-hidden="true" />
                 WhatsApp 問款
               </a>
+              {/* 直播開播通知常設入口（v2.2.0）：低調第三掣，冇直播都見到 */}
+              <LivePushEntry />
             </div>
           </div>
         </div>
       </section>
+
+      {/* ============ 1.5 直播進行中（v2.2.0）：currentLive 有直播嗰 90 分鐘先 render ============ */}
+      <LiveNowSection />
 
       {/* ============ 2. WhatsApp 群組 Banner ============ */}
       <section
@@ -338,8 +432,10 @@ export default function Home() {
         </div>
       </section>
 
+      <HairlineDivider />
+
       {/* ============ 3. 今晚精選（2 大 4 細不對稱格網） ============ */}
-      <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
+      <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
         <div ref={picksRef} className="reveal">
           <SectionHeading en="Tonight's Picks" zh="今晚精選" />
           <div className="mt-8 grid gap-6 lg:grid-cols-2">
@@ -379,8 +475,10 @@ export default function Home() {
         </div>
       </section>
 
+      <HairlineDivider />
+
       {/* ============ 4. 新品上架（4 欄 + scroll reveal stagger） ============ */}
-      <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
+      <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
         <div ref={newRef} className="reveal">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <SectionHeading en="New Arrivals" zh="新品上架" />
@@ -406,8 +504,10 @@ export default function Home() {
         </div>
       </section>
 
+      <HairlineDivider />
+
       {/* ============ 5. Facebook 直播專區 ============ */}
-      <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
+      <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
         <div ref={liveRef} className="reveal">
           <SectionHeading en="Live Room" zh="Facebook 直播專區" />
           <p className="mt-3 max-w-xl text-[15px] text-txt-2">
@@ -426,7 +526,9 @@ export default function Home() {
               className="flex flex-col justify-center gap-4 rounded-2xl border bg-space-2 p-6 lg:col-span-3"
               style={{ borderColor: 'var(--glass-border)' }}
             >
-              <p className="font-mono text-xs tracking-[0.2em] text-pink">LIVE ON FACEBOOK</p>
+              <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-gold">
+                Live on Facebook
+              </p>
               <p className="font-serif-tc text-xl font-semibold leading-[1.4] text-txt-1">
                 每晚開播，即場著身、即場開賣
               </p>
@@ -437,18 +539,21 @@ export default function Home() {
                 href={FACEBOOK_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn btn-primary mt-2"
+                className="mt-2 inline-flex w-fit items-center gap-2 border-b pb-1 text-sm font-semibold text-gold-soft transition-opacity hover:opacity-70"
+                style={{ borderColor: 'var(--gold)' }}
               >
-                <Facebook size={18} aria-hidden="true" />
-                去 Facebook 睇直播
+                <Facebook size={16} aria-hidden="true" />
+                去 Facebook 睇直播 →
               </a>
             </div>
           </div>
         </div>
       </section>
 
+      <HairlineDivider />
+
       {/* ============ 5.5 公司宣傳影片回顧 ============ */}
-      <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
+      <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
         <div ref={promoRef} className="reveal">
           <SectionHeading en="Promo Films" zh="公司宣傳影片回顧" />
           <p className="mt-3 max-w-xl text-[15px] text-txt-2">
@@ -500,8 +605,10 @@ export default function Home() {
         </div>
       </section>
 
+      <HairlineDivider />
+
       {/* ============ 6. 品牌故事條 + Glo Glo 主播介紹 ============ */}
-      <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
+      <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
         <div ref={storyRef} className="reveal grid items-center gap-10 lg:grid-cols-2">
           {/* 左：Glo Glo 相片（全彩） */}
           <div className="grid grid-cols-2 gap-4">
@@ -554,8 +661,10 @@ export default function Home() {
         </div>
       </section>
 
+      <HairlineDivider />
+
       {/* ============ 7. 客戶打卡牆（IG 風格横 scroll，duotone→hover 上色） ============ */}
-      <section className="mt-16 md:mt-24">
+      <section className="mt-10 md:mt-14">
         <div ref={wallRef} className="reveal mx-auto max-w-[1280px] px-5 md:px-8 xl:px-12">
           <SectionHeading en="Star Girls" zh="客戶打卡牆" center />
           <p className="mt-3 text-center text-[15px] text-txt-2">
@@ -582,14 +691,18 @@ export default function Home() {
         </div>
       </section>
 
+      <HairlineDivider />
+
       {/* ============ 8. WhatsApp CTA 區塊 ============ */}
-      <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
+      <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
         <div
           ref={waRef}
-          className="reveal rounded-[24px] border bg-space-3 px-6 py-12 text-center md:px-12"
-          style={{ borderColor: 'var(--glass-border)' }}
+          className="reveal border bg-space-3 px-6 py-12 text-center md:px-12 md:py-16"
+          style={{ borderColor: 'rgba(245, 197, 24, 0.28)' }}
         >
-          <p className="font-mono text-xs tracking-[0.2em] text-success">WHATSAPP FIRST</p>
+          <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-gold">
+            WhatsApp First
+          </p>
           <h2 className="mx-auto mt-3 max-w-xl font-serif-tc text-2xl font-semibold leading-[1.3] text-starlight md:text-[32px]">
             有咩唔明，WhatsApp 直接問 Glo Glo 團隊
           </h2>
@@ -601,10 +714,11 @@ export default function Home() {
             href={WHATSAPP_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-whatsapp mt-8"
+            className="mt-8 inline-flex items-center gap-2 border-b pb-1 font-serif-tc text-base font-semibold text-gold-soft transition-opacity hover:opacity-70"
+            style={{ borderColor: 'var(--gold)' }}
           >
-            <MessageCircle size={18} aria-hidden="true" />
-            即刻 WhatsApp 我哋
+            <MessageCircle size={16} aria-hidden="true" />
+            即刻 WhatsApp 我哋 →
           </a>
         </div>
       </section>

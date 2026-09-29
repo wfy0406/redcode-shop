@@ -55,6 +55,18 @@ interface SfNetworkItem {
   name?: string;
   address?: string;
   district?: string;
+  // v2.2.0（順豐站點查詢頁）：經緯度（官方有時回字串有時回數字）＋電話＋營業時間（簡體，要轉繁）
+  longitude?: string | number;
+  latitude?: string | number;
+  telephone?: string;
+  serviceTime?: string;
+}
+
+/** 官方經緯度防禦式 parse：字串／數字都收，唔係有限數就 null（欄位照舊留空） */
+function parseSfCoord(v: string | number | undefined): number | null {
+  if (v === undefined || v === null) return null;
+  const n = typeof v === "number" ? v : Number(String(v).trim());
+  return Number.isFinite(n) ? n : null;
 }
 
 export interface SfSyncStats {
@@ -280,6 +292,11 @@ export async function runSfSync(): Promise<SfSyncStats> {
         const name = sfToTraditional(item.name ?? "").trim();
         if (!name) continue; // 冇名嘅行唔要
         const address = item.address ? sfToTraditional(item.address).trim() : null;
+        // v2.2.0：經緯度／電話／營業時間；serviceTime 係簡體，同 name/address 一樣要過轉繁先存
+        const lat = parseSfCoord(item.latitude);
+        const lng = parseSfCoord(item.longitude);
+        const phone = item.telephone ? item.telephone.trim() || null : null;
+        const serviceTime = item.serviceTime ? sfToTraditional(item.serviceTime).trim() || null : null;
         // district：官方街坊級值 → 議會區映射；表冇 → 轉繁原值＋warn＋自我修復入 extraDistricts
         const rawDistrict = (item.district ?? "").trim();
         let district: string | null = null;
@@ -301,7 +318,7 @@ export async function runSfSync(): Promise<SfSyncStats> {
         if (hitByCode) {
           await db
             .update(sfStations)
-            .set({ name, address, district, active: true })
+            .set({ name, address, district, lat, lng, phone, serviceTime, active: true })
             .where(eq(sfStations.id, hitByCode.id));
           stats.updated += 1;
           continue;
@@ -311,7 +328,7 @@ export async function runSfSync(): Promise<SfSyncStats> {
         if (hitByName) {
           await db
             .update(sfStations)
-            .set({ officialCode: code, name, address, district, active: true })
+            .set({ officialCode: code, name, address, district, lat, lng, phone, serviceTime, active: true })
             .where(eq(sfStations.id, hitByName.id));
           byCode.set(code, hitByName);
           stats.updated += 1;
@@ -322,7 +339,7 @@ export async function runSfSync(): Promise<SfSyncStats> {
         maxSort.set(region, nextSort);
         await db
           .insert(sfStations)
-          .values({ id: `${region}-O${code}`, region, type, name, district, address, active: true, sortOrder: nextSort, officialCode: code })
+          .values({ id: `${region}-O${code}`, region, type, name, district, address, lat, lng, phone, serviceTime, active: true, sortOrder: nextSort, officialCode: code })
           .onConflictDoNothing(); // 保險：id 撞咗（理論上唔會）就 skip，唔好冧成個 sync
         stats.added += 1;
       }

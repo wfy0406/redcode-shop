@@ -27,17 +27,30 @@ function hktDate(d: Date): string {
   return new Date(d.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
 }
 
+/** 推送結果（never-throw：失敗唔 throw，用 error 欄回報，畀批次同步收集用） */
+export interface WmsMemberSyncResult {
+  ok: boolean;
+  /** 冇推嘅原因（冇 API key／非會員／g- 佔位電話），成功推送時唔會有 */
+  skipped?: string;
+  /** 失敗原因（已遮罩，唔會包含 apiKey 等秘密） */
+  error?: string;
+}
+
 /**
- * 推送一個會員去 WMS。
+ * 推送一個會員去 WMS（never-throw，回傳結果畀批次同步收集錯誤）。
  * 用法（fire-and-forget）：void forwardMemberToWms(userId).catch((e) => console.error(...));
+ * v2.2.0：payload 加 vipTier／vipExpiresAt（WMS receiveMember 合約第 5 節已加呢兩個 optional 欄）。
+ * 注意：log 永遠唔准落 payload／apiKey（老闆鐵律：secret/api key 落 log 必須遮罩）。
  */
-export async function forwardMemberToWms(userId: number): Promise<void> {
-  if (!process.env.WMS_API_KEY || process.env.WMS_SYNC_DISABLED === "1") return;
+export async function forwardMemberToWms(userId: number): Promise<WmsMemberSyncResult> {
+  if (!process.env.WMS_API_KEY || process.env.WMS_SYNC_DISABLED === "1") {
+    return { ok: false, skipped: "wms-disabled" };
+  }
   const db = getDb();
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  if (!user || user.role !== "member") return;
+  if (!user || user.role !== "member") return { ok: false, skipped: "not-member" };
   // Google 開戶佔位電話（g-xxx）唔推——WMS 用電話做 key，補咗真電話先有意義
-  if (user.phone.startsWith("g-")) return;
+  if (user.phone.startsWith("g-")) return { ok: false, skipped: "placeholder-phone" };
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), MEMBER_SYNC_TIMEOUT_MS);
@@ -50,6 +63,9 @@ export async function forwardMemberToWms(userId: number): Promise<void> {
       name: user.name,
       registeredAt: hktDate(user.createdAt),
       marketingOptIn: user.marketingOptIn ?? false,
+      // v2.2.0：VIP 級別推送（WMS receiveMember 已加 vipTier／vipExpiresAt optional 欄）
+      vipTier: user.vipTier ?? "NONE",
+      vipExpiresAt: user.vipExpiresAt ? user.vipExpiresAt.toISOString() : null,
     };
     if (user.email) payload.email = user.email;
     if (user.age != null) payload.age = user.age;
@@ -64,13 +80,21 @@ export async function forwardMemberToWms(userId: number): Promise<void> {
     } | null;
     const errMsg = data?.error?.json?.message;
     if (errMsg || !resp.ok) {
-      console.error(`[wms] 會員同步失敗（user ${userId}）:`, errMsg ?? `HTTP ${resp.status}`);
+      // 淨係落 WMS 回嘅錯誤訊息／HTTP 狀態碼，唔准落 payload（入面有 apiKey）
+      const reason = errMsg ?? `HTTP ${resp.status}`;
+      console.error(`[wms] 會員同步失敗（user ${userId}）:`, reason);
+      return { ok: false, error: reason };
     }
+    return { ok: true };
   } catch (e) {
-    console.error(
-      `[wms] 會員同步出錯（user ${userId}）:`,
-      e instanceof Error && e.name === "AbortError" ? `timeout ${MEMBER_SYNC_TIMEOUT_MS / 1000}s` : e,
-    );
+    const reason =
+      e instanceof Error && e.name === "AbortError"
+        ? `timeout ${MEMBER_SYNC_TIMEOUT_MS / 1000}s`
+        : e instanceof Error
+          ? e.message
+          : String(e);
+    console.error(`[wms] 會員同步出錯（user ${userId}）:`, reason);
+    return { ok: false, error: reason };
   } finally {
     clearTimeout(timer);
   }

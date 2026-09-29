@@ -6,6 +6,8 @@ import FormField from '@/components/account/FormField';
 import WishingStar from '@/components/account/WishingStar';
 import GoogleLoginButton from '@/components/account/GoogleLoginButton';
 import RegionStationPicker from '@/components/shop/RegionStationPicker';
+import PushPermissionGuide from '@/components/push/PushPermissionGuide';
+import { isPushSupported } from '@/lib/pushClient';
 
 /**
  * RedCode 設計系統 §P5 —— 會員註冊 /register
@@ -68,6 +70,10 @@ export default function Register() {
   const [birthMonth, setBirthMonth] = useState('');
   // 直接促銷同意（2026-08-05 Glo 要求，PDPO：唔可以預先剔選，要會員主動剔先算同意）
   const [agreeMarketing, setAgreeMarketing] = useState(false);
+  // 直播開播通知（v2.2.0）：剔咗＝註冊成功後彈 PushPermissionGuide 綁定呢部裝置；
+  // 失敗/拒絕唔阻塞註冊（guide 入面會提示可以稍後喺會員中心開返）
+  const [wantLivePush, setWantLivePush] = useState(false);
+  const [showPushGuide, setShowPushGuide] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -395,6 +401,27 @@ export default function Register() {
             </span>
           </label>
 
+          {/* 直播開播通知（v2.2.0）：綁定呢部裝置收 Web Push；獨立於上面嘅促銷同意，
+              唔預先剔選；失敗/拒絕唔阻塞註冊，可稍後喺會員中心開返 */}
+          <label
+            htmlFor="reg-live-push"
+            className="flex cursor-pointer items-start gap-3 rounded-xl border border-space-line bg-space-2 px-4 py-3.5"
+          >
+            <input
+              id="reg-live-push"
+              type="checkbox"
+              checked={wantLivePush}
+              onChange={(e) => setWantLivePush(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[#F5C518]"
+            />
+            <span className="text-[13px] leading-[1.7] text-txt-2">
+              📺 接收直播開播通知（綁定呢部裝置）
+              <span className="block text-txt-3">
+                Glo Glo 一開播，呢部裝置就會收到通知；只用嚟話你知開播，唔會做其他推廣。可以隨時喺會員中心取消綁定。
+              </span>
+            </span>
+          </label>
+
           {submitError && (
             <p
               role="alert"
@@ -451,6 +478,15 @@ export default function Register() {
           </Link>
         </p>
       </div>
+
+      {/* 直播通知權限講解（註冊成功後先彈；無論成功與否都入會員中心，唔阻塞註冊） */}
+      <PushPermissionGuide
+        open={showPushGuide}
+        onClose={() => {
+          setShowPushGuide(false);
+          navigate('/account', { replace: true });
+        }}
+      />
     </section>
   );
 }

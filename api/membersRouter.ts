@@ -8,7 +8,9 @@ import { logAudit } from "./audit";
 import { hashPassword } from "./auth";
 import { requestApprovalIfStaff } from "./approvalGuard";
 import { forwardMemberToWms } from "./wmsMemberSync";
-import { sendVipUpgradeEmail } from "./email";
+import { sendVipUpgradeEmail, siteUrl } from "./email";
+import { buildVipVerifyUrl } from "./vipCert";
+import { getVipRules } from "./vip";
 
 /**
  * 會員列表 —— staff（員工）＋ admin 可用（2026-07-29 起：員工都可以睇同改會員資料）
@@ -285,7 +287,7 @@ export const membersRouter = createRouter({
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
       const [target] = await db
-        .select({ id: users.id, role: users.role, name: users.name, email: users.email, vipTier: users.vipTier })
+        .select({ id: users.id, role: users.role, name: users.name, email: users.email, phone: users.phone, vipTier: users.vipTier })
         .from(users)
         .where(eq(users.id, input.userId))
         .limit(1);
@@ -301,24 +303,48 @@ export const membersRouter = createRouter({
       if (input.tier !== "NONE" && input.expiresAt!.getTime() <= Date.now()) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "到期日要係將來嘅時間" });
       }
+      // v2.1.1（Wave 2）：手動升級（new rank > old rank）都要寄 VIP 晉升恭賀信；
+      // 同級改期／降級唔寄。DB commit 完先 void 寄，寄信失敗唔影響操作。
+      const rankOf = (t: string) => (t === "GOLD" ? 2 : t === "SILVER" ? 1 : 0);
+      const isUpgrade = rankOf(input.tier) > rankOf(target.vipTier);
+      // v2.2.0 門檻凍結：升級（發證書嗰啲 transition）先寫「升級嗰刻嘅門檻」快照；
+      // 降級／清級／同級改期唔郁舊快照（歷史留念）
+      const upgradeRules = isUpgrade ? await getVipRules() : null;
       await db
         .update(users)
         .set(
           input.tier === "NONE"
             ? { vipTier: "NONE", vipEffectiveAt: null, vipExpiresAt: null }
-            : { vipTier: input.tier, vipEffectiveAt: new Date(), vipExpiresAt: input.expiresAt! },
+            : {
+                vipTier: input.tier,
+                vipEffectiveAt: new Date(),
+                vipExpiresAt: input.expiresAt!,
+                ...(upgradeRules
+                  ? {
+                      vipThresholdCents:
+                        input.tier === "GOLD"
+                          ? upgradeRules.goldThresholdCents
+                          : upgradeRules.silverThresholdCents,
+                    }
+                  : {}),
+              },
         )
         .where(eq(users.id, input.userId));
-      // v2.1.1（Wave 2）：手動升級（new rank > old rank）都要寄 VIP 晉升恭賀信；
-      // 同級改期／降級唔寄。DB commit 完先 void 寄，寄信失敗唔影響操作。
-      const rankOf = (t: string) => (t === "GOLD" ? 2 : t === "SILVER" ? 1 : 0);
-      if (rankOf(input.tier) > rankOf(target.vipTier) && target.email) {
+      if (isUpgrade && target.email) {
+        const rules = await getVipRules();
+        const memberNo = `RC-${String(target.id).padStart(6, "0")}`;
         void sendVipUpgradeEmail({
           to: target.email,
           name: target.name,
           tier: input.tier as "SILVER" | "GOLD",
           effectiveAt: new Date(),
           expiresAt: input.expiresAt!,
+          memberNo,
+          phone: target.phone ?? null,
+          // v2.2.0 證書版：證書附件要齊門檻（呢級嘅年度消費門檻，整數仙）／期限／驗證連結
+          thresholdCents: input.tier === "GOLD" ? rules.goldThresholdCents : rules.silverThresholdCents,
+          durationMonths: rules.durationMonths,
+          verifyUrl: buildVipVerifyUrl(siteUrl(), memberNo),
         }).then((r) => {
           if (!r.ok) console.error(`[vip] 手動升級恭賀信寄唔出（會員 #${input.userId} → ${input.tier}）：`, r.error);
         }).catch((e) => console.error("[vip] 手動升級恭賀信寄送錯誤:", e));
@@ -332,8 +358,61 @@ export const membersRouter = createRouter({
         targetId: input.userId,
         detail: `手動設定會員「${target.name}」VIP 級別：${target.vipTier} → ${input.tier}（${tierLabel}${input.tier === "NONE" ? "" : `，到期 ${input.expiresAt!.toISOString().slice(0, 10)}`}）`,
       });
+      // v2.2.0：手動改 VIP 級別成功（升／降／清級都計）→ 推送最新級別去 WMS
+      // （fire-and-forget，失敗淨 log 唔阻操作）
+      void forwardMemberToWms(input.userId).catch((e) => console.error("[wms] VIP 級別同步 error:", e));
       return { ok: true };
     }),
+
+  /**
+   * v2.2.0：管理員人手將全部 VIP 會員（vipTier ∈ SILVER/GOLD）嘅級別批量推送去 WMS。
+   * 用途：WMS 嗰邊加咗 vipTier／vipExpiresAt 欄之後，一次性補返現有 VIP 會員嘅級別。
+   * ─ 逐個推（receiveMember 用 phone upsert，idempotent，重複推唔怕）；
+   * ─ 錯誤逐個收集：一個衰唔會停晒成批（best-effort，同開機回填同款做法）；
+   * ─ 每 20 位抖半秒，唔好一次過打晒落 WMS（佢免費 plan 冷啟動會慢）；
+   * ─ log／回傳淨係錯誤訊息，永遠唔准落 apiKey（老闆鐵律：秘密落 log 必須遮罩）。
+   */
+  syncVipTiersToWms: adminProcedure.mutation(async ({ ctx }) => {
+    const db = getDb();
+    const vipMembers = await db.query.users.findMany({
+      where: and(
+        eq(users.role, "member"),
+        inArray(users.vipTier, ["SILVER", "GOLD"]),
+      ),
+      columns: { id: true },
+    });
+    let pushed = 0;
+    let skipped = 0;
+    const failures: { userId: number; error: string }[] = [];
+    for (const m of vipMembers) {
+      const r = await forwardMemberToWms(m.id);
+      if (r.ok) {
+        pushed++;
+      } else if (r.skipped) {
+        skipped++; // g- 佔位電話等：唔算失敗，補咗真電話嗰次自然會推
+      } else {
+        failures.push({ userId: m.id, error: r.error ?? "unknown" });
+      }
+      // 每 20 位抖半秒，唔好一次過打晒落 WMS
+      if ((pushed + skipped + failures.length) % 20 === 0) {
+        await new Promise((res) => setTimeout(res, 500));
+      }
+    }
+    if (failures.length > 0) {
+      console.error(
+        `[wms] VIP 級別批量同步有 ${failures.length} 位失敗:`,
+        failures.map((f) => `#${f.userId} ${f.error}`).join("；"),
+      );
+    }
+    void logAudit({
+      actorId: ctx.user.userId,
+      actorRole: ctx.user.role,
+      action: "member.syncVipTiersToWms",
+      targetType: "member",
+      detail: `批量同步 VIP 級別去 WMS：共 ${vipMembers.length} 位，成功 ${pushed}、略過 ${skipped}、失敗 ${failures.length}`,
+    });
+    return { ok: true, total: vipMembers.length, pushed, skipped, failures };
+  }),
 
   remove: adminProcedure
     .input(

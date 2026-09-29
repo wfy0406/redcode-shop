@@ -329,6 +329,64 @@ CREATE INDEX IF NOT EXISTS sfstations_region ON "sfStations" (region, active, "s
 -- v2.1.1（Wave 2，2026-09-30）：順豐官方網點 code——每日自動同步（api/sfSync.ts）嘅穩定鍵
 ALTER TABLE "sfStations" ADD COLUMN IF NOT EXISTS "officialCode" text;
 CREATE INDEX IF NOT EXISTS sfstations_officialcode ON "sfStations" ("officialCode");
+
+-- v2.2.0（順豐站點查詢頁 /#/sf-stations）：經緯度（搵最近站點用）＋電話＋營業時間；
+-- 全部 nullable，舊行留 NULL，由每日同步（api/sfSync.ts）補寫
+ALTER TABLE "sfStations" ADD COLUMN IF NOT EXISTS "lat" double precision;
+ALTER TABLE "sfStations" ADD COLUMN IF NOT EXISTS "lng" double precision;
+ALTER TABLE "sfStations" ADD COLUMN IF NOT EXISTS "phone" varchar(32);
+ALTER TABLE "sfStations" ADD COLUMN IF NOT EXISTS "serviceTime" varchar(255);
+
+-- v2.2.0（門檻凍結＋金會員 $8000，老闆 2026-09-30 指令）：
+-- users 加「升級嗰刻嘅消費門檻快照」欄（證書凍結用；nullable，降級／過期唔清）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "vipThresholdCents" integer;
+-- backfill：v2.2.0 前只有銀 $3000／金 $5000 呢個歷史門檻，舊 VIP 會員補返快照
+UPDATE users SET "vipThresholdCents" = 300000 WHERE "vipTier" = 'SILVER' AND "vipThresholdCents" IS NULL;
+UPDATE users SET "vipThresholdCents" = 500000 WHERE "vipTier" = 'GOLD' AND "vipThresholdCents" IS NULL;
+-- 一次性將金門檻 $5000 → $8000：只郁仲係預設值嘅設定（老闆自己改過其他數就唔郁）
+UPDATE siteSettings SET value = (value::jsonb || '{"goldThresholdCents":800000}'::jsonb)::text, "updatedAt" = now() WHERE key = 'vip_rules' AND (value::jsonb ->> 'goldThresholdCents')::int = 500000;
+
+-- v2.2.0（直播開播推送通知，老闆 2026-09-30 指令）：
+-- users 加「接收直播開播通知」同意欄（預設 false，沉默唔當同意；舊會員自動落入未同意）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "livePushOptIn" boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "livePushOptInAt" timestamp;
+
+-- Web Push 訂閱裝置表（endpoint unique；active=false＝已註銷／推送服務回 404/410 失效）
+CREATE TABLE IF NOT EXISTS "pushSubscriptions" (
+  id serial PRIMARY KEY,
+  "userId" integer NOT NULL REFERENCES users(id),
+  endpoint text NOT NULL UNIQUE,
+  p256dh text NOT NULL,
+  auth text NOT NULL,
+  "userAgent" varchar(255),
+  active boolean NOT NULL DEFAULT true,
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "lastSentAt" timestamp
+);
+CREATE INDEX IF NOT EXISTS pushsubscriptions_user ON "pushSubscriptions" ("userId", active);
+
+-- 直播開播推送批次表（狀態機 pending → sending → sent／failed；rejected＝主管拒絕；
+-- source 'SHOP'｜'WMS'；發送失敗原因落 reviewNote）
+CREATE TABLE IF NOT EXISTS "pushCampaigns" (
+  id serial PRIMARY KEY,
+  title varchar(128) NOT NULL,
+  body text NOT NULL,
+  "liveDate" varchar(32) NOT NULL,
+  "liveSession" varchar(32) NOT NULL,
+  url text NOT NULL,
+  status varchar(16) NOT NULL DEFAULT 'pending',
+  source varchar(8) NOT NULL DEFAULT 'SHOP',
+  "requestedBy" integer,
+  "requestedByName" varchar(128),
+  "reviewedBy" integer,
+  "reviewedByName" varchar(128),
+  "reviewNote" text,
+  "sentAt" timestamp,
+  "sentCount" integer,
+  "failCount" integer,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pushcampaigns_status_sent ON "pushCampaigns" (status, "sentAt" DESC);
 `;
 
 export async function ensureDatabase(): Promise<void> {

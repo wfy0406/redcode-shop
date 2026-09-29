@@ -10,6 +10,8 @@ import { cartSubtotal, lineTotal, unitPrice } from '@/components/cart/types';
 import type { CartLine } from '@/components/cart/types';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
+import { normalizeVipTier } from '@/components/VipBadge';
+import VipTierBand from '@/components/VipTierBand';
 
 /**
  * RedCode 購物車（design-system.md §P6）
@@ -131,6 +133,14 @@ export default function Cart() {
     retry: false,
   });
 
+  // v2.2.0 級別格調帶：同 Navbar 同一來源 vip.getMyVip；載入緊唔顯示，避免閃普通會員提示
+  const myVipQuery = trpc.vip.getMyVip.useQuery(undefined, {
+    enabled: !!user,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const vipTier = myVipQuery.data ? normalizeVipTier(myVipQuery.data.tier) : null;
+
   const [pendingId, setPendingId] = useState<number | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
@@ -168,6 +178,9 @@ export default function Cart() {
       <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">
         購物車
       </h1>
+
+      {/* v2.2.0 級別格調帶：VIP 出 hairline 金線＋淡底＋專屬短句；普通會員低調升級提示 */}
+      {user && vipTier && <VipTierBand tier={vipTier} />}
 
       {authLoading ? (
         <CartSkeleton />

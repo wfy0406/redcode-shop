@@ -236,7 +236,7 @@ export default function VipSettingsPanel({
               inputMode="numeric"
               value={goldThreshold}
               onChange={(e) => setGoldThreshold(e.target.value)}
-              placeholder="5000"
+              placeholder="8000"
               className={inputCls}
             />
           </div>

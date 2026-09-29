@@ -24,6 +24,8 @@ import { WishStarSpinner } from '@/components/cart/WishingStar';
 import { formatHKD } from '@/components/cart/format';
 import { ORDER_STATUS_META } from '@/components/admin/statusMeta';
 import PaymentHeroCard from '../components/payment/PaymentHeroCard';
+import { normalizeVipTier } from '@/components/VipBadge';
+import VipTierBand from '@/components/VipTierBand';
 import { trpc } from '@/providers/trpc';
 import {
   DEFAULT_PAYMENT_METHODS,
@@ -244,6 +246,14 @@ export default function Payment() {
   );
   const order = orderQuery.data ?? null;
 
+  // v2.2.0 級別格調帶：同 Navbar 同一來源 vip.getMyVip；載入緊唔顯示，避免閃普通會員提示
+  const myVipQuery = trpc.vip.getMyVip.useQuery(undefined, {
+    enabled: !!user,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const vipTier = myVipQuery.data ? normalizeVipTier(myVipQuery.data.tier) : null;
+
   // Airwallex 回跳 ap=done：一入頁即刻 refetch 一次，攞 webhook 更新後嘅最新狀態
   useEffect(() => {
     if (apDone && orderId !== null && user) {
@@ -453,6 +463,13 @@ export default function Payment() {
         </p>
       </header>
 
+      {/* v2.2.0 級別格調帶：VIP 出 hairline 金線＋淡底＋專屬短句；普通會員低調升級提示 */}
+      {vipTier && (
+        <div className="mx-auto max-w-2xl">
+          <VipTierBand tier={vipTier} />
+        </div>
+      )}
+
       {/* 英倫風訂單卡（A5 PaymentHeroCard，契約見 SPEC §3.5；冇 items 就唔傳） */}
       {order && (
         <div className="mx-auto mt-12 max-w-2xl">
@@ -462,6 +479,8 @@ export default function Payment() {
             statusLabel={statusLabel}
             total={order.total}
             receiptUrl={`${window.location.origin}/#/receipt/${order.id}`}
+            // v2.2.0：落單當刻級別 → 卡面級別絲綢帶＋accent 點綴（普通會員唔出）
+            vipTier={normalizeVipTier(order.vipTierAtPurchase)}
             {...(order.discountAmount > 0 ? { discountAmount: order.discountAmount } : {})}
             {...((order.vipDiscountCents ?? 0) > 0
               ? {
