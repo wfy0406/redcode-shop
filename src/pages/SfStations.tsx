@@ -347,43 +347,80 @@ export default function SfStations() {
   };
 
   /* ---------- 用我而家嘅位置 ---------- */
-  const findByGeolocation = () => {
+  const findByGeolocation = async () => {
     if (nearest.status === 'busy') return;
     if (!('geolocation' in navigator)) {
       setNearest({ status: 'error', message: '你嘅瀏覽器唔支援定位，可以試下打地址搵' });
       return;
     }
     setNearest({ status: 'busy', mode: 'geo' });
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        void (async () => {
-          try {
-            const items = (await utils.vip.nearestStations.fetch({
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              limit: 5,
-            })) as NearestStation[];
-            if (items.length === 0) {
-              setNearest({
-                status: 'error',
-                message: '你附近暫時未有已登記坐標嘅站點，可以試下打地址或者用下面嘅篩選搵',
-              });
-              return;
-            }
-            setNearest({ status: 'done', label: '你而家嘅位置', items });
-          } catch {
-            setNearest({ status: 'error', message: '網絡唔穩定，請稍後再試' });
-          }
-        })();
-      },
-      () => {
-        setNearest({
-          status: 'error',
-          message: '未能取得你嘅位置（可能係拒絕咗定位授權），可以試下打地址搵',
+
+    const usePosition = async (pos: GeolocationPosition) => {
+      try {
+        const items = (await utils.vip.nearestStations.fetch({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          limit: 5,
+        })) as NearestStation[];
+        if (items.length === 0) {
+          setNearest({
+            status: 'error',
+            message: '你附近暫時未有已登記坐標嘅站點，可以試下打地址或者用下面嘅篩選搵',
+          });
+          return;
+        }
+        setNearest({ status: 'done', label: '你而家嘅位置', items });
+      } catch {
+        setNearest({ status: 'error', message: '網絡唔穩定，請稍後再試' });
+      }
+    };
+
+    // v2.2.2 加強（老闆實測：第一次定位失敗、過陣再試又得）：
+    // 手機 GPS 冷啟動要十幾廿秒先攞到衞星定位，舊版一刀切 10 秒 timeout → 初次必死、
+    // 之後瀏覽器有咗暖身快取先「突然得返」。而家兩段式：
+    // ① 快取/network 定位（enableHighAccuracy:false，通常 1–2 秒有，誤差幾十米夠搵站用）
+    // ② ① 逾時先開 GPS 高精度重試（25 秒），中間畀用戶見到「轉咗用 GPS 精準定位…」
+    // 錯誤訊息按 error.code 分開：拒絕授權／收唔到／逾時，各有各嘅補救提示。
+    const requestPosition = (opts: PositionOptions) =>
+      new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, opts);
+      });
+
+    const explainError = (code: number): string => {
+      if (code === 1)
+        return '你拒絕咗定位授權。想用得返：撳瀏覽器地址欄左邊嘅鎖形 icon → 權限 → 位置 → 允許，然後再撳一次；或者直接打地址搵';
+      if (code === 2)
+        return '而家收唔到定位訊號（室內／地庫會咁），行近窗邊或出面再試，或者直接打地址搵';
+      return '定位逾時，試多一次或者直接打地址搵';
+    };
+
+    try {
+      // ① 快速定位：准用 5 分鐘內快取；network-based 定位唔使等衞星
+      const pos = await requestPosition({
+        enableHighAccuracy: false,
+        timeout: 12000,
+        maximumAge: 300000,
+      });
+      await usePosition(pos);
+    } catch (e1) {
+      const err1 = e1 as GeolocationPositionError;
+      // 只有「逾時」先自動重試高精度；拒絕授權／收唔到即刻報
+      if (err1.code !== 3) {
+        setNearest({ status: 'error', message: explainError(err1.code) });
+        return;
+      }
+      try {
+        const pos = await requestPosition({
+          enableHighAccuracy: true,
+          timeout: 25000,
+          maximumAge: 60000,
         });
-      },
-      { timeout: 10000, maximumAge: 300000 },
-    );
+        await usePosition(pos);
+      } catch (e2) {
+        const err2 = e2 as GeolocationPositionError;
+        setNearest({ status: 'error', message: explainError(err2.code) });
+      }
+    }
   };
 
   const busy = nearest.status === 'busy';
