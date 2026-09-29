@@ -231,18 +231,22 @@ export default function PaymentHeroCard(props: {
   statusLabel: string;
   total: number;
   discountAmount?: number;
+  /** v2.1.0（VIP+免運）：VIP 折扣金額（港元整數）＋級別 label；有折扣先顯示，排優惠碼折扣行上面 */
+  vipDiscountAmount?: number;
+  vipTierLabel?: string;
   items?: { name: string; quantity: number; price: number }[];
   deliveryLabel?: string;
   /** 張單嘅單據頁完整 URL——有傳就喺卡尾出真二維碼，掃完開返張單（2026-09-29） */
   receiptUrl?: string;
 }): JSX.Element {
-  const { orderNo, createdAt, statusLabel, total, discountAmount, items, deliveryLabel, receiptUrl } = props;
+  const { orderNo, createdAt, statusLabel, total, discountAmount, vipDiscountAmount, vipTierLabel, items, deliveryLabel, receiptUrl } = props;
   const cardRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState<'png' | 'pdf' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const date = splitDate(createdAt);
   const hasItems = Array.isArray(items) && items.length > 0;
   const hasDiscount = typeof discountAmount === 'number' && discountAmount > 0;
+  const hasVipDiscount = typeof vipDiscountAmount === 'number' && vipDiscountAmount > 0;
 
   /* html2canvas 截卡（按鈕喺卡外，唔會入鏡；卡內以純 CSS/SVG 繪製，截圖保真） */
   const captureCard = async (): Promise<HTMLCanvasElement> => {
@@ -484,6 +488,17 @@ export default function PaymentHeroCard(props: {
 
             {/* ---- 折扣 + 總計（會計式雙 hairline） ---- */}
             <div style={{ marginTop: 22 }}>
+              {/* v2.1.0：VIP 折扣行排優惠碼折扣行上面（落單次序先 VIP 後 coupon） */}
+              {hasVipDiscount && (
+                <div className="flex items-baseline justify-between" style={{ padding: '4px 0 6px' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                    VIP 折扣{vipTierLabel ? `（${vipTierLabel}）` : ''}
+                  </span>
+                  <span style={{ fontFamily: MONO, fontSize: 13, color: '#8a6d1f', fontVariantNumeric: 'tabular-nums' }}>
+                    −{fmtMoney(vipDiscountAmount ?? 0)}
+                  </span>
+                </div>
+              )}
               {hasDiscount && (
                 <div className="flex items-baseline justify-between" style={{ padding: '4px 0 10px' }}>
                   <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>

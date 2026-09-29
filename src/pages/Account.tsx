@@ -4,6 +4,7 @@ import { Calendar, Wallet } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar from '@/components/account/WishingStar';
+import VipCard from '@/components/account/VipCard';
 import OrderCard from '@/components/account/OrderCard';
 import ProfileCard from '@/components/account/ProfileCard';
 import DeliveryPrefCard from '@/components/account/DeliveryPrefCard';
@@ -89,6 +90,11 @@ export default function Account() {
     <section className="mx-auto w-full max-w-[1280px] px-5 py-12 md:px-8 md:py-16 xl:px-12">
       <p className="script text-3xl">My little galaxy</p>
       <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">會員中心</h1>
+
+      {/* VIP 級別區塊（v2.1.0，2026-09-29）：級別 badge＋有效期＋年度消費＋升級進度＋ /vip 入口 */}
+      <div className="mt-8">
+        <VipCard />
+      </div>
 
       {/* Google 開戶（電話仲係 g- 佔位）→ 頂置「完成會員資料」卡：Google 預填、可改、確認先儲存 */}
       {user.phone.startsWith('g-') && (

@@ -185,6 +185,47 @@ export default function OrderEditPanel({ order, onClose, onSaved }: {
             <dd className="font-mono text-[12px] text-txt-2">{fmtPaidAt(order.paidAt)}</dd>
           </div>
         )}
+        {/* v2.1.0（VIP+免運）：落單當刻級別／VIP 折扣／運費／系統備註（全部唯讀，改單唔郁得呢啲） */}
+        <div className="flex gap-2">
+          <dt className="w-28 shrink-0 text-txt-3">會員級別</dt>
+          <dd className="text-txt-2">
+            {order.vipTierAtPurchase === 'GOLD'
+              ? 'VIP 金會員'
+              : order.vipTierAtPurchase === 'SILVER'
+                ? 'VIP 銀會員'
+                : '會員'}
+          </dd>
+        </div>
+        {(order.vipDiscountCents ?? 0) > 0 && (
+          <div className="flex gap-2">
+            <dt className="w-28 shrink-0 text-txt-3">VIP 折扣</dt>
+            <dd className="font-mono text-[12px] text-gold">
+              −{fmtHKD(Math.round((order.vipDiscountCents ?? 0) / 100))}
+            </dd>
+          </div>
+        )}
+        {(order.shippingFree || order.region) && (
+          <div className="flex gap-2">
+            <dt className="w-28 shrink-0 text-txt-3">運費</dt>
+            <dd className="text-txt-2">
+              {order.shippingFree ? (
+                <span className="font-medium text-gold">免運 ✓</span>
+              ) : order.region === 'MO' ? (
+                '順豐到付（澳門單・不包郵）'
+              ) : order.region === 'OVERSEAS' ? (
+                '順豐到付（國外單・不包郵）'
+              ) : (
+                '順豐到付'
+              )}
+            </dd>
+          </div>
+        )}
+        {order.remark && (
+          <div className="flex gap-2">
+            <dt className="w-28 shrink-0 text-txt-3">系統備註</dt>
+            <dd className="text-txt-2">{order.remark}</dd>
+          </div>
+        )}
       </dl>
 
       {/* F7 退款資料（唯讀）：refundStatus==='none' 就唔顯示——退款由 WMS 主管審批，後台呢度睇唔郁得 */}

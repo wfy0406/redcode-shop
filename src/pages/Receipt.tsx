@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
@@ -12,6 +13,12 @@ import { useAuth } from '@/hooks/useAuth';
  * 私隱（Glo 指示）：聯絡電話淨係顯示頭 4 位（其餘 ****）；
  * 取貨方式淨係顯示方法（順豐站自取／順豐智能櫃自取／送貨上門），
  * 唔顯示詳細取貨點同送貨地址。
+ *
+ * v2.1.0（VIP+免運，2026-09-29；Glo：全網所有單據都要睇到折扣同會員級別）：
+ * 訂單資料加「會員級別」（銀/金先顯示）＋「運費」（免運 ✓／順豐到付連地區註記）；
+ * 總計區 VIP 折扣行排優惠碼折扣行上面（落單次序先 VIP 後 coupon）；
+ * remark（澳門單／VIP金會員全年免運等系統備註）喺備註位顯示。
+ * 新行全部喺 .rcr-sheet 入面，列印／下載圖片自動入鏡。
  *
  * 下載：「下載圖片」html2canvas 出 PNG（dynamic import，唔塞首屏）；
  * 「列印／儲存 PDF」用 visibility 技巧淨係印 .rcr-sheet。
@@ -212,8 +219,8 @@ function RuleLabel({ children }: { children: string }) {
   );
 }
 
-/** 資料行（mono label 左、serif 粗體值右對齊） */
-function MetaRow({ label, value }: { label: string; value: string }) {
+/** 資料行（mono label 左、serif 粗體值右對齊）；value 可以係節點（免運金漆字等上色用） */
+function MetaRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16 }}>
       <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.08em', color: INK_SOFT, whiteSpace: 'nowrap' }}>
@@ -338,6 +345,28 @@ export default function Receipt() {
       : order.deliveryMethod === 'sf_locker'
         ? '順豐智能櫃自取'
         : '送貨上門';
+
+  // v2.1.0：VIP 級別（銀/金先上單；普通會員唔顯示，保持版面簡潔）
+  const vipTierText =
+    order.vipTierAtPurchase === 'GOLD'
+      ? 'VIP 金會員'
+      : order.vipTierAtPurchase === 'SILVER'
+        ? 'VIP 銀會員'
+        : null;
+
+  // v2.1.0：運費——免運 ✓（金漆字）；非免運按地區註記；舊單（region 係 null）唔加呢行
+  const shippingText = order.shippingFree
+    ? 'free'
+    : order.region === 'MO'
+      ? '順豐到付（澳門單・不包郵）'
+      : order.region === 'OVERSEAS'
+        ? '順豐到付（國外單・不包郵）'
+        : order.region === 'HK'
+          ? '順豐到付'
+          : null;
+
+  // v2.1.0：VIP 折扣（DB 存整數仙 → 顯示港元）
+  const vipDiscount = Math.round((order.vipDiscountCents ?? 0) / 100);
 
   // F7 退款狀態：取消單成張灰階；refunded 顯示退款時間＋原路退回說明
   const isCancelled = order.status === 'cancelled';
@@ -485,9 +514,22 @@ export default function Receipt() {
                 <MetaRow label="會員姓名 Member" value={order.user.name} />
                 <MetaRow label="聯絡電話 Phone" value={maskPhone(order.user.phone)} />
                 <MetaRow label="取貨方式 Delivery" value={deliveryText} />
+                {/* v2.1.0：會員級別（銀/金先上單）＋ 運費（免運 ✓／到付連地區註記） */}
+                {vipTierText && <MetaRow label="會員級別 Tier" value={vipTierText} />}
+                {shippingText === 'free' && (
+                  <MetaRow
+                    label="運費 Shipping"
+                    value={<span style={{ color: '#8a6d1f' }}>免運 ✓</span>}
+                  />
+                )}
+                {shippingText !== null && shippingText !== 'free' && (
+                  <MetaRow label="運費 Shipping" value={shippingText} />
+                )}
                 <MetaRow label="付款渠道 Payment" value={CHANNEL_TEXT[order.paymentChannel] ?? order.paymentChannel} />
                 {paidDate && <MetaRow label="付款時間 Paid At" value={paidDate.zhTime} />}
                 {order.note && <MetaRow label="備註 Note" value={order.note} />}
+                {/* v2.1.0：系統備註（澳門單・不包郵／VIP金會員全年免運等，WMS 同一字串） */}
+                {order.remark && <MetaRow label="訂單備註 Remark" value={order.remark} />}
               </div>
             </div>
 
@@ -570,6 +612,17 @@ export default function Receipt() {
                   {fmtMoney(subtotal)}
                 </span>
               </div>
+              {/* v2.1.0：VIP 折扣行排優惠碼折扣行上面（落單次序先 VIP 後 coupon） */}
+              {vipDiscount > 0 && (
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 6px' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                    VIP 折扣{vipTierText ? `（${vipTierText}）` : ''}
+                  </span>
+                  <span style={{ fontFamily: MONO, fontSize: 13, color: '#8a6d1f', fontVariantNumeric: 'tabular-nums' }}>
+                    −{fmtMoney(vipDiscount)}
+                  </span>
+                </div>
+              )}
               {order.discountAmount > 0 && (
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 10px' }}>
                   <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>

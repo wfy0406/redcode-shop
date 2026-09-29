@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Images, LayoutList, ListChecks, LogIn, Mail, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Crown, Images, LayoutList, ListChecks, LogIn, Mail, Package, ScrollText, ShieldCheck, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -19,6 +19,8 @@ import MarketingEmailCard from '@/components/admin/MarketingEmailCard';
 import StaffManager from '@/components/admin/StaffManager';
 import AnalyticsManager from '@/components/admin/AnalyticsManager';
 import MemberList from '@/components/admin/MemberList';
+import VipSettingsPanel from '@/components/admin/VipSettingsPanel';
+import StationManager from '@/components/admin/StationManager';
 import ApprovalCenter from '@/components/admin/ApprovalCenter';
 import AuditLog from '@/components/admin/AuditLog';
 import { isToday } from '@/components/admin/format';
@@ -43,6 +45,8 @@ type ViewKey =
   | 'promo'
   | 'marketing'
   | 'members'
+  // v2.1.0（VIP+免運，2026-09-29）：VIP/免運規則＋順豐站點管理（admin only）
+  | 'vip'
   | 'staff'
   | 'audit';
 
@@ -204,6 +208,10 @@ function AdminConsole() {
     // 會員列表（2026-08-06 三級制）：主管同員工都入得——員工改會員資料要主管/管理員審批；
     // 刪會員仍然 admin only（MemberList 入面 canDelete 擋）
     { key: 'members', label: '會員', icon: <Users size={17} aria-hidden="true" /> },
+    // VIP＋免運規則＋順豐站點管理只限最高管理員（admin；後端 settings/vip admin API 都係 adminProcedure）
+    ...(isAdmin
+      ? [{ key: 'vip' as ViewKey, label: 'VIP 設定', icon: <Crown size={17} aria-hidden="true" /> }]
+      : []),
     // 員工帳號管理只限最高管理員（admin）
     ...(isAdmin
       ? [{ key: 'staff' as ViewKey, label: '員工帳號', icon: <ShieldCheck size={17} aria-hidden="true" /> }]
@@ -255,6 +263,14 @@ function AdminConsole() {
     promo: <PromoManager toast={pushToast} />,
     marketing: <MarketingEmailCard toast={pushToast} />,
     members: <MemberList toast={pushToast} />,
+    vip: isAdmin ? (
+      <div className="space-y-6">
+        <VipSettingsPanel toast={pushToast} />
+        <StationManager toast={pushToast} />
+      </div>
+    ) : (
+      ADMIN_ONLY_HINT
+    ),
     approvals: <ApprovalCenter toast={pushToast} />,
     staff: isAdmin ? <StaffManager toast={pushToast} /> : ADMIN_ONLY_HINT,
     audit: isAdmin ? <AuditLog /> : ADMIN_ONLY_HINT,

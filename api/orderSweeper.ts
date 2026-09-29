@@ -2,7 +2,7 @@ import { and, eq, lt, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, products, users } from "@db/schema";
 import { logAudit } from "./audit";
-import { sendOrderCancelledEmail } from "./email";
+import { sendOrderCancelledEmail, orderVipEmailInfo } from "./email";
 
 /**
  * 待付款訂單自動取消（2026-07-30 Glo 規則；2026-08-04 起收緊做 2 天）
@@ -60,6 +60,8 @@ export async function sweepExpiredPendingOrders(now = new Date()): Promise<numbe
           total: order.total,
           discountAmount: order.discountAmount,
           createdAt: order.createdAt,
+          // v2.1.1（Wave 2）：取消信一樣顯示 VIP 級別＋折扣（全網單據統一）
+          vip: orderVipEmailInfo(order),
           items: order.items.map((it) => ({
             productName: it.productName,
             size: it.size,

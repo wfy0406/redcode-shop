@@ -9,7 +9,13 @@ import { resolvePromoDiscount } from "./promoRouter";
 import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
 import { sendOrderReviewAlertEmail } from "./email";
 import { logAudit } from "./audit";
-import { sendOrderApprovedEmail, sendOrderPendingEmail } from "./email";
+import { sendOrderApprovedEmail, sendOrderPendingEmail, orderVipEmailInfo } from "./email";
+import {
+  computeCheckoutQuote,
+  normalizeDeliveryMethod,
+  normalizeRegion,
+  recomputeVipTierInBackground,
+} from "./vip";
 
 const orderStatusEnum = z.enum([
   "pending_payment",
@@ -22,7 +28,15 @@ const orderStatusEnum = z.enum([
 ]);
 
 // 取貨方式：address＝送到地址（預設）；sf_station＝順豐站自取；sf_locker＝順豐智能櫃自取
-const deliveryMethodEnum = z.enum(["address", "sf_station", "sf_locker"]);
+// v2.1.0（VIP+免運）：API 邊界同時接受契約大寫值（HOME/SF_STATION/SF_LOCKER），入 DB 前正規化
+const deliveryMethodEnum = z.enum([
+  "address",
+  "sf_station",
+  "sf_locker",
+  "HOME",
+  "SF_STATION",
+  "SF_LOCKER",
+]);
 
 function generateOrderNo(): string {
   const now = new Date();
@@ -133,8 +147,12 @@ export const ordersRouter = createRouter({
           note: z.string().optional(),
           promoCode: z.string().optional(),
           // 順豐站／智能櫃（選填）：揀咗自取先需要填 pickupPoint
+          // v2.1.0（VIP+免運）：新增 region（HK/MO/OVERSEAS，預設跟會員預設地區）＋
+          // stationId（對 sfStations.id；server 會攞站名做快照寫落 stationName／pickupPoint）
           deliveryMethod: deliveryMethodEnum.optional(),
           pickupPoint: z.string().max(255).optional(),
+          region: z.enum(["HK", "MO", "OVERSEAS", "hk", "mo", "overseas"]).optional(),
+          stationId: z.string().trim().max(64).optional(),
         })
         .optional(),
     )
@@ -161,6 +179,34 @@ export const ordersRouter = createRouter({
         0,
       );
 
+      // v2.1.0（VIP+免運）：落單地區預設跟會員預設收件地區（舊會員＝HK）
+      const me = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+        columns: { defaultRegion: true },
+      });
+      const region = normalizeRegion(input?.region ?? me?.defaultRegion);
+
+      // v2.1.0：server 重用 checkoutQuote 共用邏輯計最終金額（VIP 折扣→優惠碼→免運判定），
+      // 唔准信前端金額；站點 ID 會校驗存在＋active＋同地區匹配
+      let quote;
+      try {
+        quote = await computeCheckoutQuote(ctx.user.userId, {
+          region,
+          deliveryMethod: input?.deliveryMethod,
+          stationId: input?.stationId,
+          // 優惠碼喺下面 transaction 入面先真正驗證＋扣配額；呢度唔傳，避免重複解析
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "";
+        if (msg === "STATION_INVALID") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "站點唔存在或已停用" });
+        }
+        if (msg === "STATION_REGION_MISMATCH") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "站點同收件地區唔啱，請重新揀過" });
+        }
+        throw e;
+      }
+
       // Generate a unique order number (RC + date + random 4 digits)
       let orderNo = generateOrderNo();
       for (let i = 0; i < 10; i++) {
@@ -171,9 +217,13 @@ export const ordersRouter = createRouter({
         orderNo = generateOrderNo();
       }
 
-      const deliveryMethod = input?.deliveryMethod ?? "address";
+      const deliveryMethod = quote.deliveryMethod;
+      // 自取站點：有 stationId 就用站名快照做 pickupPoint（兼容舊嘅顯示／WMS／email 流程）；
+      // 冇 stationId 就沿用舊嘅自由文本 pickupPoint
       const pickupPoint =
-        deliveryMethod === "address" ? null : (input?.pickupPoint?.trim() || null);
+        deliveryMethod === "address"
+          ? null
+          : (quote.stationName ?? input?.pickupPoint?.trim() ?? null) || null;
 
       // PostgreSQL 支援真 transaction：扣庫存 + 優惠碼 + insert order + items + clear cart 一齊 atomic
       const orderId = await db.transaction(async (tx) => {
@@ -201,8 +251,11 @@ export const ordersRouter = createRouter({
         }
 
         // 優惠碼：server 重算折扣 + usedCount 遞增（同事務）
+        // v2.1.0（VIP+免運）：先 VIP 後優惠碼——優惠碼以 VIP 折後價做基數（疊加，見 api/vip.ts 檔頭）
+        const vipDiscountDollars = quote.vipDiscountCents / 100;
+        const couponBase = subtotal - vipDiscountDollars;
         let promoCodeValue: string | null = null;
-        let discountAmount = 0;
+        let couponDiscount = 0;
         if (input?.promoCode?.trim()) {
           // 每人限用檢查用：先數呢個帳號之前用過呢個碼幾多次（口徑同 usedCount：計已建立訂單）
           const [{ n: myUses }] = await tx
@@ -214,9 +267,9 @@ export const ordersRouter = createRouter({
                 eq(orders.userId, ctx.user.userId),
               ),
             );
-          const resolved = await resolvePromoDiscount(tx, input.promoCode, subtotal, myUses);
+          const resolved = await resolvePromoDiscount(tx, input.promoCode, couponBase, myUses);
           promoCodeValue = resolved.promo.code;
-          discountAmount = Math.min(resolved.discountAmount, subtotal);
+          couponDiscount = Math.min(resolved.discountAmount, couponBase);
           const bumped = await tx
             .update(promoCodes)
             .set({ usedCount: sql`${promoCodes.usedCount} + 1` })
@@ -234,6 +287,8 @@ export const ordersRouter = createRouter({
             throw new TRPCError({ code: "BAD_REQUEST", message: "優惠碼已用完" });
           }
         }
+        // 總折扣＝VIP 折扣＋優惠碼折扣（discountAmount 舊欄係整數港元，兩者加埋寫入）
+        const discountAmount = vipDiscountDollars + couponDiscount;
         const total = subtotal - discountAmount;
 
         const [{ id }] = await tx
@@ -249,6 +304,14 @@ export const ordersRouter = createRouter({
             discountAmount,
             deliveryMethod,
             pickupPoint,
+            // v2.1.0（VIP+免運）：地區／站點快照／免運標記／VIP 快照／規則備註（分號分隔）
+            region: quote.region,
+            stationId: quote.stationId,
+            stationName: quote.stationName,
+            shippingFree: quote.shippingFree,
+            vipTierAtPurchase: quote.vipTier,
+            vipDiscountCents: quote.vipDiscountCents,
+            remark: quote.remarks.length > 0 ? quote.remarks.join("；") : null,
           })
           .returning({ id: orders.id });
 
@@ -287,6 +350,8 @@ export const ordersRouter = createRouter({
             total: created.total,
             discountAmount: created.discountAmount,
             createdAt: created.createdAt,
+            // v2.1.1（Wave 2）：單據顯示 VIP 級別＋VIP 折扣行
+            vip: orderVipEmailInfo(created),
             items: created.items.map((it) => ({
               productName: it.productName,
               size: it.size,
@@ -307,7 +372,7 @@ export const ordersRouter = createRouter({
         action: "order.create",
         targetType: "order",
         targetId: orderNo,
-        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}${deliveryMethod !== "address" ? `，自取（${deliveryMethod === "sf_station" ? "順豐站" : "智能櫃"}${pickupPoint ? `：${pickupPoint}` : ""}）` : ""}${emailNote}`,
+        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}${quote.vipDiscountCents > 0 ? `，VIP${quote.vipTier === "GOLD" ? "金" : "銀"}會員折 HK$${quote.vipDiscountCents / 100}` : ""}${quote.shippingFree ? "，免運" : ""}${region !== "HK" ? `，${region === "MO" ? "澳門" : "國外"}單` : ""}${deliveryMethod !== "address" ? `，自取（${deliveryMethod === "sf_station" ? "順豐站" : "智能櫃"}${pickupPoint ? `：${pickupPoint}` : ""}）` : ""}${emailNote}`,
       });
       return created;
     }),
@@ -489,6 +554,10 @@ export const ordersRouter = createRouter({
         where: eq(orders.id, proof.orderId),
         with: { items: true },
       });
+      // v2.1.0（VIP+免運）：訂單一確認收款，背景重算會員 VIP 級別（本年度已付款消費達標即升級）
+      if (input.approve && reviewedOrder) {
+        recomputeVipTierInBackground(reviewedOrder.userId, reviewedOrder.orderNo);
+      }
       // 已確認通知 email（2026-08-04 第二版）：批准嗰刻寄出，附訂單單據 HTML 附件；
       // 結果寫埋入日誌 detail（已寄出／寄出失敗／冇綁 Email），等客人話收唔到嗰陣後台即刻查到原因
       let emailNote = "";
@@ -512,6 +581,7 @@ export const ordersRouter = createRouter({
             })),
             total: reviewedOrder.total,
             discountAmount: reviewedOrder.discountAmount,
+            vip: orderVipEmailInfo(reviewedOrder),
             delivery: {
               method: reviewedOrder.deliveryMethod,
               pickupPoint: reviewedOrder.pickupPoint,
@@ -563,6 +633,8 @@ export const ordersRouter = createRouter({
       if (claimed.length === 0) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "訂單已經處理咗" });
       }
+      // v2.1.0（VIP+免運）：確認收款後背景重算 VIP 級別
+      recomputeVipTierInBackground(order.userId, order.orderNo);
       // 已確認通知 email：同截圖批准一致，批准嗰刻寄出，附訂單單據 HTML 附件
       let emailNote = "";
       const member = await db.query.users.findFirst({
@@ -584,6 +656,7 @@ export const ordersRouter = createRouter({
           })),
           total: order.total,
           discountAmount: order.discountAmount,
+          vip: orderVipEmailInfo(order),
           delivery: {
             method: order.deliveryMethod,
             pickupPoint: order.pickupPoint,
@@ -755,7 +828,10 @@ export const ordersRouter = createRouter({
       const nextNote = input.note === undefined ? order.note : input.note?.trim() || null;
       const nextAddress =
         input.address === undefined ? order.address : input.address?.trim() || null;
-      const nextDeliveryMethod = input.deliveryMethod ?? order.deliveryMethod;
+      // v2.1.0：API 接受契約大寫值（HOME/SF_STATION/SF_LOCKER），入 DB 前正規化返舊值
+      const nextDeliveryMethod = input.deliveryMethod
+        ? normalizeDeliveryMethod(input.deliveryMethod)
+        : (order.deliveryMethod as "address" | "sf_station" | "sf_locker");
       const nextPickupPoint =
         nextDeliveryMethod === "address"
           ? null

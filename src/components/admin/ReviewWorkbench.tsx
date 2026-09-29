@@ -259,6 +259,21 @@ export default function ReviewWorkbench({
               ))}
             </div>
 
+            {/* v2.1.0：VIP 折扣細行（先 VIP 後 coupon，排優惠碼上面；仙 → 港元） */}
+            {(selected.vipDiscountCents ?? 0) > 0 && (
+              <p className="mt-2 text-right text-[13px] text-gold">
+                VIP 折扣
+                {selected.vipTierAtPurchase === 'GOLD'
+                  ? '（VIP金會員）'
+                  : selected.vipTierAtPurchase === 'SILVER'
+                    ? '（VIP銀會員）'
+                    : ''}{' '}
+                <span className="font-mono">
+                  −{fmtHKD(Math.round((selected.vipDiscountCents ?? 0) / 100))}
+                </span>
+                {selected.shippingFree && <span className="ml-2">免運 ✓</span>}
+              </p>
+            )}
             {/* 優惠碼折扣細行（應收金額已係折後價） */}
             {selected.discountAmount > 0 && (
               <p className="mt-2 text-right text-[13px] text-gold">

@@ -11,6 +11,16 @@ import {
   resetAirwallexConfigCache,
 } from "./airwallex";
 import type { AirwallexStoredConfig } from "./airwallex";
+import {
+  VIP_RULES_SETTING_KEY,
+  SHIPPING_RULES_SETTING_KEY,
+  getVipRules,
+  getShippingRules,
+  resetVipRulesCache,
+  resetShippingRulesCache,
+  vipRulesSchema,
+  shippingRulesSchema,
+} from "./vip";
 
 /**
  * 全站設定（key-value）——
@@ -206,6 +216,72 @@ export const settingsRouter = createRouter({
         next.clientId?.trim() && next.apiKey?.trim() && next.webhookSecret?.trim(),
       );
       return { ok: true as const, configured };
+    }),
+
+  // ─── v2.1.0（VIP+免運，2026-09-29）：VIP／免運規則設定（admin 專用） ───
+  // 存 siteSettings key="vip_rules"／"shipping_rules"（JSON）；預設值同 getter 喺 api/vip.ts。
+  // 前台顯示用 vip.getPublicVipConfig（公開），呢度係後台編輯用嘅讀寫。
+
+  /** 讀 VIP 規則現況（admin）：回合併咗預設值嘅完整規則 */
+  getVipRules: adminProcedure.query(async () => getVipRules()),
+
+  /** 改 VIP 規則（admin）：整體替換（五個欄要齊）；銀門檻唔可以高過金門檻 */
+  setVipRules: adminProcedure
+    .input(vipRulesSchema)
+    .mutation(async ({ input, ctx }) => {
+      if (input.silverThresholdCents > input.goldThresholdCents) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "銀會員門檻唔可以高過金會員門檻",
+        });
+      }
+      const db = getDb();
+      const value = JSON.stringify(input);
+      await db
+        .insert(siteSettings)
+        .values({ key: VIP_RULES_SETTING_KEY, value, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: siteSettings.key,
+          set: { value, updatedAt: new Date() },
+        });
+      resetVipRulesCache(); // 即時生效，唔使等 cache 過期
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "setting.vipRules",
+        targetType: "setting",
+        targetId: VIP_RULES_SETTING_KEY,
+        detail: `更新 VIP 規則：銀滿$${input.silverThresholdCents / 100}（${input.silverDiscountBps / 100}折計）／金滿$${input.goldThresholdCents / 100}（${input.goldDiscountBps / 100}折計）／期限 ${input.durationMonths} 個月`,
+      });
+      return { ok: true as const };
+    }),
+
+  /** 讀免運規則現況（admin） */
+  getShippingRules: adminProcedure.query(async () => getShippingRules()),
+
+  /** 改免運規則（admin）：整體替換；取貨方式用契約大寫值（HOME/SF_STATION/SF_LOCKER） */
+  setShippingRules: adminProcedure
+    .input(shippingRulesSchema)
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const value = JSON.stringify(input);
+      await db
+        .insert(siteSettings)
+        .values({ key: SHIPPING_RULES_SETTING_KEY, value, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: siteSettings.key,
+          set: { value, updatedAt: new Date() },
+        });
+      resetShippingRulesCache();
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "setting.shippingRules",
+        targetType: "setting",
+        targetId: SHIPPING_RULES_SETTING_KEY,
+        detail: `更新免運規則：滿$${input.freeThresholdCents / 100} 免運（${input.freeMethods.join("/") || "冇"}）／金會員全年免運（${input.goldVipFreeMethods.join("/") || "冇"}）`,
+      });
+      return { ok: true as const };
     }),
 });
 

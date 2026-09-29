@@ -9,6 +9,7 @@ import { hashPassword, verifyPassword, signToken } from "./auth";
 import { logAudit } from "./audit";
 import { sendPasswordResetEmail, sendWelcomeEmail } from "./email";
 import { forwardMemberToWms } from "./wmsMemberSync";
+import { normalizeDeliveryMethod, normalizeRegion } from "./vip";
 
 /**
  * 電話正規化（2026-08-04 Glo 規則）：香港號碼統一儲 8 位本地號。
@@ -38,6 +39,12 @@ const publicUser = (u: typeof users.$inferSelect) => ({
   // 預設取貨方式（2026-08-08 Glo 要求）：會員中心顯示＋結帳自動帶入用
   deliveryMethod: u.deliveryMethod,
   pickupPoint: u.pickupPoint,
+  // v2.1.0（VIP+免運）：預設收件地區＋預設順豐站點（註冊／會員中心可設，結帳自動帶入）
+  defaultRegion: u.defaultRegion,
+  defaultStationId: u.defaultStationId,
+  // v2.1.0（VIP+免運）：VIP 級別＋到期日（導覽列 badge／會員中心顯示用；規則詳情用 vip.getMyVip）
+  vipTier: u.vipTier,
+  vipExpiresAt: u.vipExpiresAt,
   age: u.age,
   birthMonth: u.birthMonth,
   // 直接促銷同意（2026-08-05）：會員中心開關顯示用；後台列表由 membersRouter 自己 select
@@ -67,8 +74,14 @@ export const authRouter = createRouter({
         password: z.string().min(6),
         address: z.string().optional(),
         // 預設取貨方式（2026-08-08 Glo 要求）：選填；揀自取可以順手填站點名稱/編號
-        deliveryMethod: z.enum(["address", "sf_station", "sf_locker"]).optional(),
+        // v2.1.0（VIP+免運）：同時接受契約大寫值（HOME/SF_STATION/SF_LOCKER），入 DB 前正規化
+        deliveryMethod: z
+          .enum(["address", "sf_station", "sf_locker", "HOME", "SF_STATION", "SF_LOCKER"])
+          .optional(),
         pickupPoint: z.string().max(255).optional(),
+        // v2.1.0：預設收件地區（HK/MO/OVERSEAS）＋預設順豐站點 ID（對 sfStations.id）
+        region: z.enum(["HK", "MO", "OVERSEAS", "hk", "mo", "overseas"]).optional(),
+        stationId: z.string().trim().max(64).optional(),
         age: z.number().int().min(0).max(150).optional(),
         // 生日月份（選填，1–12；舊會員留空）
         birthMonth: z.number().int().min(1).max(12).optional(),
@@ -111,10 +124,16 @@ export const authRouter = createRouter({
           email,
           address: input.address ?? null,
           // 預設取貨方式：揀自取先會存站點（送貨上門唔存，唔好留殘舊資料）
-          deliveryMethod: input.deliveryMethod ?? "address",
+          deliveryMethod: normalizeDeliveryMethod(input.deliveryMethod),
           pickupPoint:
-            input.deliveryMethod && input.deliveryMethod !== "address"
+            input.deliveryMethod && normalizeDeliveryMethod(input.deliveryMethod) !== "address"
               ? input.pickupPoint?.trim() || null
+              : null,
+          // v2.1.0（VIP+免運）：預設收件地區＋預設站點（自取先存站點 ID）
+          defaultRegion: normalizeRegion(input.region),
+          defaultStationId:
+            input.deliveryMethod && normalizeDeliveryMethod(input.deliveryMethod) !== "address"
+              ? input.stationId?.trim() || null
               : null,
           age: input.age ?? null,
           birthMonth: input.birthMonth ?? null,
@@ -418,8 +437,13 @@ export const authRouter = createRouter({
         email: z.string().trim().email("Email 格式唔啱").max(255).nullable().optional(),
         address: z.string().nullable().optional(),
         // 預設取貨方式（2026-08-08 Glo 要求）：送貨上門／順豐站／智能櫃；站點傳 null／空＝清除
-        deliveryMethod: z.enum(["address", "sf_station", "sf_locker"]).optional(),
+        // v2.1.0（VIP+免運）：同時接受契約大寫值；新增預設地區＋預設站點 ID
+        deliveryMethod: z
+          .enum(["address", "sf_station", "sf_locker", "HOME", "SF_STATION", "SF_LOCKER"])
+          .optional(),
         pickupPoint: z.string().max(255).nullable().optional(),
+        region: z.enum(["HK", "MO", "OVERSEAS", "hk", "mo", "overseas"]).nullable().optional(),
+        stationId: z.string().trim().max(64).nullable().optional(),
         age: z.number().int().min(1).max(120).nullable().optional(),
       }),
     )
@@ -483,13 +507,24 @@ export const authRouter = createRouter({
       }
       if (input.address !== undefined) data.address = input.address;
       if (input.deliveryMethod !== undefined) {
-        data.deliveryMethod = input.deliveryMethod;
+        data.deliveryMethod = normalizeDeliveryMethod(input.deliveryMethod);
         // 改做送貨上門又冇一併傳站點 → 清走舊站點，唔好留殘舊資料
-        if (input.deliveryMethod === "address" && input.pickupPoint === undefined) {
+        if (data.deliveryMethod === "address" && input.pickupPoint === undefined) {
           data.pickupPoint = null;
+        }
+        // v2.1.0：改做送貨上門同時清預設站點 ID（冇一併傳嘅話）
+        if (data.deliveryMethod === "address" && input.stationId === undefined) {
+          data.defaultStationId = null;
         }
       }
       if (input.pickupPoint !== undefined) data.pickupPoint = input.pickupPoint?.trim() || null;
+      // v2.1.0（VIP+免運）：預設收件地區／預設順豐站點（null／空＝清除）
+      if (input.region !== undefined && input.region !== null) {
+        data.defaultRegion = normalizeRegion(input.region);
+      }
+      if (input.stationId !== undefined) {
+        data.defaultStationId = input.stationId?.trim() || null;
+      }
       if (input.age !== undefined) data.age = input.age;
       if (Object.keys(data).length > 0) {
         await db.update(users).set(data).where(eq(users.id, ctx.user.userId));

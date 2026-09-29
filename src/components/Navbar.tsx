@@ -7,6 +7,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import type { CartLine } from '@/components/cart/types';
 import MessengerIcon from '@/components/MessengerIcon';
+import VipBadge, { normalizeVipTier } from '@/components/VipBadge';
 import { PRODUCT_CATEGORIES } from '@contracts/types';
 
 /**
@@ -80,6 +81,15 @@ export default function Navbar() {
   const liveGroups = liveSessionsQuery.data ?? [];
   // 邊個直播日期展開緊（desktop dropdown 同手機選單共用——一個開另一個跟住開，冇壞處）
   const [liveDateOpen, setLiveDateOpen] = useState<string | null>(null);
+
+  // VIP 級別 badge（v2.1.0，2026-09-29）：登入會員名旁邊顯示 會員／VIP銀會員／VIP金會員，撳落去 /vip 介紹頁。
+  // 用 vip.getMyVip 而唔係 auth.me（後者欄位主線整合先補）；載入緊唔顯示，避免閃「會員」。
+  const myVipQuery = trpc.vip.getMyVip.useQuery(undefined, {
+    enabled: !!user,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const vipTier = myVipQuery.data ? normalizeVipTier(myVipQuery.data.tier) : null;
 
   // 手機選單連結（2026-08-04 抽出嚟：問候語＋登出掣嘅動畫 delay 要跟佢長度計）
   const mobileLinks = [
@@ -280,6 +290,12 @@ export default function Navbar() {
               <Link to="/account" className="nav-link">
                 {user.name}
               </Link>
+              {/* VIP 級別 badge（v2.1.0）：撳落去 /vip 會員制度介紹頁 */}
+              {vipTier && (
+                <Link to="/vip" aria-label={`會員級別：${vipTier === 'GOLD' ? 'VIP金會員' : vipTier === 'SILVER' ? 'VIP銀會員' : '會員'}，了解會員制度`}>
+                  <VipBadge tier={vipTier} size="sm" />
+                </Link>
+              )}
               <button
                 type="button"
                 onClick={logout}
@@ -341,6 +357,28 @@ export default function Navbar() {
             >
               {user.name}寶寶，{greetingNow()}💕！
             </p>
+          )}
+          {/* VIP 級別 badge（v2.1.0）：手機選單問候下面顯示，撳落去 /vip 介紹頁 */}
+          {user && vipTier && (
+            <div
+              className="border-b pb-4 pt-3"
+              style={{
+                borderColor: 'var(--space-line)',
+                animation: 'mobile-nav-in 400ms var(--ease-expo) 25ms both',
+              }}
+            >
+              <Link
+                to="/vip"
+                onClick={() => setMenuOpen(false)}
+                className="inline-flex items-center gap-2"
+                aria-label="了解會員制度"
+              >
+                <VipBadge tier={vipTier} size="md" />
+                <span className="text-[13px] text-txt-3 underline underline-offset-4">
+                  了解會員制度 →
+                </span>
+              </Link>
+            </div>
           )}
           {mobileLinks.map((link, i) =>
             link.to === '/products' ? (

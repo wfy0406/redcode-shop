@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import FormField from '@/components/account/FormField';
 import WishingStar from '@/components/account/WishingStar';
 import GoogleLoginButton from '@/components/account/GoogleLoginButton';
+import RegionStationPicker from '@/components/shop/RegionStationPicker';
 
 /**
  * RedCode 設計系統 §P5 —— 會員註冊 /register
@@ -57,9 +58,12 @@ export default function Register() {
   const [confirm, setConfirm] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
+  // 預設收件地區（2026-09-29 v2.1.0 VIP+免運）：香港（預設）／澳門／國外；國外只可以送貨上門
+  const [region, setRegion] = useState<'HK' | 'MO' | 'OVERSEAS'>('HK');
   // 預設取貨方式（2026-08-08 Glo 要求）：結帳自動帶入；送貨上門用上面嘅地址欄
   const [deliveryMethod, setDeliveryMethod] = useState<'address' | 'sf_station' | 'sf_locker'>('address');
-  const [pickupPoint, setPickupPoint] = useState('');
+  // 自取站點（v2.1.0）：RegionStationPicker 揀（唔再自由填字）；國外單唔揀得自取
+  const [stationId, setStationId] = useState<string | undefined>(undefined);
   const [age, setAge] = useState('');
   const [birthMonth, setBirthMonth] = useState('');
   // 直接促銷同意（2026-08-05 Glo 要求，PDPO：唔可以預先剔選，要會員主動剔先算同意）
@@ -97,21 +101,24 @@ export default function Register() {
     if (Object.keys(next).length > 0) return;
 
     setSubmitting(true);
+    // 國外單只支援送貨上門（同結帳頁同一規則）
+    const effectiveMethod = region === 'OVERSEAS' ? 'address' : deliveryMethod;
     try {
+      // v2.1.0：region／stationId 後端 register 已接；useAuth 嘅 RegisterInput 型別未加
+      // 呢兩個欄（主線整合時補型別），呢度用 assertion 繞過多餘屬性檢查
       await register({
         name: name.trim(),
         phone: normalizePhone(phone),
         password,
         email: email.trim(),
         ...(address.trim() ? { address: address.trim() } : {}),
-        deliveryMethod,
-        ...(deliveryMethod !== 'address' && pickupPoint.trim()
-          ? { pickupPoint: pickupPoint.trim() }
-          : {}),
+        deliveryMethod: effectiveMethod,
+        region,
+        ...(effectiveMethod !== 'address' && stationId ? { stationId } : {}),
         ...(age.trim() ? { age: Number(age) } : {}),
         ...(birthMonth ? { birthMonth: Number(birthMonth) } : {}),
         marketingOptIn: agreeMarketing,
-      });
+      } as Parameters<typeof register>[0]);
       navigate('/account', { replace: true });
     } catch (err) {
       if (isConflict(err)) {
@@ -210,30 +217,33 @@ export default function Register() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
           />
-          {/* 預設取貨方式（2026-08-08 Glo 要求）：結帳會自動帶入，客人到時照樣可以改；
-              揀送貨上門就用上面嘅地址欄 */}
+          {/* 預設收件地區（v2.1.0 VIP+免運）：影響免運同可取貨方式；國外只可以送貨上門 */}
           <div className="w-full">
             <span className="mb-2 flex items-baseline justify-between gap-2 text-sm text-txt-2">
               <span>
-                預設取貨方式
+                預設收件地區
                 <span className="ml-2 text-[13px] text-txt-3">（選填）</span>
               </span>
-              <span className="text-[13px] text-txt-3">結帳嗰陣自動帶入</span>
+              <span className="text-[13px] text-txt-3">澳門／國外單不包郵</span>
             </span>
-            <div className="grid grid-cols-3 gap-2" role="group" aria-label="預設取貨方式">
+            <div className="grid grid-cols-3 gap-2" role="group" aria-label="預設收件地區">
               {(
                 [
-                  ['address', '送貨上門'],
-                  ['sf_station', '順豐站'],
-                  ['sf_locker', '智能櫃'],
+                  ['HK', '香港'],
+                  ['MO', '澳門'],
+                  ['OVERSEAS', '國外'],
                 ] as const
               ).map(([value, label]) => {
-                const active = deliveryMethod === value;
+                const active = region === value;
                 return (
                   <button
                     key={value}
                     type="button"
-                    onClick={() => setDeliveryMethod(value)}
+                    onClick={() => {
+                      setRegion(value);
+                      setStationId(undefined);
+                      if (value === 'OVERSEAS') setDeliveryMethod('address');
+                    }}
                     aria-pressed={active}
                     className="h-12 rounded-xl border text-[14px] transition-[border-color,box-shadow] duration-200"
                     style={
@@ -256,19 +266,66 @@ export default function Register() {
                 );
               })}
             </div>
-            {deliveryMethod !== 'address' && (
+          </div>
+          {/* 預設取貨方式（2026-08-08 Glo 要求）：結帳會自動帶入，客人到時照樣可以改；
+              揀送貨上門就用上面嘅地址欄；自取改用站點下拉（v2.1.0） */}
+          <div className="w-full">
+            <span className="mb-2 flex items-baseline justify-between gap-2 text-sm text-txt-2">
+              <span>
+                預設取貨方式
+                <span className="ml-2 text-[13px] text-txt-3">（選填）</span>
+              </span>
+              <span className="text-[13px] text-txt-3">結帳嗰陣自動帶入</span>
+            </span>
+            <div className="grid grid-cols-3 gap-2" role="group" aria-label="預設取貨方式">
+              {(
+                [
+                  ['address', '送貨上門'],
+                  ['sf_station', '順豐站'],
+                  ['sf_locker', '智能櫃'],
+                ] as const
+              ).map(([value, label]) => {
+                const active = deliveryMethod === value;
+                const disabled = region === 'OVERSEAS' && value !== 'address';
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => {
+                      if (disabled) return;
+                      setDeliveryMethod(value);
+                      setStationId(undefined);
+                    }}
+                    disabled={disabled}
+                    aria-pressed={active}
+                    className="h-12 rounded-xl border text-[14px] transition-[border-color,box-shadow] duration-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    style={
+                      active
+                        ? {
+                            borderColor: 'var(--pink)',
+                            background: 'var(--pink-haze)',
+                            color: 'var(--txt-1)',
+                            fontWeight: 600,
+                          }
+                        : {
+                            borderColor: 'var(--space-line)',
+                            background: 'var(--space-2)',
+                            color: 'var(--txt-3)',
+                          }
+                    }
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {deliveryMethod !== 'address' && region !== 'OVERSEAS' && (
               <div className="mt-3">
-                <FormField
-                  id="reg-pickup"
-                  label={deliveryMethod === 'sf_station' ? '順豐站名稱／編號' : '智能櫃名稱／編號'}
-                  optional
-                  placeholder={
-                    deliveryMethod === 'sf_station'
-                      ? '例如：大埔廣場順豐站'
-                      : '例如：852L110 大埔超級城智能櫃'
-                  }
-                  value={pickupPoint}
-                  onChange={(e) => setPickupPoint(e.target.value)}
+                <RegionStationPicker
+                  region={region === 'MO' ? 'MO' : 'HK'}
+                  method={deliveryMethod}
+                  value={stationId}
+                  onChange={(id) => setStationId(id)}
                 />
               </div>
             )}

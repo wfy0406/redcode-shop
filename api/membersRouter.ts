@@ -8,6 +8,7 @@ import { logAudit } from "./audit";
 import { hashPassword } from "./auth";
 import { requestApprovalIfStaff } from "./approvalGuard";
 import { forwardMemberToWms } from "./wmsMemberSync";
+import { sendVipUpgradeEmail } from "./email";
 
 /**
  * 會員列表 —— staff（員工）＋ admin 可用（2026-07-29 起：員工都可以睇同改會員資料）
@@ -39,6 +40,9 @@ export const membersRouter = createRouter({
           // 直接促銷同意（2026-08-05 Glo 要求：列表睇到客戶接唔接受推廣）
           marketingOptIn: users.marketingOptIn,
           marketingPromptedAt: users.marketingPromptedAt,
+          // v2.1.0（VIP+免運）：列表直接睇到級別＋到期（後台會員列表「級別」欄用）
+          vipTier: users.vipTier,
+          vipExpiresAt: users.vipExpiresAt,
           orderCount: sql<number>`count(${orders.id})::int`,
           totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,
         })
@@ -82,6 +86,10 @@ export const membersRouter = createRouter({
           marketingOptIn: users.marketingOptIn,
           marketingOptInAt: users.marketingOptInAt,
           marketingPromptedAt: users.marketingPromptedAt,
+          // v2.1.0（VIP+免運）：會員詳情睇埋 VIP 級別＋生效／到期
+          vipTier: users.vipTier,
+          vipEffectiveAt: users.vipEffectiveAt,
+          vipExpiresAt: users.vipExpiresAt,
         })
         .from(users)
         .where(eq(users.id, input.id))
@@ -252,6 +260,77 @@ export const membersRouter = createRouter({
         targetType: "member",
         targetId: input.id,
         detail: `重設會員「${target.name}」密碼`,
+      });
+      return { ok: true };
+    }),
+
+  /**
+   * v2.1.0（VIP+免運）：管理員手動改會員 VIP 級別（admin 專用）。
+   * 用途：特事特辦（例如大客／公關單）唔使等年度消費達標。
+   * ─ tier=NONE：清走級別（生效／到期時間一併清）
+   * ─ tier=SILVER/GOLD：expiresAt 必填（手動改級唔會自動計期限，管理員話事）；
+   *   vipEffectiveAt 寫而家
+   * 下次訂單確認後 recomputeVipTier 會按規則重判——期限內唔會被降級（規則照顧咗）。
+   * 動作記落操作日誌（action: member.setVipTier）。
+   */
+  setVipTier: adminProcedure
+    .input(
+      z.object({
+        userId: z.number().int().positive(),
+        tier: z.enum(["NONE", "SILVER", "GOLD"]),
+        // 升級必填到期日；NONE 會忽略呢個欄
+        expiresAt: z.coerce.date().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [target] = await db
+        .select({ id: users.id, role: users.role, name: users.name, email: users.email, vipTier: users.vipTier })
+        .from(users)
+        .where(eq(users.id, input.userId))
+        .limit(1);
+      if (!target) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      }
+      if (target.role !== "member") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "員工帳號唔可以喺會員管理改 VIP 級別" });
+      }
+      if (input.tier !== "NONE" && !input.expiresAt) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "設定 VIP 級別要填到期日" });
+      }
+      if (input.tier !== "NONE" && input.expiresAt!.getTime() <= Date.now()) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "到期日要係將來嘅時間" });
+      }
+      await db
+        .update(users)
+        .set(
+          input.tier === "NONE"
+            ? { vipTier: "NONE", vipEffectiveAt: null, vipExpiresAt: null }
+            : { vipTier: input.tier, vipEffectiveAt: new Date(), vipExpiresAt: input.expiresAt! },
+        )
+        .where(eq(users.id, input.userId));
+      // v2.1.1（Wave 2）：手動升級（new rank > old rank）都要寄 VIP 晉升恭賀信；
+      // 同級改期／降級唔寄。DB commit 完先 void 寄，寄信失敗唔影響操作。
+      const rankOf = (t: string) => (t === "GOLD" ? 2 : t === "SILVER" ? 1 : 0);
+      if (rankOf(input.tier) > rankOf(target.vipTier) && target.email) {
+        void sendVipUpgradeEmail({
+          to: target.email,
+          name: target.name,
+          tier: input.tier as "SILVER" | "GOLD",
+          effectiveAt: new Date(),
+          expiresAt: input.expiresAt!,
+        }).then((r) => {
+          if (!r.ok) console.error(`[vip] 手動升級恭賀信寄唔出（會員 #${input.userId} → ${input.tier}）：`, r.error);
+        }).catch((e) => console.error("[vip] 手動升級恭賀信寄送錯誤:", e));
+      }
+      const tierLabel = input.tier === "GOLD" ? "金會員" : input.tier === "SILVER" ? "銀會員" : "普通會員";
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "member.setVipTier",
+        targetType: "member",
+        targetId: input.userId,
+        detail: `手動設定會員「${target.name}」VIP 級別：${target.vipTier} → ${input.tier}（${tierLabel}${input.tier === "NONE" ? "" : `，到期 ${input.expiresAt!.toISOString().slice(0, 10)}`}）`,
       });
       return { ok: true };
     }),

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Calendar, ChevronDown, Search } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import VipBadge, { normalizeVipTier } from '@/components/VipBadge';
 import type { AdminOrder, OrderStatus, ReviewHandler, StatusHandler } from './types';
 import { fmtDateTime, fmtHKD } from './format';
 import StatusBadge from './StatusBadge';
@@ -13,7 +14,10 @@ import OrderEditPanel from './OrderEditPanel';
 
 /**
  * 全部訂單列表 —— status 篩選 tabs + 單號搜尋 + 點入行展開詳情
- * 詳情：items / 優惠碼折扣行 / 取貨方式（順豐站/智能櫃）/ 地址 / 備註 / 付款截圖審批 / 訂單狀態操作 / WMS 同步狀態 / 完整刪除 / 手動改單
+ * 詳情：items / VIP 折扣行 / 優惠碼折扣行 / 取貨方式（順豐站/智能櫃）/ 運費（免運 ✓／到付）/ 地址 / 備註 / 系統備註（remark）/ 付款截圖審批 / 訂單狀態操作 / WMS 同步狀態 / 完整刪除 / 手動改單
+ * v2.1.0（VIP+免運，2026-09-29；Glo：所有單據都要睇到折扣同會員級別）：
+ * 每行單號隔籬顯示 VIP 級別 badge（銀/金先出，普通會員唔出）＋ 免運 ✓／澳門單・國外單到付 chip；
+ * 展開詳情有 會員級別（全部級別都顯示）＋ VIP 折扣（排優惠碼上面）＋ 運費 ＋ remark 系統備註。
  */
 
 /** orders.wmsSyncStates 回傳嘅一列（同 db wmsSyncLog 對應） */
@@ -308,6 +312,27 @@ export default function OrderList({
                   <span className="font-mono text-[14px] text-txt-1">{order.orderNo}</span>
                   {/* F7：有退款進度／紀錄嘅單，單號隔籬顯示退款 badge */}
                   {order.refundStatus !== 'none' && <RefundBadge refundStatus={order.refundStatus} />}
+                  {/* v2.1.0：落單當刻 VIP 級別（銀/金先喺行度出；普通會員唔出，展開詳情有齊） */}
+                  {normalizeVipTier(order.vipTierAtPurchase) !== 'NONE' && (
+                    <VipBadge tier={normalizeVipTier(order.vipTierAtPurchase)} size="sm" />
+                  )}
+                  {/* v2.1.0：免運 ✓（金）／澳門・國外單到付（灰）一行睇晒 */}
+                  {order.shippingFree && (
+                    <span
+                      className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[11px] text-gold"
+                      style={{ borderColor: 'var(--gold)' }}
+                    >
+                      免運 ✓
+                    </span>
+                  )}
+                  {!order.shippingFree && (order.region === 'MO' || order.region === 'OVERSEAS') && (
+                    <span
+                      className="inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[11px] text-txt-3"
+                      style={{ borderColor: 'var(--space-line)' }}
+                    >
+                      {order.region === 'MO' ? '澳門單・到付' : '國外單・到付'}
+                    </span>
+                  )}
                   <span className="min-w-0 truncate text-[14px] text-txt-2">
                     {order.user.name}
                     <span className="ml-2 font-mono text-[13px] text-txt-3">{order.user.phone}</span>
@@ -373,6 +398,27 @@ export default function OrderList({
                                 </li>
                               ))}
                             </ul>
+                            {/* VIP 折扣行（v2.1.0；先 VIP 後 coupon，排優惠碼上面；仙 → 港元） */}
+                            {(order.vipDiscountCents ?? 0) > 0 && (
+                              <div className="mt-2 flex items-baseline justify-between gap-3 text-[13px]">
+                                <span className="text-gold">
+                                  VIP 折扣
+                                  {normalizeVipTier(order.vipTierAtPurchase) !== 'NONE' && (
+                                    <>
+                                      {' '}
+                                      <span className="font-mono">
+                                        {normalizeVipTier(order.vipTierAtPurchase) === 'GOLD'
+                                          ? 'VIP金會員'
+                                          : 'VIP銀會員'}
+                                      </span>
+                                    </>
+                                  )}
+                                </span>
+                                <span className="shrink-0 font-mono text-gold">
+                                  −{fmtHKD(Math.round((order.vipDiscountCents ?? 0) / 100))}
+                                </span>
+                              </div>
+                            )}
                             {/* 優惠碼折扣行（total 已係折後價） */}
                             {order.discountAmount > 0 && (
                               <div className="mt-2 flex items-baseline justify-between gap-3 text-[13px]">
@@ -387,6 +433,13 @@ export default function OrderList({
                           </>
                         )}
                         <dl className="mt-4 flex flex-col gap-2 border-t pt-4" style={{ borderColor: 'var(--space-line)' }}>
+                          {/* v2.1.0：落單當刻會員級別（全部級別都顯示，普通會員灰 badge「會員」） */}
+                          <div className="flex items-center gap-2 text-[14px]">
+                            <dt className="w-16 shrink-0 text-txt-3">會員級別</dt>
+                            <dd className="text-txt-2">
+                              <VipBadge tier={normalizeVipTier(order.vipTierAtPurchase)} size="sm" />
+                            </dd>
+                          </div>
                           <div className="flex gap-2 text-[14px]">
                             <dt className="w-16 shrink-0 text-txt-3">取貨方式</dt>
                             <dd className="text-txt-2">
@@ -401,10 +454,34 @@ export default function OrderList({
                             <dt className="w-16 shrink-0 text-txt-3">收件地址</dt>
                             <dd className="text-txt-2">{order.address || order.user.address || '—'}</dd>
                           </div>
+                          {/* v2.1.0：運費（免運 ✓ 金／到付連地區註記；舊單冇 region 唔顯示） */}
+                          {(order.shippingFree || order.region) && (
+                            <div className="flex gap-2 text-[14px]">
+                              <dt className="w-16 shrink-0 text-txt-3">運費</dt>
+                              <dd className="text-txt-2">
+                                {order.shippingFree ? (
+                                  <span className="font-medium text-gold">免運 ✓</span>
+                                ) : order.region === 'MO' ? (
+                                  '順豐到付（澳門單・不包郵）'
+                                ) : order.region === 'OVERSEAS' ? (
+                                  '順豐到付（國外單・不包郵）'
+                                ) : (
+                                  '順豐到付'
+                                )}
+                              </dd>
+                            </div>
+                          )}
                           <div className="flex gap-2 text-[14px]">
                             <dt className="w-16 shrink-0 text-txt-3">備註</dt>
                             <dd className="text-txt-2">{order.note || '—'}</dd>
                           </div>
+                          {/* v2.1.0：系統備註（WMS 同一字串：澳門單・不包郵・順豐到付／VIP金會員全年免運等） */}
+                          {order.remark && (
+                            <div className="flex gap-2 text-[14px]">
+                              <dt className="w-16 shrink-0 text-txt-3">系統備註</dt>
+                              <dd className="text-txt-2">{order.remark}</dd>
+                            </div>
+                          )}
                           <div className="flex gap-2 text-[14px]">
                             <dt className="w-16 shrink-0 text-txt-3">落單時間</dt>
                             <dd className="font-mono text-[13px] text-txt-2">

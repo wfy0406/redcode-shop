@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { KeyRound, Pencil, Search, Trash2, Users, X } from 'lucide-react';
+import { Crown, KeyRound, Pencil, Search, Trash2, Users, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
+import VipBadge, { normalizeVipTier } from '@/components/VipBadge';
 import { fmtDate, fmtDateTime, fmtHKD } from './format';
 import { LoadingBlock } from './WishingStar';
 import StatusBadge from './StatusBadge';
@@ -27,6 +28,10 @@ import type { ToastKind } from './useToasts';
  * 2026-08-06 更新（Glo 要求）：
  * - 推廣同意改三態制：接受（粉紅）／未選擇（琥珀，舊會員未表態，登入會彈窗問一次）／唔接受（灰）
  * - 會員詳情加「設為接受／設為唔接受」快掣（員工＋管理員），人手設定後會員唔會再見到彈窗
+ * 2026-09-29 更新（v2.1.0 VIP+免運）：
+ * - 列表加「級別」欄（會員／VIP銀／VIP金 badge＋到期日細字）
+ *   （members.list 後端已回 vipTier/vipExpiresAt，型別已對齊）
+ * - 會員詳情加 VIP 級別＋管理員手動改級 UI（members.setVipTier：NONE 清級別；升級必填將來到期日）
  */
 
 /** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
@@ -45,6 +50,9 @@ type MemberRow = {
   marketingPromptedAt: Date | string | null;
   orderCount: number;
   totalSpent: number;
+  // v2.1.0（VIP+免運）：級別欄用；後端 list 未回就當 NONE 顯示
+  vipTier?: 'NONE' | 'SILVER' | 'GOLD';
+  vipExpiresAt?: Date | string | null;
 };
 
 type MemberDetail = {
@@ -66,6 +74,10 @@ type MemberDetail = {
     marketingOptInAt: Date | string | null;
     // 三態制（2026-08-06）：NULL＋2026-08-05 或之前註冊＝未選
     marketingPromptedAt: Date | string | null;
+    // v2.1.0（VIP+免運）：會員詳情顯示＋手動改級用
+    vipTier: 'NONE' | 'SILVER' | 'GOLD';
+    vipEffectiveAt: Date | string | null;
+    vipExpiresAt: Date | string | null;
   };
   orderCount: number;
   totalSpent: number;
@@ -426,6 +438,123 @@ function ResetPasswordForm({
   );
 }
 
+/** date input 值（YYYY-MM-DD）；冇到期日就預設一年後今日 */
+function defaultExpiryInput(d?: Date | string | null): string {
+  if (d) {
+    const date = d instanceof Date ? d : new Date(d);
+    if (!Number.isNaN(date.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+  }
+  const next = new Date();
+  next.setFullYear(next.getFullYear() + 1);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+}
+
+/**
+ * 管理員手動改會員 VIP 級別表單（v2.1.0，admin 專用）—— members.setVipTier
+ * 揀 NONE＝清走級別（唔使到期日）；揀銀/金必填將來到期日（手動改級唔會自動計期限）。
+ * 確認前先彈 window.confirm 講清楚改動。
+ */
+function VipTierForm({
+  user,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  user: MemberDetail['user'];
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (input: { userId: number; tier: 'NONE' | 'SILVER' | 'GOLD'; expiresAt?: Date }) => void;
+}) {
+  const [tier, setTier] = useState<'NONE' | 'SILVER' | 'GOLD'>(normalizeVipTier(user.vipTier));
+  const [expiry, setExpiry] = useState(defaultExpiryInput(user.vipExpiresAt));
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const inputCls =
+    'h-10 w-full rounded-lg border border-space-line bg-space-1 px-3 text-[13px] text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none';
+  const labelCls = 'mb-1 block text-[11px] text-txt-3';
+
+  const submit = () => {
+    if (tier === 'NONE') {
+      setFormError(null);
+      onSave({ userId: user.id, tier: 'NONE' });
+      return;
+    }
+    if (!expiry) return setFormError('設定 VIP 級別要填到期日');
+    // 到期日當日 23:59（本地時間）先完，唔好朝早 00:00 一過就過期
+    const expiresAt = new Date(`${expiry}T23:59:59`);
+    if (Number.isNaN(expiresAt.getTime())) return setFormError('到期日格式唔啱');
+    if (expiresAt.getTime() <= Date.now()) return setFormError('到期日要係將來嘅時間');
+    setFormError(null);
+    onSave({ userId: user.id, tier, expiresAt });
+  };
+
+  return (
+    <div
+      className="mt-2 rounded-xl border p-3"
+      style={{ borderColor: 'var(--gold)', background: 'var(--space-2)' }}
+    >
+      <p className="mb-2.5 text-[12px] leading-relaxed text-txt-3">
+        手動改級係特事特辦（例如大客／公關單），唔使等年度消費達標；動作會記落操作日誌。
+        期限內下次訂單確認重判級別時都唔會被降級。
+      </p>
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div>
+          <label className={labelCls} htmlFor={`vt-tier-${user.id}`}>
+            級別
+          </label>
+          <select
+            id={`vt-tier-${user.id}`}
+            className={inputCls}
+            value={tier}
+            onChange={(e) => setTier(e.target.value as 'NONE' | 'SILVER' | 'GOLD')}
+          >
+            <option value="NONE">會員（清走級別）</option>
+            <option value="SILVER">VIP銀會員</option>
+            <option value="GOLD">VIP金會員</option>
+          </select>
+        </div>
+        {tier !== 'NONE' && (
+          <div>
+            <label className={labelCls} htmlFor={`vt-expiry-${user.id}`}>
+              到期日（必填，當日 23:59 到期）
+            </label>
+            <input
+              id={`vt-expiry-${user.id}`}
+              type="date"
+              className={inputCls}
+              value={expiry}
+              onChange={(e) => setExpiry(e.target.value)}
+            />
+          </div>
+        )}
+      </div>
+      {formError && <p className="mt-2 text-[12px] text-pink-soft">{formError}</p>}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy}
+          className="btn btn-primary !px-4 !py-2 text-[13px] disabled:opacity-50"
+        >
+          {busy ? '設定緊…' : '確認改級'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="btn btn-secondary !px-4 !py-2 text-[13px]"
+        >
+          取消
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MemberList({
   toast,
 }: {
@@ -436,11 +565,15 @@ export default function MemberList({
   // 刪除會員仍然係最高管理員專用（後端 members.remove 係 adminProcedure）；
   // 員工可以睇同改，唔可以刪
   const canDelete = me?.role === 'admin';
+  // 手動改 VIP 級別係 adminProcedure，同樣只限最高管理員
+  const canSetVip = me?.role === 'admin';
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [resettingId, setResettingId] = useState<number | null>(null);
+  // v2.1.0：邊個會員開緊改級別表單
+  const [vipEditingId, setVipEditingId] = useState<number | null>(null);
 
   // 打字停 300ms 先出搜尋請求，唔會每個字打一次
   useEffect(() => {
@@ -524,10 +657,37 @@ export default function MemberList({
     onError: (err) => toast(err.message || '重設密碼失敗，請再試', 'error'),
   });
 
+  // v2.1.0：管理員手動改 VIP 級別（NONE 清級別；升級要到期日）
+  const setVipTierMutation = trpc.members.setVipTier.useMutation({
+    onSuccess: () => {
+      toast('已更新會員 VIP 級別 ✓', 'success');
+      setVipEditingId(null);
+      void utils.members.list.invalidate();
+      void utils.members.detail.invalidate();
+    },
+    onError: (err) => toast(err.message || '設定 VIP 級別失敗，請再試', 'error'),
+  });
+
+  /** 改級前先 confirm 講清楚改動（會即時影響會員折扣/免運） */
+  const askSetVipTier = (
+    m: { id: number; name: string },
+    input: { tier: 'NONE' | 'SILVER' | 'GOLD'; expiresAt?: Date },
+  ) => {
+    const label =
+      input.tier === 'GOLD' ? 'VIP金會員' : input.tier === 'SILVER' ? 'VIP銀會員' : '普通會員';
+    const msg =
+      input.tier === 'NONE'
+        ? `確定清走會員「${m.name}」嘅 VIP 級別？佢會變返普通會員。`
+        : `確定將會員「${m.name}」設做 ${label}，到期日 ${input.expiresAt ? fmtDate(input.expiresAt) : ''}？\n佢即刻享有相應折扣${input.tier === 'GOLD' ? '＋全年免運' : ''}。`;
+    if (!window.confirm(msg)) return;
+    setVipTierMutation.mutate({ userId: m.id, tier: input.tier, expiresAt: input.expiresAt });
+  };
+
   // 換咗第二個會員，順手閂返編輯同重設密碼表單
   useEffect(() => {
     setEditingId(null);
     setResettingId(null);
+    setVipEditingId(null);
   }, [selectedId]);
 
   const askDelete = (m: MemberRow) => {
@@ -616,9 +776,17 @@ export default function MemberList({
                     {/* Google 連結狀態（2026-08-04）：綠＝已連結，灰＝未連結；
                         直接促銷同意（2026-08-05）：粉紅＝接受推廣，灰＝唔接受 */}
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {/* VIP 級別（v2.1.0）：會員／VIP銀／VIP金 */}
+                      <VipBadge tier={normalizeVipTier(m.vipTier)} />
                       <GoogleBadge linked={m.googleLinked} />
                       <MarketingBadge state={consentStateOf(m)} />
                     </div>
+                    {/* VIP 到期日細字（銀/金先顯示） */}
+                    {normalizeVipTier(m.vipTier) !== 'NONE' && m.vipExpiresAt && (
+                      <p className="mt-1 font-mono text-[11px] text-txt-3">
+                        VIP 有效期至 {fmtDate(m.vipExpiresAt)}
+                      </p>
+                    )}
                   </div>
                   {canDelete && (
                     <button
@@ -696,6 +864,17 @@ export default function MemberList({
                             </p>
                           </>
                         )}
+                        {/* VIP 級別（v2.1.0）：badge＋有效期（NONE 唔顯示期限） */}
+                        <p className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-txt-3">
+                          級別：
+                          <VipBadge tier={normalizeVipTier(detail.user.vipTier)} />
+                          {normalizeVipTier(detail.user.vipTier) !== 'NONE' &&
+                            detail.user.vipExpiresAt && (
+                              <span className="font-mono text-txt-2">
+                                有效期至 {fmtDate(detail.user.vipExpiresAt)}
+                              </span>
+                            )}
+                        </p>
                         {/* 直接促銷同意（2026-08-06 三態制）：接受／未選擇（琥珀，下次登入彈窗問一次）／唔接受；
                             行尾快掣畀員工人手設定，設定＝已表態，會員唔會再見到彈窗 */}
                         <p className="mt-1 text-[12px] text-txt-3">
@@ -737,7 +916,7 @@ export default function MemberList({
                             設為唔接受
                           </button>
                         </p>
-                        {/* 修改資料／重設密碼（員工＋管理員） */}
+                        {/* 修改資料／重設密碼（員工＋管理員）；改 VIP 級別（admin 專用，v2.1.0） */}
                         {editingId === m.id ? (
                           <MemberEditForm
                             user={detail.user}
@@ -754,6 +933,13 @@ export default function MemberList({
                               resetPwMutation.mutate({ id: m.id, newPassword })
                             }
                           />
+                        ) : vipEditingId === m.id && canSetVip ? (
+                          <VipTierForm
+                            user={detail.user}
+                            busy={setVipTierMutation.isPending}
+                            onCancel={() => setVipEditingId(null)}
+                            onSave={(input) => askSetVipTier(m, input)}
+                          />
                         ) : (
                           <div className="mt-2 flex flex-wrap gap-2">
                             <button
@@ -761,6 +947,7 @@ export default function MemberList({
                               onClick={() => {
                                 setEditingId(m.id);
                                 setResettingId(null);
+                                setVipEditingId(null);
                               }}
                               className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
                               style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
@@ -772,12 +959,27 @@ export default function MemberList({
                               onClick={() => {
                                 setResettingId(m.id);
                                 setEditingId(null);
+                                setVipEditingId(null);
                               }}
                               className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
                               style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
                             >
                               <KeyRound size={13} aria-hidden="true" /> 重設密碼
                             </button>
+                            {canSetVip && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setVipEditingId(m.id);
+                                  setEditingId(null);
+                                  setResettingId(null);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-gold"
+                                style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                              >
+                                <Crown size={13} aria-hidden="true" /> 改 VIP 級別
+                              </button>
+                            )}
                           </div>
                         )}
                         <h5 className="mt-3 text-[11px] font-bold tracking-[0.08em] text-gold">
@@ -828,6 +1030,8 @@ export default function MemberList({
                 <th className="py-2 pr-3 font-normal">Email</th>
                 <th className="py-2 pr-3 font-normal">Google</th>
                 <th className="py-2 pr-3 font-normal">推廣</th>
+                {/* v2.1.0（VIP+免運）：級別欄（badge＋到期日細字） */}
+                <th className="py-2 pr-3 font-normal">級別</th>
                 <th className="py-2 pr-3 font-normal">地址</th>
                 <th className="py-2 pr-3 font-normal">生日月份</th>
                 <th className="py-2 pr-3 font-normal">註冊日期</th>
@@ -854,6 +1058,14 @@ export default function MemberList({
                   </td>
                   <td className="whitespace-nowrap py-2.5 pr-3">
                     <MarketingBadge state={consentStateOf(m)} />
+                  </td>
+                  <td className="whitespace-nowrap py-2.5 pr-3">
+                    <VipBadge tier={normalizeVipTier(m.vipTier)} />
+                    {normalizeVipTier(m.vipTier) !== 'NONE' && m.vipExpiresAt && (
+                      <span className="mt-0.5 block font-mono text-[11px] font-normal text-txt-3">
+                        至 {fmtDate(m.vipExpiresAt)}
+                      </span>
+                    )}
                   </td>
                   <td className="max-w-[140px] truncate py-2.5 pr-3 text-[13px] text-txt-3">
                     {m.address || '—'}
@@ -1018,6 +1230,17 @@ export default function MemberList({
                       </p>
                     </>
                   )}
+                  {/* VIP 級別（v2.1.0）：badge＋有效期（NONE 唔顯示期限） */}
+                  <p className="col-span-full flex flex-wrap items-center gap-2 text-txt-3">
+                    級別：
+                    <VipBadge tier={normalizeVipTier(detail.user.vipTier)} />
+                    {normalizeVipTier(detail.user.vipTier) !== 'NONE' &&
+                      detail.user.vipExpiresAt && (
+                        <span className="font-mono text-txt-2">
+                          有效期至 {fmtDate(detail.user.vipExpiresAt)}
+                        </span>
+                      )}
+                  </p>
                   {/* 直接促銷同意（2026-08-06 三態制）：接受／未選擇（琥珀，下次登入彈窗問一次）／唔接受；
                       行尾快掣畀員工人手設定，設定＝已表態，會員唔會再見到彈窗 */}
                   <p className="col-span-full text-txt-3">
@@ -1061,7 +1284,7 @@ export default function MemberList({
                   </p>
                 </div>
 
-                {/* 修改資料／重設密碼（員工＋管理員） */}
+                {/* 修改資料／重設密碼（員工＋管理員）；改 VIP 級別（admin 專用，v2.1.0） */}
                 {editingId === detail.user.id ? (
                   <MemberEditForm
                     user={detail.user}
@@ -1078,6 +1301,13 @@ export default function MemberList({
                       resetPwMutation.mutate({ id: detail.user.id, newPassword })
                     }
                   />
+                ) : vipEditingId === detail.user.id && canSetVip ? (
+                  <VipTierForm
+                    user={detail.user}
+                    busy={setVipTierMutation.isPending}
+                    onCancel={() => setVipEditingId(null)}
+                    onSave={(input) => askSetVipTier(detail.user, input)}
+                  />
                 ) : (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -1085,6 +1315,7 @@ export default function MemberList({
                       onClick={() => {
                         setEditingId(detail.user.id);
                         setResettingId(null);
+                        setVipEditingId(null);
                       }}
                       className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
                       style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
@@ -1096,12 +1327,27 @@ export default function MemberList({
                       onClick={() => {
                         setResettingId(detail.user.id);
                         setEditingId(null);
+                        setVipEditingId(null);
                       }}
                       className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-txt-1"
                       style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
                     >
                       <KeyRound size={13} aria-hidden="true" /> 重設密碼
                     </button>
+                    {canSetVip && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVipEditingId(detail.user.id);
+                          setEditingId(null);
+                          setResettingId(null);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] text-txt-2 transition-colors hover:text-gold"
+                        style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+                      >
+                        <Crown size={13} aria-hidden="true" /> 改 VIP 級別
+                      </button>
+                    )}
                   </div>
                 )}
 

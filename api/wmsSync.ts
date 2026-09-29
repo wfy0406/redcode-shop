@@ -39,7 +39,8 @@ import type { Context } from "hono";
 import { getDb } from "./queries/connection";
 import { orders, paymentProofs, products, wmsSyncLog } from "@db/schema";
 import { logAudit } from "./audit";
-import { sendOrderApprovedEmail } from "./email";
+import { sendOrderApprovedEmail, orderVipEmailInfo } from "./email";
+import { recomputeVipTierInBackground } from "./vip";
 
 const DEFAULT_WMS_BASE_URL = "https://red-code-wms.onrender.com";
 const DEFAULT_PUBLIC_BASE_URL = "https://redcode.red";
@@ -263,8 +264,16 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     delivery: {
       method: order.deliveryMethod ?? "address",
       pickupPoint: order.pickupPoint ?? null,
+      // v2.1.0（VIP+免運）：站點 ID＋地區，WMS 詳情頁／出貨對照用（WMS 唔識嘅欄會忽略）
+      stationId: order.stationId ?? null,
+      region: order.region ?? "HK",
     },
     note: order.note,
+    // v2.1.0（VIP+免運）：系統備註（澳門單／免運／到付等，落單時寫定）；
+    // WMS order.receiveWebhook 有現成 remark 欄（v1.3 schema 已有），唔使改 WMS
+    remark: order.remark ?? null,
+    shippingFree: order.shippingFree ?? false,
+    vipTierAtPurchase: order.vipTierAtPurchase ?? null,
     customer: {
       name: order.user.name,
       phone: order.user.phone,
@@ -303,7 +312,15 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
       order.paymentChannel === "airwallex"
         ? `Airwallex 網上收款已確認${order.airwallexIntentId ? `（${order.airwallexIntentId}）` : ""}，無需付款截圖`
         : null,
-      order.promoCode ? `優惠碼 ${order.promoCode}（全單減 HK$${order.discountAmount}）` : null,
+      // v2.1.0：discountAmount 而家包括 VIP 折扣＋優惠碼折扣；呢度拆返優惠碼嗰部分出嚟寫
+      order.promoCode
+        ? `優惠碼 ${order.promoCode}（全單減 HK$${Math.max(0, order.discountAmount - (order.vipDiscountCents ?? 0) / 100)}）`
+        : null,
+      // v2.1.0（VIP+免運）：VIP 折扣同免運／地區備註都要寫明，等 WMS 同事寄件知收唔收運費
+      (order.vipDiscountCents ?? 0) > 0
+        ? `VIP${order.vipTierAtPurchase === "GOLD" ? "金" : "銀"}會員折扣（全單已減 HK$${(order.vipDiscountCents ?? 0) / 100}）`
+        : null,
+      order.remark ? `系統備註：${order.remark}` : null,
       order.note ? `客人備註：${order.note}` : null,
       !screenshot && proof ? `截圖：${publicBaseUrl()}${proof.imagePath}` : null,
     ]
@@ -474,6 +491,7 @@ export async function wmsReviewCallback(c: Context) {
         })),
         total: order.total,
         discountAmount: order.discountAmount,
+        vip: orderVipEmailInfo(order),
         delivery: {
           method: order.deliveryMethod,
           pickupPoint: order.pickupPoint,
@@ -488,6 +506,10 @@ export async function wmsReviewCallback(c: Context) {
     }
   }
   // 審計日誌：WMS 回傳嘅審批結果（批准／要求重傳／取消）落後台「日誌」頁翻查
+  // v2.1.0（VIP+免運）：WMS 批准＝訂單確認收款，背景重算會員 VIP 級別（同後台人手批准一致）
+  if (decision === "approved") {
+    recomputeVipTierInBackground(order.userId, order.orderNo);
+  }
   void logAudit({
     actorId: null,
     actorRole: "system",

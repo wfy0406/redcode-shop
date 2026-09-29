@@ -463,6 +463,18 @@ export default function Payment() {
             total={order.total}
             receiptUrl={`${window.location.origin}/#/receipt/${order.id}`}
             {...(order.discountAmount > 0 ? { discountAmount: order.discountAmount } : {})}
+            {...((order.vipDiscountCents ?? 0) > 0
+              ? {
+                  // v2.1.0：VIP 折扣（仙 → 港元）＋落單當刻級別 label，確認書都要睇到
+                  vipDiscountAmount: Math.round((order.vipDiscountCents ?? 0) / 100),
+                  vipTierLabel:
+                    order.vipTierAtPurchase === 'GOLD'
+                      ? 'VIP 金會員'
+                      : order.vipTierAtPurchase === 'SILVER'
+                        ? 'VIP 銀會員'
+                        : undefined,
+                }
+              : {})}
             {...(heroItems ? { items: heroItems } : {})}
             {...(deliveryLabel ? { deliveryLabel } : {})}
           />

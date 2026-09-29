@@ -29,7 +29,7 @@ import { getDb } from "./queries/connection";
 import { orders, products } from "@db/schema";
 import { logAudit } from "./audit";
 import { createAirwallexRefund } from "./airwallex";
-import { sendOrderRefundedEmail } from "./email";
+import { sendOrderRefundedEmail, orderVipEmailInfo } from "./email";
 
 /** 已過咗付款階段嘅訂單狀態——淨係呢啲單先可以申請退款 */
 const REFUNDABLE_STATUSES: readonly string[] = [
@@ -209,6 +209,8 @@ export async function wmsRefundCallback(c: Context) {
         refundAmount,
         channel,
         refundedAt,
+        // v2.1.1（Wave 2）：退款信一樣顯示 VIP 級別＋折扣（全網單據統一）
+        vip: orderVipEmailInfo(order),
       });
       emailNote = result.ok
         ? `；退款通知信已寄出至 ${member.email}`

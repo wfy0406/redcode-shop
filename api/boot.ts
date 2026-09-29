@@ -18,7 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, productImageArchive, products, users } from "@db/schema";
 import { getAirwallexConfig, retrievePaymentIntent, verifyWebhookSignature } from "./airwallex";
-import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail } from "./email";
+import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail, orderVipEmailInfo } from "./email";
 import { logAudit } from "./audit";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
@@ -169,6 +169,8 @@ async function handlePaidOnline(
           total: order.total,
           delivery,
           paidAt,
+          // v2.1.1（Wave 2）：單據顯示 VIP 級別＋VIP 折扣＋免運標示
+          vip: orderVipEmailInfo(order),
         });
         if (!r.ok) {
           console.error(`[email] 網上收款通知寄唔出（訂單 ${order.orderNo}）：`, r.error);
@@ -360,4 +362,9 @@ if (env.isProduction) {
   // 待付款訂單 48 小時未傳付款截圖 → 自動取消（開機掃一次，之後每 30 分鐘掃；失敗淨係 log）
   const { startOrderSweeper } = await import("./orderSweeper");
   startOrderSweeper();
+
+  // v2.1.1（Wave 2）：順豐站點每日自動同步官網全量清單（boot 後 30 秒檢查，之後每 24 小時；
+  // 全程 never-throw，失敗淨係 log，站點清單維持現狀）
+  const { startSfSync } = await import("./sfSync");
+  startSfSync();
 }

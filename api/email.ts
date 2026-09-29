@@ -23,6 +23,9 @@
  * Email client 兼容：table 排版＋全部 inline CSS，唔用 flex/grid/@import。
  */
 
+import fs from "node:fs";
+import path from "node:path";
+
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 /* ── 精裝紙單色板（同 WMS BillPage §0 設計錨逐字對齊） ── */
 const CREAM = "#fcfcf8"; // 外層奶油底
@@ -57,6 +60,55 @@ export type OrderEmailDelivery = {
   pickupPoint: string | null;
   address: string | null;
 };
+
+/**
+ * v2.1.0（VIP+免運）／v2.1.1（Wave 2，2026-09-30）：訂單電郵／單據嘅 VIP 顯示資料。
+ * 全部 optional——舊 caller 唔傳都 compile 到、版面同以前一樣。
+ * ─ tierLabel：「VIP 銀會員」／「VIP 金會員」（infoBox 加「會員級別」行）
+ * ─ discountAmount：VIP 折扣（整數港元；總計區加「VIP 折扣 −HK$X」行，排優惠碼折扣行上面）
+ * ─ shippingFreeLabel：「免運 ✓」／「澳門單・順豐到付」等（送貨方式後面加括號）
+ */
+export type OrderEmailVip = {
+  tierLabel?: string | null;
+  discountAmount?: number;
+  shippingFreeLabel?: string | null;
+};
+
+/**
+ * 由 order row 嘅 v2.1.0 欄位砌 email 用嘅 VIP 顯示資料（call sites 統一用呢個，口徑一致）：
+ * ─ vipDiscountCents > 0 先有折扣行（記住 /100 轉返整數港元）
+ * ─ vipTierAtPurchase 'SILVER'→VIP 銀會員／'GOLD'→VIP 金會員／'NONE' 或 null→唔顯示
+ * ─ shippingFree=true →「免運 ✓」；否則澳門單／國外單要到付標示
+ * 三樣都冇 → 回 undefined（caller 直接 vip: orderVipEmailInfo(order) 咁用）
+ */
+export function orderVipEmailInfo(order: {
+  vipTierAtPurchase?: string | null;
+  vipDiscountCents?: number | null;
+  shippingFree?: boolean | null;
+  region?: string | null;
+}): OrderEmailVip | undefined {
+  const tierLabel =
+    order.vipTierAtPurchase === "GOLD"
+      ? "VIP 金會員"
+      : order.vipTierAtPurchase === "SILVER"
+        ? "VIP 銀會員"
+        : null;
+  const discountAmount = (order.vipDiscountCents ?? 0) > 0 ? Math.round((order.vipDiscountCents ?? 0) / 100) : 0;
+  const shippingFreeLabel = order.shippingFree
+    ? "免運 ✓"
+    : order.region === "MO"
+      ? "澳門單・順豐到付"
+      : order.region === "OVERSEAS"
+        ? "國外單・順豐到付"
+        : null;
+  if (!tierLabel && discountAmount <= 0 && !shippingFreeLabel) return undefined;
+  return { tierLabel, discountAmount, shippingFreeLabel };
+}
+
+/** 送貨方式＋VIP 運費標示（有 label 就喺後面加括號，例如「順豐站自取：XX站（免運 ✓）」） */
+function fmtDeliveryWithVip(d: OrderEmailDelivery, label?: string | null): string {
+  return fmtDelivery(d) + (label ? `（${escapeHtml(label)}）` : "");
+}
 
 function siteUrl(): string {
   return (process.env.SITE_URL || "https://redcode.red").replace(/\/+$/, "");
@@ -262,14 +314,25 @@ function itemsTable(items: OrderEmailItem[]): string {
   </table>`;
 }
 
-/** 內容小組件：金額總結（小計／折扣／總額）——總計行上 1px 金線＋下 3px double 金線，大字粗體 serif */
-function totalsBlock(total: number, discountAmount: number): string {
+/** 內容小組件：金額總結（小計／VIP 折扣／優惠碼折扣／總額）——總計行上 1px 金線＋下 3px double 金線，大字粗體 serif */
+// v2.1.1（Wave 2）：加 optional vip 參數——VIP 折扣行排優惠碼折扣行**上面**（折扣次序：先 VIP 後 coupon）。
+// 注意 orders.discountAmount 係「VIP 折扣＋優惠碼折扣」嘅總和，所以優惠碼行要減返 VIP 部分先顯示。
+function totalsBlock(total: number, discountAmount: number, vip?: OrderEmailVip): string {
+  const vipDiscount = vip?.discountAmount ?? 0;
+  const couponDiscount = Math.max(0, discountAmount - vipDiscount);
   const subtotal = total + discountAmount;
+  const vipRow =
+    vipDiscount > 0
+      ? `<tr>
+          <td style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};">VIP 折扣</td>
+          <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};font-variant-numeric:tabular-nums;">−${fmtMoney(vipDiscount)}</td>
+        </tr>`
+      : "";
   const discountRow =
-    discountAmount > 0
+    couponDiscount > 0
       ? `<tr>
           <td style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};">優惠碼折扣</td>
-          <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};font-variant-numeric:tabular-nums;">−${fmtMoney(discountAmount)}</td>
+          <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};font-variant-numeric:tabular-nums;">−${fmtMoney(couponDiscount)}</td>
         </tr>`
       : "";
   const subtotalRow =
@@ -282,6 +345,7 @@ function totalsBlock(total: number, discountAmount: number): string {
   const grand = `padding:14px 2px;border-top:1px solid ${GOLD};border-bottom:3px double ${GOLD};`;
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0 6px;">
     ${subtotalRow}
+    ${vipRow}
     ${discountRow}
     <tr>
       <td style="${grand}font-size:12px;font-weight:700;letter-spacing:3px;color:${INK};">應付總額</td>
@@ -338,6 +402,8 @@ function buildInvoiceHtml(args: {
   items: OrderEmailItem[];
   total: number;
   discountAmount: number;
+  /** v2.1.1（Wave 2）：VIP 級別／折扣／免運標示（optional，舊 caller 唔傳都得） */
+  vip?: OrderEmailVip;
 }): string {
   const site = siteUrl();
   const orderNo = escapeHtml(args.orderNo);
@@ -352,11 +418,19 @@ function buildInvoiceHtml(args: {
       </tr>`,
     )
     .join("");
+  const vipDiscount = args.vip?.discountAmount ?? 0;
+  const couponDiscount = Math.max(0, args.discountAmount - vipDiscount);
   const subtotal = args.total + args.discountAmount;
+  // VIP 折扣行排優惠碼折扣行上面（折扣次序：先 VIP 後 coupon）
+  const vipRow = vipDiscount > 0 ? `<tr><td>VIP 折扣</td><td class="num">−${fmtMoney(vipDiscount)}</td></tr>` : "";
   const discountRow =
-    args.discountAmount > 0
-      ? `<tr><td>優惠碼折扣</td><td class="num">−${fmtMoney(args.discountAmount)}</td></tr>`
+    couponDiscount > 0
+      ? `<tr><td>優惠碼折扣</td><td class="num">−${fmtMoney(couponDiscount)}</td></tr>`
       : "";
+  // 有級別就喺訂單資料區加「會員級別」一欄
+  const tierCell = args.vip?.tierLabel
+    ? `<div><div class="k">會員級別</div><div class="v"><span class="gold">${escapeHtml(args.vip.tierLabel)}</span></div></div>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="zh-Hant">
@@ -429,11 +503,12 @@ function buildInvoiceHtml(args: {
         <div><div class="k">落單日期</div><div class="v">${fmtDateHK(args.createdAt)}</div></div>
         <div><div class="k">訂單狀態</div><div class="v"><span class="gold">已確認 ✓</span></div></div>
         <div><div class="k">付款狀態</div><div class="v">已確認付款</div></div>
+        ${tierCell}
       </div>
       <div class="box">
         <div class="k" style="font-size:10.5px;letter-spacing:2px;color:${INK_FAINT};">收件資料</div>
         <div style="font-weight:600;color:${INK};">${escapeHtml(args.name)}${args.phone ? ` · ${escapeHtml(args.phone)}` : ""}</div>
-        <div>${fmtDelivery(args.delivery)}</div>
+        <div>${fmtDeliveryWithVip(args.delivery, args.vip?.shippingFreeLabel)}</div>
       </div>
       <hr />
       <table class="items">
@@ -442,6 +517,7 @@ function buildInvoiceHtml(args: {
       </table>
       <table class="totals">
         ${args.discountAmount > 0 ? `<tr><td>小計</td><td class="num">${fmtMoney(subtotal)}</td></tr>` : ""}
+        ${vipRow}
         ${discountRow}
         <tr class="grand"><td>應付總額</td><td class="num">${fmtMoney(args.total)}</td></tr>
       </table>
@@ -522,6 +598,8 @@ export async function sendOrderPendingEmail(args: {
   discountAmount: number;
   createdAt: Date | string;
   items: OrderEmailItem[];
+  /** v2.1.1（Wave 2）：VIP 級別／折扣顯示（optional） */
+  vip?: OrderEmailVip;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
@@ -531,10 +609,11 @@ export async function sendOrderPendingEmail(args: {
       ${infoBox([
         ["訂單編號", mono(orderNo)],
         ["落單時間", fmtDateHK(args.createdAt)],
+        ...(args.vip?.tierLabel ? ([["會員級別", `<span style="color:${GOLD};">${escapeHtml(args.vip.tierLabel)}</span>`]] as [string, string][]) : []),
         ["付款期限", `<span style="color:${GOLD};">48 小時內</span>`],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip)}
       <p style="margin:22px 0 10px;font-weight:700;color:${INK};">付款之後，記得做埋呢步先算完成：</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
         ${[
@@ -584,6 +663,8 @@ export async function sendOrderApprovedEmail(args: {
   total: number;
   discountAmount: number;
   delivery: OrderEmailDelivery;
+  /** v2.1.1（Wave 2）：VIP 級別／折扣／免運標示（optional） */
+  vip?: OrderEmailVip;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
@@ -594,10 +675,11 @@ export async function sendOrderApprovedEmail(args: {
         ["訂單編號", mono(orderNo)],
         ["確認時間", fmtDateHK(new Date())],
         ["訂單狀態", `<span style="color:${GOLD};">已確認 ✓</span>`],
-        ["送貨方式", fmtDelivery(args.delivery)],
+        ...(args.vip?.tierLabel ? ([["會員級別", `<span style="color:${GOLD};">${escapeHtml(args.vip.tierLabel)}</span>`]] as [string, string][]) : []),
+        ["送貨方式", fmtDeliveryWithVip(args.delivery, args.vip?.shippingFreeLabel)],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip)}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;">
         <tr><td style="background:${GOLD_TINT};border:1px solid ${GOLD_HAIR};padding:14px 18px;">
           <p style="margin:0;font-size:13px;line-height:1.85;color:${INK};">
@@ -627,6 +709,7 @@ export async function sendOrderApprovedEmail(args: {
           items: args.items,
           total: args.total,
           discountAmount: args.discountAmount,
+          vip: args.vip,
         }),
       ],
     });
@@ -822,6 +905,8 @@ export async function sendOrderCancelledEmail(args: {
   discountAmount: number;
   createdAt: Date | string;
   items: OrderEmailItem[];
+  /** v2.1.1（Wave 2）：VIP 級別／折扣顯示（optional） */
+  vip?: OrderEmailVip;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
@@ -831,10 +916,11 @@ export async function sendOrderCancelledEmail(args: {
       ${infoBox([
         ["訂單編號", mono(orderNo)],
         ["落單時間", fmtDateHK(args.createdAt)],
+        ...(args.vip?.tierLabel ? ([["會員級別", `<span style="color:${GOLD};">${escapeHtml(args.vip.tierLabel)}</span>`]] as [string, string][]) : []),
         ["取消原因", `<span style="color:${ERROR};">超過 48 小時未收到付款截圖</span>`],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip)}
       <p style="margin:22px 0 0;">如果你其實已經付咗款，請盡快聯絡我哋提供付款證明，同事會幫你跟進；想買返嘅話，亦可以隨時再落單。</p>
       ${ctaButton("再去逛逛", `${siteUrl()}/#/products`)}
       ${note("呢張訂單已經取消，唔使再付款。多謝你對 RedCode 嘅支持 ♥")}
@@ -868,9 +954,12 @@ export async function sendOrderPaidOnlineEmail(args: {
   total: number;
   delivery: OrderEmailDelivery;
   paidAt: Date;
+  /** v2.1.1（Wave 2）：VIP 級別／折扣／免運標示（optional）；discountAmount 呢封信本來冇，VIP 折扣由 vip 參數帶入 */
+  vip?: OrderEmailVip & { discountAmount?: number };
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
+    const vipDiscount = args.vip?.discountAmount ?? 0;
     const content = `
       <p style="margin:0 0 14px;">你好：</p>
       <p style="margin:0;">多謝你喺 RedCode 購物！我哋已透過網上付款安全收到你嘅款項 <b>${fmtMoney(args.total)}</b>（付款時間：${fmtDateHK(args.paidAt)}）。同事而家正確認你嘅訂單，確認後你會再收到確認電郵（附訂單單據）。</p>
@@ -878,10 +967,11 @@ export async function sendOrderPaidOnlineEmail(args: {
         ["訂單編號", mono(orderNo)],
         ["付款時間", fmtDateHK(args.paidAt)],
         ["訂單狀態", `<span style="color:${GOLD};">已收款，確認中</span>`],
-        ["取貨方式", fmtDelivery(args.delivery)],
+        ...(args.vip?.tierLabel ? ([["會員級別", `<span style="color:${GOLD};">${escapeHtml(args.vip.tierLabel)}</span>`]] as [string, string][]) : []),
+        ["取貨方式", fmtDeliveryWithVip(args.delivery, args.vip?.shippingFreeLabel)],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, 0)}
+      ${totalsBlock(args.total, vipDiscount, args.vip)}
       ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
       ${note("你嘅付款資料由安全支付平台處理，本站不會儲存信用卡資料，請放心使用。")}
       ${feeDisclaimer()}
@@ -919,10 +1009,13 @@ export async function sendOrderRefundedEmail(args: {
   refundAmount: number;
   channel: "airwallex" | "manual";
   refundedAt: Date;
+  /** v2.1.1（Wave 2）：VIP 級別／折扣顯示（optional） */
+  vip?: OrderEmailVip;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
     const refundText = fmtMoney(args.refundAmount);
+    const vipDiscount = args.vip?.discountAmount ?? 0;
     const refundLine =
       args.channel === "airwallex"
         ? `你嘅退款 <b>${refundText}</b> 已經原路退回（信用卡／電子錢包），款項一般 3–10 個工作天到賬，實際時間以發卡行／電子錢包為準。`
@@ -933,12 +1026,13 @@ export async function sendOrderRefundedEmail(args: {
       ${infoBox([
         ["訂單編號", mono(orderNo)],
         ["退款金額", `<span style="color:${GOLD};">${refundText}</span>`],
+        ...(args.vip?.tierLabel ? ([["會員級別", escapeHtml(args.vip.tierLabel)]] as [string, string][]) : []),
         ["退款方式", args.channel === "airwallex" ? "原路退回（信用卡／電子錢包）" : "人手退款（FPS／PayMe 等）"],
         ["退款時間", fmtDateHK(args.refundedAt)],
       ])}
       <p style="margin:0;">${refundLine}</p>
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, 0)}
+      ${totalsBlock(args.total, vipDiscount, args.vip)}
       ${ctaButton("查看訂單", `${siteUrl()}/#/orders`)}
       ${note("如有疑問，請到 redcode.red 「我的訂單」揾返呢張單，或者聯絡我哋客服跟進。")}
       ${feeDisclaimer()}
@@ -955,6 +1049,106 @@ export async function sendOrderRefundedEmail(args: {
     });
   } catch (e) {
     console.error(`[email] 砌退款通知信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/* ───────────────────────── VIP 晉升恭賀信（v2.1.1 Wave 2，2026-09-30） ───────────────────────── */
+
+/**
+ * VIP 晉升恭賀信（老闆原話：「晉升為vip每一級要收到一封好靚既電郵，要有附件圖片，
+ * 係晉升會員恭賀信，email要列明會員期限，簽署係係Gloria。內容要提及客人係有份成就redcode」）。
+ *
+ * ─ 觸發：vip.ts recomputeVipTier 真・升級（NONE→SILVER/GOLD、SILVER→GOLD）＋
+ *   membersRouter setVipTier 手動升級；同級續期／降級唔寄。
+ * ─ 模板：brandedEmail 精裝紙單；內嵌 ${site}/email/vip-upgrade-{silver,gold}.jpg
+ *   （圖放 public/email/，vite build 會抄落 dist/public/email/）。
+ * ─ 附件：同一張圖做 base64 附件（RedCode-VIP-silver.jpg / RedCode-VIP-gold.jpg）；
+ *   runtime fs 讀唔到 → console.warn 照寄（唔准因附件失敗而唔寄）。
+ * ─ never-throw：同其他 sendXxxEmail 一致。
+ */
+export async function sendVipUpgradeEmail(args: {
+  to: string;
+  name: string;
+  tier: "SILVER" | "GOLD";
+  effectiveAt: Date;
+  expiresAt: Date;
+}): Promise<SendResult> {
+  try {
+    const site = siteUrl();
+    const isGold = args.tier === "GOLD";
+    const tierLabel = isGold ? "VIP 金會員" : "VIP 銀會員";
+    const imgFile = isGold ? "vip-upgrade-gold.jpg" : "vip-upgrade-silver.jpg";
+    const attachmentName = isGold ? "RedCode-VIP-gold.jpg" : "RedCode-VIP-silver.jpg";
+    // 禮遇 recap（同後台 VIP 規則預設一致；改咗規則都係以結帳時為準，信內寫到明）
+    const benefits = isGold
+      ? ["全年所有訂單 <b>9 折</b>", "全年<b>免運</b>（一件都免，僅限順豐站及自提點）"]
+      : ["全年所有訂單 <b>92 折</b>"];
+
+    const content = `
+      <p style="margin:0 0 14px;">${escapeHtml(args.name)}寶寶，你好呀 💕</p>
+      <p style="margin:0 0 14px;">好開心同你講——你喺 RedCode 嘅累積消費已經達標，由今日起正式晉升做 <b>${tierLabel}</b>！✨</p>
+      <p style="margin:0;">RedCode 可以行到今日，係因為有你一路支持——<b>你嘅支持成就咗 RedCode</b>，呢份會員禮遇係我哋小小嘅心意，多謝你陪我哋一齊行 ♥</p>
+      <img src="${site}/email/${imgFile}" alt="${tierLabel} 恭賀圖" width="504"
+        style="display:block;width:100%;max-width:100%;height:auto;margin:22px 0;" />
+      ${infoBox([
+        ["會員級別", `<span style="color:${GOLD};">${tierLabel} ✦</span>`],
+        ["生效日期", fmtDateHK(args.effectiveAt)],
+        ["有效期至", fmtDateHK(args.expiresAt)],
+        ["會員期限", "由生效日起計一年"],
+      ])}
+      <p style="margin:0 0 8px;font-weight:700;color:${INK};">你嘅會員禮遇：</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 0;">
+        ${benefits
+          .map(
+            (b) => `<tr>
+              <td style="width:26px;vertical-align:top;padding:4px 0;color:${GOLD};font-weight:700;">✦</td>
+              <td style="padding:4px 0;font-size:14.5px;line-height:1.75;color:${INK_SOFT};">${b}</td>
+            </tr>`,
+          )
+          .join("")}
+      </table>
+      ${note("期限內級別唔會降；到期後會按你嗰年嘅消費重新判定。實際折扣同免運規則以結帳時官網顯示為準。")}
+      ${ctaButton("睇我嘅會員制度", `${site}/#/vip`)}
+      <p style="margin:22px 0 0;">多謝你 ♥<br />Gloria 上</p>
+    `;
+
+    // 恭賀圖做 base64 附件（唔係淨係內嵌連結——老闆要求「要有附件圖片」）。
+    // 候選路徑：production 靜態檔 serve 自 ./dist/public（見 api/lib/vite.ts serveStatic root），
+    // dev 就喺 ./public；再包兩個 import.meta.dirname 相對路徑做保險（bundle 後目錄結構唔同都攞到）。
+    // 讀唔到 → console.warn 照寄，唔准因附件失敗而唔寄。
+    let attachments: { filename: string; content: string }[] | undefined;
+    try {
+      const candidates = [
+        path.resolve(process.cwd(), "dist/public/email", imgFile),
+        path.resolve(process.cwd(), "public/email", imgFile),
+        path.resolve(import.meta.dirname, "../dist/public/email", imgFile),
+        path.resolve(import.meta.dirname, "../../dist/public/email", imgFile),
+        path.resolve(import.meta.dirname, "../public/email", imgFile),
+      ];
+      const found = candidates.find((p) => fs.existsSync(p));
+      if (found) {
+        attachments = [{ filename: attachmentName, content: fs.readFileSync(found).toString("base64") }];
+      } else {
+        console.warn(`[email] VIP 恭賀圖附件搵唔到（${imgFile}），照寄唔附圖；試過嘅路徑：${candidates.join(" , ")}`);
+      }
+    } catch (e) {
+      console.warn(`[email] 讀 VIP 恭賀圖附件失敗（${imgFile}），照寄唔附圖:`, e);
+    }
+
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】恭賀你晉升 ${tierLabel} ✦`,
+      html: brandedEmail({
+        preheader: `恭賀你晉升 RedCode ${tierLabel}——你嘅支持成就咗 RedCode ♥`,
+        kicker: "REDCODE HK直播台 · 會員晉升",
+        title: `恭賀晉升 ${tierLabel} ✦`,
+        contentHtml: content,
+      }),
+      attachments,
+    });
+  } catch (e) {
+    console.error(`[email] 砌 VIP 晉升信出錯 → ${args.to}`, e);
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }

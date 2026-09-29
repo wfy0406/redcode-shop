@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { Check, Copy, CreditCard, MapPin, MessageCircle, TicketPercent, X } from 'lucide-react';
+import { keepPreviousData } from '@tanstack/react-query';
+import { Check, Copy, CreditCard, MapPin, MessageCircle, TicketPercent, Truck, X } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
+import RegionStationPicker from '@/components/shop/RegionStationPicker';
 import LoginPrompt from '@/components/cart/LoginPrompt';
 import PaymentDropzone from '@/components/cart/PaymentDropzone';
 import { StarGlyph, WishStarBurst, WishStarSpinner } from '@/components/cart/WishingStar';
@@ -214,18 +216,39 @@ interface ConfirmStepProps {
   onCreated: (order: CreatedOrder) => void;
 }
 
+type Region = 'HK' | 'MO' | 'OVERSEAS';
+
+const REGION_OPTIONS: readonly [Region, string][] = [
+  ['HK', '香港'],
+  ['MO', '澳門'],
+  ['OVERSEAS', '國外'],
+];
+
 function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   const { user } = useAuth();
   const utils = trpc.useUtils();
   const createOrder = trpc.orders.create.useMutation();
   const promoValidate = trpc.promo.validate.useMutation();
 
+  // v2.1.0：useAuth 嘅 AuthUser 型別未加 VIP 新欄（主線整合時補型別）；runtime auth.me 已經有返
+  const vipUser = user as (typeof user & {
+    defaultRegion?: Region | null;
+    defaultStationId?: string | null;
+  }) | null;
+
   const [address, setAddress] = useState('');
   const [note, setNote] = useState('');
-  // 取貨方式：address 送貨上門（預設）／sf_station 順豐站／sf_locker 智能櫃；自取可再填站點名稱/編號（選填）
+  // 收件地區（v2.1.0 VIP+免運）：香港（預設）／澳門／國外；國外只可以送貨上門（不包郵）
+  const [region, setRegion] = useState<Region>('HK');
+  // 取貨方式：address 送貨上門（預設）／sf_station 順豐站／sf_locker 智能櫃
   const [deliveryMethod, setDeliveryMethod] = useState<'address' | 'sf_station' | 'sf_locker'>('address');
-  const [pickupPoint, setPickupPoint] = useState('');
+  // 自取站點（v2.1.0）：由 RegionStationPicker 揀，必揀先落得單（唔再自由填字）；
+  // 站名唔使傳——server 落單時會用 stationId 攞站名做快照
+  const [stationId, setStationId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+
+  // 國外單只支援送貨上門——任何計數／落單都用呢個正規化後嘅方式
+  const effectiveMethod = region === 'OVERSEAS' ? 'address' : deliveryMethod;
 
   // F5 優惠碼：收起（文字連結）→ 展開 input → 成功後 morph 做 code chip
   const [promoOpen, setPromoOpen] = useState(false);
@@ -244,23 +267,78 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
     if (saved) setAddress((prev) => (prev.trim() ? prev : saved));
   }, [user?.address]);
 
-  // 預設取貨方式（2026-08-08 Glo 要求）：會員設咗順豐站/智能櫃就自動帶入（連站點）；
-  // 客人撳過其他方式就唔好再覆蓋（effect 只喺會員資料載入時跑一次）
+  // 預設收件地區（v2.1.0）：會員喺註冊／會員中心設咗澳門／國外就自動帶入
+  // （客人撳過就唔好再覆蓋——effect 只喺會員資料載入時跑一次）
+  useEffect(() => {
+    const r = vipUser?.defaultRegion;
+    if (r === 'MO' || r === 'OVERSEAS') setRegion((prev) => (prev !== 'HK' ? prev : r));
+  }, [vipUser?.defaultRegion]);
+
+  // 預設取貨方式（2026-08-08 Glo 要求）：會員設咗順豐站/智能櫃就自動帶入（連站點 ID）；
+  // 預設地區係國外就唔帶自取（國外只可以送貨上門）；客人撳過其他方式就唔好再覆蓋
   useEffect(() => {
     const m = user?.deliveryMethod;
     if (m === 'sf_station' || m === 'sf_locker') {
+      if (vipUser?.defaultRegion === 'OVERSEAS') return;
       setDeliveryMethod((prev) => (prev !== 'address' ? prev : m));
-      const pp = user?.pickupPoint;
-      if (pp) setPickupPoint((prev) => (prev.trim() ? prev : pp));
+      const sid = vipUser?.defaultStationId;
+      if (sid) setStationId((prev) => prev ?? sid);
     }
-  }, [user?.deliveryMethod, user?.pickupPoint]);
+  }, [user?.deliveryMethod, vipUser?.defaultRegion, vipUser?.defaultStationId]);
+
+  const onRegionChange = (r: Region) => {
+    setRegion(r);
+    // 轉地區 → 舊站點唔啱用，要重新揀
+    setStationId(undefined);
+    if (r === 'OVERSEAS') setDeliveryMethod('address');
+  };
+
+  const onMethodChange = (m: 'address' | 'sf_station' | 'sf_locker') => {
+    setDeliveryMethod(m);
+    setStationId(undefined);
+  };
 
   // 會員已填嘅地址（註冊或會員中心填嘅）：埋單時可以一撳用返
   const savedAddress = user?.address?.trim() ?? '';
 
   const subtotal = cartSubtotal(items);
+
+  // 即時報價（v2.1.0 VIP+免運）：region／取貨方式／站點／優惠碼一變就由 server 重算
+  // VIP 折扣＋優惠碼＋免運判定；keepPreviousData 避免金額區閃爍。
+  // 報價失敗（例如站點啱啱被停用）就 fallback 返客戶端小計，唔會擋住落單——server 落單時會再驗。
+  const quoteQuery = trpc.vip.checkoutQuote.useQuery(
+    {
+      region,
+      deliveryMethod: effectiveMethod,
+      stationId: effectiveMethod !== 'address' ? stationId : undefined,
+      couponCode: appliedPromo?.code,
+    },
+    {
+      enabled: !!user && items.length > 0,
+      placeholderData: keepPreviousData,
+      retry: false,
+    },
+  );
+  const quote = quoteQuery.data;
+
+  // 金額全部整數港元顯示（quote 回 cents，÷100；VIP 折扣 server 已四捨五入到港元個位）
+  const displaySubtotal = quote ? quote.subtotalCents / 100 : subtotal;
+  const vipDiscount = quote ? quote.vipDiscountCents / 100 : 0;
+  const couponDiscount = quote
+    ? quote.couponDiscountCents / 100
+    : (appliedPromo?.discountAmount ?? 0);
+  const vipLabel =
+    quote?.vipTier === 'GOLD'
+      ? 'VIP金會員 9 折'
+      : quote?.vipTier === 'SILVER'
+        ? 'VIP銀會員 92 折'
+        : '';
   // 客戶端折扣只係顯示用途；落單時 server 會用 promoCode 重算，以 server 為準
-  const displayTotal = appliedPromo ? appliedPromo.finalTotal : subtotal;
+  const displayTotal = quote
+    ? quote.totalCents / 100
+    : appliedPromo
+      ? appliedPromo.finalTotal
+      : subtotal;
 
   const onApplyPromo = async () => {
     const code = promoInput.trim().toUpperCase();
@@ -294,15 +372,23 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
 
   const onCreate = async () => {
     setError(null);
+    // 自取必揀站點（v2.1.0）：唔再接受自由文字站點
+    if (effectiveMethod !== 'address' && !stationId) {
+      setError(
+        `請先揀返${effectiveMethod === 'sf_station' ? '順豐站' : '智能櫃'}站點先好落單`,
+      );
+      return;
+    }
     try {
       const created = await createOrder.mutateAsync({
         address: address.trim() || undefined,
         note: note.trim() || undefined,
         // 有先用嘅優惠碼先傳；server 會重算折扣
         promoCode: appliedPromo?.code,
-        deliveryMethod,
-        pickupPoint:
-          deliveryMethod === 'address' ? undefined : pickupPoint.trim() || undefined,
+        deliveryMethod: effectiveMethod,
+        // v2.1.0：收件地區＋站點 ID（server 會攞站名做快照寫落 stationName／pickupPoint）
+        region,
+        stationId: effectiveMethod !== 'address' ? stationId : undefined,
       });
       // 後端已清車，invalidate 令購物車頁 / badge 同步
       void utils.cart.list.invalidate();
@@ -372,7 +458,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
             >
               <TicketPercent size={15} aria-hidden="true" />
               {appliedPromo.code}
-              <span className="text-gold-soft">−{formatHKD(appliedPromo.discountAmount)}</span>
+              <span className="text-gold-soft">−{formatHKD(couponDiscount)}</span>
               <button
                 type="button"
                 onClick={onRemovePromo}
@@ -445,14 +531,29 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
           </button>
         )}
 
-        {/* 價格明細：小計 / 優惠碼（有名有姓一條行）/ 總計（醒目），靠字重分層唔靠色 */}
+        {/* 價格明細（v2.1.0）：商品小計 / VIP 折扣（有先顯示）/ 優惠碼 / 運費 / 總計，
+            金額以 server 報價為準（未載到就先睇客戶端小計），靠字重分層唔靠色 */}
         <div className="mt-4 border-t pt-4" style={{ borderColor: 'var(--space-line)' }}>
           <div className="flex items-baseline justify-between">
-            <span className="text-[15px] text-txt-2">小計（運費順豐到付）</span>
+            <span className="text-[15px] text-txt-2">商品小計</span>
             <span className="font-mono text-base tabular-nums text-txt-1">
-              {formatHKD(subtotal)}
+              {formatHKD(displaySubtotal)}
             </span>
           </div>
+          {vipDiscount > 0 && (
+            <div
+              className="mt-2.5 flex items-baseline justify-between"
+              style={{ animation: 'promo-fade-in .2s ease both' }}
+            >
+              <span className="inline-flex items-center gap-1.5 text-[15px] text-gold">
+                <StarGlyph size={13} color="var(--gold)" />
+                {vipLabel}
+              </span>
+              <span className="font-mono text-base tabular-nums text-gold">
+                −{formatHKD(vipDiscount)}
+              </span>
+            </div>
+          )}
           {appliedPromo && (
             <div
               className="mt-2.5 flex items-baseline justify-between"
@@ -464,7 +565,26 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                 <span className="font-mono uppercase tracking-wider">{appliedPromo.code}</span>
               </span>
               <span className="font-mono text-base tabular-nums text-gold">
-                −{formatHKD(appliedPromo.discountAmount)}
+                −{formatHKD(couponDiscount)}
+              </span>
+            </div>
+          )}
+          {/* 運費行：免運金色；到付／不包郵灰色（順豐到付，金額收貨時先畀） */}
+          {quote && (
+            <div
+              className="mt-2.5 flex items-baseline justify-between"
+              style={{ animation: 'promo-fade-in .2s ease both' }}
+            >
+              <span className="inline-flex items-center gap-1.5 text-[15px] text-txt-2">
+                <Truck size={14} aria-hidden="true" />
+                運費
+              </span>
+              <span
+                className={`font-mono text-base tabular-nums ${
+                  quote.shippingFree ? 'font-medium text-gold' : 'text-txt-3'
+                }`}
+              >
+                {quote.shippingFree ? '免運' : quote.shippingLabel}
               </span>
             </div>
           )}
@@ -475,12 +595,18 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
             style={{ animation: 'promo-total-in .18s ease both' }}
           >
             <span className="font-serif-tc text-lg font-semibold text-txt-1">
-              {appliedPromo ? '折後總計' : '總計'}
+              {vipDiscount > 0 || (appliedPromo && couponDiscount > 0) ? '折後總計' : '總計'}
             </span>
             <span className="font-mono text-2xl tabular-nums text-pink">
               {formatHKD(displayTotal)}
             </span>
           </div>
+          {/* server 備註（澳門單・不包郵・順豐到付／VIP金會員全年免運…）：細字提示 */}
+          {quote && quote.remarks.length > 0 && (
+            <p className="mt-2.5 text-[13px] leading-relaxed text-txt-3">
+              {quote.remarks.join('；')}
+            </p>
+          )}
         </div>
         <style>{PROMO_STYLES}</style>
       </div>
@@ -497,23 +623,17 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
       >
         <h2 className="font-serif-tc text-xl font-semibold text-txt-1">收貨資料</h2>
 
-        {/* 取貨方式（順豐站／智能櫃自取，站點名稱/編號選填） */}
+        {/* 收件地區（v2.1.0）：香港（預設）／澳門／國外——影響免運判定同可取貨方式 */}
         <div className="mt-5">
-          <span className="text-sm text-txt-2">取貨方式</span>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {(
-              [
-                ['address', '送貨上門'],
-                ['sf_station', '順豐站'],
-                ['sf_locker', '智能櫃'],
-              ] as const
-            ).map(([value, label]) => {
-              const active = deliveryMethod === value;
+          <span className="text-sm text-txt-2">收件地區</span>
+          <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="收件地區">
+            {REGION_OPTIONS.map(([value, label]) => {
+              const active = region === value;
               return (
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setDeliveryMethod(value)}
+                  onClick={() => onRegionChange(value)}
                   aria-pressed={active}
                   className="h-11 rounded-xl border text-[13px] transition-colors"
                   style={
@@ -536,25 +656,80 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
               );
             })}
           </div>
+          {/* 地區提示：澳門／國外不包郵（同 server 備註同一口徑） */}
+          {region === 'MO' && (
+            <p className="mt-2 text-[13px] leading-relaxed text-txt-3">
+              澳門單・不包郵・順豐到付
+            </p>
+          )}
+          {region === 'OVERSEAS' && (
+            <p
+              className="mt-2 rounded-xl border px-3.5 py-2.5 text-[13px] leading-relaxed"
+              style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
+            >
+              海外訂單・不包郵——只支援送貨上門，運費到付
+            </p>
+          )}
         </div>
 
-        {deliveryMethod !== 'address' && (
+        {/* 取貨方式（順豐站／智能櫃自取要去下面揀站點；國外單只可以送貨上門） */}
+        <div className="mt-5">
+          <span className="text-sm text-txt-2">取貨方式</span>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {(
+              [
+                ['address', '送貨上門'],
+                ['sf_station', '順豐站'],
+                ['sf_locker', '智能櫃'],
+              ] as const
+            ).map(([value, label]) => {
+              const active = deliveryMethod === value;
+              const disabled = region === 'OVERSEAS' && value !== 'address';
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    if (!disabled) onMethodChange(value);
+                  }}
+                  disabled={disabled}
+                  aria-pressed={active}
+                  className="h-11 rounded-xl border text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  style={
+                    active
+                      ? {
+                          borderColor: 'var(--pink)',
+                          background: 'var(--pink-haze)',
+                          color: 'var(--txt-1)',
+                          fontWeight: 600,
+                        }
+                      : {
+                          borderColor: 'var(--space-line)',
+                          background: 'var(--space-2)',
+                          color: 'var(--text-3)',
+                        }
+                  }
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 自取站點（v2.1.0）：地區分組下拉揀站（必揀），唔再自由填字 */}
+        {effectiveMethod !== 'address' && (
           <div className="mt-4">
-            <label htmlFor="checkout-pickup" className="text-sm text-txt-2">
-              {deliveryMethod === 'sf_station' ? '順豐站名稱／編號（選填）' : '智能櫃名稱／編號（選填）'}
-            </label>
-            <input
-              id="checkout-pickup"
-              value={pickupPoint}
-              onChange={(e) => setPickupPoint(e.target.value)}
-              placeholder={
-                deliveryMethod === 'sf_station'
-                  ? '例如：大埔廣場順豐站'
-                  : '例如：852L110 大埔超級城智能櫃'
-              }
-              className="mt-2 h-12 w-full rounded-xl border bg-space-2 px-4 text-[15px] text-txt-1 placeholder:text-txt-disabled focus:border-pink"
-              style={{ borderColor: 'var(--space-line)' }}
+            <RegionStationPicker
+              region={region === 'MO' ? 'MO' : 'HK'}
+              method={effectiveMethod}
+              value={stationId}
+              onChange={(id) => {
+                setStationId(id);
+                if (error) setError(null);
+              }}
             />
+            <p className="mt-2 text-[13px] text-txt-3">落單前一定要揀返個站點</p>
           </div>
         )}
 

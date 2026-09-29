@@ -5,8 +5,11 @@
 import { Pool } from "pg";
 import { env } from "./lib/env";
 import { getDb } from "./queries/connection";
-import { users, products } from "@db/schema";
+import { users, products, sfStations } from "@db/schema";
 import { hashPassword } from "./auth";
+import { SF_STATIONS } from "./data/sfStations";
+// v2.1.0：全量官方清單（HK 1654／MO 51，2026-09-29 抽取）；表空時 seed 全量，樣例清單留作 fallback 參考
+import { SF_STATIONS_FULL } from "./data/sfStationsFull";
 
 const DDL = `
 DO $$ BEGIN CREATE TYPE role AS ENUM ('member', 'staff', 'admin');
@@ -292,6 +295,40 @@ CREATE TABLE IF NOT EXISTS "productImageArchive" (
 INSERT INTO "promoCodes" ("code", "kind", "value", "minSpend", "perUserLimit", "usedCount", "isActive")
 VALUES ('WELLCOMEYOU', 'percent', 8, 0, 1, 0, true)
 ON CONFLICT ("code") DO NOTHING;
+
+-- ===== v2.1.0（VIP+免運，2026-09-29）=====
+-- users：VIP 級別＋期限＋預設收件地區／預設順豐站點（舊會員自動落入 NONE／HK，唔使 backfill）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "vipTier" varchar(8) NOT NULL DEFAULT 'NONE';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "vipEffectiveAt" timestamp;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "vipExpiresAt" timestamp;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "defaultRegion" varchar(8) NOT NULL DEFAULT 'HK';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "defaultStationId" varchar(64);
+
+-- orders：收件地區（舊單自動 HK）＋順豐站點快照＋免運標記＋VIP 快照＋系統備註
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "region" varchar(8) NOT NULL DEFAULT 'HK';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "stationId" varchar(64);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "stationName" varchar(255);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "shippingFree" boolean NOT NULL DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "vipTierAtPurchase" varchar(8);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "vipDiscountCents" integer NOT NULL DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "remark" text;
+
+-- 順豐站點清單（後台可改；預設樣例喺 api/data/sfStations.ts，開機時表空就自動倒入）
+CREATE TABLE IF NOT EXISTS "sfStations" (
+  id varchar(64) PRIMARY KEY,
+  region varchar(8) NOT NULL,
+  type varchar(16) NOT NULL,
+  name varchar(255) NOT NULL,
+  district varchar(64),
+  address text,
+  active boolean NOT NULL DEFAULT true,
+  "sortOrder" integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS sfstations_region ON "sfStations" (region, active, "sortOrder");
+
+-- v2.1.1（Wave 2，2026-09-30）：順豐官方網點 code——每日自動同步（api/sfSync.ts）嘅穩定鍵
+ALTER TABLE "sfStations" ADD COLUMN IF NOT EXISTS "officialCode" text;
+CREATE INDEX IF NOT EXISTS sfstations_officialcode ON "sfStations" ("officialCode");
 `;
 
 export async function ensureDatabase(): Promise<void> {
@@ -341,6 +378,17 @@ export async function ensureDatabase(): Promise<void> {
       { sku: "RC-SWEAT-006", name: "奶油白 oversize 衛衣", description: "奶油白寬鬆版型衛衣，舒適保暖，慵懶風必備。", image: "/product-6.jpg", price: 228, category: "top", listedDate: new Date(now - 10 * day), stock: 35 },
     ]);
     console.log("[boot-migrate] created 6 products");
+  }
+
+  // v2.1.0（VIP+免運）：順豐站點表空就自動倒入預設樣例清單（api/data/sfStations.ts）。
+  // 只喺「成張表空」嘅情況下 seed——後台之後嘅任何改動（改名／停用／刪除）都唔會被覆蓋；
+  // 想重新導入預設清單用後台 vip.reseedDefaultStations（逐個 upsert，唔會清走自加嘅站）。
+  const existingStations = await db.query.sfStations.findMany({ limit: 1 });
+  if (existingStations.length === 0) {
+    // v2.1.0：seed 全量官方清單（SF_STATIONS_FULL 已帶穩定 id 同 sortOrder）；失敗先落樣例清單保底
+    const seedRows = (SF_STATIONS_FULL.length > 0 ? SF_STATIONS_FULL : SF_STATIONS.map((s, i) => ({ ...s, sortOrder: i })));
+    await db.insert(sfStations).values(seedRows);
+    console.log(`[boot-migrate] seeded ${seedRows.length} sf stations（${SF_STATIONS_FULL.length > 0 ? "全量官方清單" : "樣例清單"}）`);
   }
   console.log("[boot-migrate] done");
 }

@@ -64,6 +64,19 @@ export const users = pgTable("users", {
   // 有值＝已表態（無論接受定唔接受），唔會再彈。唔使 backfill，舊會員自動落入未選。
   marketingPromptedAt: timestamp("marketingPromptedAt"),
   role: roleEnum("role").notNull().default("member"),
+  // ===== v2.1.0（VIP+免運）=====
+  // VIP 級別：'NONE'（普通會員）｜'SILVER'（銀）｜'GOLD'（金）。
+  // 由 api/vip.ts recomputeVipTier 按「本年度已付款訂單總額」自動升級；
+  // 期限＝生效日起 vip.durationMonths 個月（預設 12）；過期後按當年消費重判。
+  // 後台亦可以 adminSetVipTier 手動改級（審計留底）。
+  vipTier: varchar("vipTier", { length: 8 }).notNull().default("NONE"),
+  vipEffectiveAt: timestamp("vipEffectiveAt"),
+  vipExpiresAt: timestamp("vipExpiresAt"),
+  // 預設收件地區（2026-09-29 v2.1.0）：'HK' 香港｜'MO' 澳門｜'OVERSEAS' 國外；
+  // 結帳自動帶入（客人照樣可以改）；舊會員預設 HK。
+  defaultRegion: varchar("defaultRegion", { length: 8 }).notNull().default("HK"),
+  // 預設順豐站點 ID（對 sfStations.id；揀咗自取先有意思，送貨上門留 NULL）
+  defaultStationId: varchar("defaultStationId", { length: 64 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
@@ -206,6 +219,23 @@ export const orders = pgTable("orders", {
   refundedAt: timestamp("refundedAt"),
   airwallexRefundId: varchar("airwallexRefundId", { length: 64 }),
   refundNote: text("refundNote"),
+  // ===== v2.1.0（VIP+免運，2026-09-29）=====
+  // 收件地區：'HK' 香港（預設；舊單自動落入）｜'MO' 澳門｜'OVERSEAS' 國外。
+  // 澳門／國外單一律不包郵（順豐到付），備註會寫落 remark 並隨 WMS webhook 送出。
+  region: varchar("region", { length: 8 }).notNull().default("HK"),
+  // 順豐站點（自取單）：stationId 對 sfStations.id；stationName 係落單嗰刻嘅名稱快照
+  // （站點清單日後改名都唔會影響歷史訂單顯示）
+  stationId: varchar("stationId", { length: 64 }),
+  stationName: varchar("stationName", { length: 255 }),
+  // 呢張單係咪免運（server 按落單嗰刻嘅免運規則判定；true＝免運，false＝到付/不包郵）
+  shippingFree: boolean("shippingFree").notNull().default(false),
+  // 落單嗰刻嘅 VIP 級別快照（'NONE'|'SILVER'|'GOLD'）＋ VIP 折扣金額（整數仙）；
+  // 之後會員升級／降級都唔會影響歷史訂單
+  vipTierAtPurchase: varchar("vipTierAtPurchase", { length: 8 }),
+  vipDiscountCents: integer("vipDiscountCents").notNull().default(0),
+  // 系統備註（v2.1.0）：免運／到付／澳門單等規則備註，分號分隔；
+  // 會隨 WMS order.receiveWebhook 嘅 remark 欄送出（WMS 已有現成 remark 欄，唔使改 WMS）
+  remark: text("remark"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   // PostgreSQL 冇 ON UPDATE CURRENT_TIMESTAMP，updatedAt 由應用層更新時一併 set
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
@@ -252,6 +282,24 @@ export const promoCodes = pgTable("promoCodes", {
   expiresAt: timestamp("expiresAt"),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
+// ===== v2.1.0（VIP+免運，2026-09-29）：順豐站點清單 =====
+// 結帳／註冊／會員中心嘅站點下拉由呢張表出（先揀地區再揀站）；
+// 站點不時有變 → 後台可以 upsert/delete；預設樣例清單喺 api/data/sfStations.ts
+// （正式清單整合時倒入；admin 可以一掣重新導入預設清單）。
+export const sfStations = pgTable("sfStations", {
+  id: varchar("id", { length: 64 }).primaryKey(), // 例如 'HK-KLM-001'
+  region: varchar("region", { length: 8 }).notNull(), // 'HK' | 'MO'
+  type: varchar("type", { length: 16 }).notNull(), // 'SF_STATION' 順豐站 | 'SF_LOCKER' 智能櫃 | 'SERVICE_POINT' 服務點
+  name: varchar("name", { length: 255 }).notNull(),
+  district: varchar("district", { length: 64 }), // 地區分組（下拉 grouping 用）
+  address: text("address"),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sortOrder").notNull().default(0),
+  // v2.1.1（Wave 2，2026-09-30）：順豐官方網點 code（每日自動同步嘅穩定鍵，見 api/sfSync.ts）。
+  // null＝後台手加／未認親嘅種子行，同步永遠唔會郁呢啲行。
+  officialCode: text("officialCode"),
 });
 
 export const praiseWall = pgTable("praiseWall", {
@@ -335,3 +383,4 @@ export type AuditLogEntry = typeof auditLog.$inferSelect;
 export type ProductImageArchive = typeof productImageArchive.$inferSelect;
 export type ListingBatch = typeof listingBatches.$inferSelect;
 export type ListingBatchItem = typeof listingBatchItems.$inferSelect;
+export type SfStation = typeof sfStations.$inferSelect;

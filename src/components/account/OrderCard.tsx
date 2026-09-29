@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { Receipt, Ticket } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
+import VipBadge, { normalizeVipTier } from '@/components/VipBadge';
 import StatusBadge from './StatusBadge';
 import OrderTimeline from './OrderTimeline';
 import PaymentProofDropzone from './PaymentProofDropzone';
@@ -15,6 +16,9 @@ import type { MyOrder, MyOrderItem } from './types';
  * + 總計 + 取貨方式（順豐站/智能櫃）+ 金星狀態時間線；待付款／被拒絕訂單附付款資料提示卡 + 截圖上傳 dropzone。
  * 2026-09 F7：待付款單加「💳 即時網上支付」（Airwallex HPP，寫法跟 Payment.tsx）；
  * 退款狀態 badge（審批中／已退款／人手退款／失敗），已退款／人手退款嘅卡整體灰化。
+ * v2.1.0（VIP+免運，2026-09-29；Glo：所有單據都要睇到折扣同會員級別）：
+ * 狀態 badge 隔籬加 VIP 級別 badge（落單當刻級別 vipTierAtPurchase，普通會員唔出）；
+ * 優惠碼折扣行上面加 VIP 折扣行（先 VIP 後 coupon）；取貨位加 免運 ✓／順豐到付 標記。
  */
 
 interface OrderCardProps {
@@ -152,6 +156,17 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
   const refundBadge = REFUND_BADGES[order.refundStatus];
   const refundGrayed = order.refundStatus === 'refunded' || order.refundStatus === 'manual';
 
+  // v2.1.0：落單當刻嘅 VIP 級別（舊單冇呢個欄 → 當普通會員，唔出 badge）
+  const vipTier = normalizeVipTier(order.vipTierAtPurchase);
+  // VIP 折扣（DB 存整數仙 → 顯示港元）；0 就唔顯示
+  const vipDiscount = Math.round((order.vipDiscountCents ?? 0) / 100);
+  // 運費標記：免運 ✓（金）；澳門／國外非免運 → 灰「順豐到付」；香港到付同舊單唔加，保持卡面簡潔
+  const shippingLabel = order.shippingFree
+    ? 'free'
+    : order.region === 'MO' || order.region === 'OVERSEAS'
+      ? 'cod'
+      : null;
+
   return (
     <article
       className="rounded-2xl border p-5 md:p-6"
@@ -183,6 +198,8 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
             <Receipt size={13} aria-hidden="true" />
             單據
           </Link>
+          {/* v2.1.0：落單當刻 VIP 級別（普通會員唔出，唔逼版面） */}
+          {vipTier !== 'NONE' && <VipBadge tier={vipTier} size="sm" />}
           <StatusBadge status={order.status} />
         </span>
       </div>
@@ -194,9 +211,30 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         ))}
       </ul>
 
+      {/* VIP 折扣行（v2.1.0：落單次序先 VIP 後 coupon，所以排優惠碼行上面） */}
+      {vipDiscount > 0 && (
+        <div className="mt-4 flex items-center justify-between border-t border-space-line pt-4 text-[13px]">
+          <span className="flex items-center gap-1.5 text-txt-3">
+            VIP 折扣
+            {vipTier !== 'NONE' && (
+              <span className="text-gold">
+                （{vipTier === 'GOLD' ? 'VIP金會員' : 'VIP銀會員'}）
+              </span>
+            )}
+          </span>
+          <span className="font-mono text-gold">−{formatHKD(vipDiscount)}</span>
+        </div>
+      )}
+
       {/* 優惠碼折扣行（有用碼先顯示，金額帶負號 + code 名） */}
       {order.discountAmount > 0 && (
-        <div className="mt-4 flex items-center justify-between border-t border-space-line pt-4 text-[13px]">
+        <div
+          className={
+            vipDiscount > 0
+              ? 'mt-2 flex items-center justify-between text-[13px]'
+              : 'mt-4 flex items-center justify-between border-t border-space-line pt-4 text-[13px]'
+          }
+        >
           <span className="flex items-center gap-1.5 text-txt-3">
             <Ticket size={13} aria-hidden="true" className="text-gold" />
             優惠碼{' '}
@@ -209,7 +247,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
       {/* 總計（DB total 已係折後價） */}
       <div
         className={
-          order.discountAmount > 0
+          vipDiscount > 0 || order.discountAmount > 0
             ? 'mt-3 flex items-baseline justify-between'
             : 'mt-4 flex items-baseline justify-between border-t border-space-line pt-4'
         }
@@ -226,6 +264,16 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
             {order.deliveryMethod === 'sf_station' ? '順豐站自取' : '順豐智能櫃自取'}
             {order.pickupPoint ? `：${order.pickupPoint}` : ''}
           </span>
+        </p>
+      )}
+
+      {/* 運費（v2.1.0）：免運 ✓ 金字；澳門／國外非免運 → 灰「順豐到付」提示不包郵 */}
+      {shippingLabel === 'free' && (
+        <p className="mt-2 text-[13px] font-medium text-gold">免運 ✓</p>
+      )}
+      {shippingLabel === 'cod' && (
+        <p className="mt-2 text-[13px] text-txt-3">
+          順豐到付（{order.region === 'MO' ? '澳門單・不包郵' : '國外單・不包郵'}）
         </p>
       )}
 

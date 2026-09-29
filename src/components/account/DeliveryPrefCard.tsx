@@ -1,15 +1,19 @@
 import { useState } from 'react';
 import { Truck } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import RegionStationPicker from '@/components/shop/RegionStationPicker';
 
 /**
  * 預設取貨方式卡（2026-08-08 Glo 要求）
- * 會員喺度揀默認 送貨上門／順豐站自取／順豐智能櫃自取（自取可以填站點名稱/編號）。
+ * 會員喺度揀默認 送貨上門／順豐站自取／順豐智能櫃自取。
+ * v2.1.0（2026-09-29 VIP+免運）：自取站點改用 RegionStationPicker 下拉（先揀地區 HK/MO 再揀站），
+ * 唔再自由填字；save 埋 region + stationId（authRouter updateProfile 已接）。
  * 結帳時會自動帶入呢個選項，客人到時照樣可以臨時改、自己打地址。
  * 送貨上門用嘅地址喺上面資料卡嘅「地址」行改。
  */
 
 type Method = 'address' | 'sf_station' | 'sf_locker';
+type Region = 'HK' | 'MO';
 
 const METHOD_OPTIONS: readonly [Method, string][] = [
   ['address', '送貨上門'],
@@ -23,10 +27,18 @@ const METHOD_FULL_LABEL: Record<Method, string> = {
   sf_locker: '順豐智能櫃自取',
 };
 
+const REGION_OPTIONS: readonly [Region, string][] = [
+  ['HK', '香港'],
+  ['MO', '澳門'],
+];
+
 interface DeliveryPrefUser {
   deliveryMethod?: Method | null;
   pickupPoint?: string | null;
   address?: string | null;
+  // v2.1.0：預設收件地區＋預設站點 ID（auth.me 已回呢兩個欄）
+  defaultRegion?: 'HK' | 'MO' | 'OVERSEAS' | null;
+  defaultStationId?: string | null;
 }
 
 export default function DeliveryPrefCard({
@@ -41,7 +53,9 @@ export default function DeliveryPrefCard({
 
   const [editing, setEditing] = useState(false);
   const [method, setMethod] = useState<Method>('address');
-  const [pickupPoint, setPickupPoint] = useState('');
+  const [region, setRegion] = useState<Region>('HK');
+  const [stationId, setStationId] = useState<string | undefined>(undefined);
+  const [stationName, setStationName] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   const currentMethod: Method =
@@ -53,21 +67,31 @@ export default function DeliveryPrefCard({
       ? user.address?.trim()
         ? `送貨上門（${user.address.trim()}）`
         : '送貨上門（地址未填寫，可以喺上面資料卡「地址」行填）'
-      : `${METHOD_FULL_LABEL[currentMethod]}${user.pickupPoint?.trim() ? `：${user.pickupPoint.trim()}` : '（未填站點）'}`;
+      : `${METHOD_FULL_LABEL[currentMethod]}${user.pickupPoint?.trim() ? `：${user.pickupPoint.trim()}` : '（未揀站點）'}${user.defaultRegion === 'MO' ? '（澳門）' : ''}`;
 
   const startEdit = () => {
     setEditing(true);
     setError(null);
     setMethod(currentMethod);
-    setPickupPoint(user.pickupPoint ?? '');
+    setRegion(user.defaultRegion === 'MO' ? 'MO' : 'HK');
+    setStationId(user.defaultStationId ?? undefined);
+    setStationName(user.pickupPoint?.trim() || undefined);
   };
 
   const save = async () => {
     setError(null);
+    // 自取必揀站點（同結帳頁一致）
+    if (method !== 'address' && !stationId) {
+      setError(`請先揀返${method === 'sf_station' ? '順豐站' : '智能櫃'}站點`);
+      return;
+    }
     try {
       await updateProfile.mutateAsync({
         deliveryMethod: method,
-        pickupPoint: method === 'address' ? null : pickupPoint.trim() || null,
+        // pickupPoint 繼續存站名快照（兼容舊嘅結帳顯示／WMS／email 流程）
+        pickupPoint: method === 'address' ? null : (stationName ?? null),
+        // v2.1.0：自取先存地區＋站點 ID；送貨上門後端會自動清 stationId，唔使傳
+        ...(method !== 'address' ? { region, stationId: stationId ?? null } : {}),
       });
       await utils.auth.me.invalidate();
       pushToast('預設取貨方式已更新');
@@ -119,7 +143,12 @@ export default function DeliveryPrefCard({
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setMethod(value)}
+                  onClick={() => {
+                    setMethod(value);
+                    // 轉方式 → 舊站點唔啱用，要重新揀
+                    setStationId(undefined);
+                    setStationName(undefined);
+                  }}
                   aria-pressed={active}
                   className="h-11 rounded-xl border text-[13px] transition-colors"
                   style={
@@ -143,24 +172,60 @@ export default function DeliveryPrefCard({
             })}
           </div>
           {method !== 'address' && (
-            <input
-              type="text"
-              value={pickupPoint}
-              onChange={(e) => {
-                setPickupPoint(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder={
-                method === 'sf_station'
-                  ? '順豐站名稱／編號（選填），例如：大埔廣場順豐站'
-                  : '智能櫃名稱／編號（選填），例如：852L110 大埔超級城智能櫃'
-              }
-              aria-label="自取站點"
-              maxLength={255}
-              autoFocus
-              className="mt-3 h-12 w-full rounded-xl border bg-space-2 px-4 text-[15px] text-txt-1 placeholder:text-txt-disabled focus:border-pink"
-              style={{ borderColor: 'var(--space-line)' }}
-            />
+            <div className="mt-3">
+              {/* 地區揀選（HK／MO）：決定下拉出邊區嘅站；澳門單不包郵 */}
+              <div className="grid grid-cols-2 gap-2" role="group" aria-label="自取地區">
+                {REGION_OPTIONS.map(([value, label]) => {
+                  const active = region === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => {
+                        setRegion(value);
+                        setStationId(undefined);
+                        setStationName(undefined);
+                      }}
+                      aria-pressed={active}
+                      className="h-11 rounded-xl border text-[13px] transition-colors"
+                      style={
+                        active
+                          ? {
+                              borderColor: 'var(--pink)',
+                              background: 'var(--pink-haze)',
+                              color: 'var(--txt-1)',
+                              fontWeight: 600,
+                            }
+                          : {
+                              borderColor: 'var(--space-line)',
+                              background: 'var(--space-2)',
+                              color: 'var(--txt-3)',
+                            }
+                      }
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-3">
+                <RegionStationPicker
+                  region={region}
+                  method={method}
+                  value={stationId}
+                  onChange={(id, name) => {
+                    setStationId(id);
+                    setStationName(name);
+                    if (error) setError(null);
+                  }}
+                />
+              </div>
+              {region === 'MO' && (
+                <p className="mt-2 text-[13px] leading-relaxed text-txt-3">
+                  澳門單・不包郵・順豐到付
+                </p>
+              )}
+            </div>
           )}
           {method === 'address' && (
             <p className="mt-3 text-[13px] leading-[1.7] text-txt-3">

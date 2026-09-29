@@ -19,6 +19,11 @@ type AuthUser = {
   // 預設取貨方式（2026-08-08 Glo 要求）：結帳自動帶入；會員中心可改
   deliveryMethod?: 'address' | 'sf_station' | 'sf_locker';
   pickupPoint?: string | null;
+  // v2.1.0（VIP+免運）：預設收件地區＋順豐站點；VIP 級別（Navbar badge 用 vip.getMyVip 攞，呢度都補埋型別）
+  defaultRegion?: 'HK' | 'MO' | 'OVERSEAS' | null;
+  defaultStationId?: string | null;
+  vipTier?: 'NONE' | 'SILVER' | 'GOLD';
+  vipExpiresAt?: string | null;
   age?: number | null;
   birthMonth?: number | null;
   // 已連結 Google 帳號（2026-08-04）：會員中心顯示連結狀態用
@@ -42,6 +47,9 @@ type RegisterInput = {
   // 預設取貨方式（2026-08-08 Glo 要求）：註冊可揀送貨上門／順豐站／智能櫃＋站點
   deliveryMethod?: 'address' | 'sf_station' | 'sf_locker';
   pickupPoint?: string;
+  // v2.1.0（VIP+免運）：預設收件地區＋順豐站點 ID
+  region?: 'HK' | 'MO' | 'OVERSEAS';
+  stationId?: string;
   age?: number;
   birthMonth?: number;
   // 直接促銷同意（2026-08-05 Glo 要求）：註冊頁剔選格，冇剔＝undefined/false
