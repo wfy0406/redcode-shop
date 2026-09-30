@@ -29,6 +29,24 @@ const TYPE_LABEL: Record<string, string> = {
   SERVICE_POINT: '服務點',
 };
 
+/** v2.2.17：同步狀態行時間格式（同操作日誌同款） */
+function fmtSyncTime(iso: string): string {
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
+
+/** v2.2.17：後端回嘅同步統計（JSON 由 siteSettings 讀返出嚟，欄位防禦式 optional） */
+type SyncStatsShape = {
+  added?: number;
+  updated?: number;
+  deactivated?: number;
+  deduped?: number;
+  total?: number;
+  perTypeFailed?: string[];
+};
+
 const inputCls =
   'h-10 w-full rounded-lg border border-space-line bg-space-1 px-3 text-[13px] text-txt-1 placeholder:text-txt-3 focus:border-pink focus:outline-none';
 const labelCls = 'mb-1 block text-[11px] text-txt-3';
@@ -275,20 +293,42 @@ export default function StationManager({
     onError: (err) => toast(err.message || '導入失敗，請再試', 'error'),
   });
   // v2.1.1（Wave 2）：立即同步順豐官網全量站點清單（每日排程之外嘅手動版）
+  // v2.2.17（老闆指令）：失敗唔再扮成功——ok:false 照實彈錯；下面有長駐狀態行翻查
   const syncNow = trpc.vip.adminSyncStationsNow.useMutation({
     onSuccess: (r) => {
-      const s = r?.stats;
-      toast(
-        `官方站點同步完成 ✓ 新增 ${s?.added ?? 0}・更新 ${s?.updated ?? 0}・停用 ${s?.deactivated ?? 0}` +
-          (s?.perTypeFailed?.length ? `（失敗類別：${s.perTypeFailed.join('、')}）` : '') +
-          (r?.lastSyncAt ? `・${new Date(r.lastSyncAt).toLocaleString('zh-HK')}` : ''),
-        s?.perTypeFailed?.length ? 'info' : 'success',
-      );
+      if (r && r.ok === false) {
+        toast(`同步失敗：${r.error ?? '請再試'}（已記入後台日誌）`, 'error');
+      } else {
+        const s = r?.stats;
+        toast(
+          `官方站點同步${s?.perTypeFailed?.length ? '部分失敗' : '成功'} ✓ 新增 ${s?.added ?? 0}・更新 ${s?.updated ?? 0}・停用 ${s?.deactivated ?? 0}` +
+            (s?.perTypeFailed?.length ? `（失敗類別：${s.perTypeFailed.join('、')}）` : '') +
+            (r?.lastSyncAt ? `・${new Date(r.lastSyncAt).toLocaleString('zh-HK')}` : ''),
+          s?.perTypeFailed?.length ? 'info' : 'success',
+        );
+      }
       void utils.vip.adminListStations.invalidate();
       void utils.vip.listStations.invalidate();
+      void utils.vip.adminStationSyncStatus.invalidate();
     },
     onError: (err) => toast(err.message || '同步失敗，請再試', 'error'),
   });
+  // v2.2.17：上次同步狀態（每日自動＋手動都計）——長駐顯示畀管理員翻查
+  const syncStatus = trpc.vip.adminStationSyncStatus.useQuery();
+  // 狀態行資料砌法：lastError 時間新過 lastSyncAt（或從未成功過）→ 最近一次係失敗
+  const syncInfo = useMemo(() => {
+    const st = syncStatus.data;
+    const stats = (st?.stats ?? null) as SyncStatsShape | null;
+    const failed =
+      !!st?.lastError && (!st?.lastSyncAt || Date.parse(st.lastError.at) > Date.parse(st.lastSyncAt));
+    const partial = !failed && (stats?.perTypeFailed?.length ?? 0) > 0;
+    const badge = failed
+      ? { text: '失敗', color: 'var(--pink)', bg: 'rgba(255, 0, 84, 0.12)' }
+      : partial
+        ? { text: '部分失敗', color: 'var(--gold)', bg: 'rgba(245, 197, 24, 0.10)' }
+        : { text: '成功', color: 'var(--success)', bg: 'rgba(94, 224, 160, 0.12)' };
+    return { st, stats, failed, partial, badge };
+  }, [syncStatus.data]);
 
   const askDelete = (s: StationRow) => {
     if (!window.confirm(`確定刪除站點「${s.name}」（${s.id}）？\n歷史訂單嘅站名快照唔受影響。`)) return;
@@ -361,6 +401,57 @@ export default function StationManager({
           <RefreshCw size={14} aria-hidden="true" className={syncNow.isPending ? 'animate-spin' : ''} />
           {syncNow.isPending ? '同步緊（約 1 分鐘）…' : '立即同步官方站點'}
         </button>
+      </div>
+
+      {/* v2.2.17（老闆指令）：上次同步狀態長駐顯示——成功／部分失敗／失敗一眼睇到；
+          每次同步（每日自動＋手動）都會寫入「操作日誌」，呢度係即時對照 */}
+      <div
+        className="mt-3 rounded-xl border px-3.5 py-2.5 text-[12px] leading-relaxed"
+        style={{ borderColor: 'var(--space-line)', background: 'var(--space-1)' }}
+      >
+        {syncStatus.isLoading ? (
+          <p className="text-txt-3">讀緊上次同步狀態…</p>
+        ) : !syncInfo.st?.lastSyncAt && !syncInfo.st?.lastError ? (
+          <p className="text-txt-3">
+            從未同步過——系統每日會自動同步一次；亦可以撳上面「立即同步官方站點」即跑。
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span
+              className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium"
+              style={{
+                borderColor: syncInfo.badge.color,
+                color: syncInfo.badge.color,
+                background: syncInfo.badge.bg,
+              }}
+            >
+              {syncInfo.badge.text}
+            </span>
+            {syncInfo.failed ? (
+              <span className="text-txt-2">
+                {fmtSyncTime(syncInfo.st!.lastError!.at)} 同步失敗：{syncInfo.st!.lastError!.error}{' '}
+                <span className="text-txt-3">
+                  （站點清單維持現狀，聽日自動重試；急就撳「立即同步官方站點」）
+                </span>
+              </span>
+            ) : (
+              <span className="text-txt-2">
+                上次同步 {syncInfo.st?.lastSyncAt ? fmtSyncTime(syncInfo.st.lastSyncAt) : '—'}
+                {syncInfo.stats && (
+                  <span className="text-txt-3">
+                    ・新增 {syncInfo.stats.added ?? 0}・更新 {syncInfo.stats.updated ?? 0}・停用{' '}
+                    {syncInfo.stats.deactivated ?? 0}・清重 {syncInfo.stats.deduped ?? 0}・官方{' '}
+                    {syncInfo.stats.total ?? 0} 個點
+                    {syncInfo.partial && syncInfo.stats.perTypeFailed
+                      ? `・失敗類別：${syncInfo.stats.perTypeFailed.join('、')}`
+                      : ''}
+                  </span>
+                )}
+              </span>
+            )}
+            <span className="text-txt-3">（逐次紀錄喺「操作日誌」都睇到）</span>
+          </div>
+        )}
       </div>
 
       {/* 新增／編輯表單 */}

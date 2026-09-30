@@ -95,6 +95,17 @@ export interface SfSyncStats {
   categoriesOk: string[];
   /** 抓取失敗／不完整嘅類別（唔做停用） */
   perTypeFailed: string[];
+  /** v2.2.17：成個同步有冇成功跑完（false＝中途出事，error 有原因，已遮罩） */
+  ok: boolean;
+  error: string | null;
+}
+
+/**
+ * v2.2.17（老闆鐵律：endpoint 落 log 必須遮罩）：
+ * 寫入審計日誌／siteSettings（會喺後台畀管理員睇）嘅錯誤訊息，網址一律遮罩。
+ */
+function maskForLog(msg: string): string {
+  return msg.replace(/https?:\/\/[^\s)】]+/gi, "〈網址已遮罩〉").slice(0, 300);
 }
 
 // ───────────────────────────── 抓取層（never-throw） ─────────────────────────────
@@ -207,9 +218,12 @@ let syncRunning = false; // 防重入：每日排程同後台手動唔會同時�
  * never-throw：每個類別獨立 try，失敗嘅類別記入 perTypeFailed（唔做停用），其餘照做。
  */
 export async function runSfSync(): Promise<SfSyncStats> {
-  const stats: SfSyncStats = { added: 0, updated: 0, deactivated: 0, deduped: 0, total: 0, categoriesOk: [], perTypeFailed: [] };
+  const stats: SfSyncStats = { added: 0, updated: 0, deactivated: 0, deduped: 0, total: 0, categoriesOk: [], perTypeFailed: [], ok: true, error: null };
   if (syncRunning) {
     console.log("[sf-sync] 已經有同步緊，今次 skip");
+    // v2.2.17：手動撳同步撞正排程緊跑，照實回（管理員睇到原因，唔會當成功咗）
+    stats.ok = false;
+    stats.error = "已經有同步進行中，請等一陣再試";
     return stats;
   }
   syncRunning = true;
@@ -423,25 +437,44 @@ export async function runSfSync(): Promise<SfSyncStats> {
       await writeSetting(SETTING_EXTRA_DISTRICTS, JSON.stringify(merged));
     }
 
-    // 完成：寫低同步時間＋統計＋audit
+    // 完成：寫低同步時間＋統計＋audit；v2.2.17：清走舊失敗紀錄，日誌講明成功定部分失敗
     const now = new Date();
     await writeSetting(SETTING_LAST_SYNC_AT, now.toISOString());
     await writeSetting(SETTING_LAST_SYNC_STATS, JSON.stringify(stats));
+    await writeSetting(SETTING_LAST_SYNC_ERROR, "");
     void logAudit({
       actorId: null,
       actorRole: "system",
       action: "station.sync",
       targetType: "setting",
       targetId: "sfStations",
-      detail: `順豐站點每日同步完成：新增 ${stats.added}、更新 ${stats.updated}、停用 ${stats.deactivated}、異體字重複清尾 ${stats.deduped}、官方合計 ${stats.total} 個點${stats.perTypeFailed.length > 0 ? `；失敗類別（未停用）：${stats.perTypeFailed.join("、")}` : ""}`,
+      detail: `順豐站點每日同步${stats.perTypeFailed.length > 0 ? "部分失敗" : "成功"}：新增 ${stats.added}、更新 ${stats.updated}、停用 ${stats.deactivated}、異體字重複清尾 ${stats.deduped}、官方合計 ${stats.total} 個點${stats.perTypeFailed.length > 0 ? `；失敗類別（未停用）：${stats.perTypeFailed.join("、")}` : ""}`,
     });
     console.log(
       `[sf-sync] 完成：+${stats.added} 更新 ${stats.updated} 停用 ${stats.deactivated} 清重 ${stats.deduped}（官方 ${stats.total} 個點）${stats.perTypeFailed.length > 0 ? `；失敗類別 ${stats.perTypeFailed.join("/")}` : ""}`,
     );
     return stats;
   } catch (e) {
-    // never-throw：任何意外淨係 log，站點清單維持現狀
+    // never-throw：任何意外淨係 log，站點清單維持現狀。
+    // v2.2.17（老闆指令）：失敗都要入後台日誌＋記落 siteSettings，管理員先睇到；
+    // 唔可以齋 console.error 就算（以前失敗係無聲無息嘅）。錯誤訊息遮罩網址先落 log。
+    const msg = maskForLog(e instanceof Error ? e.message : String(e));
+    stats.ok = false;
+    stats.error = msg;
     console.error("[sf-sync] 同步失敗:", e);
+    try {
+      await writeSetting(SETTING_LAST_SYNC_ERROR, JSON.stringify({ at: new Date().toISOString(), error: msg }));
+    } catch (e2) {
+      console.error("[sf-sync] 寫失敗紀錄都出事（DB 可能冇咗）:", e2);
+    }
+    void logAudit({
+      actorId: null,
+      actorRole: "system",
+      action: "station.sync",
+      targetType: "setting",
+      targetId: "sfStations",
+      detail: `順豐站點同步失敗：${msg}（站點清單維持現狀，聽日自動重試）`,
+    });
     return stats;
   } finally {
     syncRunning = false;

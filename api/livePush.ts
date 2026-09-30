@@ -125,16 +125,19 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
     // v2.2.8（老闆回報「跳完都係無開 app」）：短鏈（share/v/、fb.watch）
     // 未必中 FB app 嘅 intent filter，所以推送前先解鏈做正式 /watch?v=ID
     // 連結——app filter 一定認得；解唔到就用返原本條，唔阻發送。
-    // v2.2.16（老闆拍板「先 APP，唔去先自動落網頁版」）：跳板頁搬去
-    // live-go-v3.html——public/ 檔冇 hash，客人瀏覽器可能 cache 住舊版，
+    // v2.2.16（老闆拍板「先 APP，唔去先自動落網頁版」）：跳板頁換新檔名——
+    // public/ 檔冇 hash，客人瀏覽器可能 cache 住舊版，
     // 新檔名保證攞到最新邏輯（blur 殺 timer，唔再扯埋 Samsung「開啟 app」窗）；
-    // 舊 live-go.html／live-go-v2.html 係轉址殼兜住舊推播。
+    // 舊 live-go*.html 全部係轉址殼兜住舊推播。
+    // v2.2.17（老闆回報 iPhone 入到 FB app 但去咗首頁）：搬去 live-go-v4.html——
+    // iOS 嘅 fb:// href 改用 encodeURI（舊版全编码 FB iOS 解唔返 → 落首頁），
+    // 金掣改真 https 連結行 universal link 直達條片。
     let pushTarget = campaign.url;
     if (isFacebookUrl(campaign.url)) {
       pushTarget = await resolveFbCanonical(campaign.url).catch(() => campaign.url);
     }
     const clickUrl = isFacebookUrl(pushTarget)
-      ? `${siteUrl()}/live-go-v3.html?u=${encodeURIComponent(pushTarget)}`
+      ? `${siteUrl()}/live-go-v4.html?u=${encodeURIComponent(pushTarget)}`
       : pushTarget;
     const payload = JSON.stringify({
       title: campaign.title,

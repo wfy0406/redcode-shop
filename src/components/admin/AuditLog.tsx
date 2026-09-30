@@ -52,6 +52,12 @@ const ACTION_LABEL: Record<string, string> = {
   'approval.approve': '批准審批',
   'approval.reject': '拒絕審批',
   'promo.marketingEmail': '寄促銷電郵',
+  // v2.2.17：順豐站點同步紀錄（成功/部分失敗/失敗都會入日誌，詳情欄有寫）
+  'station.upsert': '新增/更新站點',
+  'station.delete': '刪除站點',
+  'station.reseed': '重新導入站點清單',
+  'station.sync': '順豐站點每日同步',
+  'station.syncNow': '順豐站點即時同步',
 };
 
 const ROLE_META: Record<string, { label: string; color: string }> = {
@@ -69,7 +75,7 @@ const FILTERS: { key: string; label: string; match: (a: string) => boolean }[] =
   { key: 'product', label: '商品', match: (a) => a.startsWith('product.') },
   { key: 'staff', label: '帳號', match: (a) => a.startsWith('staff.') },
   { key: 'approval', label: '審批', match: (a) => a.startsWith('approval.') },
-  { key: 'other', label: '其他', match: (a) => /^(promo|praise|setting)\./.test(a) },
+  { key: 'other', label: '其他', match: (a) => /^(promo|praise|setting|station)\./.test(a) },
 ];
 
 function fmtTime(d: Date | string): string {

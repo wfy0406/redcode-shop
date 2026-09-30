@@ -686,14 +686,49 @@ export const vipRouter = createRouter({
     const lastSyncRow = await db.query.siteSettings.findFirst({
       where: eq(siteSettings.key, "sf.lastSyncAt"),
     });
+    // v2.2.17（老闆指令：成功定失敗都要喺後台日誌睇到）：
+    // 失敗唔再扮成功（以前全軍覆沒都會寫「新增 0、更新 0」），日誌照實寫，前端照實彈錯。
     void logAudit({
       actorId: ctx.user.userId,
       actorRole: ctx.user.role,
       action: "station.syncNow",
       targetType: "setting",
       targetId: "sfStations",
-      detail: `管理員手動即時同步順豐官方站點：新增 ${stats.added}、更新 ${stats.updated}、停用 ${stats.deactivated}${stats.perTypeFailed.length > 0 ? `；失敗類別：${stats.perTypeFailed.join("、")}` : ""}`,
+      detail: stats.ok
+        ? `管理員手動即時同步順豐官方站點${stats.perTypeFailed.length > 0 ? "（部分失敗）" : "成功"}：新增 ${stats.added}、更新 ${stats.updated}、停用 ${stats.deactivated}${stats.perTypeFailed.length > 0 ? `；失敗類別：${stats.perTypeFailed.join("、")}` : ""}`
+        : `管理員手動即時同步順豐官方站點失敗：${stats.error ?? "未知錯誤"}`,
     });
-    return { ok: true as const, stats, lastSyncAt: lastSyncRow?.value ?? null };
+    return { ok: stats.ok, stats, lastSyncAt: lastSyncRow?.value ?? null, error: stats.error };
+  }),
+
+  /**
+   * v2.2.17（老闆指令，2026-09-30）：順豐站點同步狀態（admin 專用）。
+   * 站點管理面板頂嘅「上次同步」狀態行用——成功/部分失敗/失敗＋統計＋時間，
+   * 唔使靠一閃即逝嘅 toast，管理員隨時入嚟都睇到最近一次同步結果。
+   */
+  adminStationSyncStatus: adminProcedure.query(async () => {
+    const db = getDb();
+    const read = async (key: string) => {
+      const row = await db.query.siteSettings.findFirst({ where: eq(siteSettings.key, key) });
+      return row?.value ?? null;
+    };
+    const [lastSyncAt, statsRaw, errorRaw] = await Promise.all([
+      read("sf.lastSyncAt"),
+      read("sf.lastSyncStats"),
+      read("sf.lastSyncError"),
+    ]);
+    let stats: unknown = null;
+    try {
+      stats = statsRaw ? (JSON.parse(statsRaw) as unknown) : null;
+    } catch {
+      stats = null;
+    }
+    let lastError: { at: string; error: string } | null = null;
+    try {
+      if (errorRaw) lastError = JSON.parse(errorRaw) as { at: string; error: string };
+    } catch {
+      lastError = null;
+    }
+    return { lastSyncAt, stats, lastError };
   }),
 });

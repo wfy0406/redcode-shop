@@ -476,9 +476,9 @@ export default function LivePushPanel({
               onClick={() => {
                 const u = url.trim();
                 if (!/^https?:\/\/.+/.test(u)) return;
-                // 同真推播完全一致：FB 連結先經 /live-go-v3.html 跳板（手機開 FB app，冇裝→網頁版）
+                // 同真推播完全一致：FB 連結先經 /live-go-v4.html 跳板（手機開 FB app，冇裝→網頁版）
                 const isFb = /^https:\/\/([^/]+\.)?(facebook\.com|fb\.watch|fb\.me)(\/|$)/i.test(u);
-                window.open(isFb ? `/live-go-v3.html?u=${encodeURIComponent(u)}` : u, '_blank', 'noopener,noreferrer');
+                window.open(isFb ? `/live-go-v4.html?u=${encodeURIComponent(u)}` : u, '_blank', 'noopener,noreferrer');
               }}
               className="block w-full rounded-2xl border p-4 text-left transition-opacity hover:opacity-85"
               style={{ borderColor: 'var(--glass-border)', background: 'var(--space-1)' }}

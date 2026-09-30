@@ -8,7 +8,7 @@
  *    badge：/push-badge.png（96² 白色剪影，Android 狀態欄小圖）
  *    —— v2.2.1 之前用 /logo.png（1242×698 闊幅），Android 睇唔過直接跌返 Chrome logo。
  * 2. notificationclick → 關通知 → clients.openWindow(data.url)（冇 url 就開 '/'）
- *    data.url 後端已指向 /live-go-v3.html 跳板頁（v2.2.16 新檔名，舊 live-go*.html 係轉址殼）：
+ *    data.url 後端已指向 /live-go-v4.html 跳板頁（v2.2.17 新檔名，舊 live-go*.html 係轉址殼）：
  *    入面先試 fb:// 開 Facebook app，開唔到（冇裝 app）先落返 facebook.com 網頁版。
  */
 
