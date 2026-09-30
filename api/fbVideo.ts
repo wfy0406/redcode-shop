@@ -69,9 +69,19 @@ function idFromHtml(html: string): string | null {
   return null;
 }
 
-function embedForId(id: string): string {
+export function embedForId(id: string): string {
   const canonical = `https://www.facebook.com/watch/?v=${id}`;
   return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(canonical)}&show_text=false&autoplay=1`;
+}
+
+/**
+ * v2.2.11（老闆指令「播之前要有縮圖」）：影片縮圖。
+ * graph.facebook.com/{id}/picture 係公開 endpoint，會 302 去 scontent CDN——
+ * 重點：呢條 URL 係畀客人部機（瀏覽器）直接載入，唔經 Render 伺服器，
+ * 所以 FB 封 data center IP 都唔影響。載入失敗（私人片／刪咗）前端自行跌落設計 poster。
+ */
+export function thumbForId(id: string): string {
+  return `https://graph.facebook.com/${id}/picture`;
 }
 
 export function canonicalForId(id: string): string {

@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { isPushSupported } from '@/lib/pushClient';
 import { openFacebookLive } from '@/lib/openLive';
 import PushPermissionGuide from '@/components/push/PushPermissionGuide';
+import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
 
 /**
  * 直播進行中展示區（v2.2.2 高度美化版，2026-09-30 老闆指令：要生動、要動感）
@@ -28,7 +29,10 @@ export default function LiveNowSection() {
   const navigate = useNavigate();
   const utils = trpc.useUtils();
   const [showGuide, setShowGuide] = useState(false);
-  const [playing, setPlaying] = useState(false);
+  // v2.2.11（老闆指令「直播一上官網就開始自動播」）：預設即播；
+  // 只有嵌入連結（embedUrl）先會真係 render 播放器，冇就照舊海報卡
+  const [playing, setPlaying] = useState(true);
+  const [full, setFull] = useState(false);
 
   const liveQuery = trpc.push.currentLive.useQuery(undefined, {
     refetchInterval: 60_000,
@@ -168,27 +172,38 @@ export default function LiveNowSection() {
             動感：成卡慢浮（translateY）、播放掣 ping 環擴散（scale＋opacity）。
           */}
           {playing && live.embedUrl ? (
+            // v2.2.11（老闆指令「反正直播一定係打直」）：直度 9:16 播放器置中，
+            // 入官網即自動播；背底先放真・縮圖（載入緊嗰秒唔会黑屏）；
+            // 「放大睇」開官網內全屏直度播放器，唔再彈去 FB
             <div
-              className="relative w-full overflow-hidden rounded-2xl border"
+              className="relative mx-auto w-full max-w-[340px] overflow-hidden rounded-2xl border"
               style={{ borderColor: 'rgba(255, 0, 84, 0.4)', background: 'var(--space-1)' }}
             >
-              <iframe
-                src={live.embedUrl}
-                className="block aspect-video w-full border-0"
-                allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-                allowFullScreen
-                title="Facebook 直播"
-              />
-              {/* v2.2.10（老闆回報「無得放大」）：FB 手機嵌入播放器收埋咗全屏掣，
-                  加個「放大睇」開 FB 全版播放器——轉橫／全屏都得 */}
+              <div className="relative aspect-[9/16] w-full">
+                {live.thumbUrl && (
+                  <img
+                    src={live.thumbUrl}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                )}
+                <iframe
+                  src={live.embedUrl}
+                  className="absolute inset-0 h-full w-full border-0"
+                  allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+                  allowFullScreen
+                  title="Facebook 直播"
+                />
+              </div>
               <button
                 type="button"
-                onClick={() => window.open(live.embedUrl ?? live.url, '_blank', 'noopener,noreferrer')}
+                onClick={() => setFull(true)}
                 className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[11px] font-medium text-gold-soft"
                 style={{ borderColor: 'rgba(245,197,24,0.4)', background: 'rgba(10,6,20,0.72)' }}
-                aria-label="放大睇直播（開全版播放器）"
+                aria-label="放大睇直播（官網全屏）"
               >
-                放大睇 ↗
+                放大睇 ⛶
               </button>
             </div>
           ) : (
@@ -262,6 +277,11 @@ export default function LiveNowSection() {
           )}
         </div>
       </div>
+
+      {/* 全屏直度播放器（官網內，唔彈 FB） */}
+      {full && live.embedUrl && (
+        <FbPlayerOverlay src={live.embedUrl} title="Facebook 直播" onClose={() => setFull(false)} />
+      )}
 
       {/* 權限講解 modal（訂閱成功會 invalidate 狀態，副掣即轉「已開啟 ✓」） */}
       <PushPermissionGuide

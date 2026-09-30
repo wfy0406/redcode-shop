@@ -21,7 +21,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { canonicalForId, resolveFbEmbedUrl, resolveFbVideoId } from "./fbVideo";
+import { canonicalForId, embedForId, resolveFbVideoId, thumbForId } from "./fbVideo";
 import { pushCampaigns, pushSubscriptions, users } from "@db/schema";
 import {
   authedProcedure,
@@ -298,16 +298,18 @@ export const pushRouter = createRouter({
     if (!live || !live.sentAt) {
       return { live: null };
     }
-    // v2.2.8（老闆指令「直播都要預覽到條片」）：同回顧一樣經 resolveFbEmbedUrl——
+    // v2.2.8（老闆指令「直播都要預覽到條片」）：同回顧一樣經 resolveFbVideoId——
     // 認到影片 ID（短鏈都解）→ 官網原位播；解唔到 → null，前端跌落「撳咗彈 FB app」。
-    const embedUrl = await resolveFbEmbedUrl(live.url).catch(() => null);
+    // v2.2.11：加埋 thumbUrl（graph /picture，客人部機直載，唔經伺服器）。
+    const vid = await resolveFbVideoId(live.url).catch(() => null);
     return {
       live: {
         liveDate: live.liveDate,
         liveSession: live.liveSession,
         url: live.url,
         sentAt: live.sentAt,
-        embedUrl,
+        embedUrl: vid ? embedForId(vid) : null,
+        thumbUrl: vid ? thumbForId(vid) : null,
       },
     };
   }),
@@ -339,9 +341,10 @@ export const pushRouter = createRouter({
       limit: 10,
     });
     // v2.2.7：逐場解埋 FB 嵌入連結（share/v/、fb.watch 短鏈 server 幫手解鏈）；
-    // 解唔到就 null，前端撳 ▶ 會直接彈去 FB app，唔會再出「影片不存在」
-    const embeds = await Promise.all(
-      rows.map((r) => resolveFbEmbedUrl(r.url).catch(() => null)),
+    // 解唔到就 null，前端撳 ▶ 會直接彈去 FB app，唔會再出「影片不存在」。
+    // v2.2.11：連埋縮圖（graph /picture，客人部機直載）。
+    const vids = await Promise.all(
+      rows.map((r) => resolveFbVideoId(r.url).catch(() => null)),
     );
     return {
       items: rows.map((r, i) => ({
@@ -350,7 +353,8 @@ export const pushRouter = createRouter({
         liveSession: r.liveSession,
         url: r.url,
         sentAt: r.sentAt,
-        embedUrl: embeds[i] ?? null,
+        embedUrl: vids[i] ? embedForId(vids[i] as string) : null,
+        thumbUrl: vids[i] ? thumbForId(vids[i] as string) : null,
       })),
     };
   }),

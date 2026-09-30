@@ -3,6 +3,7 @@ import { ExternalLink, Play } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { openFacebookLive } from '@/lib/openLive';
 import { useReveal } from '@/hooks/useReveal';
+import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
 
 /**
  * 直播回顧（v2.2.6 老闆指令「高度美化・聚光燈之下・最好可以預覽 FB 片」）：
@@ -12,8 +13,9 @@ import { useReveal } from '@/hooks/useReveal';
  * · 頁區上方兩支聚光燈射落嚟（旋轉漸層光錐，呼吸明暗；只郁 opacity，跟動效鐵律）
  * · 卡嘅 16:9「舞台」預設係設計好嘅 poster：頂部聚光燈 radial 光池＋
  *   地面 pink 反光＋中央金圈 ▶（脈衝環 scale/opacity）；
- * · 撳 ▶ → URL 認到影片 ID 就原位載入 Facebook 播放器（v2.2.7：認唔到
- *   就唔再嵌入「影片不存在」畫面，直接 openFacebookLive 彈去 FB app）；
+ * · v2.2.11：舞台有真・影片縮圖就放縮圖（冇先用聚光燈 poster）；
+ *   撳 ▶ → 官網內全屏直度（9:16）播放器（直播一定打直），唔彈 FB；
+ *   認唔到影片 ID 就 openFacebookLive 彈去 FB app。
  *   撳「去 Facebook 睇 ↗」→ openFacebookLive（有 app 彈 app）。
  * · 第一場（最新）做 featured，桌面版佔滿兩欄。
  * 冇回顧時成區唔 render。
@@ -32,12 +34,19 @@ interface HistoryItem {
   sentAt: string | Date | null;
   /** server 已解好嘅 FB 嵌入 URL（share/fb.watch 短鏈都解）；null = 嵌入唔到，撳 ▶ 彈 FB app */
   embedUrl?: string | null;
+  /** 真・影片縮圖（graph /picture，客人部機直載）；null = 冇，用設計 poster */
+  thumbUrl?: string | null;
 }
 
 /* ---------- 單場舞台卡 ---------- */
 function StageCard({ item, index, featured }: { item: HistoryItem; index: number; featured: boolean }) {
+  // v2.2.11（老闆指令「播之前整返縮圖」「比例要直」「放大唔好彈 FB」）：
+  // · 有 thumbUrl → 舞台直接放真・縮圖（載入失敗跌落設計 poster）
+  // · 撳 ▶ → 官網內全屏直度（9:16）播放器，唔再喺 16:9 舞台入面硬塞、唔彈 FB
   const [playing, setPlaying] = useState(false);
+  const [thumbOk, setThumbOk] = useState(true);
   const embedUrl = item.embedUrl ?? null;
+  const showThumb = !!item.thumbUrl && thumbOk;
 
   return (
     <article
@@ -46,67 +55,70 @@ function StageCard({ item, index, featured }: { item: HistoryItem; index: number
     >
       {/* ===== 舞台（16:9）：poster → 撳 ▶ 原位變 FB 播放器 ===== */}
       <div className="relative aspect-video w-full overflow-hidden" style={{ background: '#07040F' }}>
-        {playing && embedUrl ? (
-          <>
-            <iframe
-              src={embedUrl}
-              className="absolute inset-0 h-full w-full border-0"
-              allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-              allowFullScreen
-              title={`${item.liveDate} ${item.liveSession} 直播回顧`}
-            />
-            {/* v2.2.10（老闆回報「無得放大」）：開 FB 全版播放器，轉橫／全屏都得 */}
-            <button
-              type="button"
-              onClick={() => window.open(embedUrl, '_blank', 'noopener,noreferrer')}
-              className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-mono text-[11px] text-gold"
-              style={{ borderColor: 'rgba(245,197,24,0.4)', background: 'rgba(10,6,20,0.72)' }}
-              aria-label={`放大睇 ${fmtDate(item.liveDate)} ${item.liveSession} 回顧`}
-            >
-              放大睇 ↗
-            </button>
-          </>
-        ) : (
+        {
           <button
             type="button"
             onClick={() => (embedUrl ? setPlaying(true) : openFacebookLive(item.url))}
             className="absolute inset-0 block h-full w-full cursor-pointer text-left"
             aria-label={`播放 ${fmtDate(item.liveDate)} ${item.liveSession} 回顧`}
           >
-            {/* 聚光燈光池（頂中 radial）＋地面反光（pink ellipse）＋兩支光錐 */}
-            <span
-              aria-hidden="true"
-              className="stage-spot absolute inset-0"
-              style={{
-                background:
-                  'radial-gradient(ellipse 55% 70% at 50% 0%, rgba(245,213,138,0.20) 0%, rgba(255,0,84,0.06) 45%, transparent 72%)',
-              }}
-            />
-            <span
-              aria-hidden="true"
-              className="stage-beam stage-beam-l absolute -top-1/4 left-[16%] h-[150%] w-[26%]"
-              style={{
-                background: 'linear-gradient(180deg, rgba(245,213,138,0.14) 0%, transparent 78%)',
-                clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
-                transform: 'rotate(-9deg)',
-              }}
-            />
-            <span
-              aria-hidden="true"
-              className="stage-beam stage-beam-r absolute -top-1/4 right-[16%] h-[150%] w-[26%]"
-              style={{
-                background: 'linear-gradient(180deg, rgba(255,0,84,0.12) 0%, transparent 78%)',
-                clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
-                transform: 'rotate(9deg)',
-              }}
-            />
-            <span
-              aria-hidden="true"
-              className="absolute inset-x-[12%] bottom-0 h-[26%]"
-              style={{
-                background: 'radial-gradient(ellipse 50% 100% at 50% 100%, rgba(255,0,84,0.16) 0%, transparent 70%)',
-              }}
-            />
+            {/* v2.2.11：有真・縮圖就放縮圖（＋暗角壓字）；冇先至用聚光燈設計 poster */}
+            {showThumb ? (
+              <>
+                <img
+                  src={item.thumbUrl ?? ''}
+                  alt={`${fmtDate(item.liveDate)} ${item.liveSession} 直播縮圖`}
+                  loading="lazy"
+                  onError={() => setThumbOk(false)}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-0"
+                  style={{
+                    background:
+                      'linear-gradient(180deg, rgba(7,4,15,0.55) 0%, transparent 30%, transparent 55%, rgba(7,4,15,0.82) 100%)',
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                {/* 聚光燈光池（頂中 radial）＋地面反光（pink ellipse）＋兩支光錐 */}
+                <span
+                  aria-hidden="true"
+                  className="stage-spot absolute inset-0"
+                  style={{
+                    background:
+                      'radial-gradient(ellipse 55% 70% at 50% 0%, rgba(245,213,138,0.20) 0%, rgba(255,0,84,0.06) 45%, transparent 72%)',
+                  }}
+                />
+                <span
+                  aria-hidden="true"
+                  className="stage-beam stage-beam-l absolute -top-1/4 left-[16%] h-[150%] w-[26%]"
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(245,213,138,0.14) 0%, transparent 78%)',
+                    clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
+                    transform: 'rotate(-9deg)',
+                  }}
+                />
+                <span
+                  aria-hidden="true"
+                  className="stage-beam stage-beam-r absolute -top-1/4 right-[16%] h-[150%] w-[26%]"
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(255,0,84,0.12) 0%, transparent 78%)',
+                    clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
+                    transform: 'rotate(9deg)',
+                  }}
+                />
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-x-[12%] bottom-0 h-[26%]"
+                  style={{
+                    background: 'radial-gradient(ellipse 50% 100% at 50% 100%, rgba(255,0,84,0.16) 0%, transparent 70%)',
+                  }}
+                />
+              </>
+            )}
 
             {/* 頂行：場次編號＋日期（左）／REPLAY tag（右） */}
             <span className="absolute left-4 top-4 flex items-baseline gap-3 md:left-5 md:top-5">
@@ -161,8 +173,17 @@ function StageCard({ item, index, featured }: { item: HistoryItem; index: number
               </span>
             </span>
           </button>
-        )}
+        }
       </div>
+
+      {/* v2.2.11：撳 ▶ → 官網內全屏直度播放器（唔彈 FB、唔硬塞 16:9） */}
+      {playing && embedUrl && (
+        <FbPlayerOverlay
+          src={embedUrl}
+          title={`${item.liveDate} ${item.liveSession} 直播回顧`}
+          onClose={() => setPlaying(false)}
+        />
+      )}
 
       {/* ===== 卡底 meta 行：日期・場次｜去 Facebook 睇 ===== */}
       <div className="flex items-center justify-between gap-4 px-4 py-3.5 md:px-5">
