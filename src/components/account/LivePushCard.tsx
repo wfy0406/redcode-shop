@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BellRing, Smartphone } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { isPushSupported, unsubscribeLivePush } from '@/lib/pushClient';
-import PushPermissionGuide from '@/components/push/PushPermissionGuide';
+import PushPermissionGuide, { isAppleMobile } from '@/components/push/PushPermissionGuide';
 
 /**
  * 直播開播通知設定卡（v2.2.0，2026-09-30 老闆指令；其後加「多裝置管理」）—— 會員中心用
@@ -207,13 +207,23 @@ export default function LivePushCard({
         </p>
 
         {!supported && (
-          <p
+          <div
             className="mt-3 rounded-xl border px-4 py-3 text-[13px] leading-[1.7] text-txt-2"
             style={{ borderColor: 'rgba(245, 197, 24, 0.4)', background: 'rgba(245, 197, 24, 0.07)' }}
           >
-            你而家嘅瀏覽器暫時唔支援推送通知。iPhone 請先喺 Safari 將 RedCode
-            「加至主畫面」，再喺主畫面圖示開返網站，就可以綁定。
-          </p>
+            <p>
+              你而家嘅瀏覽器暫時收唔到推送通知。iPhone 用戶：Apple 規定網站通知
+              要先将 RedCode「加至主畫面」先收得到，三步 30 秒搞掂：
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li>喺 Safari 底欄撳「分享」掣（方形加個向上箭嘴）</li>
+              <li>喺選單搵「加至主畫面」→「新增」</li>
+              <li>喺主畫面撳 RedCode 圖示開返官網，返嚟呢度撳「綁定呢部裝置」</li>
+            </ol>
+            <p className="mt-2 text-txt-3">
+              一次設定，一勞永逸；加咗之後撳「綁定呢部裝置」會有齊圖文教學。
+            </p>
+          </div>
         )}
 
         {/* 裝置清單：逐部描述＋綁定日期＋最近推送＋移除掣 */}
@@ -257,7 +267,9 @@ export default function LivePushCard({
         )}
 
         <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
-          {supported && !currentBound && (
+          {/* v2.2.16（老闆指令）：iPhone 未加主畫面都出掣——撳咗入圖文教學，
+              跟完步驟喺主畫面開返就可以直接接收通知 */}
+          {(supported || isAppleMobile()) && !currentBound && (
             <button
               type="button"
               onClick={() => setShowGuide(true)}

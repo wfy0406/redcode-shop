@@ -31,7 +31,13 @@ import {
   supervisorProcedure,
 } from "./middleware";
 import { logAudit } from "./audit";
-import { PUSH_TITLE, buildLivePushBody, sendLivePush } from "./livePush";
+import {
+  PUSH_TITLE,
+  REPLAY_ORDER_BY,
+  buildLivePushBody,
+  moveLiveReplay,
+  sendLivePush,
+} from "./livePush";
 import { forwardMemberToWms } from "./wmsMemberSync";
 
 /** v2.2.1（合約 §9）：直播推送同意狀態有變 → 即推最新狀態去 WMS（fire-and-forget，失敗淨 log） */
@@ -345,7 +351,8 @@ export const pushRouter = createRouter({
         eq(pushCampaigns.status, "sent"),
         or(isNotNull(pushCampaigns.endedAt), lt(pushCampaigns.sentAt, since)),
       ),
-      orderBy: [desc(pushCampaigns.sentAt)],
+      // v2.2.16（老闆指令）：回顧順序後台/WMS 改得——設咗 replayOrder 嘅排先
+      orderBy: [...REPLAY_ORDER_BY],
       limit: 10,
     });
     // v2.2.7：逐場解埋 FB 嵌入連結（share/v/、fb.watch 短鏈 server 幫手解鏈）；
@@ -496,9 +503,29 @@ export const pushRouter = createRouter({
         failCount: r.failCount,
         createdAt: r.createdAt,
         endedAt: r.endedAt,
+        // v2.2.16：回顧排序欄（後台 ↑↓ 調順序用）
+        replayOrder: r.replayOrder,
       })),
     };
   }),
+
+  // ─── moveLiveReplay（員工級）：直播回顧上移／下移一級（v2.2.16 老闆指令）───
+  moveLiveReplay: staffProcedure
+    .input(z.object({ id: z.number().int().positive(), direction: z.enum(["up", "down"]) }))
+    .mutation(async ({ ctx, input }) => {
+      const res = await moveLiveReplay(input.id, input.direction);
+      if (res.ok) {
+        void logAudit({
+          actorId: ctx.user.userId,
+          actorRole: ctx.user.role,
+          action: "push.moveLiveReplay",
+          targetType: "pushCampaign",
+          targetId: input.id,
+          detail: `直播回顧${input.direction === "up" ? "上移" : "下移"}一級（批次 #${input.id}）`,
+        });
+      }
+      return res;
+    }),
 
   // ─── endLiveNow（員工級）：一掣落直播畫（v2.2.2 老闆指令）─────────────
   // 推播一出，首頁／直播頁會顯示 90 分鐘；老闆要可以即時取消顯示。

@@ -18,13 +18,43 @@ import { subscribeLivePush } from '@/lib/pushClient';
  *   <PushPermissionGuide open={showGuide} onClose={(ok) => { setShowGuide(false); ... }} />
  */
 
-type Step = 'intro' | 'busy' | 'success' | 'denied' | 'error';
+type Step = 'iosSetup' | 'intro' | 'busy' | 'success' | 'denied' | 'error';
 
 /** iPhone／iPad／iPod 偵測（iOS Web Push 要 PWA 加至主畫面先收到） */
 export function isAppleMobile(): boolean {
   if (typeof navigator === 'undefined') return false;
   return /iP(hone|ad|od)/.test(navigator.userAgent);
 }
+
+/** 係咪已經「加至主畫面」開緊（iOS PWA standalone 模式先有 Web Push） */
+export function isInstalledPwa(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (window.matchMedia?.('(display-mode: standalone)').matches) return true;
+  // 舊 iOS Safari 專用屬性
+  return (navigator as unknown as { standalone?: boolean }).standalone === true;
+}
+
+/** v2.2.16（老闆指令：教學要靚、要有圖）：iPhone「加至主畫面」三步圖文教學 */
+const IOS_STEPS = [
+  {
+    n: 1,
+    img: '/ios-guide/step1.png',
+    alt: '步驟一示意圖：Safari 底欄嘅分享掣',
+    text: '喺 Safari 底欄撳「分享」掣（方形加個向上箭嘴嗰個）',
+  },
+  {
+    n: 2,
+    img: '/ios-guide/step2.png',
+    alt: '步驟二示意圖：分享選單入面嘅「加至主畫面」',
+    text: '喺選單碌落搵「加至主畫面」，撳右上角「新增」',
+  },
+  {
+    n: 3,
+    img: '/ios-guide/step3.png',
+    alt: '步驟三示意圖：主畫面嘅 RedCode 圖示',
+    text: '喺主畫面撳 RedCode 圖示開返官網，再撳「通知我開播」',
+  },
+] as const;
 
 /** 假通知示意卡（intro 步用，等客知道跟住會見到咩） */
 function MockNotification() {
@@ -109,20 +139,32 @@ export default function PushPermissionGuide({
   const [errorMsg, setErrorMsg] = useState<string>('');
   const apple = isAppleMobile();
 
-  // 每次打開重置：之前拒絕過（denied）就直接入教學步驟
+  // 每次打開重置：之前拒絕過（denied）就直接入教學步驟；
+  // iPhone/iPad 未「加至主畫面」→ 先入圖文教學（v2.2.16 老闆指令：教學要靚、有圖）
   useEffect(() => {
     if (!open) return;
     setErrorMsg('');
     const denied =
       typeof Notification !== 'undefined' && Notification.permission === 'denied';
-    setStep(denied ? 'denied' : 'intro');
-  }, [open]);
+    if (denied) {
+      setStep('denied');
+      return;
+    }
+    setStep(apple && !isInstalledPwa() ? 'iosSetup' : 'intro');
+  }, [open, apple]);
 
   if (!open) return null;
 
   /** 撳「允許通知」／「再試一次」：真正觸發 requestPermission＋訂閱 */
   const handleConfirm = async () => {
     if (step === 'busy') return;
+    // iPhone 教學步撳「我加咗啦」但仲係 Safari 度開緊 → 提返佢要喺主畫面圖示開，唔好硬撞 error
+    if (step === 'iosSetup' && apple && !isInstalledPwa()) {
+      setErrorMsg(
+        '仲係偵測唔到主畫面版本——加咗之後，記得喺主畫面撳 RedCode 圖示開返官網，先再撳呢個掣。',
+      );
+      return;
+    }
     setStep('busy');
     const res = await subscribeLivePush();
     if (res.ok) {
@@ -184,6 +226,65 @@ export default function PushPermissionGuide({
           Live Alert
         </p>
 
+        {step === 'iosSetup' && (
+          <>
+            <h2 className="mt-2 font-serif-tc text-xl font-semibold leading-[1.35] text-txt-1">
+              iPhone 要多一步（30 秒搞掂）
+            </h2>
+            <p className="mt-3 text-[13px] leading-[1.8] text-txt-2">
+              Apple 規定 iPhone 嘅網站通知，要先将 RedCode
+              <b className="text-gold-soft">「加至主畫面」</b>
+              先收得到——一次設定，之後 Glo Glo 一開播即刻彈通知。
+            </p>
+
+            {/* 三步圖文教學：左右碌 snap 卡（官網自家教學插圖） */}
+            <div className="-mx-6 mt-4 overflow-x-auto px-6 pb-1 md:-mx-8 md:px-8">
+              <div className="flex snap-x snap-mandatory gap-3">
+                {IOS_STEPS.map((s) => (
+                  <div key={s.n} className="w-[68%] shrink-0 snap-center">
+                    <div
+                      className="relative overflow-hidden rounded-2xl border"
+                      style={{ borderColor: 'rgba(245, 197, 24, 0.35)' }}
+                    >
+                      <img src={s.img} alt={s.alt} className="block w-full" loading="lazy" />
+                      <span
+                        className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-full font-mono text-[13px] font-bold"
+                        style={{ background: 'var(--gold)', color: 'var(--space-1)' }}
+                      >
+                        {s.n}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-left text-[12px] leading-[1.7] text-txt-2">{s.text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="mt-1 font-mono text-[10px] tracking-[0.25em] text-txt-3">
+              ← 左右碌睇晒 3 步 →
+            </p>
+
+            {errorMsg && (
+              <p role="alert" className="mt-3 text-[13px] leading-[1.7] text-pink-soft">
+                {errorMsg}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleConfirm()}
+              className="btn btn-primary mt-5 w-full"
+            >
+              我加咗啦，繼續設定通知
+            </button>
+            <button
+              type="button"
+              onClick={close}
+              className="mt-3 text-[13px] text-txt-3 underline underline-offset-4 transition-opacity hover:opacity-70"
+            >
+              遲啲先
+            </button>
+          </>
+        )}
+
         {step === 'intro' && (
           <>
             <h2 className="mt-2 font-serif-tc text-xl font-semibold leading-[1.35] text-txt-1">
@@ -194,16 +295,6 @@ export default function PushPermissionGuide({
               <b className="text-txt-1">請撳「允許」</b>
               ——之後 Glo Glo 一開播，你部機就會收到通知，唔會再錯過任何一場。
             </p>
-            {apple && (
-              <p
-                className="mt-3 rounded-xl border px-4 py-3 text-left text-[13px] leading-[1.7] text-txt-2"
-                style={{ borderColor: 'rgba(245, 197, 24, 0.4)', background: 'rgba(245, 197, 24, 0.07)' }}
-              >
-                <b className="text-gold-soft">iPhone 用戶留意：</b>
-                請先喺 Safari 將 RedCode「加至主畫面」（分享掣 → 加至主畫面），
-                再喺主畫面圖示開返網站，先收得到推送通知。
-              </p>
-            )}
             <div className="mt-5">
               <MockNotification />
             </div>

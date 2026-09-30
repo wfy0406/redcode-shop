@@ -359,6 +359,8 @@ export const pushCampaigns = pgTable("pushCampaigns", {
   failCount: integer("failCount"),
   // v2.2.2（老闆指令）：後台「立即落畫」——有值即停止喺首頁／直播頁顯示（批次紀錄保留）
   endedAt: timestamp("endedAt"),
+  // v2.2.16（老闆指令）：直播回顧顯示順序——細數排前；NULL＝未設定（跟 sentAt 新→舊排尾）
+  replayOrder: integer("replayOrder"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 

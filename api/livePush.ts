@@ -17,7 +17,7 @@
  *   ⑤ audit log（push.sendLivePush，detail 只落 campaign id／計數，唔落 endpoint）。
  */
 import webpush from "web-push";
-import { and, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { pushCampaigns, pushSubscriptions } from "@db/schema";
 import { logAudit } from "./audit";
@@ -125,15 +125,16 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
     // v2.2.8（老闆回報「跳完都係無開 app」）：短鏈（share/v/、fb.watch）
     // 未必中 FB app 嘅 intent filter，所以推送前先解鏈做正式 /watch?v=ID
     // 連結——app filter 一定認得；解唔到就用返原本條，唔阻發送。
-    // v2.2.15（老闆拍板「先 APP，唔去先自動落網頁版」）：跳板頁搬去
-    // live-go-v2.html——public/ 檔冇 hash，客人瀏覽器可能 cache 住舊版，
-    // 新檔名保證攞到最新邏輯；舊 live-go.html 變轉址殼兜住舊推播。
+    // v2.2.16（老闆拍板「先 APP，唔去先自動落網頁版」）：跳板頁搬去
+    // live-go-v3.html——public/ 檔冇 hash，客人瀏覽器可能 cache 住舊版，
+    // 新檔名保證攞到最新邏輯（blur 殺 timer，唔再扯埋 Samsung「開啟 app」窗）；
+    // 舊 live-go.html／live-go-v2.html 係轉址殼兜住舊推播。
     let pushTarget = campaign.url;
     if (isFacebookUrl(campaign.url)) {
       pushTarget = await resolveFbCanonical(campaign.url).catch(() => campaign.url);
     }
     const clickUrl = isFacebookUrl(pushTarget)
-      ? `${siteUrl()}/live-go-v2.html?u=${encodeURIComponent(pushTarget)}`
+      ? `${siteUrl()}/live-go-v3.html?u=${encodeURIComponent(pushTarget)}`
       : pushTarget;
     const payload = JSON.stringify({
       title: campaign.title,
@@ -235,4 +236,62 @@ function isFacebookUrl(raw: string): boolean {
   } catch {
     return false;
   }
+}
+
+
+// ─── v2.2.16（老闆指令）：直播回顧顯示順序 ───────────────────────────────
+// pushCampaigns.replayOrder：細數排前；NULL＝未設定（跟 sentAt 新→舊排尾）。
+// 官網後台（tRPC moveLiveReplay）同 WMS 官網中心（/api/wms/live-push/move）共用。
+
+/** 回顧清單統一排序：設咗 replayOrder 嘅排先（細→大），未設嘅跟 sentAt 新→舊 */
+export const REPLAY_ORDER_BY = [
+  asc(sql`("replayOrder" IS NULL)`),
+  asc(pushCampaigns.replayOrder),
+  desc(pushCampaigns.sentAt),
+] as const;
+
+/** 直播「進行中」窗口（同 pushRouter LIVE_WINDOW_MS 一致）：過咗先入回顧 */
+const REPLAY_WINDOW_MS = 90 * 60 * 1000;
+
+/** 回顧清單操作範圍：已落畫／過窗嘅 sent 批次，最新 20 筆（前台回顧顯示頭 10 筆） */
+const REPLAY_MANAGE_LIMIT = 20;
+
+/**
+ * 回顧上移／下移一級：
+ * ① 按而家顯示順序攞出成條回顧清單（頭 20 筆）；
+ * ② 搵到目標同佢隔籬嗰筆，對調位置；
+ * ③ 成條清單重寫 replayOrder＝(i+1)*10（正規化，之後對調就永遠齊整）。
+ * 唔喺清單／已排最盡 → { ok:false, error }（UI 顯示返句原因）。
+ */
+export async function moveLiveReplay(
+  id: number,
+  direction: "up" | "down",
+): Promise<{ ok: boolean; error?: string }> {
+  const db = getDb();
+  const since = new Date(Date.now() - REPLAY_WINDOW_MS);
+  const rows = await db.query.pushCampaigns.findMany({
+    where: and(
+      eq(pushCampaigns.status, "sent"),
+      or(isNotNull(pushCampaigns.endedAt), lt(pushCampaigns.sentAt, since)),
+    ),
+    orderBy: [...REPLAY_ORDER_BY],
+    limit: REPLAY_MANAGE_LIMIT,
+  });
+  const idx = rows.findIndex((r) => r.id === id);
+  if (idx < 0) {
+    return { ok: false, error: "呢場唔喺直播回顧清單（可能仲顯示緊／未夠 90 分鐘）" };
+  }
+  const swapWith = direction === "up" ? idx - 1 : idx + 1;
+  if (swapWith < 0 || swapWith >= rows.length) {
+    return { ok: false, error: direction === "up" ? "已經排最前" : "已經排最尾" };
+  }
+  const order = rows.map((r) => r.id);
+  [order[idx], order[swapWith]] = [order[swapWith], order[idx]];
+  for (let i = 0; i < order.length; i++) {
+    await db
+      .update(pushCampaigns)
+      .set({ replayOrder: (i + 1) * 10 })
+      .where(eq(pushCampaigns.id, order[i]));
+  }
+  return { ok: true };
 }

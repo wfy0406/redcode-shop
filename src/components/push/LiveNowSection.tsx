@@ -160,7 +160,8 @@ export default function LiveNowSection() {
 
             {!isPushSupported() && !subscribed && (
               <p className="mt-3 max-w-md text-[12px] leading-[1.7] text-txt-3">
-                iPhone 用戶：請先喺 Safari 將 RedCode「加至主畫面」，先收得到開播通知。
+                iPhone 用戶：Apple 規定要先将 RedCode「加至主畫面」先收得通知——
+                撳上面「🔔 通知我開播」有齊圖文教學，30 秒搞掂，一勞永逸。
               </p>
             )}
           </div>

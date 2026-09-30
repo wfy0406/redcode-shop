@@ -12,7 +12,7 @@ import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
-import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushEnd, wmsLivePushList, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
+import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushEnd, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
@@ -58,6 +58,7 @@ app.post("/api/wms/live-push/approve", wmsLivePushApprove);
 app.post("/api/wms/live-push/list", wmsLivePushList);
 app.post("/api/wms/live-push/end", wmsLivePushEnd);
 app.post("/api/wms/live-push/delete", wmsLivePushDelete);
+app.post("/api/wms/live-push/move", wmsLivePushMove);
 app.post("/api/wms/live-push/preview", wmsLivePushPreview);
 
 // WMS → 官網會員管理（2026-09-30 v2.2.1 合約 §9；同樣 WMS_CALLBACK_SECRET 驗證）：

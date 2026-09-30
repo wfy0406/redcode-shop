@@ -26,7 +26,7 @@ import { and, desc, eq, gte, isNull } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { pushCampaigns } from "@db/schema";
 import { logAudit } from "./audit";
-import { PUSH_TITLE, buildLivePushBody, sendLivePush } from "./livePush";
+import { PUSH_TITLE, buildLivePushBody, moveLiveReplay, sendLivePush } from "./livePush";
 import { canonicalForId, resolveFbVideoId } from "./fbVideo";
 
 /** WMS 員工角色白名單（其他→400） */
@@ -96,6 +96,8 @@ function campaignRow(r: typeof pushCampaigns.$inferSelect) {
     failCount: r.failCount,
     createdAt: r.createdAt,
     endedAt: r.endedAt,
+    // v2.2.16（老闆指令）：直播回顧顯示順序（細數排前；null＝跟日期新→舊）
+    replayOrder: r.replayOrder,
   };
 }
 
@@ -323,6 +325,33 @@ export async function wmsLivePushDelete(c: Context) {
     detail: `WMS 刪除直播回顧（批次 #${id}，${campaign.liveDate} ${campaign.liveSession}，狀態 ${campaign.status}，操作：${byName}）`,
   });
   console.log(`[wms] live-push delete #${id}`);
+  return c.json({ ok: true, id });
+}
+
+/** POST /api/wms/live-push/move：直播回顧上移／下移一級（v2.2.16 老闆指令） */
+export async function wmsLivePushMove(c: Context) {
+  const r = await readJsonWithSecret(c);
+  if ("res" in r) return r.res;
+  const b = r.b;
+  const id = typeof b.id === "number" && Number.isInteger(b.id) && b.id > 0 ? b.id : null;
+  const direction = b.direction === "up" || b.direction === "down" ? b.direction : null;
+  const byName = typeof b.byName === "string" ? b.byName.trim() : "";
+  if (!id) return c.json({ ok: false, error: "id 必填（正整數）" }, 400);
+  if (!direction) return c.json({ ok: false, error: "direction 必須係 up／down" }, 400);
+  if (!byName) return c.json({ ok: false, error: "byName 必填（WMS 員工名）" }, 400);
+
+  const res = await moveLiveReplay(id, direction);
+  if (!res.ok) return c.json({ ok: false, error: res.error }, 409);
+  void logAudit({
+    actorId: null,
+    actorRole: "system",
+    actorNameFallback: "WMS",
+    action: "push.moveLiveReplay",
+    targetType: "pushCampaign",
+    targetId: id,
+    detail: `WMS 直播回顧${direction === "up" ? "上移" : "下移"}一級（批次 #${id}，操作：${byName}）`,
+  });
+  console.log(`[wms] live-push move #${id} ${direction}`);
   return c.json({ ok: true, id });
 }
 

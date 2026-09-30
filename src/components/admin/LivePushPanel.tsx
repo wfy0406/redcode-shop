@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Radio, Send, Square, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Radio, Send, Square, Trash2 } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import WishingStar from './WishingStar';
@@ -34,6 +34,9 @@ type Campaign = {
   sentCount: number | null;
   failCount: number | null;
   createdAt: string | Date;
+  endedAt: string | Date | null;
+  // v2.2.16：直播回顧顯示順序（後台 ↑↓ 調；null＝跟日期新→舊）
+  replayOrder: number | null;
 };
 
 const STATUS_META: Record<string, { label: string; color: string; border: string }> = {
@@ -233,6 +236,31 @@ export default function LivePushPanel({
       c.sentAt != null &&
       nowMs - new Date(c.sentAt).getTime() < 90 * 60 * 1000
     );
+
+  // ─── v2.2.16（老闆指令）：直播回顧順序 ↑↓ 調 ───────────────
+  // 資格同後端一致：sent 兼（已落畫 或 過咗 90 分鐘窗口）＝回顧清單入面嗰啲。
+  const [moveBusyId, setMoveBusyId] = useState<number | null>(null);
+  const moveReplayMutation = trpc.push.moveLiveReplay.useMutation({
+    onSuccess: async (r) => {
+      if (!r.ok) toast(r.error ?? '調唔到，請再試', 'info');
+      setMoveBusyId(null);
+      await utils.push.listLivePush.invalidate();
+      await utils.push.liveHistory.invalidate();
+    },
+    onError: (err) => {
+      setMoveBusyId(null);
+      toast(err.message || '調順序失敗，請再試', 'error');
+    },
+  });
+  const isReplay = (c: (typeof campaigns)[number]) =>
+    c.status === 'sent' &&
+    (c.endedAt != null ||
+      (c.sentAt != null && nowMs - new Date(c.sentAt).getTime() >= 90 * 60 * 1000));
+  const moveReplay = (id: number, direction: 'up' | 'down') => {
+    if (moveBusyId != null) return;
+    setMoveBusyId(id);
+    moveReplayMutation.mutate({ id, direction });
+  };
   const removeCampaign = (c: (typeof campaigns)[number]) => {
     if (deleteMutation.isPending) return;
     if (!window.confirm(`確定刪除「${c.liveDate} ${c.liveSession}」呢筆回顧？刪咗直播頁會即刻唔再顯示，冇得還原。`)) return;
@@ -448,9 +476,9 @@ export default function LivePushPanel({
               onClick={() => {
                 const u = url.trim();
                 if (!/^https?:\/\/.+/.test(u)) return;
-                // 同真推播完全一致：FB 連結先經 /live-go-v2.html 跳板（手機開 FB app，冇裝→網頁版）
+                // 同真推播完全一致：FB 連結先經 /live-go-v3.html 跳板（手機開 FB app，冇裝→網頁版）
                 const isFb = /^https:\/\/([^/]+\.)?(facebook\.com|fb\.watch|fb\.me)(\/|$)/i.test(u);
-                window.open(isFb ? `/live-go-v2.html?u=${encodeURIComponent(u)}` : u, '_blank', 'noopener,noreferrer');
+                window.open(isFb ? `/live-go-v3.html?u=${encodeURIComponent(u)}` : u, '_blank', 'noopener,noreferrer');
               }}
               className="block w-full rounded-2xl border p-4 text-left transition-opacity hover:opacity-85"
               style={{ borderColor: 'var(--glass-border)', background: 'var(--space-1)' }}
@@ -630,22 +658,51 @@ export default function LivePushPanel({
                       <span style={{ color: 'var(--pink-soft)' }}>{c.failCount ?? 0}</span>
                     </td>
                     <td className="py-2.5 pl-3 text-right">
-                      {/* v2.2.5：已落畫嘅回顧可以刪（直播頁即時唔再顯示）；顯示緊／審批中唔俾刪 */}
-                      <button
-                        type="button"
-                        onClick={() => removeCampaign(c)}
-                        disabled={!canDelete(c) || deleteBusyId === c.id}
-                        title={
-                          canDelete(c)
-                            ? '刪除呢筆直播回顧'
-                            : '顯示緊或者審批中嘅批次唔可以刪'
-                        }
-                        aria-label={`刪除 ${c.liveDate} ${c.liveSession} 回顧`}
-                        className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
-                        style={{ borderColor: 'var(--space-line)', color: 'var(--pink-soft)' }}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </button>
+                      <div className="inline-flex items-center gap-1.5">
+                        {/* v2.2.16（老闆指令）：回顧順序 ↑↓ 調——即時反映喺官網直播回顧區 */}
+                        {isReplay(c) && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => moveReplay(c.id, 'up')}
+                              disabled={moveBusyId === c.id}
+                              title="回顧移前一級"
+                              aria-label={`${c.liveDate} ${c.liveSession} 回顧移前`}
+                              className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
+                              style={{ borderColor: 'var(--space-line)', color: 'var(--gold-soft)' }}
+                            >
+                              <ChevronUp size={14} aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveReplay(c.id, 'down')}
+                              disabled={moveBusyId === c.id}
+                              title="回顧移後一級"
+                              aria-label={`${c.liveDate} ${c.liveSession} 回顧移後`}
+                              className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
+                              style={{ borderColor: 'var(--space-line)', color: 'var(--gold-soft)' }}
+                            >
+                              <ChevronDown size={14} aria-hidden="true" />
+                            </button>
+                          </>
+                        )}
+                        {/* v2.2.5：已落畫嘅回顧可以刪（直播頁即時唔再顯示）；顯示緊／審批中唔俾刪 */}
+                        <button
+                          type="button"
+                          onClick={() => removeCampaign(c)}
+                          disabled={!canDelete(c) || deleteBusyId === c.id}
+                          title={
+                            canDelete(c)
+                              ? '刪除呢筆直播回顧'
+                              : '顯示緊或者審批中嘅批次唔可以刪'
+                          }
+                          aria-label={`刪除 ${c.liveDate} ${c.liveSession} 回顧`}
+                          className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
+                          style={{ borderColor: 'var(--space-line)', color: 'var(--pink-soft)' }}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

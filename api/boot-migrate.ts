@@ -393,6 +393,8 @@ CREATE TABLE IF NOT EXISTS "pushCampaigns" (
 CREATE INDEX IF NOT EXISTS pushcampaigns_status_sent ON "pushCampaigns" (status, "sentAt" DESC);
 -- v2.2.2：舊庫補欄（CREATE TABLE IF NOT EXISTS 唔會幫現有表加欄）
 ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "endedAt" timestamp;
+-- v2.2.16（老闆指令）：直播回顧顯示順序——細數排前；NULL＝跟 sentAt 新→舊排尾
+ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "replayOrder" integer;
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：
