@@ -47,13 +47,25 @@ function StageCard({ item, index, featured }: { item: HistoryItem; index: number
       {/* ===== 舞台（16:9）：poster → 撳 ▶ 原位變 FB 播放器 ===== */}
       <div className="relative aspect-video w-full overflow-hidden" style={{ background: '#07040F' }}>
         {playing && embedUrl ? (
-          <iframe
-            src={embedUrl}
-            className="absolute inset-0 h-full w-full border-0"
-            allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-            allowFullScreen
-            title={`${item.liveDate} ${item.liveSession} 直播回顧`}
-          />
+          <>
+            <iframe
+              src={embedUrl}
+              className="absolute inset-0 h-full w-full border-0"
+              allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+              allowFullScreen
+              title={`${item.liveDate} ${item.liveSession} 直播回顧`}
+            />
+            {/* v2.2.10（老闆回報「無得放大」）：開 FB 全版播放器，轉橫／全屏都得 */}
+            <button
+              type="button"
+              onClick={() => window.open(embedUrl, '_blank', 'noopener,noreferrer')}
+              className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-full border px-3 py-1.5 font-mono text-[11px] text-gold"
+              style={{ borderColor: 'rgba(245,197,24,0.4)', background: 'rgba(10,6,20,0.72)' }}
+              aria-label={`放大睇 ${fmtDate(item.liveDate)} ${item.liveSession} 回顧`}
+            >
+              放大睇 ↗
+            </button>
+          </>
         ) : (
           <button
             type="button"

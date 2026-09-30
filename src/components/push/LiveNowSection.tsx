@@ -179,6 +179,17 @@ export default function LiveNowSection() {
                 allowFullScreen
                 title="Facebook 直播"
               />
+              {/* v2.2.10（老闆回報「無得放大」）：FB 手機嵌入播放器收埋咗全屏掣，
+                  加個「放大睇」開 FB 全版播放器——轉橫／全屏都得 */}
+              <button
+                type="button"
+                onClick={() => window.open(live.embedUrl ?? live.url, '_blank', 'noopener,noreferrer')}
+                className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-[11px] font-medium text-gold-soft"
+                style={{ borderColor: 'rgba(245,197,24,0.4)', background: 'rgba(10,6,20,0.72)' }}
+                aria-label="放大睇直播（開全版播放器）"
+              >
+                放大睇 ↗
+              </button>
             </div>
           ) : (
           <button
