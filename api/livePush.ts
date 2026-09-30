@@ -129,15 +129,17 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
     // public/ 檔冇 hash，客人瀏覽器可能 cache 住舊版，
     // 新檔名保證攞到最新邏輯（blur 殺 timer，唔再扯埋 Samsung「開啟 app」窗）；
     // 舊 live-go*.html 全部係轉址殼兜住舊推播。
-    // v2.2.17（老闆回報 iPhone 入到 FB app 但去咗首頁）：搬去 live-go-v4.html——
-    // iOS 嘅 fb:// href 改用 encodeURI（舊版全编码 FB iOS 解唔返 → 落首頁），
-    // 金掣改真 https 連結行 universal link 直達條片。
+    // v2.2.18（老闆指令：上網查證後一次過修復）：搬去 live-go-v5.html——
+    // 查證結論：iOS fb:// 全線已死（開 app 淨係落首頁，唔再試）；
+    // iOS 金掣＝真 https 連結（universal link，用戶手勢先有）＋4 秒自動網頁版條片；
+    // Android 一槍 https-intent（唔好連發——連發會踩走 Samsung 系統窗），
+    // Chrome 擋 gestureless 係設計意志，金掣手勢先實彈。
     let pushTarget = campaign.url;
     if (isFacebookUrl(campaign.url)) {
       pushTarget = await resolveFbCanonical(campaign.url).catch(() => campaign.url);
     }
     const clickUrl = isFacebookUrl(pushTarget)
-      ? `${siteUrl()}/live-go-v4.html?u=${encodeURIComponent(pushTarget)}`
+      ? `${siteUrl()}/live-go-v5.html?u=${encodeURIComponent(pushTarget)}`
       : pushTarget;
     const payload = JSON.stringify({
       title: campaign.title,

@@ -44,6 +44,7 @@ const BOOT_DELAY_MS = 30_000;
 
 const SETTING_LAST_SYNC_AT = "sf.lastSyncAt";
 const SETTING_LAST_SYNC_STATS = "sf.lastSyncStats";
+const SETTING_LAST_SYNC_ERROR = "sf.lastSyncError"; // v2.2.17：上次失敗時間＋原因（後台狀態行用）
 const SETTING_EXTRA_DISTRICTS = "sf.extraDistricts";
 
 /** 澳門四區（映射表原值直通；HK 智能櫃 fan-out 要剔除呢 4 個 key） */
