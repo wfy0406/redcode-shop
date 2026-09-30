@@ -525,7 +525,7 @@ export async function ensureDatabase(): Promise<void> {
     // 搵唔到就唔郁（會員下次結帳揀過）。跑一次夠——siteSettings 旗標擋重複。
     try {
       const flag = await pool.query(
-        `SELECT value FROM "siteSettings" WHERE key = 'defaultStationHealV1At' LIMIT 1;`,
+        `SELECT value FROM "siteSettings" WHERE key = 'defaultStationHealV2At' LIMIT 1;`,
       );
       if (flag.rowCount === 0) {
         const dangling = await pool.query(
@@ -537,9 +537,10 @@ export async function ensureDatabase(): Promise<void> {
         let healed = 0;
         for (const row of dangling.rows as { userId: number; sid: string; region: string | null; type: string | null; name: string | null }[]) {
           if (!row.region || !row.type || !row.name) continue;
+          // 候選唔限類型（v2.2.7）：服務點都係合法預設站；同名（含異體）就指過去
           const cands = await pool.query(
-            `SELECT id, name FROM "sfStations" WHERE region = $1 AND type = $2 AND active = true;`,
-            [row.region, row.type],
+            `SELECT id, name FROM "sfStations" WHERE region = $1 AND active = true;`,
+            [row.region],
           );
           const variants = new Set([row.name, ...nameVariants(row.name)]);
           const hit = (cands.rows as { id: string; name: string }[]).find(
@@ -554,7 +555,7 @@ export async function ensureDatabase(): Promise<void> {
           }
         }
         await pool.query(
-          `INSERT INTO "siteSettings" (key, value) VALUES ('defaultStationHealV1At', $1)
+          `INSERT INTO "siteSettings" (key, value) VALUES ('defaultStationHealV2At', $1)
            ON CONFLICT (key) DO NOTHING;`,
           [new Date().toISOString()],
         );

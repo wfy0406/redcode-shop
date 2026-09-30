@@ -12,8 +12,9 @@ import { useReveal } from '@/hooks/useReveal';
  * · 頁區上方兩支聚光燈射落嚟（旋轉漸層光錐，呼吸明暗；只郁 opacity，跟動效鐵律）
  * · 卡嘅 16:9「舞台」預設係設計好嘅 poster：頂部聚光燈 radial 光池＋
  *   地面 pink 反光＋中央金圈 ▶（脈衝環 scale/opacity）；
- * · 撳 ▶ → 原位載入 Facebook 影片播放器（plugins/video.php，autoplay），
- *   唔離開官網都睇到；撳「去 Facebook 睇 ↗」→ openFacebookLive（有 app 彈 app）。
+ * · 撳 ▶ → URL 認到影片 ID 就原位載入 Facebook 播放器（v2.2.7：認唔到
+ *   就唔再嵌入「影片不存在」畫面，直接 openFacebookLive 彈去 FB app）；
+ *   撳「去 Facebook 睇 ↗」→ openFacebookLive（有 app 彈 app）。
  * · 第一場（最新）做 featured，桌面版佔滿兩欄。
  * 冇回顧時成區唔 render。
  */
@@ -31,10 +32,27 @@ interface HistoryItem {
   sentAt: string | Date | null;
 }
 
-/** FB 影片嵌入 URL（非 FB 連結回 null，poster 撳落去就直接跳） */
+/**
+ * FB 影片嵌入 URL。
+ * v2.2.7 老闆回報「影片不存在」：plugins/video.php 只認得含數字 ID 嘅
+ * 影片永久連結（/videos/{id}、watch?v={id}、/reel/{id}、/posts/{id}、
+ * story_fbid={id}）；專頁首頁、/live/、fb.watch 短鏈等等嵌入器解析唔到，
+ * 會彈「影片不存在」。所以而家抽唔到 ID 就唔好嵌入——
+ * 撳 ▶ 直接 openFacebookLive 彈去 Facebook app 睇。
+ */
+function fbVideoIdOf(url: string): string | null {
+  const m =
+    /facebook\.com\/(?:[\w.%-]+\/)?(?:videos|reel)\/(\d{5,})/i.exec(url) ??
+    /[?&]v=(\d{5,})/.exec(url) ??
+    /facebook\.com\/(?:[\w.%-]+\/)?posts\/(\d{5,})/i.exec(url) ??
+    /[?&]story_fbid=(\d{5,})/.exec(url);
+  return m?.[1] ?? null;
+}
 function embedUrlOf(url: string): string | null {
-  if (!url.includes('facebook.com')) return null;
-  return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}&show_text=false&autoplay=1`;
+  const id = fbVideoIdOf(url);
+  if (!id) return null;
+  const canonical = `https://www.facebook.com/watch/?v=${id}`;
+  return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(canonical)}&show_text=false&autoplay=1`;
 }
 
 /* ---------- 單場舞台卡 ---------- */

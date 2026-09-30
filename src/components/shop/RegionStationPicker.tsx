@@ -8,7 +8,8 @@ import { trpc } from '@/providers/trpc';
  * 順豐站點揀選器（2026-09-29 VIP+免運，技術契約：RegionStationPicker）
  * 結帳／註冊／會員中心共用：揀咗自取（順豐站／智能櫃）就要喺度揀返個站，唔再自由填字。
  * - region 由 parent 控制（HK／MO；國外單唔會用到呢個組件，parent 唔好 render）
- * - 類型跟取貨方式：sf_station → SF_STATION；sf_locker → SF_LOCKER
+ * - 類型跟取貨方式：sf_station → SF_STATION＋SERVICE_POINT（服務點都可以自取，v2.2.7）；
+ *   sf_locker → SF_LOCKER
  * - 資料：vip.listStations（公開，後台 DB 可改）；按 district 分組 + 搜尋過濾
  * - 揀咗之後收埋做一張站點卡（站名＋地址＋「更改」）；站喺後台被刪/停用會自動叫 parent 清返
  */
@@ -33,9 +34,11 @@ interface RegionStationPickerProps {
   label?: string;
 }
 
-const TYPE_BY_METHOD: Record<Method, 'SF_STATION' | 'SF_LOCKER'> = {
-  sf_station: 'SF_STATION',
-  sf_locker: 'SF_LOCKER',
+// v2.2.7（老闆指令「預設咗服務點結帳見唔到」）：順豐站方式要包埋服務點，
+// 否則喺站點頁預設咗服務點嘅會員，結帳清單永遠載唔到佢個站 → 自我修復會清走預設
+const TYPE_BY_METHOD: Record<Method, string[]> = {
+  sf_station: ['SF_STATION', 'SERVICE_POINT'],
+  sf_locker: ['SF_LOCKER'],
 };
 
 const DEFAULT_LABEL: Record<Method, string> = {
@@ -50,11 +53,18 @@ export default function RegionStationPicker({
   onChange,
   label,
 }: RegionStationPickerProps) {
+  // 唔傳 type：攞全區再喺度 filter（sf_station 要同時包 SF_STATION＋SERVICE_POINT）
   const stationsQuery = trpc.vip.listStations.useQuery(
-    { region, type: TYPE_BY_METHOD[method] },
+    { region },
     { placeholderData: keepPreviousData },
   );
-  const stations = (stationsQuery.data ?? []) as Station[];
+  const stations = useMemo(
+    () =>
+      ((stationsQuery.data ?? []) as Station[]).filter((s) =>
+        TYPE_BY_METHOD[method].includes(s.type),
+      ),
+    [stationsQuery.data, method],
+  );
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');

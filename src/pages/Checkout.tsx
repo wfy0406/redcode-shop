@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Check, Copy, CreditCard, MapPin, MessageCircle, TicketPercent, Truck, X } from 'lucide-react';
@@ -293,6 +293,68 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
       if (sid) setStationId((prev) => prev ?? sid);
     }
   }, [user?.deliveryMethod, vipUser?.defaultRegion, vipUser?.defaultStationId]);
+
+  // v2.2.7（老闆指令「結帳頁仲係見唔到預設」）：預設站 ID 喺可用清單搵唔到嘅保險——
+  // 用會員存低嘅站名快照（pickupPoint）喺清單度認親（含異體字變體），
+  // 認到就即場帶入，順手靜音修返會員 profile 嘅 defaultStationId（下次唔使再認）。
+  // 觸發條件：自取模式＋未揀到站＋（有預設 ID 或站名快照）；每個 地區×方式 只試一次。
+  const repairTriedRef = useRef<string | null>(null);
+  const repairProfile = trpc.auth.updateProfile.useMutation();
+  // 唔傳 type：服務點（SERVICE_POINT）都係順豐站方式嘅合法預設（v2.2.7）
+  const repairListQuery = trpc.vip.listStations.useQuery(
+    { region: region === 'MO' ? 'MO' : 'HK' },
+    {
+      enabled:
+        !!user &&
+        region !== 'OVERSEAS' &&
+        effectiveMethod !== 'address' &&
+        !stationId &&
+        !!(vipUser?.defaultStationId || user?.pickupPoint?.trim()),
+      retry: false,
+    },
+  );
+  useEffect(() => {
+    if (stationId) return;
+    const list = repairListQuery.data;
+    if (!list || !user) return;
+    const key = `${user.id}:${region}:${effectiveMethod}`;
+    if (repairTriedRef.current === key) return;
+    repairTriedRef.current = key;
+
+    const variantsOf = (n: string) => {
+      const v = new Set<string>([n]);
+      v.add(n.replaceAll('湧', '涌'));
+      v.add(n.replaceAll('後', '后'));
+      v.add(n.replaceAll('裏', '里'));
+      v.add(n.replaceAll('湧', '涌').replaceAll('後', '后').replaceAll('裏', '里'));
+      return v;
+    };
+    const sameName = (a: string, b: string) => {
+      const vs = variantsOf(a);
+      for (const x of variantsOf(b)) if (vs.has(x)) return true;
+      return false;
+    };
+
+    const allowTypes =
+      effectiveMethod === 'sf_locker' ? ['SF_LOCKER'] : ['SF_STATION', 'SERVICE_POINT'];
+    const pool = list.filter((s) => allowTypes.includes(s.type));
+    const wantId = vipUser?.defaultStationId ?? null;
+    const wantName = user.pickupPoint?.trim() ?? '';
+    const hit =
+      (wantId ? pool.find((s) => s.id === wantId) : undefined) ??
+      (wantName ? pool.find((s) => sameName(s.name, wantName)) : undefined);
+    if (!hit) return;
+
+    setStationId(hit.id);
+    // 靜音修復 profile（fire-and-forget）：ID 唔同先修；失敗唔影響今次落單
+    if (wantId !== hit.id) {
+      void repairProfile
+        .mutateAsync({ stationId: hit.id })
+        .then(() => utils.auth.me.invalidate())
+        .catch(() => undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repairListQuery.data, stationId, region, effectiveMethod, user, vipUser?.defaultStationId]);
 
   const onRegionChange = (r: Region) => {
     setRegion(r);
