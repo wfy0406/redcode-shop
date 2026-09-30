@@ -49,7 +49,54 @@ export async function injectProductOg(html: string, id: number, origin: string):
     // 抽走 index.html 入面嘅預設 og:/twitter: meta（首頁通用版），換上呢件商品嘅
     let out = html.replace(/[ \t]*<meta\s+(?:property|name)="(?:og:|twitter:)[^>]*\/>\s*\n?/g, "");
     out = out.replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`);
+    // SEO（v2.2.20）：canonical 指返呢件商品（replace 原有嗰條，唔會多一條出嚟）
+    out = out.replace(
+      '<link rel="canonical" href="https://redcode.red/" />',
+      `<link rel="canonical" href="${esc(pageUrl)}" />`,
+    );
     out = out.replace("</head>", `    ${tags}\n  </head>`);
+
+    // SEO（v2.2.20）：順手注入 Product JSON-LD（放 </head> 前）。
+    // 價錢注意：products 表 price/discountPrice 係整數港元（唔係 cents——
+    // cents 淨係訂單/VIP 引擎用），所以 JSON-LD price 直接 toFixed(2)，唔准 ÷100。
+    // 任何一步出錯都靜靜雞 skip，唔好炸成個 injection。
+    try {
+      const stripText = (s: string) =>
+        s
+          .replace(/<[^>]*>/g, " ")
+          .replace(/[\u0000-\u001f]/g, " ")
+          .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      const descPlain = stripText(p.description ?? "") || `${p.name}｜RedCode 香港女裝直播`;
+      const jsonDesc = descPlain.length > 200 ? `${descPlain.slice(0, 197)}…` : descPlain;
+      const images = (p.photos && p.photos.length ? p.photos : [p.image]).map((u) =>
+        u.startsWith("http") ? u : `${origin}${u}`,
+      );
+      const jsonLd = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: p.name,
+        image: images,
+        description: jsonDesc,
+        ...(p.sku ? { sku: p.sku } : {}),
+        brand: { "@type": "Brand", name: "RedCode" },
+        offers: {
+          "@type": "Offer",
+          url: pageUrl,
+          priceCurrency: "HKD",
+          price: price.toFixed(2),
+          availability:
+            p.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+          itemCondition: "https://schema.org/NewCondition",
+        },
+      };
+      // 防 </script> 截斷：JSON 入面所有 < 換做 \u003c
+      const jsonLdTag = `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>`;
+      out = out.replace("</head>", `    ${jsonLdTag}\n  </head>`);
+    } catch {
+      /* JSON-LD 注入失敗唔影響已經做好嘅 OG meta */
+    }
     return out;
   } catch {
     return html;

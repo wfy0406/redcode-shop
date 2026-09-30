@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TouchEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { CalendarDays, Check, Heart, Minus, Plus, Share2, ShoppingBag, Tag } from 'lucide-react';
@@ -112,6 +112,21 @@ export default function ProductDetail() {
 
   const infoRef = useReveal<HTMLDivElement>();
   const gridRef = useRevealDep<HTMLDivElement>([productId]);
+
+  // SEO（v2.2.20）：商品載入後（包括 demo fallback）按商品名改 title/description；
+  // demo 貨 description 係 null → 用通用句兜底，唔好 set 到「undefined」。
+  // unmount 唔使 reset：轉頁時 SeoManager 會按新 pathname 接管。
+  useEffect(() => {
+    if (!product) return;
+    document.title = `${product.name}｜RedCode Fashion Design`;
+    const plain = (product.description ?? '').replace(/\s+/g, ' ').trim();
+    const desc = plain
+      ? plain.length > 120
+        ? `${plain.slice(0, 117)}…`
+        : plain
+      : `${product.name}——RedCode 香港女裝直播精選，直播優惠價發售，順豐站自取。`;
+    document.querySelector('meta[name="description"]')?.setAttribute('content', desc);
+  }, [product]);
 
   const handleAdd = () => {
     if (!product || added || addCart.isPending) return;

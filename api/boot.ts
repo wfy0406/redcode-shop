@@ -16,7 +16,7 @@ import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushEnd, wmsLivePushList,
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, productImageArchive, products, users } from "@db/schema";
 import { getAirwallexConfig, retrievePaymentIntent, verifyWebhookSignature } from "./airwallex";
@@ -266,6 +266,51 @@ app.post("/api/admin/upload-asset", uploadSiteAsset);
 // 資產 runtime override：disk 有上傳版就 serve disk 版，冇就跌落 dist 靜態版
 app.get("/empty-cart.png", serveEmptyCartOverride);
 app.get("/gloglo-3.jpg", serveGlogloBannerOverride);
+
+// SEO（v2.2.20）：動態 sitemap——首頁＋全部公開可見產品頁（上架中＋未自動下架）。
+// 一定要註冊喺 serveStaticFiles(app) 之前，唔係會俾 SPA notFound fallback 派 HTML。
+// 鐵律：任何錯誤都唔准 500——DB 讀唔到就照出淨首頁嘅 urlset；error log 遮罩網址。
+app.get("/sitemap.xml", async (c) => {
+  const xmlEscape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  const maskForLog = (msg: string) =>
+    msg.replace(/https?:\/\/[^\s)】]+/gi, "〈網址已遮罩〉").slice(0, 300);
+  const homeUrl = `<url><loc>https://redcode.red/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`;
+  let urls = homeUrl;
+  try {
+    const db = getDb();
+    // 產品表冇 updatedAt 欄，lastmod 用 listedDate（上架日期，YYYY-MM-DD）
+    const rows = await db
+      .select({ id: products.id, listedDate: products.listedDate })
+      .from(products)
+      .where(
+        and(
+          eq(products.isActive, true),
+          or(
+            eq(products.delistEnabled, false),
+            isNull(products.delistAt),
+            gt(products.delistAt, new Date()),
+          )!,
+        ),
+      );
+    const productUrls = rows.map((p) => {
+      const d = p.listedDate instanceof Date ? p.listedDate : new Date(p.listedDate);
+      const lastmod = Number.isNaN(d.getTime()) ? "" : `<lastmod>${d.toISOString().slice(0, 10)}</lastmod>`;
+      return `<url><loc>${xmlEscape(`https://redcode.red/products/${p.id}`)}</loc>${lastmod}<priority>0.8</priority></url>`;
+    });
+    urls = [homeUrl, ...productUrls].join("\n  ");
+  } catch (e) {
+    console.error(
+      "[sitemap] 讀產品出錯（照出淨首頁版）:",
+      maskForLog(e instanceof Error ? e.message : String(e)),
+    );
+  }
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  ${urls}\n</urlset>`;
+  return c.body(xml, 200, {
+    "Content-Type": "application/xml; charset=utf-8",
+    "Cache-Control": "public, max-age=3600",
+  });
+});
 
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({

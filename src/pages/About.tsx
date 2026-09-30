@@ -129,6 +129,8 @@ export default function About() {
               <img
                 src="/gloglo-1.jpg"
                 alt=""
+                loading="lazy"
+                decoding="async"
                 className="aspect-square w-full rounded-xl object-cover"
               />
               <p className="mt-1.5 text-center font-mono text-xs leading-none text-pink-tint">

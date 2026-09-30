@@ -100,7 +100,13 @@ function FloatCard({ src, caption, rotate, parallax, className, dim }: FloatCard
         filter: dim ? 'brightness(.7) blur(1px)' : undefined,
       }}
     >
-      <img src={src} alt="" className="h-full max-h-40 w-full rounded-xl object-cover" />
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        className="h-full max-h-40 w-full rounded-xl object-cover"
+      />
       <p className="script mt-1.5 text-center text-base leading-none">{caption}</p>
     </div>
   );

@@ -226,6 +226,7 @@ export default function Vip() {
           src={heroImg}
           alt=""
           aria-hidden="true"
+          fetchPriority="high"
           className="absolute inset-0 h-full w-full object-cover opacity-70"
         />
         {/* 左側壓暗俾文字 + 頂部桃紅霓虹暈 + 底部漸隱返 space-1 */}
@@ -402,6 +403,8 @@ export default function Vip() {
                   <img
                     src={cardSilverImg}
                     alt="RED CODE 銀色金屬會員卡"
+                    loading="lazy"
+                    decoding="async"
                     className="mx-auto mt-5 w-full max-w-[320px] transition-transform duration-500 hover:-translate-y-1.5"
                     style={{ filter: 'drop-shadow(0 18px 36px rgba(154, 160, 180, 0.3))' }}
                   />
@@ -472,6 +475,8 @@ export default function Vip() {
                   <img
                     src={cardGoldImg}
                     alt="RED CODE 金色金屬會員卡"
+                    loading="lazy"
+                    decoding="async"
                     className="mx-auto mt-4 w-full max-w-[340px] transition-transform duration-500 hover:-translate-y-1.5"
                     style={{ filter: 'drop-shadow(0 22px 44px rgba(245, 197, 24, 0.32))' }}
                   />
