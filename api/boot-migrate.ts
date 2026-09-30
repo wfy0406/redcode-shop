@@ -13,6 +13,7 @@ import { SF_STATIONS_FULL } from "./data/sfStationsFull";
 // v2.2.2：順豐官方坐標快照（2026-09-30 抓取）——boot 時回填 lat IS NULL 嘅行，
 // 新部署唔使等每日 sfSync 先用到 GPS 最近站點（老闆投訴「按 GPS 完全搵唔到」）
 import { SF_STATION_COORDS } from "./data/sfStationCoords";
+import { nameVariants } from "./sfSync";
 
 const DDL = `
 DO $$ BEGIN CREATE TYPE role AS ENUM ('member', 'staff', 'admin');
@@ -515,6 +516,54 @@ export async function ensureDatabase(): Promise<void> {
       console.log(`[boot-migrate] 順豐坐標快照回填完成：補咗 ${filled} 個站點`);
     } catch (e) {
       console.error("[boot-migrate] 順豐坐標回填失敗（唔影響開機）:", (e as Error).message);
+    }
+
+    // ===== v2.2.5：修復「預設站點指住已停用行」（老闆指令「結帳頁無用預設」）=====
+    // 成因：v2.2.2 清重停用咗異體字雙胞胎種子行；會員嘅 defaultStationId 如果指住嗰啲行，
+    // 結帳站點清單（只回 active）搵唔到 → 自我修復清走，睇落似「預設唔見咗」。
+    // 做法：逐個 dangling 指針搵同區同類同名（含異體變體）嘅 active 行改指過去；
+    // 搵唔到就唔郁（會員下次結帳揀過）。跑一次夠——siteSettings 旗標擋重複。
+    try {
+      const flag = await pool.query(
+        `SELECT value FROM "siteSettings" WHERE key = 'defaultStationHealV1At' LIMIT 1;`,
+      );
+      if (flag.rowCount === 0) {
+        const dangling = await pool.query(
+          `SELECT u.id AS "userId", u."defaultStationId" AS sid, s.region, s.type, s.name
+             FROM users u LEFT JOIN "sfStations" s ON s.id = u."defaultStationId"
+            WHERE u."defaultStationId" IS NOT NULL
+              AND (s.id IS NULL OR s.active = false);`,
+        );
+        let healed = 0;
+        for (const row of dangling.rows as { userId: number; sid: string; region: string | null; type: string | null; name: string | null }[]) {
+          if (!row.region || !row.type || !row.name) continue;
+          const cands = await pool.query(
+            `SELECT id, name FROM "sfStations" WHERE region = $1 AND type = $2 AND active = true;`,
+            [row.region, row.type],
+          );
+          const variants = new Set([row.name, ...nameVariants(row.name)]);
+          const hit = (cands.rows as { id: string; name: string }[]).find(
+            (cd) => variants.has(cd.name) || nameVariants(cd.name).some((v) => variants.has(v)),
+          );
+          if (hit) {
+            await pool.query(`UPDATE users SET "defaultStationId" = $1 WHERE id = $2;`, [
+              hit.id,
+              row.userId,
+            ]);
+            healed += 1;
+          }
+        }
+        await pool.query(
+          `INSERT INTO "siteSettings" (key, value) VALUES ('defaultStationHealV1At', $1)
+           ON CONFLICT (key) DO NOTHING;`,
+          [new Date().toISOString()],
+        );
+        console.log(
+          `[boot-migrate] 預設站點修復完成：${dangling.rows.length} 個斷指針，改指 ${healed} 個`,
+        );
+      }
+    } catch (e) {
+      console.error("[boot-migrate] 預設站點修復失敗（唔影響開機）:", (e as Error).message);
     }
 
     // 開機自檢：users 核心欄位齊唔齊，缺就喺 log 大聲叫（Render logs 一眼睇到，唔使等客人報）

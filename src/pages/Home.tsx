@@ -439,8 +439,9 @@ export default function Home() {
           className="bottom-6 left-4 w-24 md:hidden"
         />
 
-        {/* 文字區：左對齊，佔欄 1–7 */}
-        <div className="relative z-10 mx-auto w-full max-w-[1280px] px-5 pb-24 pt-16 md:px-8 xl:px-12">
+        {/* 文字區：左對齊，佔欄 1–7；手機版底部留 220px 俾浮卡（v2.2.5 老闆指令：
+            「去最新直播款」同浮卡重疊——greeting 令文字區長咗，CTA 跌落浮卡位） */}
+        <div className="relative z-10 mx-auto w-full max-w-[1280px] px-5 pb-[220px] pt-16 md:px-8 md:pb-24 xl:px-12">
           <div className="max-w-2xl">
             {/* v2.2.2（老闆指令）：會員一入首頁就見到「xxx寶寶，歡迎嚟到RedCode！」＋級別徽章 */}
             <MemberGreeting />

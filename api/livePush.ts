@@ -135,9 +135,13 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
     const now = new Date();
     for (const sub of subs) {
       try {
+        // v2.2.5（老闆指令「推播有時無彈出，要較最緊急」）：
+        // urgency:'high' → FCM/APNs 即刻派件（慳電模式都照彈）；
+        // TTL 90 分鐘 → 同直播顯示窗口對齊，過咗期嘅通知唔好再彈（避免直播完先彈舊通知）。
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           payload,
+          { TTL: 90 * 60, urgency: "high" },
         );
         sentCount++;
         await db

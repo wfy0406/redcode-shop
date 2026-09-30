@@ -1,6 +1,7 @@
 import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Sun, Sunrise, Zap } from 'lucide-react';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import LiveNowSection from '@/components/push/LiveNowSection';
+import LiveHistorySection from '@/components/push/LiveHistorySection';
 import { useReveal } from '@/hooks/useReveal';
 
 /**
@@ -8,7 +9,7 @@ import { useReveal } from '@/hooks/useReveal';
  * 1. Hero：live-banner.png 底 + 「直播專區」標題 + LIVE 眨燈 badge（§3.5 steps(2) 眨燈）
  * 2. Facebook 直播嵌入：FacebookPageEmbed（SDK 版 page plugin，深色玻璃框 + error fallback 連結）
  * 3. 直播時間表卡（brief.md：晚場 22:00 ／ 快閃場 15:30，單場可逾 3 小時，以 FB 公佈為準）
- * 4. （已移除直播回顧 video cards — 公司宣傳影片移咗去首頁）
+ * 4. 直播回顧（v2.2.5）：最近 10 場已落畫場次（LiveHistorySection，日期＋場次，撳入去 FB app 重溫）
  * 5. 「點樣睇直播落單」四步（大字編號 DM Mono）
  * 6. CTA：去 Facebook 睇直播 + WhatsApp
  */
@@ -205,6 +206,9 @@ export default function Live() {
           </div>
         </div>
       </section>
+
+      {/* ============ 2.5 直播回顧（v2.2.5 老闆指令）：最近 10 場已落畫場次，撳入去 FB app 重溫 ============ */}
+      <LiveHistorySection />
 
       {/* ============ 3. 直播時間表卡 ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">

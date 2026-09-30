@@ -12,7 +12,7 @@ import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
-import { wmsLivePushApprove, wmsLivePushList, wmsLivePushRequest } from "./wmsLivePush";
+import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushEnd, wmsLivePushList, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { env } from "./lib/env";
@@ -56,6 +56,8 @@ app.post("/api/wms/listing-batch", wmsListingBatch);
 app.post("/api/wms/live-push/request", wmsLivePushRequest);
 app.post("/api/wms/live-push/approve", wmsLivePushApprove);
 app.post("/api/wms/live-push/list", wmsLivePushList);
+app.post("/api/wms/live-push/end", wmsLivePushEnd);
+app.post("/api/wms/live-push/delete", wmsLivePushDelete);
 
 // WMS → 官網會員管理（2026-09-30 v2.2.1 合約 §9；同樣 WMS_CALLBACK_SECRET 驗證）：
 // 睇會員推送狀態／踢裝置／拒絕接收／設促銷同意／改 VIP 級別（升級寄證書信＋門檻快照）

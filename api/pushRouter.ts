@@ -8,14 +8,17 @@
  * ─ listMyDevices（登入）：裝置清單 {id,userAgent,createdAt,lastSentAt,isCurrent}（endpoint 唔回前端）
  * ─ removeMyDevice（登入）：逐部踢走（只准自己嘅 row）；冇 active 裝置就 optIn=false
  * ─ currentLive（公開）：最新一筆 90 分鐘內 sent 嘅直播（embedUrl 只限 facebook.com）
+ * ─ liveHistory（公開）：直播回顧——已落畫場次最新 10 筆（日期＋場次＋連結）
  * ─ requestLivePush（員工級）：staff→pending 等批；supervisor/admin→直接發送（fire-and-forget）
  * ─ approveLivePush（主管級）：{id, approve, reviewNote?}→通過即發送
  * ─ listLivePush（員工級）：近 50 筆批次紀錄
+ * ─ endLiveNow（員工級）：一掣落直播畫（寫 endedAt）
+ * ─ deleteLiveCampaign（員工級）：刪除直播回顧（顯示緊／pending 唔准刪）
  * 發送引擎喺 api/livePush.ts（never-throw）；endpoint/keys/secret 永遠唔准落 log／audit。
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { pushCampaigns, pushSubscriptions, users } from "@db/schema";
 import {
@@ -308,6 +311,31 @@ export const pushRouter = createRouter({
     };
   }),
 
+  // ─── liveHistory（公開）：直播回顧——已落畫嘅場次，最新 10 筆（v2.2.5 老闆指令）────
+  // 「已落畫」＝後台按咗落播（endedAt 有值）或者 90 分鐘窗口已過；
+  // 進行中嗰筆唔會出現喺度（佢喺 currentLive）。直播頁用嚟列「日期＋場次」畀客人重溫。
+  liveHistory: publicQuery.query(async () => {
+    const db = getDb();
+    const since = new Date(Date.now() - LIVE_WINDOW_MS);
+    const rows = await db.query.pushCampaigns.findMany({
+      where: and(
+        eq(pushCampaigns.status, "sent"),
+        or(isNotNull(pushCampaigns.endedAt), lt(pushCampaigns.sentAt, since)),
+      ),
+      orderBy: [desc(pushCampaigns.sentAt)],
+      limit: 10,
+    });
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        liveDate: r.liveDate,
+        liveSession: r.liveSession,
+        url: r.url,
+        sentAt: r.sentAt,
+      })),
+    };
+  }),
+
   // ─── requestLivePush（員工級）：staff→pending 等批；supervisor/admin→直接發送 ─
   requestLivePush: staffProcedure
     .input(livePushInputSchema)
@@ -469,4 +497,42 @@ export const pushRouter = createRouter({
     });
     return { ok: true as const, id: live.id, liveDate: live.liveDate, liveSession: live.liveSession };
   }),
+
+  // ─── deleteLiveCampaign（員工級）：刪除直播回顧（v2.2.5 老闆指令）─────────────
+  // 官網後台＋WMS 官網中心共用條規則：
+  // · 顯示緊嘅直播（sent＋90 分鐘內＋未落畫）唔准刪——要先落播
+  // · pending 批次唔准刪——請用審批拒絕
+  // · 其餘（已落畫回顧／發送失敗／已拒絕）成筆刪走，寫 audit
+  deleteLiveCampaign: staffProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const campaign = await db.query.pushCampaigns.findFirst({
+        where: eq(pushCampaigns.id, input.id),
+      });
+      if (!campaign) {
+        return { ok: false as const, message: "推送批次唔存在（可能已經刪咗）" };
+      }
+      if (campaign.status === "pending" || campaign.status === "sending") {
+        return { ok: false as const, message: "批次仲喺審批／發送流程，唔可以刪" };
+      }
+      const stillLive =
+        campaign.status === "sent" &&
+        !campaign.endedAt &&
+        campaign.sentAt != null &&
+        Date.now() - campaign.sentAt.getTime() < LIVE_WINDOW_MS;
+      if (stillLive) {
+        return { ok: false as const, message: "呢場直播仲顯示緊，請先按「落播」再刪" };
+      }
+      await db.delete(pushCampaigns).where(eq(pushCampaigns.id, input.id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "push.deleteLiveCampaign",
+        targetType: "pushCampaign",
+        targetId: input.id,
+        detail: `刪除直播回顧（批次 #${input.id}，${campaign.liveDate} ${campaign.liveSession}，狀態 ${campaign.status}）`,
+      });
+      return { ok: true as const, id: input.id };
+    }),
 });

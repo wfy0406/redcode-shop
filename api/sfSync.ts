@@ -30,7 +30,7 @@
  */
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { sfStations, siteSettings } from "@db/schema";
+import { sfStations, siteSettings, users } from "@db/schema";
 import { logAudit } from "./audit";
 import { SF_NEIGHBORHOOD_TO_DISTRICT } from "./data/sfNeighborhoodMap";
 import { sfToTraditional } from "./data/sfS2T";
@@ -74,7 +74,7 @@ function parseSfCoord(v: string | number | undefined): number | null {
  * 順豐 API 用字同種子清單唔齊（例如「葵涌」vs 轉繁後「葵湧」）；
  * 認親／去重時逐個變體試，唔試會誤當新站 insert，搞到一地重複行。
  */
-function nameVariants(name: string): string[] {
+export function nameVariants(name: string): string[] {
   const v = new Set<string>();
   v.add(name.replaceAll("湧", "涌"));
   v.add(name.replaceAll("後", "后"));
@@ -387,6 +387,24 @@ export async function runSfSync(): Promise<SfSyncStats> {
         if (officialNames.has(s.name) || nameVariants(s.name).some((v) => officialNames.has(v))) {
           await db.update(sfStations).set({ active: false }).where(eq(sfStations.id, s.id));
           stats.deduped += 1;
+          // v2.2.5（老闆指令）：會員嘅「預設站點」如果指住呢啲殘影行，
+          // 結帳會見唔到預設（清單只回 active，自我修復會清走）——
+          // 停用前將 users.defaultStationId 改指去存活嘅官方行（同區同類同名／異體）。
+          const survivor =
+            existing.find(
+              (o) =>
+                o.officialCode &&
+                o.active &&
+                (o.name === s.name ||
+                  nameVariants(s.name).includes(o.name) ||
+                  nameVariants(o.name).includes(s.name)),
+            ) ?? null;
+          if (survivor) {
+            await db
+              .update(users)
+              .set({ defaultStationId: survivor.id })
+              .where(eq(users.defaultStationId, s.id));
+          }
         }
       }
 

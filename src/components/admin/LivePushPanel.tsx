@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Radio, Send, Square } from 'lucide-react';
+import { Radio, Send, Square, Trash2 } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import WishingStar from './WishingStar';
@@ -195,6 +195,41 @@ export default function LivePushPanel({
     endLiveMutation.mutate();
   };
 
+  // ─── v2.2.5（老闆指令）：刪除直播回顧 ───────────────
+  // 規則同後端一致：顯示緊（sent＋90 分鐘內＋未落畫）／pending／sending 唔俾刪。
+  const deleteMutation = trpc.push.deleteLiveCampaign.useMutation({
+    onSuccess: async (r) => {
+      if (r.ok) {
+        toast('已刪除呢筆直播回顧', 'success');
+      } else {
+        toast(r.message ?? '刪唔到，請再試', 'error');
+      }
+      await utils.push.listLivePush.invalidate();
+      await utils.push.liveHistory.invalidate();
+    },
+    onError: (err) => toast(err.message || '刪除失敗，請再試', 'error'),
+  });
+  const [deleteBusyId, setDeleteBusyId] = useState<number | null>(null);
+  const nowMs = Date.now();
+  const canDelete = (c: (typeof campaigns)[number]) =>
+    c.status !== 'pending' &&
+    c.status !== 'sending' &&
+    !(
+      c.status === 'sent' &&
+      !c.endedAt &&
+      c.sentAt != null &&
+      nowMs - new Date(c.sentAt).getTime() < 90 * 60 * 1000
+    );
+  const removeCampaign = (c: (typeof campaigns)[number]) => {
+    if (deleteMutation.isPending) return;
+    if (!window.confirm(`確定刪除「${c.liveDate} ${c.liveSession}」呢筆回顧？刪咗直播頁會即刻唔再顯示，冇得還原。`)) return;
+    setDeleteBusyId(c.id);
+    deleteMutation.mutate(
+      { id: c.id },
+      { onSettled: () => setDeleteBusyId(null) },
+    );
+  };
+
   return (
     <div className="space-y-8">
       {/* ============ 而家顯示緊（v2.2.2）：有直播先見到，一掣落畫 ============ */}
@@ -270,6 +305,28 @@ export default function LivePushPanel({
               <label htmlFor="lp-session" className={labelCls}>
                 場次
               </label>
+              {/* v2.2.5（老闆指令）：場次快揀掣——朝早場／下午場／晚上場／深夜場／快閃場，撳完照樣可以手改 */}
+              <div className="mb-2 flex flex-wrap gap-2">
+                {(['朝早場', '下午場', '晚上場', '深夜場', '快閃場'] as const).map((s) => {
+                  const active = liveSession === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setLiveSession(s)}
+                      aria-pressed={active}
+                      className="rounded-full border px-3.5 py-1.5 text-[12px] transition-colors"
+                      style={
+                        active
+                          ? { borderColor: 'var(--pink)', background: 'var(--pink-haze)', color: 'var(--txt-1)', fontWeight: 600 }
+                          : { borderColor: 'var(--space-line)', background: 'var(--space-2)', color: 'var(--txt-3)' }
+                      }
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
               <input
                 id="lp-session"
                 type="text"
@@ -477,6 +534,7 @@ export default function LivePushPanel({
                   <th className="py-2.5 pr-3 font-bold">來源</th>
                   <th className="py-2.5 pr-3 font-bold">發送時間</th>
                   <th className="py-2.5 font-bold">成功／失敗</th>
+                  <th className="py-2.5 pl-3 text-right font-bold">回顧</th>
                 </tr>
               </thead>
               <tbody>
@@ -516,6 +574,24 @@ export default function LivePushPanel({
                       <span style={{ color: 'var(--success)' }}>{c.sentCount ?? 0}</span>
                       <span className="text-txt-3">／</span>
                       <span style={{ color: 'var(--pink-soft)' }}>{c.failCount ?? 0}</span>
+                    </td>
+                    <td className="py-2.5 pl-3 text-right">
+                      {/* v2.2.5：已落畫嘅回顧可以刪（直播頁即時唔再顯示）；顯示緊／審批中唔俾刪 */}
+                      <button
+                        type="button"
+                        onClick={() => removeCampaign(c)}
+                        disabled={!canDelete(c) || deleteBusyId === c.id}
+                        title={
+                          canDelete(c)
+                            ? '刪除呢筆直播回顧'
+                            : '顯示緊或者審批中嘅批次唔可以刪'
+                        }
+                        aria-label={`刪除 ${c.liveDate} ${c.liveSession} 回顧`}
+                        className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
+                        style={{ borderColor: 'var(--space-line)', color: 'var(--pink-soft)' }}
+                      >
+                        <Trash2 size={14} aria-hidden="true" />
+                      </button>
                     </td>
                   </tr>
                 ))}
