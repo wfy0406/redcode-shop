@@ -25,10 +25,12 @@ const ID_PATTERNS: RegExp[] = [
 ];
 
 const HTML_ID_PATTERNS: RegExp[] = [
-  /"video_id"\s*:\s*"?(\d{5,})"?/,
+  /"video_id"\s*:\s*"?(\d{5,})"?/i,
+  /"videoID"\s*:\s*"?(\d{5,})"?/,
   /og:url[^>]*content="[^"]*?(?:videos|reel)\/(\d{5,})/i,
   /watch\?v=(\d{5,})/,
-  /\/(?:videos|reel)\/(\d{5,})/,
+  // FB HTML 成日 escape 斜線（videos\/123），兩款都認
+  /\/(?:videos|reel)\\?\/(\d{5,})/,
 ];
 
 const SHORT_LINK_RE = /(?:facebook\.com\/share\/|fb\.watch\/|fb\.me\/)/i;
@@ -109,6 +111,34 @@ export async function resolveFbVideoId(url: string): Promise<string | null> {
   } catch {
     id = null;
   }
+
+  // v2.2.9 老闆實測短鏈解唔到（FB 封 data center IP）：第二招——
+  // 假扮係嵌入播放器自己，直接問 plugins/video.php 攞播放器 HTML，
+  // 入面成日有 "video_id"／正式影片地址；呢條路 FB 封得冇咁盡。
+  if (!id) {
+    try {
+      const ctrl2 = new AbortController();
+      const timer2 = setTimeout(() => ctrl2.abort(), 5000);
+      const res2 = await fetch(
+        `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}&show_text=false`,
+        {
+          method: "GET",
+          redirect: "follow",
+          signal: ctrl2.signal,
+          headers: {
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
+          },
+        },
+      );
+      clearTimeout(timer2);
+      id = idFromHtml(await res2.text());
+    } catch {
+      id = null;
+    }
+  }
+
   if (idCache.size > 500) idCache.clear();
   idCache.set(url, id);
   return id;

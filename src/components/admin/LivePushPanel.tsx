@@ -372,9 +372,17 @@ export default function LivePushPanel({
                 </p>
               )}
               {preview && !preview.embeddable && (
-                <p className="mt-1.5 text-[12px] text-pink-soft">
-                  ⚠️ 官網認唔到呢條係邊條片——回顧會改為「彈去 FB app 睇」。想官網原位播，請喺 FB 撳入條片、複製地址欄嗰條長連結（有 videos/ 數字嗰款）。
-                </p>
+                <div className="mt-1.5 rounded-xl border border-space-line bg-space-2 px-3.5 py-3">
+                  <p className="text-[12px] text-pink-soft">
+                    ⚠️ 官網認唔到呢條係邊條片——推送照樣發得、客人撳到會彈去 FB app 睇，只係官網唔會原位播。
+                  </p>
+                  <p className="mt-2 text-[12px] font-medium text-txt-2">想官網都播到？攞「長連結」三步：</p>
+                  <ol className="mt-1 list-decimal space-y-1 pl-5 text-[12px] leading-relaxed text-txt-3">
+                    <li>喺手機瀏覽器（Chrome/Safari）開 <span className="font-mono text-gold-soft">facebook.com</span>，入去 RedCode 專頁</li>
+                    <li>撳入嗰條直播片，等條片開始播</li>
+                    <li>撳最頂地址欄 → 全選 → 複製（嗰條有 <span className="font-mono">videos/一串數字</span> 嘅就係），貼返落呢度</li>
+                  </ol>
+                </div>
               )}
             </div>
             <div>

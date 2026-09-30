@@ -14,6 +14,9 @@
  * ─ POST /api/wms/live-push/delete {secret, id, byName} → 刪除直播回顧
  *     （v2.2.5 老闆指令：WMS 官網中心同官網後台一樣可以落播＋刪回顧；
  *       顯示緊嘅直播要先落播先刪到；pending/sending 唔准刪）
+ * ─ POST /api/wms/live-push/preview {secret, url} → 連結檢查
+ *     （v2.2.8：WMS 推送頁都可以即場知條 FB link 官網播唔播到；
+ *       淨係 resolve，唔寫 DB、唔落 audit——條 URL 未確認推送唔好留痕）
  *
  * secret 永遠唔准落 log／audit；錯誤回應唔會帶出 secret 內容。
  */
@@ -24,6 +27,7 @@ import { getDb } from "./queries/connection";
 import { pushCampaigns } from "@db/schema";
 import { logAudit } from "./audit";
 import { PUSH_TITLE, buildLivePushBody, sendLivePush } from "./livePush";
+import { canonicalForId, resolveFbVideoId } from "./fbVideo";
 
 /** WMS 員工角色白名單（其他→400） */
 const WMS_ROLES = ["staff", "supervisor", "admin"] as const;
@@ -320,4 +324,21 @@ export async function wmsLivePushDelete(c: Context) {
   });
   console.log(`[wms] live-push delete #${id}`);
   return c.json({ ok: true, id });
+}
+
+/** POST /api/wms/live-push/preview：連結檢查（v2.2.8）——淨係 resolve，唔寫 DB 唔落 audit */
+export async function wmsLivePushPreview(c: Context) {
+  const r = await readJsonWithSecret(c);
+  if ("res" in r) return r.res;
+  const url = typeof r.b.url === "string" ? r.b.url.trim() : "";
+  if (!/^https?:\/\/.+/.test(url) || url.length > 500) {
+    return c.json({ ok: false, error: "url 必填（https?:// 開頭）" }, 400);
+  }
+  const id = await resolveFbVideoId(url).catch(() => null);
+  return c.json({
+    ok: true,
+    embeddable: !!id,
+    canonicalUrl: id ? canonicalForId(id) : url,
+    changed: id ? canonicalForId(id) !== url : false,
+  });
 }
