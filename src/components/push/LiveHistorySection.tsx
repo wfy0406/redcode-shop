@@ -30,35 +30,14 @@ interface HistoryItem {
   liveSession: string;
   url: string;
   sentAt: string | Date | null;
-}
-
-/**
- * FB 影片嵌入 URL。
- * v2.2.7 老闆回報「影片不存在」：plugins/video.php 只認得含數字 ID 嘅
- * 影片永久連結（/videos/{id}、watch?v={id}、/reel/{id}、/posts/{id}、
- * story_fbid={id}）；專頁首頁、/live/、fb.watch 短鏈等等嵌入器解析唔到，
- * 會彈「影片不存在」。所以而家抽唔到 ID 就唔好嵌入——
- * 撳 ▶ 直接 openFacebookLive 彈去 Facebook app 睇。
- */
-function fbVideoIdOf(url: string): string | null {
-  const m =
-    /facebook\.com\/(?:[\w.%-]+\/)?(?:videos|reel)\/(\d{5,})/i.exec(url) ??
-    /[?&]v=(\d{5,})/.exec(url) ??
-    /facebook\.com\/(?:[\w.%-]+\/)?posts\/(\d{5,})/i.exec(url) ??
-    /[?&]story_fbid=(\d{5,})/.exec(url);
-  return m?.[1] ?? null;
-}
-function embedUrlOf(url: string): string | null {
-  const id = fbVideoIdOf(url);
-  if (!id) return null;
-  const canonical = `https://www.facebook.com/watch/?v=${id}`;
-  return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(canonical)}&show_text=false&autoplay=1`;
+  /** server 已解好嘅 FB 嵌入 URL（share/fb.watch 短鏈都解）；null = 嵌入唔到，撳 ▶ 彈 FB app */
+  embedUrl?: string | null;
 }
 
 /* ---------- 單場舞台卡 ---------- */
 function StageCard({ item, index, featured }: { item: HistoryItem; index: number; featured: boolean }) {
   const [playing, setPlaying] = useState(false);
-  const embedUrl = embedUrlOf(item.url);
+  const embedUrl = item.embedUrl ?? null;
 
   return (
     <article

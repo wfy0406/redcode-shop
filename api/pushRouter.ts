@@ -7,8 +7,9 @@
  * ─ myPushStatus（登入）：{ optIn, activeDevices }
  * ─ listMyDevices（登入）：裝置清單 {id,userAgent,createdAt,lastSentAt,isCurrent}（endpoint 唔回前端）
  * ─ removeMyDevice（登入）：逐部踢走（只准自己嘅 row）；冇 active 裝置就 optIn=false
- * ─ currentLive（公開）：最新一筆 90 分鐘內 sent 嘅直播（embedUrl 只限 facebook.com）
- * ─ liveHistory（公開）：直播回顧——已落畫場次最新 10 筆（日期＋場次＋連結）
+ * ─ currentLive（公開）：最新一筆 90 分鐘內 sent 嘅直播（embedUrl 經 resolveFbEmbedUrl 解鏈）
+ * ─ previewLiveUrl（員工級）：推送前檢查連結官網播唔播到（回 embeddable＋正式連結）
+ * ─ liveHistory（公開）：直播回顧——已落畫場次最新 10 筆（日期＋場次＋連結＋已解嵌入 URL）
  * ─ requestLivePush（員工級）：staff→pending 等批；supervisor/admin→直接發送（fire-and-forget）
  * ─ approveLivePush（主管級）：{id, approve, reviewNote?}→通過即發送
  * ─ listLivePush（員工級）：近 50 筆批次紀錄
@@ -20,6 +21,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
+import { canonicalForId, resolveFbEmbedUrl, resolveFbVideoId } from "./fbVideo";
 import { pushCampaigns, pushSubscriptions, users } from "@db/schema";
 import {
   authedProcedure,
@@ -296,10 +298,9 @@ export const pushRouter = createRouter({
     if (!live || !live.sentAt) {
       return { live: null };
     }
-    // FB embed 預覽：只喺 url 含 facebook.com 先砌 plugins/video.php，否則 null
-    const embedUrl = live.url.includes("facebook.com")
-      ? `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(live.url)}&show_text=false`
-      : null;
+    // v2.2.8（老闆指令「直播都要預覽到條片」）：同回顧一樣經 resolveFbEmbedUrl——
+    // 認到影片 ID（短鏈都解）→ 官網原位播；解唔到 → null，前端跌落「撳咗彈 FB app」。
+    const embedUrl = await resolveFbEmbedUrl(live.url).catch(() => null);
     return {
       live: {
         liveDate: live.liveDate,
@@ -310,6 +311,18 @@ export const pushRouter = createRouter({
       },
     };
   }),
+
+  // ─── previewLiveUrl（員工級）：推送前即檢查條 FB 連結官網播唔播到（v2.2.8 老闆問「邊款連結得」）──
+  previewLiveUrl: staffProcedure
+    .input(z.object({ url: z.string().trim().url().max(500) }))
+    .query(async ({ input }) => {
+      const id = await resolveFbVideoId(input.url).catch(() => null);
+      return {
+        embeddable: !!id,
+        canonicalUrl: id ? canonicalForId(id) : input.url,
+        changed: id ? canonicalForId(id) !== input.url : false,
+      };
+    }),
 
   // ─── liveHistory（公開）：直播回顧——已落畫嘅場次，最新 10 筆（v2.2.5 老闆指令）────
   // 「已落畫」＝後台按咗落播（endedAt 有值）或者 90 分鐘窗口已過；
@@ -325,13 +338,19 @@ export const pushRouter = createRouter({
       orderBy: [desc(pushCampaigns.sentAt)],
       limit: 10,
     });
+    // v2.2.7：逐場解埋 FB 嵌入連結（share/v/、fb.watch 短鏈 server 幫手解鏈）；
+    // 解唔到就 null，前端撳 ▶ 會直接彈去 FB app，唔會再出「影片不存在」
+    const embeds = await Promise.all(
+      rows.map((r) => resolveFbEmbedUrl(r.url).catch(() => null)),
+    );
     return {
-      items: rows.map((r) => ({
+      items: rows.map((r, i) => ({
         id: r.id,
         liveDate: r.liveDate,
         liveSession: r.liveSession,
         url: r.url,
         sentAt: r.sentAt,
+        embedUrl: embeds[i] ?? null,
       })),
     };
   }),

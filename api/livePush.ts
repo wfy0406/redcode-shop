@@ -22,6 +22,7 @@ import { getDb } from "./queries/connection";
 import { pushCampaigns, pushSubscriptions } from "@db/schema";
 import { logAudit } from "./audit";
 import { siteUrl } from "./email";
+import { resolveFbCanonical } from "./fbVideo";
 
 /** 通知標題（合約 §8 寫死模板） */
 export const PUSH_TITLE = "🔴 RedCode 直播開始啦！";
@@ -121,9 +122,16 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
     // v2.2.2（老闆指令）：推播撳入去要直接開 Facebook app。
     // SW 開唔到 fb:// scheme，所以 FB 連結先指去 /live-go.html 跳板頁，
     // 入面再試 fb:// 深鏈；開唔到（冇裝 app）先落返網頁版。非 FB 連結維持原樣。
-    const clickUrl = isFacebookUrl(campaign.url)
-      ? `${siteUrl()}/live-go.html?u=${encodeURIComponent(campaign.url)}`
-      : campaign.url;
+    // v2.2.8（老闆回報「跳完都係無開 app」）：短鏈（share/v/、fb.watch）
+    // 未必中 FB app 嘅 intent filter，所以推送前先解鏈做正式 /watch?v=ID
+    // 連結——app filter 一定認得；解唔到就用返原本條，唔阻發送。
+    let pushTarget = campaign.url;
+    if (isFacebookUrl(campaign.url)) {
+      pushTarget = await resolveFbCanonical(campaign.url).catch(() => campaign.url);
+    }
+    const clickUrl = isFacebookUrl(pushTarget)
+      ? `${siteUrl()}/live-go.html?u=${encodeURIComponent(pushTarget)}`
+      : pushTarget;
     const payload = JSON.stringify({
       title: campaign.title,
       body: campaign.body,

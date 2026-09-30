@@ -19,14 +19,16 @@ import PushPermissionGuide from '@/components/push/PushPermissionGuide';
  * - 外框：雙層 radial 紅金光暈呼吸（opacity）＋ shimmer 掃光（translateX）
  * - LIVE pill：紅點呼吸＋EQ 聲波條（scaleY 跳動，似緊直播聲浪）
  * - 右側海報卡：慢浮（translateY）＋播放掣 ping 環（scale＋opacity 擴散）
- * - 棄用 FB plugins/video.php iframe（完播／群組直播會顯示「影片不存在」）
- *   → 品牌海報卡成張撳得，openFacebookLive 深鏈直入 FB app（冇裝→網頁版）
+ * - 右側海報卡：v2.2.8 起後端 resolveFbEmbedUrl 認到影片 ID（短鏈都解）
+ *   → 撳 ▶ 原位載入 FB 播放器，唔離開官網都睇到直播；
+ *   認唔到 → 成張卡撳得，openFacebookLive 深鏈直入 FB app（冇裝→網頁版）。
  */
 export default function LiveNowSection() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const utils = trpc.useUtils();
   const [showGuide, setShowGuide] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
   const liveQuery = trpc.push.currentLive.useQuery(undefined, {
     refetchInterval: 60_000,
@@ -160,18 +162,31 @@ export default function LiveNowSection() {
           </div>
 
           {/*
-            右：品牌海報卡（v2.2.2）
-            舊版用 FB plugins/video.php iframe，直播完結／群組直播／非公開影片
-            會直接顯示「影片不存在」，首頁爛咗咁 → 棄用。
-            改成成張卡撳得：openFacebookLive 深鏈直入 FB app，冇裝 app 落網頁版。
+            右：海報卡（v2.2.8）
+            後端認到影片 ID → 撳 ▶ 原位變 FB 播放器（官網直接睇直播）；
+            認唔到 → 成張卡撳得，openFacebookLive 深鏈直入 FB app。
             動感：成卡慢浮（translateY）、播放掣 ping 環擴散（scale＋opacity）。
           */}
+          {playing && live.embedUrl ? (
+            <div
+              className="relative w-full overflow-hidden rounded-2xl border"
+              style={{ borderColor: 'rgba(255, 0, 84, 0.4)', background: 'var(--space-1)' }}
+            >
+              <iframe
+                src={live.embedUrl}
+                className="block aspect-video w-full border-0"
+                allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+                allowFullScreen
+                title="Facebook 直播"
+              />
+            </div>
+          ) : (
           <button
             type="button"
-            onClick={() => openFacebookLive(live.url)}
+            onClick={() => (live.embedUrl ? setPlaying(true) : openFacebookLive(live.url))}
             className="livenow-poster group relative block w-full overflow-hidden rounded-2xl border text-left"
             style={{ borderColor: 'rgba(255, 0, 84, 0.4)', background: 'var(--space-1)' }}
-            aria-label="入 Facebook 睇直播"
+            aria-label={live.embedUrl ? '官網直接睇直播' : '入 Facebook 睇直播'}
           >
             <div className="relative flex aspect-video flex-col items-center justify-center gap-4 px-6">
               {/* 背景紅光暈（radial）＋浮動光斑 */}
@@ -224,13 +239,16 @@ export default function LiveNowSection() {
                 </span>
               </span>
               <span className="font-serif-tc text-lg font-semibold text-starlight">
-                入 Facebook 睇直播
+                {live.embedUrl ? '撳 ▶ 官網直接睇' : '入 Facebook 睇直播'}
               </span>
               <span className="text-[12px] text-txt-3">
-                有裝 Facebook 會直接開 app；冇裝就開網頁版
+                {live.embedUrl
+                  ? '唔離開官網都睇到；想留言互動可以撳左邊「立即入直播」開 FB app'
+                  : '有裝 Facebook 會直接開 app；冇裝就開網頁版'}
               </span>
             </div>
           </button>
+          )}
         </div>
       </div>
 

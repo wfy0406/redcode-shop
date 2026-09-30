@@ -6,12 +6,12 @@
 <meta name="robots" content="noindex">
 <title>RedCode 直播｜正在帶你入 Facebook…</title>
 <!--
-  RedCode 直播跳板頁（v2.2.4，2026-09-30 老闆指令）
+  RedCode 直播跳板頁（v2.2.8，2026-09-30 老闆指令）
   用途：推播通知撳入嚟 → 即刻試開 Facebook app；
         開唔到（冇裝 app／桌面機）→ 自動落返 facebook.com 網頁版。
-  v2.2.4：Android 改用 intent:// 深鏈 —— Chrome 會自動交畀 FB app，
-          冇裝 app 就由 S.browser_fallback_url 自動落網頁版，
-          唔使靠用户手勢（舊版 fb:// 自動跳會被 Chrome 靜音擋，先會誤落網頁版）。
+  v2.2.8：Android 首選 fb-scheme intent（裝咗 app 一定開到，唔使中 path filter），
+          擋咗先試 https intent，再唔得落網頁版；
+          推播嗰邊亦會先解短鏈做正式 /watch 連結先派出。
           iOS 維持隱形 iframe 試 fb://facewebmodal。
   安全：?u= 只准 facebook.com／fb.watch／fb.me 連結，其他一律踢返首頁（擋 open-redirect）。
 -->
@@ -90,16 +90,29 @@
   if (isAndroid) {
     // Android Chrome：intent:// 唔使用戶手勢，Chrome 會直接交畀 FB app；
     // 冇裝 app → 自動行 S.browser_fallback_url 去網頁版（唔使猜 timer）。
-    var intentUrl = 'intent://' + parsed2.host + parsed2.pathname + parsed2.search +
+    // v2.2.8（老闆回報「跳完都係無開 app」）：
+    //   首選 fb-scheme intent —— scheme 屬 FB，裝咗 app 就一定開到，
+    //   唔使理條 link 嘅 host/path 中唔中 https intent filter
+    //   （舊版用 https intent，share/v/ 呢類路徑唔中 filter → 靜音落網頁版）。
+    var intentFb = 'intent://facewebmodal/f?href=' + encodeURIComponent(u) +
+      '#Intent;scheme=fb;package=com.facebook.katana;action=android.intent.action.VIEW;' +
+      'S.browser_fallback_url=' + encodeURIComponent(u) + ';end';
+    var intentWeb = 'intent://' + parsed2.host + parsed2.pathname + parsed2.search +
       '#Intent;scheme=https;package=com.facebook.katana;action=android.intent.action.VIEW;' +
       'S.browser_fallback_url=' + encodeURIComponent(u) + ';end';
-    manual.href = intentUrl;
+    manual.href = intentFb;
     try {
-      window.location.href = intentUrl;
-      // 保險：極端情況（舊 WebView 唔識 intent://）1.8s 後仲喺度就行網頁版
+      window.location.href = intentFb;
+      // 保險①：fb-scheme intent 畀靜音擋 → 1.2s 試 https intent（/watch 路徑 app filter 一定中）
       setTimeout(function () {
-        if (!document.hidden && Date.now() - started < 5000) toWeb();
-      }, 1800);
+        if (!document.hidden && Date.now() - started < 4000) {
+          try { window.location.href = intentWeb; } catch (e) { toWeb(); }
+        }
+      }, 1200);
+      // 保險②：兩招都冇反應（舊 WebView 唔識 intent://）→ 2.6s 落網頁版
+      setTimeout(function () {
+        if (!document.hidden && Date.now() - started < 6000) toWeb();
+      }, 2600);
     } catch (e) { toWeb(); }
     return;
   }

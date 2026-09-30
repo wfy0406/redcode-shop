@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Radio, Send, Square, Trash2 } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
@@ -102,6 +102,19 @@ export default function LivePushPanel({
   // 每張待批卡嘅拒絕/批准備註（key = campaign id）
   const [notes, setNotes] = useState<Record<number, string>>({});
   const [reviewBusyId, setReviewBusyId] = useState<number | null>(null);
+
+  // v2.2.8：推送前即檢查條 FB 連結官網播唔播到（debounce 600ms，唔好逐字打就逐字查）
+  const [urlForCheck, setUrlForCheck] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setUrlForCheck(url.trim()), 600);
+    return () => clearTimeout(t);
+  }, [url]);
+  const previewQuery = trpc.push.previewLiveUrl.useQuery(
+    { url: urlForCheck },
+    { enabled: /^https?:\/\/.+/.test(urlForCheck), retry: false, staleTime: 60_000 },
+  );
+  // 淨係顯示「同而家輸入框一樣嘅 URL」嘅檢查結果，避免舊結果誤導
+  const preview = urlForCheck === url.trim() ? previewQuery.data : undefined;
 
   const listQuery = trpc.push.listLivePush.useQuery(undefined, {
     retry: false,
@@ -349,6 +362,20 @@ export default function LivePushPanel({
                 placeholder="https://www.facebook.com/redcodexhk/live/..."
                 className={inputCls}
               />
+              {/* v2.2.8 連結檢查：話你知條 link 官網播唔播到（短鏈會自動解鏈） */}
+              {previewQuery.isFetching && (
+                <p className="mt-1.5 text-[12px] text-txt-3">檢查緊條連結…</p>
+              )}
+              {preview?.embeddable && (
+                <p className="mt-1.5 text-[12px] text-gold-soft">
+                  ✓ 呢條連結官網可以原位播{preview.changed ? '（短鏈已自動解做正式連結）' : ''}，推播撳入去亦會直開 FB app
+                </p>
+              )}
+              {preview && !preview.embeddable && (
+                <p className="mt-1.5 text-[12px] text-pink-soft">
+                  ⚠️ 官網認唔到呢條係邊條片——回顧會改為「彈去 FB app 睇」。想官網原位播，請喺 FB 撳入條片、複製地址欄嗰條長連結（有 videos/ 數字嗰款）。
+                </p>
+              )}
             </div>
             <div>
               <label htmlFor="lp-message" className={labelCls}>
