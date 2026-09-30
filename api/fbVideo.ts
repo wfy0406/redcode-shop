@@ -76,12 +76,92 @@ export function embedForId(id: string): string {
 
 /**
  * v2.2.11（老闆指令「播之前要有縮圖」）：影片縮圖。
- * graph.facebook.com/{id}/picture 係公開 endpoint，會 302 去 scontent CDN——
- * 重點：呢條 URL 係畀客人部機（瀏覽器）直接載入，唔經 Render 伺服器，
- * 所以 FB 封 data center IP 都唔影響。載入失敗（私人片／刪咗）前端自行跌落設計 poster。
+ * graph.facebook.com/{id}/picture 係公開 endpoint，會 302 去 scontent CDN。
+ * v2.2.14 老闆實測：對影片 ID 佢回嘅係通用灰圖（等於冇縮圖），
+ * 所以直播／回顧已改用 resolveFbThumb 摷真縮圖；呢個留返備用。
  */
 export function thumbForId(id: string): string {
   return `https://graph.facebook.com/${id}/picture`;
+}
+
+/**
+ * v2.2.14（老闆指令「直播回顧要有真預覽圖，唔係個個一樣」）：伺服器摷真縮圖。
+ * 做法：假扮嵌入播放器自己，問 plugins/video.php 攞播放器 HTML
+ * （v2.2.9 實證呢條路 FB 對 data center IP 封得冇咁盡），
+ * 喺 HTML 入面摷 og:image／"thumbnailImage" uri——係 scontent CDN 嘅真縮圖。
+ * 摷到就回條 CDN URL 畀客人部機直載（唔經伺服器 proxy，慳流量）；
+ * 摷唔到／被封 → null，前端自行跌落設計 poster。
+ * cache：摷到 cache 6 個鐘（scontent URL 有時效，唔好 cache 死）；
+ *        摷唔到只 cache 15 分鐘（等 FB 解封後快啲恢復）。
+ */
+const THUMB_OK_TTL_MS = 6 * 60 * 60 * 1000;
+const THUMB_MISS_TTL_MS = 15 * 60 * 1000;
+const thumbCache = new Map<string, { url: string | null; at: number }>();
+
+const THUMB_PATTERNS: RegExp[] = [
+  /og:image[^>]*content="([^"]+)"/i,
+  /content="([^"]+)"[^>]*og:image/i,
+  /"thumbnailImage"\s*:\s*\{[^{}]*"uri"\s*:\s*"([^"]+)"/,
+  /"preferred_thumbnail"\s*:\s*\{[^{}]*"uri"\s*:\s*"([^"]+)"/,
+  /"videoThumbnail"\s*:\s*\{[^{}]*"uri"\s*:\s*"([^"]+)"/,
+  /\sposter="([^"]+)"/i,
+];
+
+/** FB HTML 入面嘅 URL 成日係 JSON escape（\/、\uXXXX）或者 HTML entity（&amp;），統一拆返 */
+function unescapeFbUrl(raw: string): string {
+  return raw
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_m, h: string) =>
+      String.fromCharCode(parseInt(h, 16)),
+    )
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&");
+}
+
+function thumbFromHtml(html: string): string | null {
+  const head = html.slice(0, 600_000);
+  for (const re of THUMB_PATTERNS) {
+    const m = re.exec(head);
+    if (m?.[1]) {
+      const url = unescapeFbUrl(m[1]);
+      // 安全：只准 FB CDN 域——唔好畀 HTML 入面嘅任咩 URL 變成我哋嘅「縮圖」
+      if (/^https:\/\/[^/]*\.(fbcdn\.net|fbsbx\.com)\//.test(url)) return url;
+    }
+  }
+  return null;
+}
+
+export async function resolveFbThumb(id: string): Promise<string | null> {
+  const hit = thumbCache.get(id);
+  if (hit) {
+    const ttl = hit.url ? THUMB_OK_TTL_MS : THUMB_MISS_TTL_MS;
+    if (Date.now() - hit.at < ttl) return hit.url;
+  }
+  let thumb: string | null = null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(
+      `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(canonicalForId(id))}&show_text=false`,
+      {
+        method: "GET",
+        redirect: "follow",
+        signal: ctrl.signal,
+        headers: {
+          // 同 resolveFbVideoId 一款：扮普通瀏覽器，fb 先肯回播放器 HTML
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
+        },
+      },
+    );
+    clearTimeout(timer);
+    thumb = thumbFromHtml(await res.text());
+  } catch {
+    thumb = null;
+  }
+  if (thumbCache.size > 500) thumbCache.clear();
+  thumbCache.set(id, { url: thumb, at: Date.now() });
+  return thumb;
 }
 
 export function canonicalForId(id: string): string {

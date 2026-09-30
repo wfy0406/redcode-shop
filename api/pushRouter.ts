@@ -21,7 +21,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { canonicalForId, embedForId, resolveFbVideoId, thumbForId } from "./fbVideo";
+import { canonicalForId, embedForId, resolveFbThumb, resolveFbVideoId } from "./fbVideo";
 import { pushCampaigns, pushSubscriptions, users } from "@db/schema";
 import {
   authedProcedure,
@@ -300,8 +300,11 @@ export const pushRouter = createRouter({
     }
     // v2.2.8（老闆指令「直播都要預覽到條片」）：同回顧一樣經 resolveFbVideoId——
     // 認到影片 ID（短鏈都解）→ 官網原位播；解唔到 → null，前端跌落「撳咗彈 FB app」。
-    // v2.2.11：加埋 thumbUrl（graph /picture，客人部機直載，唔經伺服器）。
+    // v2.2.14（老闆指令「要有真預覽圖」）：thumbUrl 改用 resolveFbThumb——
+    // graph /picture 對影片 ID 回通用灰圖等於冇；而家 server 摷播放器 HTML 嘅
+    // og:image，回 scontent CDN 真縮圖畀客人部機直載；摷唔到 → null 跌落 poster。
     const vid = await resolveFbVideoId(live.url).catch(() => null);
+    const thumb = vid ? await resolveFbThumb(vid).catch(() => null) : null;
     return {
       live: {
         liveDate: live.liveDate,
@@ -309,7 +312,7 @@ export const pushRouter = createRouter({
         url: live.url,
         sentAt: live.sentAt,
         embedUrl: vid ? embedForId(vid) : null,
-        thumbUrl: vid ? thumbForId(vid) : null,
+        thumbUrl: thumb,
       },
     };
   }),
@@ -342,9 +345,13 @@ export const pushRouter = createRouter({
     });
     // v2.2.7：逐場解埋 FB 嵌入連結（share/v/、fb.watch 短鏈 server 幫手解鏈）；
     // 解唔到就 null，前端撳 ▶ 會直接彈去 FB app，唔會再出「影片不存在」。
-    // v2.2.11：連埋縮圖（graph /picture，客人部機直載）。
+    // v2.2.14：縮圖改用 resolveFbThumb（server 摷 og:image 真縮圖）——
+    // 舊版 graph /picture 對影片 ID 回通用灰圖，十場都一個樣，老闆指令要真預覽。
     const vids = await Promise.all(
       rows.map((r) => resolveFbVideoId(r.url).catch(() => null)),
+    );
+    const thumbs = await Promise.all(
+      vids.map((v) => (v ? resolveFbThumb(v).catch(() => null) : null)),
     );
     return {
       items: rows.map((r, i) => ({
@@ -354,7 +361,7 @@ export const pushRouter = createRouter({
         url: r.url,
         sentAt: r.sentAt,
         embedUrl: vids[i] ? embedForId(vids[i] as string) : null,
-        thumbUrl: vids[i] ? thumbForId(vids[i] as string) : null,
+        thumbUrl: thumbs[i],
       })),
     };
   }),
