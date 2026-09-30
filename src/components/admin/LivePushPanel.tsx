@@ -371,6 +371,25 @@ export default function LivePushPanel({
                   ✓ 呢條連結官網可以原位播{preview.changed ? '（短鏈已自動解做正式連結）' : ''}，推播撳入去亦會直開 FB app
                 </p>
               )}
+              {/* v2.2.15 縮圖診斷：伺服器摷唔摷到真預覽圖，後台一眼睇到 */}
+              {preview?.embeddable && preview.thumbNote === 'ok' && preview.thumbUrl && (
+                <div className="mt-1.5 flex items-center gap-2.5">
+                  <img
+                    src={preview.thumbUrl}
+                    alt="直播縮圖預覽"
+                    className="h-16 w-16 rounded-lg object-cover"
+                    style={{ border: '1px solid var(--glass-border)' }}
+                  />
+                  <p className="text-[12px] text-txt-3">
+                    ✓ 縮圖摷到——官網直播位同回顧卡會顯示呢張真預覽圖
+                  </p>
+                </div>
+              )}
+              {preview?.embeddable && preview.thumbNote && preview.thumbNote !== 'ok' && (
+                <p className="mt-1.5 text-[12px] text-txt-3">
+                  ⚠️ 縮圖暫時摷唔到（{preview.thumbNote === 'fetch_fail' ? '伺服器連 FB 嗰下被擋，遲啲會自動好返' : 'FB 播放器頁冇提供縮圖'}）——官網會用返設計圖代替，唔影響播放
+                </p>
+              )}
               {preview && !preview.embeddable && (
                 <div className="mt-1.5 rounded-xl border border-space-line bg-space-2 px-3.5 py-3">
                   <p className="text-[12px] text-pink-soft">
@@ -429,9 +448,9 @@ export default function LivePushPanel({
               onClick={() => {
                 const u = url.trim();
                 if (!/^https?:\/\/.+/.test(u)) return;
-                // 同真推播完全一致：FB 連結先經 /live-go.html 跳板（手機開 FB app，冇裝→網頁版）
+                // 同真推播完全一致：FB 連結先經 /live-go-v2.html 跳板（手機開 FB app，冇裝→網頁版）
                 const isFb = /^https:\/\/([^/]+\.)?(facebook\.com|fb\.watch|fb\.me)(\/|$)/i.test(u);
-                window.open(isFb ? `/live-go.html?u=${encodeURIComponent(u)}` : u, '_blank', 'noopener,noreferrer');
+                window.open(isFb ? `/live-go-v2.html?u=${encodeURIComponent(u)}` : u, '_blank', 'noopener,noreferrer');
               }}
               className="block w-full rounded-2xl border p-4 text-left transition-opacity hover:opacity-85"
               style={{ borderColor: 'var(--glass-border)', background: 'var(--space-1)' }}

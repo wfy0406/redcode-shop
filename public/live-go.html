@@ -6,157 +6,22 @@
 <meta name="robots" content="noindex">
 <title>RedCode 直播｜正在帶你入 Facebook…</title>
 <!--
-  RedCode 直播跳板頁（v2.2.14，2026-09-30 老闆指令）
-  用途：推播通知撳入嚟 → 即刻試開 Facebook app；
-        開唔到（冇裝 app／桌面機）→ 自動落返 facebook.com 網頁版。
-  v2.2.14（老闆實測：推播撳入去冇彈 FB app，但網站「立即入直播」掣就彈到）：
-    病因——v2.2.8 Android 首發 intent:// 深鏈，得 Chrome 識；
-    老闆部機（同好多客嘅瀏覽器）唔識 intent:// → 靜音食咗，數秒後落網頁版，全程冇彈 app。
-    修正——Android 首發改用 fb://facewebmodal（同網站金掣同一招，老闆部機實證彈到）；
-    1.2s 補一槍 Chrome 專用 intent://（pinned package，裝咗 FB 會直開）；
-    5s 都冇反應先落網頁版；頁面一 hidden（入咗 app）即刻清晒 timer。
-    金掣本身都行 fb://＋1.5s 網頁後備（用戶手勢觸發，實證必定彈到）。
-  安全：?u= 只准 facebook.com／fb.watch／fb.me 連結，其他一律踢返首頁（擋 open-redirect）。
+  舊跳板頁（v2.2.15 起停用）：淨係轉址殼。
+  通知欄入面嘅舊推播仍然指嚟呢度，即刻過骨去新版 live-go-v2.html（保留 ?u= 參數）。
+  新推播已經直接指去 live-go-v2.html，唔會再經呢度。
 -->
-<style>
-  html, body { margin: 0; padding: 0; height: 100%; }
-  body {
-    background: radial-gradient(1200px 800px at 50% -10%, #1a2340 0%, #0b1020 60%);
-    color: #e8eaf2;
-    font-family: "Noto Serif TC", "PMingLiU", serif;
-    display: flex; align-items: center; justify-content: center;
-    text-align: center;
-  }
-  .card { padding: 32px 28px; max-width: 420px; }
-  img.logo { width: 168px; height: auto; opacity: 0.95; }
-  h1 { font-size: 20px; font-weight: 600; margin: 22px 0 8px; letter-spacing: 0.05em; }
-  p.sub { font-size: 14px; color: #9aa3c0; margin: 0 0 26px; line-height: 1.7; }
-  .dot {
-    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
-    background: #ff0054; margin-right: 8px; vertical-align: middle;
-    animation: breathe 1.6s ease-in-out infinite;
-  }
-  @keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
-  a.btn {
-    position: relative;
-    display: inline-block; padding: 13px 34px; border-radius: 999px;
-    background: #f5c518; color: #0b1020; text-decoration: none;
-    font-size: 16px; font-weight: 700; letter-spacing: 0.03em;
-  }
-  a.btn::after {
-    content: ""; position: absolute; inset: -6px; border-radius: 999px;
-    box-shadow: 0 0 22px 4px rgba(245, 197, 24, 0.55);
-    animation: btnGlow 1.8s ease-in-out infinite;
-    pointer-events: none;
-  }
-  @keyframes btnGlow { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
-  a.btn:active { opacity: 0.85; }
-  p.web { margin: 22px 0 0; }
-  p.web a { color: #9aa3c0; font-size: 13px; text-decoration: underline; }
-  @media (prefers-reduced-motion: reduce) { .dot, a.btn::after { animation: none; } }
-</style>
+<meta http-equiv="refresh" content="0; url=/live-go-v2.html">
 </head>
 <body>
-<div class="card">
-  <img class="logo" src="/logo.png" alt="RedCode">
-  <h1><span class="dot"></span>正在帶你入 Facebook 直播…</h1>
-  <p class="sub">如果手機有裝 Facebook，會自動幫你開 app；<br>冇反應嘅話，撳下面個金掣。</p>
-  <a class="btn" id="manual" href="/">立即入直播</a>
-  <p class="web"><a id="weblink" href="/">未裝 Facebook？直接開網頁版 ↗</a></p>
-</div>
 <script>
-(function () {
-  var manual = document.getElementById('manual');
-  var weblink = document.getElementById('weblink');
-
-  // ① 攞 ?u= 目標連結，只准 FB 系域名（擋 open-redirect 濫用）
-  var u = '';
-  try {
-    var params = new URLSearchParams(window.location.search);
-    var raw = params.get('u') || '';
-    if (raw) {
-      var parsed = new URL(raw);
-      var host = parsed.hostname.toLowerCase();
-      var ok = parsed.protocol === 'https:' &&
-        (host === 'facebook.com' || host.endsWith('.facebook.com') ||
-         host === 'fb.watch' || host === 'fb.me' || host.endsWith('.fb.me'));
-      if (ok) u = raw;
-    }
-  } catch (e) { u = ''; }
-
-  if (!u) { window.location.replace('/'); return; }
-
-  // ② 分平台：桌面機直接開網頁版；Android 用 fb://＋intent:// 雙保險；iOS 用 fb:// iframe。
-  var ua = navigator.userAgent || '';
-  var isAndroid = /Android/i.test(ua);
-  var isIOS = /iPhone|iPad|iPod/i.test(ua);
-  if (!isAndroid && !isIOS) {
-    weblink.href = u;
-    manual.href = u;
-    window.location.replace(u);
-    return;
-  }
-
-  var started = Date.now();
-  var fellBack = false;
-  var timers = [];
-  function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
-  function clearAll() { for (var i = 0; i < timers.length; i++) clearTimeout(timers[i]); }
-  // 一跳入 app 頁面就會 hidden——即刻清晒後備 timer，免得返轉頭時亂跳
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) clearAll();
-  });
-
-  function toWeb() {
-    if (fellBack) return;
-    fellBack = true;
-    window.location.href = u;
-  }
-
-  var deep = 'fb://facewebmodal/f?href=' + encodeURIComponent(u);
-  weblink.href = u;
-
-  if (isAndroid) {
-    // v2.2.14：首發 fb://facewebmodal —— 同網站「立即入直播」金掣同一招，
-    // 老闆部機實證會彈 app 選擇器（Facebook／Lite）。
-    // Chrome 一樣識 fb://：得一款 FB app 會直開，多過一款先彈選擇器。
-    var intentFb = 'intent://facewebmodal/f?href=' + encodeURIComponent(u) +
-      '#Intent;scheme=fb;package=com.facebook.katana;action=android.intent.action.VIEW;' +
-      'S.browser_fallback_url=' + encodeURIComponent(u) + ';end';
-    manual.href = deep;
-    // 金掣係用戶手勢：fb:// 必定彈到；1.5s 冇走（冇裝 app）→ 自己落網頁版
-    manual.addEventListener('click', function () {
-      later(function () { if (!document.hidden) toWeb(); }, 1500);
-    });
-    try { window.location.href = deep; } catch (e) { /* 靜音 */ }
-    // 補槍：Chrome 專用 intent://（pinned package，裝咗 FB 會直開唔使揀）；
-    // 唔識 intent:// 嘅瀏覽器會靜音忽略，唔影響第一槍。
-    later(function () {
-      if (!document.hidden && !fellBack && Date.now() - started < 4000) {
-        try { window.location.href = intentFb; } catch (e) { /* 靜音 */ }
-      }
-    }, 1200);
-    // 最後防線：兩槍都冇反應 → 落 FB 網頁版（冇裝 app 嘅客一樣睇到直播）
-    later(function () { if (!document.hidden) toWeb(); }, 5000);
-    return;
-  }
-
-  // iOS：金掣去網頁版最穩（冇裝 app 撳 fb:// 會彈系統錯誤框）；
-  // 自動流程用隱形 iframe 靜音試 fb://facewebmodal，1.6s 開唔到就落網頁版。
-  manual.href = u;
-  later(function () { if (!document.hidden) toWeb(); }, 1600);
-  try {
-    var iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = deep;
-    document.body.appendChild(iframe);
-    later(function () {
-      if (document.body.contains(iframe)) document.body.removeChild(iframe);
-    }, 1500);
-  } catch (e) {
-    toWeb();
-  }
-})();
+  window.location.replace('/live-go-v2.html' + window.location.search + window.location.hash);
+</script>
+<p style="color:#9aa3c0;font-family:serif;text-align:center;margin-top:40vh">
+  正在帶你入 Facebook…<br>
+  <a id="fallback" href="/live-go-v2.html" style="color:#f5c518">冇反應撳呢度</a>
+</p>
+<script>
+  document.getElementById('fallback').href = '/live-go-v2.html' + window.location.search;
 </script>
 </body>
 </html>

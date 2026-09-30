@@ -120,17 +120,20 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
       where: eq(pushSubscriptions.active, true),
     });
     // v2.2.2（老闆指令）：推播撳入去要直接開 Facebook app。
-    // SW 開唔到 fb:// scheme，所以 FB 連結先指去 /live-go.html 跳板頁，
+    // SW 開唔到 fb:// scheme，所以 FB 連結先指去跳板頁，
     // 入面再試 fb:// 深鏈；開唔到（冇裝 app）先落返網頁版。非 FB 連結維持原樣。
     // v2.2.8（老闆回報「跳完都係無開 app」）：短鏈（share/v/、fb.watch）
     // 未必中 FB app 嘅 intent filter，所以推送前先解鏈做正式 /watch?v=ID
     // 連結——app filter 一定認得；解唔到就用返原本條，唔阻發送。
+    // v2.2.15（老闆拍板「先 APP，唔去先自動落網頁版」）：跳板頁搬去
+    // live-go-v2.html——public/ 檔冇 hash，客人瀏覽器可能 cache 住舊版，
+    // 新檔名保證攞到最新邏輯；舊 live-go.html 變轉址殼兜住舊推播。
     let pushTarget = campaign.url;
     if (isFacebookUrl(campaign.url)) {
       pushTarget = await resolveFbCanonical(campaign.url).catch(() => campaign.url);
     }
     const clickUrl = isFacebookUrl(pushTarget)
-      ? `${siteUrl()}/live-go.html?u=${encodeURIComponent(pushTarget)}`
+      ? `${siteUrl()}/live-go-v2.html?u=${encodeURIComponent(pushTarget)}`
       : pushTarget;
     const payload = JSON.stringify({
       title: campaign.title,

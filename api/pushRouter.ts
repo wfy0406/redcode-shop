@@ -21,7 +21,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { canonicalForId, embedForId, resolveFbThumb, resolveFbVideoId } from "./fbVideo";
+import { canonicalForId, embedForId, probeFbThumb, resolveFbThumb, resolveFbVideoId } from "./fbVideo";
 import { pushCampaigns, pushSubscriptions, users } from "@db/schema";
 import {
   authedProcedure,
@@ -322,10 +322,15 @@ export const pushRouter = createRouter({
     .input(z.object({ url: z.string().trim().url().max(500) }))
     .query(async ({ input }) => {
       const id = await resolveFbVideoId(input.url).catch(() => null);
+      // v2.2.15（老闆指令「回顧要有真預覽圖」）：預覽連埋縮圖診斷（唔經 cache 即場摷），
+      // 等老闆喺後台一撳就知伺服器摷唔摷到真縮圖、摷唔到係咩原因，唔使估。
+      const probe = id ? await probeFbThumb(id).catch(() => null) : null;
       return {
         embeddable: !!id,
         canonicalUrl: id ? canonicalForId(id) : input.url,
         changed: id ? canonicalForId(id) !== input.url : false,
+        thumbUrl: probe?.url ?? null,
+        thumbNote: !id ? null : (probe?.reason ?? "fetch_fail"),
       };
     }),
 

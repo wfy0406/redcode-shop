@@ -99,11 +99,13 @@ const THUMB_MISS_TTL_MS = 15 * 60 * 1000;
 const thumbCache = new Map<string, { url: string | null; at: number }>();
 
 const THUMB_PATTERNS: RegExp[] = [
-  /og:image[^>]*content="([^"]+)"/i,
+  /og:image(?::url)?[^>]*content="([^"]+)"/i,
   /content="([^"]+)"[^>]*og:image/i,
+  /twitter:image[^>]*content="([^"]+)"/i,
   /"thumbnailImage"\s*:\s*\{[^{}]*"uri"\s*:\s*"([^"]+)"/,
   /"preferred_thumbnail"\s*:\s*\{[^{}]*"uri"\s*:\s*"([^"]+)"/,
   /"videoThumbnail"\s*:\s*\{[^{}]*"uri"\s*:\s*"([^"]+)"/,
+  /"thumbSrc"\s*:\s*"([^"]+)"/,
   /\sposter="([^"]+)"/i,
 ];
 
@@ -130,13 +132,10 @@ function thumbFromHtml(html: string): string | null {
   return null;
 }
 
-export async function resolveFbThumb(id: string): Promise<string | null> {
-  const hit = thumbCache.get(id);
-  if (hit) {
-    const ttl = hit.url ? THUMB_OK_TTL_MS : THUMB_MISS_TTL_MS;
-    if (Date.now() - hit.at < ttl) return hit.url;
-  }
-  let thumb: string | null = null;
+/** 摷縮圖嘅實際工序——分開埋「點解摷唔到」，後台預覽診斷用（v2.2.15） */
+type ThumbProbe = { url: string | null; reason: "ok" | "fetch_fail" | "no_match" };
+
+async function fetchThumb(id: string): Promise<ThumbProbe> {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
@@ -155,13 +154,31 @@ export async function resolveFbThumb(id: string): Promise<string | null> {
       },
     );
     clearTimeout(timer);
-    thumb = thumbFromHtml(await res.text());
+    if (!res.ok) return { url: null, reason: "fetch_fail" };
+    const thumb = thumbFromHtml(await res.text());
+    return thumb ? { url: thumb, reason: "ok" } : { url: null, reason: "no_match" };
   } catch {
-    thumb = null;
+    return { url: null, reason: "fetch_fail" };
   }
+}
+
+export async function resolveFbThumb(id: string): Promise<string | null> {
+  const hit = thumbCache.get(id);
+  if (hit) {
+    const ttl = hit.url ? THUMB_OK_TTL_MS : THUMB_MISS_TTL_MS;
+    if (Date.now() - hit.at < ttl) return hit.url;
+  }
+  const probe = await fetchThumb(id);
   if (thumbCache.size > 500) thumbCache.clear();
-  thumbCache.set(id, { url: thumb, at: Date.now() });
-  return thumb;
+  thumbCache.set(id, { url: probe.url, at: Date.now() });
+  return probe.url;
+}
+
+/** 後台預覽診斷用（v2.2.15 老闆指令）：唔經 cache 即場摷，連「點解摷唔到」一齊回 */
+export async function probeFbThumb(
+  id: string,
+): Promise<{ url: string | null; reason: "ok" | "fetch_fail" | "no_match" }> {
+  return fetchThumb(id);
 }
 
 export function canonicalForId(id: string): string {
