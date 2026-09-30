@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>RedCode 直播｜正在帶你入 Facebook…</title>
+<!--
+  RedCode 直播跳板頁 v6（v2.2.19，2026-10-01 老闆拍板）
+  老闆原話：「IPHONE唔轉跳APP，跳去網頁版；或者按果粒制就跳去APP指定直播片。
+             ANDROID繼續唔洗郁。」
+
+  【iPhone 流程（v6 新方案）】
+  · 自動路線完全唔掂 App：頁面 load 4 秒後自動去**網頁版條片**。
+    點解：老闆實測 v5 金掣（真 https universal link）都落咗 App 首頁——
+    即係 Facebook 個 iOS App 接到連結都唔去條片（佢自己 drop 咗 /watch 路徑），
+    呢個係 FB App 嘅行為，任何網站都控制唔到；fb:// 又一早死咗（淨係落首頁）。
+    所以 iPhone 嘅「自動」永遠唔再碰 App，客人實落到條片（網頁版）。
+  · 金掣＝「用 Facebook App 睇直播」：真 https 連結（universal link，
+    iOS 唯一有可能入 App 條片嘅機制，要用戶親手撳先有）——
+    撳唔撳由客決定；入唔入到條片睇 FB App 版本，最差情況都係網頁版條片。
+  · target _blank：關閉 in-app browser 返嚟 PWA 唔會 reload。
+
+  【Android 流程】同 v5 一字唔改（老闆指令）：
+  · 全 Android 一槍 https-intent（scheme=https、package 指實 com.facebook.katana，
+    App Links 原生路線直達條片）；唔連發（連發會踩走 Samsung 系統窗）；
+  · Chrome 擋 gestureless 係官方設計——自動槍被擋後頁面留喺度，
+    金掣（手勢）一撳實彈；6 秒冇動靜先自動網頁版；
+  · Samsung 12 秒長後備；blur／visibilitychange／pagehide 一響殺晒 timer。
+
+  安全：?u= 只准 facebook.com／fb.watch／fb.me 連結，其他一律踢返首頁（擋 open-redirect）。
+-->
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 800px at 50% -10%, #1a2340 0%, #0b1020 60%);
+    color: #e8eaf2;
+    font-family: "Noto Serif TC", "PMingLiU", serif;
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+  }
+  .card { padding: 32px 28px; max-width: 420px; }
+  img.logo { width: 168px; height: auto; opacity: 0.95; }
+  h1 { font-size: 20px; font-weight: 600; margin: 22px 0 8px; letter-spacing: 0.05em; }
+  p.sub { font-size: 14px; color: #9aa3c0; margin: 0 0 10px; line-height: 1.7; }
+  .dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: #ff0054; margin-right: 8px; vertical-align: middle;
+    animation: breathe 1.6s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  .arrow {
+    font-size: 26px; color: #f5c518; margin: 6px 0 2px; line-height: 1;
+    animation: hop 1.2s ease-in-out infinite;
+  }
+  @keyframes hop { 0%,100% { transform: translateY(0); } 50% { transform: translateY(7px); } }
+  a.btn {
+    position: relative;
+    display: inline-block; padding: 15px 44px; border-radius: 999px;
+    background: #f5c518; color: #0b1020; text-decoration: none;
+    font-size: 18px; font-weight: 700; letter-spacing: 0.03em;
+  }
+  a.btn::after {
+    content: ""; position: absolute; inset: -6px; border-radius: 999px;
+    box-shadow: 0 0 22px 4px rgba(245, 197, 24, 0.55);
+    animation: btnGlow 1.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes btnGlow { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+  a.btn:active { opacity: 0.85; }
+  p.web { margin: 24px 0 0; }
+  p.web a { color: #9aa3c0; font-size: 13px; text-decoration: underline; }
+  @media (prefers-reduced-motion: reduce) { .dot, .arrow, a.btn::after { animation: none; } }
+</style>
+</head>
+<body>
+<div class="card">
+  <img class="logo" src="/logo.png" alt="RedCode">
+  <h1><span class="dot"></span>正在帶你入 Facebook 直播…</h1>
+  <p class="sub" id="sub">見到「開啟應用程式」就撳開啟；<br>冇反應嘅話，撳下面個金掣（撳頁面任何位都得）</p>
+  <div class="arrow">↓</div>
+  <a class="btn" id="manual" href="/">立即入直播</a>
+  <p class="web"><a id="weblink" href="/">未裝 Facebook？直接開網頁版 ↗</a></p>
+</div>
+<script>
+(function () {
+  var manual = document.getElementById('manual');
+  var weblink = document.getElementById('weblink');
+  var sub = document.getElementById('sub');
+
+  // ① 攞 ?u= 目標連結，只准 FB 系域名（擋 open-redirect 濫用）
+  var u = '';
+  try {
+    var params = new URLSearchParams(window.location.search);
+    var raw = params.get('u') || '';
+    if (raw) {
+      var parsed = new URL(raw);
+      var host = parsed.hostname.toLowerCase();
+      var ok = parsed.protocol === 'https:' &&
+        (host === 'facebook.com' || host.endsWith('.facebook.com') ||
+         host === 'fb.watch' || host === 'fb.me' || host.endsWith('.fb.me'));
+      if (ok) u = raw;
+    }
+  } catch (e) { u = ''; }
+
+  if (!u) { window.location.replace('/'); return; }
+
+  var ua = navigator.userAgent || '';
+  var isAndroid = /Android/i.test(ua);
+  var isIOS = /iPhone|iPad|iPod/i.test(ua);
+
+  // 桌面機：唔使玩深鏈，直接去 FB 網頁版
+  if (!isAndroid && !isIOS) {
+    weblink.href = u;
+    manual.href = u;
+    window.location.replace(u);
+    return;
+  }
+
+  var fellBack = false;   // 已經落咗網頁版
+  var prompted = false;   // blur 過＝系統窗／app 彈過出嚟
+  var timers = [];
+  function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
+  function clearAll() { for (var i = 0; i < timers.length; i++) clearTimeout(timers[i]); }
+
+  // 一有失焦（系統「開啟 app」窗、app 選擇器、入咗 app）→ 殺晒 timer；
+  // 頁面隱藏（入咗 app／開咗 in-app browser）→ 一樣殺
+  window.addEventListener('blur', function () { prompted = true; clearAll(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) clearAll();
+  });
+  window.addEventListener('pagehide', clearAll);
+
+  // 所有延遲動作嘅共同守衛：彈過窗／入咗 app／已落網頁版就乜都唔做
+  function guard() { return !prompted && !document.hidden && !fellBack; }
+
+  function toWeb() {
+    if (fellBack) return;
+    fellBack = true;
+    window.location.href = u;
+  }
+
+  // 用戶喺系統窗撳「取消」返嚟 → 開條 8s 長 timer，最終落到網頁版唔會卡住
+  window.addEventListener('focus', function () {
+    if (prompted && !fellBack && !document.hidden) {
+      clearAll();
+      later(function () { if (!document.hidden && !fellBack) toWeb(); }, 8000);
+    }
+  });
+
+  weblink.href = u;
+
+  // ───────────────────────────── iOS（v6 老闆拍板）─────────────────────────────
+  // 自動：乜都唔試開 App，4 秒直接落網頁版條片——客人實落到條片。
+  // 金掣：「用 Facebook App 睇直播」真 https 連結（universal link，iOS 唯一
+  // 有可能入 App 條片嘅機制，要親手撳）；入唔入到條片睇 FB App 版本，
+  // 最差情況都係網頁版條片，撳唔撳由客決定。
+  if (isIOS) {
+    sub.innerHTML = '幾秒後自動開網頁版直播；<br>想用 Facebook App 睇，撳下面個金掣';
+    manual.textContent = '用 Facebook App 睇直播';
+    manual.href = u;
+    manual.target = '_blank';   // 關閉 in-app browser 返嚟 PWA 唔會 reload
+    manual.rel = 'noopener';
+    later(function () { if (guard()) toWeb(); }, 4000);
+    return;
+  }
+
+  // ───────────────────── Android（同 v5 一字唔改，老闆指令）─────────────────────
+  // 一槍 https-intent：scheme=https＋package 指實 FB，行 App Links 原生路線直達條片。
+  // 唔用 S.browser_fallback_url：Chrome 擋 gestureless 嗰陣會即刻扯去 fallback，
+  // 金掣冇機會畀人撳；自己嘅 guarded timer 先係可控嘅後備。
+  var intentUrl = '';
+  try {
+    var up = new URL(u);
+    intentUrl = 'intent://' + up.host + up.pathname + up.search +
+      '#Intent;scheme=https;package=com.facebook.katana;end';
+  } catch (e) { intentUrl = ''; }
+
+  var isSamsung = /SamsungBrowser/i.test(ua);
+
+  function fireIntent() {
+    if (!intentUrl) return;
+    try { window.location.href = intentUrl; } catch (e) { /* 靜音 */ }
+  }
+
+  // 金掣＝intent 連結（手勢下 Chrome 實彈「開啟應用程式」）
+  if (intentUrl) manual.href = intentUrl;
+  else manual.href = u;
+
+  // 自動一槍：Chrome 會 silent 擋（頁面留喺度等金掣）；Samsung 會彈系統窗。
+  // 全頁只有呢一槍——唔好連發（連發會踩走 Samsung 個窗）。
+  fireIntent();
+
+  // 後備 timer：Chrome 6 秒（自動槍被擋，等用戶撳金掣）；Samsung 12 秒
+  // （系統窗可能彈緊而我哋偵測唔到——畀足時間用戶撳「開啟」先落網頁版）
+  later(function () { if (guard()) toWeb(); }, isSamsung ? 12000 : 6000);
+
+  // 金掣撳完 2.5 秒仲喺度（罕見：手勢都被擋／冇裝 app 冇 fallback）→ 自己落網頁版
+  manual.addEventListener('click', function () {
+    later(function () { if (guard()) toWeb(); }, 2500);
+  });
+
+  // 成版任何位撳一下都當金掣使（細字網頁版連結同金掣本身除外——佢哋有自己嘅路）
+  document.addEventListener('pointerdown', function (ev) {
+    if (fellBack) return;
+    if (ev.target === weblink || ev.target === manual) return;
+    fireIntent();
+  });
+})();
+</script>
+</body>
+</html>
