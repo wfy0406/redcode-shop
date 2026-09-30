@@ -42,13 +42,13 @@ function mapDbProduct(p: {
  * RedCode 首頁（design-system.md §P1 + §4.3 Hero 構圖）
  * 1. Hero：動態星空 + radial burst + 花體襯字 + 主標 + CTA + 散佈浮卡
  * 2. WhatsApp 群組 Banner（sticky，加入群組 CTA）
- * 3. 今晚精選：2 大 4 細不對稱格網
- * 4. 新品上架：最新 8 件（4 欄商品卡）+ scroll reveal stagger
- * 5. Facebook 直播專區（page plugin + CTA panel）
- * 5.5 公司宣傳影片回顧（promo-1 橫片 + promo-2 直片）
- * 6. 品牌故事條 + Glo Glo 主播介紹
- * 7. 客戶打卡牆（IG 風格横 scroll）
- * 8. WhatsApp CTA 區塊
+ * 3. 新品上架：最新 8 件（4 欄商品卡）+ scroll reveal stagger
+ *    （v2.2.13 老闆指令：今晚精選成區刪走——同新品上架撞定位）
+ * 4. Facebook 直播專區（page plugin + CTA panel）
+ * 4.5 公司宣傳影片回顧（promo-1 橫片 + promo-2 直片）
+ * 5. 品牌故事條 + Glo Glo 主播介紹
+ * 6. 客戶打卡牆（IG 風格横 scroll）
+ * 7. WhatsApp CTA 區塊
  */
 
 // TODO: 換返 RedCode 真 WhatsApp 號碼
@@ -348,7 +348,6 @@ export default function Home() {
   );
   const allProducts =
     productsError || !dbProducts ? PRODUCTS : dbProducts.map(mapDbProduct);
-  const featured = allProducts.slice(0, 4);
   // 2026-09（Glo 要求）：新品上架只顯示最新 8 件，唔再成版碌極未完；
   // 其餘商品經「睇全部商品 →」去 /products 睇晒
   const newArrivals = allProducts.slice(0, 8);
@@ -371,7 +370,6 @@ export default function Home() {
           alt: p.alt,
           caption: undefined as string | undefined,
         }));
-  const picksRef = useReveal<HTMLDivElement>();
   const newRef = useReveal<HTMLDivElement>();
   const liveRef = useReveal<HTMLDivElement>();
   const promoRef = useReveal<HTMLDivElement>();
@@ -504,8 +502,9 @@ export default function Home() {
       <LiveNowSection />
 
       {/* ============ 2. WhatsApp 群組 Banner ============ */}
+      {/* v2.2.13：頂欄加咗 iPhone safe-area padding，呢條 sticky banner 要跟住避開 */}
       <section
-        className="sticky top-[60px] z-30 border-y bg-space-3 md:top-[72px]"
+        className="sticky top-[calc(60px+env(safe-area-inset-top))] z-30 border-y bg-space-3 md:top-[calc(72px+env(safe-area-inset-top))]"
         style={{ borderColor: 'var(--success)' }}
         aria-label="加入 WhatsApp 群組"
       >
@@ -538,50 +537,8 @@ export default function Home() {
 
       <HairlineDivider />
 
-      {/* ============ 3. 今晚精選（2 大 4 細不對稱格網） ============ */}
-      <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
-        <div ref={picksRef} className="reveal">
-          <SectionHeading en="Tonight's Picks" zh="今晚精選" />
-          <div className="mt-8 grid gap-6 lg:grid-cols-2">
-            {/* 左：2×2 大卡 Glo Glo 著身圖（全彩，人像唔用 duotone） */}
-            <div className="group relative overflow-hidden rounded-[20px] border" style={{ borderColor: 'var(--glass-border)' }}>
-              <img
-                src="/gloglo-3.jpg"
-                alt="Glo Glo 著身示範今晚精選款"
-                className="h-full min-h-[420px] w-full object-cover transition-transform duration-1000"
-              />
-              <div
-                className="absolute inset-x-0 bottom-0 p-6"
-                style={{
-                  background: 'linear-gradient(180deg, transparent 0%, rgba(7,3,15,.85) 100%)',
-                }}
-              >
-                <p className="font-mono text-xs tracking-widest text-pink-tint">WORN BY GLO GLO</p>
-                <p className="mt-1 font-serif-tc text-2xl font-semibold text-starlight">
-                  Glo Glo 著身示範 · 直播同款
-                </p>
-                <Link
-                  to="/products"
-                  className="mt-3 inline-block border-b text-sm font-medium text-pink-soft transition-colors hover:text-pink-tint"
-                  style={{ borderColor: 'var(--pink)' }}
-                >
-                  睇晒全部直播款 →
-                </Link>
-              </div>
-            </div>
-            {/* 右：4 張商品卡 */}
-            <div className="grid grid-cols-2 gap-4 md:gap-6">
-              {featured.map((product) => (
-                <ProductCard key={product.id} product={product} />
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <HairlineDivider />
-
-      {/* ============ 4. 新品上架（4 欄 + scroll reveal stagger） ============ */}
+      {/* ============ 3. 新品上架（4 欄 + scroll reveal stagger） ============ */}
+      {/* v2.2.13（老闆指令）：「今晚精選」成區刪走——同新品上架撞定位，留返新品上架一個就夠 */}
       <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
         <div ref={newRef} className="reveal">
           <div className="flex flex-wrap items-end justify-between gap-4">

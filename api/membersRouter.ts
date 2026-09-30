@@ -112,6 +112,9 @@ export const membersRouter = createRouter({
           vipExpiresAt: users.vipExpiresAt,
           // v2.2.0（合約 §9）：列表睇埋會員有無接收直播開播推播通知
           livePushOptIn: users.livePushOptIn,
+          // v2.2.13（老闆指令）：列表睇埋會員有冇訂閱推播通知（幾多部裝置訂閱緊）
+          // 鐵律：endpoint/p256dh/auth 永遠唔准回前端——淨係回 count 數字
+          pushSubCount: sql<number>`(select count(*)::int from "pushSubscriptions" ps where ps."userId" = ${users.id} and ps.active)`,
           orderCount: sql<number>`count(${orders.id})::int`,
           totalSpent: sql<number>`coalesce(sum(${orders.total}) filter (where ${orders.status} not in ('cancelled', 'rejected')), 0)::int`,
         })

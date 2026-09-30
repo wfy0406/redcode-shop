@@ -36,6 +36,9 @@ import type { ToastKind } from './useToasts';
  * - 詳情卡加「直播推送」段（admin 專用）：members.adminGetPushStatus 顯示已訂閱狀態＋
  *   裝置清單（deviceLabel／綁定日期／最近推送），逐部「移除」（members.adminRemovePushDevice）
  *   ＋「全部拒絕接收」（members.adminUnsubscribePush）；全部動作 confirm 後先執行
+ * 2026-09-30 更新（v2.2.13 老闆指令）：
+ * - 列表加「推播」狀態 badge：members.list 新回 pushSubCount（活躍訂閱裝置數），
+ *   綠 chip「已訂閱推播（N部）」／灰 chip「未訂閱推播」；訂閱內容（endpoint/keys）永遠唔出前端
  */
 
 /** membersRouter 未 merge 前嘅本地型別（同 spec §B4 契約一致） */
@@ -57,6 +60,8 @@ type MemberRow = {
   // v2.1.0（VIP+免運）：級別欄用；後端 list 未回就當 NONE 顯示
   vipTier?: 'NONE' | 'SILVER' | 'GOLD';
   vipExpiresAt?: Date | string | null;
+  // v2.2.13（老闆指令）：列表睇埋會員有冇訂閱推播通知（幾多部裝置訂閱緊）
+  pushSubCount?: number;
 };
 
 type MemberDetail = {
@@ -175,6 +180,35 @@ function MarketingBadge({ state }: { state: ConsentState }) {
         aria-hidden="true"
       />
       {state === 'yes' ? '接受推廣' : state === 'unset' ? '未選擇' : '唔接受推廣'}
+    </span>
+  );
+}
+
+/**
+ * 推播訂閱 badge（v2.2.13 老闆指令）：綠＝已訂閱（顯示裝置數），灰＝未訂閱。
+ * 跟 GoogleBadge/MarketingBadge 同一 styling pattern；淨係用 count，唔掂訂閱內容。
+ */
+function PushBadge({ count }: { count: number }) {
+  const subscribed = count > 0;
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium"
+      style={
+        subscribed
+          ? {
+              borderColor: 'var(--success)',
+              color: 'var(--success)',
+              background: 'rgba(94, 224, 160, 0.12)',
+            }
+          : { borderColor: 'var(--space-line)', color: 'var(--text-3)' }
+      }
+    >
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{ background: subscribed ? 'var(--success)' : 'currentColor' }}
+        aria-hidden="true"
+      />
+      {subscribed ? `已訂閱推播（${count}部）` : '未訂閱推播'}
     </span>
   );
 }
@@ -932,6 +966,8 @@ export default function MemberList({
                       <VipBadge tier={normalizeVipTier(m.vipTier)} />
                       <GoogleBadge linked={m.googleLinked} />
                       <MarketingBadge state={consentStateOf(m)} />
+                      {/* v2.2.13：推播訂閱狀態（老闆指令） */}
+                      <PushBadge count={m.pushSubCount ?? 0} />
                     </div>
                     {/* VIP 到期日細字（銀/金先顯示） */}
                     {normalizeVipTier(m.vipTier) !== 'NONE' && m.vipExpiresAt && (
@@ -1186,6 +1222,8 @@ export default function MemberList({
                 <th className="py-2 pr-3 font-normal">Email</th>
                 <th className="py-2 pr-3 font-normal">Google</th>
                 <th className="py-2 pr-3 font-normal">推廣</th>
+                {/* v2.2.13（老闆指令）：推播訂閱狀態欄 */}
+                <th className="py-2 pr-3 font-normal">推播</th>
                 {/* v2.1.0（VIP+免運）：級別欄（badge＋到期日細字） */}
                 <th className="py-2 pr-3 font-normal">級別</th>
                 <th className="py-2 pr-3 font-normal">地址</th>
@@ -1214,6 +1252,9 @@ export default function MemberList({
                   </td>
                   <td className="whitespace-nowrap py-2.5 pr-3">
                     <MarketingBadge state={consentStateOf(m)} />
+                  </td>
+                  <td className="whitespace-nowrap py-2.5 pr-3">
+                    <PushBadge count={m.pushSubCount ?? 0} />
                   </td>
                   <td className="whitespace-nowrap py-2.5 pr-3">
                     <VipBadge tier={normalizeVipTier(m.vipTier)} />

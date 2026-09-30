@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, NavLink, useLocation } from 'react-router';
 import { ChevronDown, Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
@@ -37,25 +37,110 @@ function greetingNow(): string {
   return '晚上好';
 }
 
-/** YYYYMMDD → 2026年9月29日（直播場次日期顯示；F8 2026-09-29） */
-function fmtLiveDate(d: string): string {
-  if (!/^\d{8}$/.test(d)) return d;
-  return `${d.slice(0, 4)}年${Number(d.slice(4, 6))}月${Number(d.slice(6, 8))}日`;
-}
-
-const NAV_LINKS = [
+// v2.2.13（老闆指令）：主導航淨返購物核心四項，順豐站點查詢／VIP會員制度／關於我們
+// 改做次級「更多」——desktop 收 hover dropdown，手機 drawer 擺會員中心下面（跟老闆畀嘅順序）。
+// 之前七條主連結＋右邊 icon 群，電腦版迫到標題摺做兩行（格式跑晒）。
+const MAIN_LINKS = [
   { to: '/', label: '首頁' },
   { to: '/products', label: '商品' },
   { to: '/live', label: '直播' },
-  // v2.2.12（老闆指令）：目錄加「VIP會員制度」，頁面/drawer 頭嘅「了解會員制度 →」唔再要
-  { to: '/vip', label: 'VIP會員制度' },
-  // v2.2.0：順豐站點查詢（公開頁，客人同員工都用）；desktop nav 同手機 drawer 共用 NAV_LINKS
-  { to: '/sf-stations', label: '順豐站點查詢' },
-  { to: '/about', label: '關於我們' },
   // 2026-07-30：有客人唔識入會員中心搵訂單 → 主選單直接放「我的訂單」；
   // 未登入撳入去會見到「請先登入」提示，登入後自動返訂單頁
   { to: '/orders', label: '我的訂單' },
 ];
+
+// 次級資訊連結（順序係老闆 v2.2.13 親口指定：順豐 → VIP → 關於，唔准調）
+const INFO_LINKS = [
+  // v2.2.0：順豐站點查詢（公開頁，客人同員工都用）
+  { to: '/sf-stations', label: '順豐站點查詢' },
+  // v2.2.12（老闆指令）：目錄加「VIP會員制度」
+  { to: '/vip', label: 'VIP會員制度' },
+  { to: '/about', label: '關於我們' },
+];
+
+/** YYYYMMDD → 2026年9月（直播場次月份分組標題；v2.2.13 老闆指令：一個月30日唔可以逐日排晒出嚟） */
+function fmtLiveMonth(d: string): string {
+  if (!/^\d{8}$/.test(d)) return d;
+  return `${d.slice(0, 4)}年${Number(d.slice(4, 6))}月`;
+}
+
+type LiveDayGroup = { liveDate: string; sessions: string[] };
+type LiveMonthGroup = { key: string; label: string; days: LiveDayGroup[]; sessionCount: number };
+
+/** 日期→場次清單按年月分組（月份新→舊；月份入面維持日期新→舊） */
+function groupLiveMonths(groups: LiveDayGroup[]): LiveMonthGroup[] {
+  const byMonth = new Map<string, LiveDayGroup[]>();
+  for (const g of groups) {
+    const key = /^\d{8}$/.test(g.liveDate) ? g.liveDate.slice(0, 6) : 'other';
+    const arr = byMonth.get(key) ?? [];
+    arr.push(g);
+    byMonth.set(key, arr);
+  }
+  return [...byMonth.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([key, days]) => ({
+      key,
+      label: key === 'other' ? '其他' : fmtLiveMonth(`${key}01`),
+      days,
+      sessionCount: days.reduce((n, d) => n + d.sessions.length, 0),
+    }));
+}
+
+/**
+ * 手機 drawer 連結行（v2.2.13 老闆指令「高度美化」）：
+ * 金色 mono 序號 01/02… ＋ serif 大標題 ＋ 當前頁 ✦ 標記；動畫只用 opacity/transform（老闆鐵律）。
+ */
+function DrawerRow({
+  to,
+  label,
+  index,
+  active,
+  gold,
+  delayMs,
+  onNavigate,
+}: {
+  to: string;
+  label: string;
+  index: number;
+  active: boolean;
+  gold?: boolean;
+  delayMs: number;
+  onNavigate: () => void;
+}) {
+  return (
+    <NavLink
+      to={to}
+      onClick={onNavigate}
+      className="group flex items-baseline gap-4 border-b py-4"
+      style={{
+        borderColor: 'var(--space-line)',
+        animation: `mobile-nav-in 400ms var(--ease-expo) ${delayMs}ms both`,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        className="font-mono text-[11px] font-medium tracking-[0.2em]"
+        style={{ color: gold ? 'rgba(245,197,24,0.85)' : 'rgba(245,197,24,0.45)' }}
+      >
+        {String(index).padStart(2, '0')}
+      </span>
+      <span
+        className={cn(
+          'font-serif-tc text-2xl font-semibold transition-colors',
+          active ? 'text-pink-soft' : gold ? '' : 'text-txt-1 group-hover:text-pink-soft',
+        )}
+        style={gold ? { color: 'var(--gold)' } : undefined}
+      >
+        {label}
+      </span>
+      {active && (
+        <span aria-hidden="true" className="ml-auto text-sm text-pink-soft">
+          ✦
+        </span>
+      )}
+    </NavLink>
+  );
+}
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -84,34 +169,39 @@ export default function Navbar() {
     refetchOnWindowFocus: false,
   });
   const liveGroups = liveSessionsQuery.data ?? [];
-  // 邊個直播日期展開緊（desktop dropdown 同手機選單共用——一個開另一個跟住開，冇壞處）
-  const [liveDateOpen, setLiveDateOpen] = useState<string | null>(null);
+  // v2.2.13（老闆指令）：場次先按年月分組——一個月30日唔會再排出成條長清單；
+  // desktop dropdown 同手機選單共用同一份分組＋展開狀態（一個開另一個跟住開，冇壞處）
+  const liveMonths = useMemo(() => groupLiveMonths(liveGroups), [liveGroups]);
+  // 邊個月份展開緊（預設自動開最新嗰個月，客人一開就見到近期場次）
+  const [liveMonthOpen, setLiveMonthOpen] = useState<string | null>(null);
+  useEffect(() => {
+    if (liveMonthOpen === null && liveMonths.length > 0) setLiveMonthOpen(liveMonths[0].key);
+  }, [liveMonths, liveMonthOpen]);
 
-  // VIP 級別 badge（v2.1.0，2026-09-29）：登入會員名旁邊顯示 會員／VIP銀會員／VIP金會員，撳落去 /vip 介紹頁。
-  // 用 vip.getMyVip 而唔係 auth.me（後者欄位主線整合先補）；載入緊唔顯示，避免閃「會員」。
-  const myVipQuery = trpc.vip.getMyVip.useQuery(undefined, {
-    enabled: !!user,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-  });
-  const vipTier = myVipQuery.data ? normalizeVipTier(myVipQuery.data.tier) : null;
+  // VIP 級別 badge（v2.2.13 老闆指令 bug fix）：同首頁打招呼用同一數據源 auth.me——
+  // 後端 publicUser 已用 effectiveVipTier 計好有效級別（過期即 NONE）。
+  // 之前導覽列自己 call vip.getMyVip，兩條快取唔同步，搞到「首頁寶寶會員、導覽列金VIP」撞車。
+  const vipTier = user ? normalizeVipTier(user.vipTier) : null;
   // v2.2.0 級別格調：chip／色一律由 vipTheme.ts 出（NONE 低調——Navbar 唔出 chip）
   const vipTheme = vipTierTheme(vipTier);
 
-  // 手機選單連結（2026-08-04 抽出嚟：問候語＋登出掣嘅動畫 delay 要跟佢長度計）
-  const mobileLinks = [
-    ...NAV_LINKS,
+  // 手機選單主組連結（購物核心＋會員中心）；更多資訊三項跟老闆順序擺會員中心下面（見 INFO_LINKS）
+  const mobileMainLinks = [
+    ...MAIN_LINKS,
     { to: '/cart', label: '購物車' },
     user
       ? { to: '/account', label: `會員中心（${user.name}）` }
       : { to: '/login', label: '會員登入' },
-    ...(isStaff ? [{ to: '/admin', label: '後台管理' }] : []),
   ];
 
   return (
     <header
-      className="sticky top-0 z-50 h-[60px] md:h-[72px] border-b"
+      // v2.2.13 老闆指令——iPhone 狀態列/Dynamic Island 遮住頂欄撳唔到：
+      // index.html 係 viewport-fit=cover，一定要配 env(safe-area-inset-top) padding，
+      // 內容高度維持 60/72px，外加安全區，內容自然喺安全區之下置中
+      className="sticky top-0 z-50 h-[calc(60px+env(safe-area-inset-top))] md:h-[calc(72px+env(safe-area-inset-top))] border-b"
       style={{
+        paddingTop: 'env(safe-area-inset-top)',
         background: 'var(--glass-bg)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
@@ -124,9 +214,9 @@ export default function Navbar() {
           <img src="/logo.png" alt="RedCode Fashion Design" className="h-10 w-auto md:h-14" />
         </Link>
 
-        {/* 中：連結（desktop） */}
-        <nav className="hidden items-center gap-8 md:flex" aria-label="主導航">
-          {NAV_LINKS.map((link) =>
+        {/* 中：連結（desktop）——v2.2.13 老闆指令：主連結瘦身成四條＋「更多」dropdown，唔再摺行 */}
+        <nav className="hidden items-center gap-5 md:flex lg:gap-8" aria-label="主導航">
+          {MAIN_LINKS.map((link) =>
             link.to === '/products' ? (
               // 2026-08-07 Glo 要求：「商品」hover／鍵盤 focus 展開分類 dropdown
               <div key={link.to} className="group relative">
@@ -177,44 +267,64 @@ export default function Navbar() {
                         {c.label}
                       </Link>
                     ))}
-                    {/* 📺 直播場次（2026-09-29 F8）：有場次貨先顯示；撳日期展開場次 */}
-                    {liveGroups.length > 0 && (
+                    {/* 📺 直播場次（v2.2.13 老闆指令）：年-月 → 日期 → 場次，一個月30日唔會排晒出嚟；有場次貨先顯示 */}
+                    {liveMonths.length > 0 && (
                       <>
                         <div className="mx-2 my-1.5 border-t" style={{ borderColor: 'var(--space-line)' }} />
                         <p className="px-3.5 pb-0.5 pt-1 text-[11px] font-bold tracking-[0.18em] text-txt-3">
                           📺 直播場次
                         </p>
-                        {liveGroups.map((g) => (
-                          <div key={g.liveDate}>
+                        {liveMonths.map((m) => (
+                          <div key={m.key}>
                             <button
                               type="button"
-                              onClick={() => setLiveDateOpen((v) => (v === g.liveDate ? null : g.liveDate))}
-                              aria-expanded={liveDateOpen === g.liveDate}
+                              onClick={() => setLiveMonthOpen((v) => (v === m.key ? null : m.key))}
+                              aria-expanded={liveMonthOpen === m.key}
                               className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-[13px] font-bold tracking-wide text-txt-2 transition-colors hover:bg-space-3"
                             >
-                              {fmtLiveDate(g.liveDate)}
-                              <ChevronDown
-                                size={12}
-                                strokeWidth={2.5}
-                                aria-hidden="true"
-                                className="transition-transform duration-200"
-                                style={{ transform: liveDateOpen === g.liveDate ? 'rotate(180deg)' : 'none' }}
-                              />
+                              {m.label}
+                              <span className="flex items-center gap-1.5">
+                                <span className="font-mono text-[10px] font-medium text-txt-disabled">
+                                  {m.sessionCount}場
+                                </span>
+                                <ChevronDown
+                                  size={12}
+                                  strokeWidth={2.5}
+                                  aria-hidden="true"
+                                  className="transition-transform duration-200"
+                                  style={{ transform: liveMonthOpen === m.key ? 'rotate(180deg)' : 'none' }}
+                                />
+                              </span>
                             </button>
-                            {liveDateOpen === g.liveDate &&
-                              g.sessions.map((s) => (
-                                <Link
-                                  key={s}
-                                  to={`/products?liveDate=${g.liveDate}&liveSession=${encodeURIComponent(s)}`}
-                                  className={cn(
-                                    'block rounded-xl py-1.5 pl-8 pr-3.5 text-[12.5px] font-bold tracking-wide transition-colors hover:bg-space-3',
-                                    pathname === '/products' && currentLiveDate === g.liveDate && currentLiveSession === s
-                                      ? 'text-pink-soft'
-                                      : 'text-txt-2',
-                                  )}
+                            {liveMonthOpen === m.key &&
+                              m.days.map((g) => (
+                                <div
+                                  key={g.liveDate}
+                                  className="flex flex-wrap items-center gap-x-2 gap-y-1.5 py-1.5 pl-6 pr-2"
                                 >
-                                  第{s}場
-                                </Link>
+                                  <span className="w-11 shrink-0 font-mono text-[11px] font-bold" style={{ color: 'var(--gold)' }}>
+                                    {Number(g.liveDate.slice(6, 8))}日
+                                  </span>
+                                  {g.sessions.map((s) => {
+                                    const active =
+                                      pathname === '/products' &&
+                                      currentLiveDate === g.liveDate &&
+                                      currentLiveSession === s;
+                                    return (
+                                      <Link
+                                        key={s}
+                                        to={`/products?liveDate=${g.liveDate}&liveSession=${encodeURIComponent(s)}`}
+                                        className={cn(
+                                          'rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-bold transition-colors',
+                                          active ? 'text-pink-soft' : 'text-txt-2 hover:text-txt-1',
+                                        )}
+                                        style={{ borderColor: active ? 'var(--pink)' : 'var(--glass-border)' }}
+                                      >
+                                        第{s}場
+                                      </Link>
+                                    );
+                                  })}
+                                </div>
                               ))}
                           </div>
                         ))}
@@ -234,6 +344,51 @@ export default function Navbar() {
               </NavLink>
             ),
           )}
+          {/* v2.2.13（老闆指令）：次級資訊收埋做「更多」hover dropdown——順豐站點查詢／VIP會員制度／關於我們 */}
+          <div className="group relative">
+            <button
+              type="button"
+              aria-haspopup="true"
+              className={cn(
+                'nav-link inline-flex items-center gap-1',
+                INFO_LINKS.some((l) => l.to === pathname) && 'active',
+              )}
+            >
+              更多
+              <ChevronDown
+                size={13}
+                strokeWidth={2.5}
+                aria-hidden="true"
+                className="transition-transform duration-200 group-hover:rotate-180"
+              />
+            </button>
+            {/* pt-2 做橋位：mouse 由選單移落 dropdown 唔會閃走；group-focus-within 照顧鍵盤 Tab */}
+            <div className="invisible absolute right-0 top-full translate-y-1 pt-2 opacity-0 transition-all duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100">
+              <div
+                className="min-w-[180px] rounded-2xl border px-1.5 py-2"
+                style={{
+                  borderColor: 'var(--glass-border)',
+                  background: 'var(--space-1)',
+                  boxShadow: '0 14px 36px rgba(0, 0, 0, 0.35)',
+                }}
+              >
+                {INFO_LINKS.map((l) => (
+                  <NavLink
+                    key={l.to}
+                    to={l.to}
+                    className={({ isActive }) =>
+                      cn(
+                        'block rounded-xl px-3.5 py-2 text-[13px] font-bold tracking-wide transition-colors hover:bg-space-3',
+                        isActive ? 'text-pink-soft' : 'text-txt-2',
+                      )
+                    }
+                  >
+                    {l.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          </div>
         </nav>
 
         {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員 */}
@@ -341,7 +496,8 @@ export default function Navbar() {
             className="flex flex-col gap-2 overflow-y-auto px-8 pb-10 pt-4 md:hidden"
             style={{
               position: 'fixed',
-              top: 60,
+              // v2.2.13：頂欄加咗 safe-area padding，drawer 頂要跟住避開 iPhone 狀態列
+              top: 'calc(60px + env(safe-area-inset-top))',
               left: 0,
               right: 0,
               bottom: 0,
@@ -389,131 +545,224 @@ export default function Navbar() {
               </Link>
             </div>
           )}
-          {mobileLinks.map((link, i) =>
-            link.to === '/products' ? (
+          {/* v2.2.13（老闆指令）：drawer 重新排順序＋高度美化——
+              購物核心（商品/直播/我的訂單/購物車）→ 會員中心 → 更多資訊（順豐→VIP→關於）→ 後台管理。
+              每行金色 mono 序號；當前頁 ✦ 標記；分組之間用金線小標隔開。 */}
+          {mobileMainLinks.map((link, i) => {
+            const index = i + 1;
+            const delayMs = i * 45;
+            const active = link.to === '/' ? pathname === '/' : pathname.startsWith(link.to);
+            if (link.to === '/products') {
               // 2026-08-07 Glo 要求：手機選單「商品」撳箭嘴展開商品分類子列表
-              <div
-                key={link.to}
-                className="border-b"
-                style={{
-                  borderColor: 'var(--space-line)',
-                  animation: `mobile-nav-in 400ms var(--ease-expo) ${i * 50}ms both`,
-                }}
-              >
-                <div className="flex items-center justify-between">
-                  <NavLink
-                    to={link.to}
-                    onClick={() => setMenuOpen(false)}
-                    className="flex-1 py-4 font-serif-tc text-2xl font-semibold text-txt-1"
-                  >
-                    {link.label}
-                  </NavLink>
-                  <button
-                    type="button"
-                    aria-label={shopExpanded ? '收起商品分類' : '展開商品分類'}
-                    aria-expanded={shopExpanded}
-                    onClick={() => setShopExpanded((v) => !v)}
-                    className="flex min-h-11 min-w-11 items-center justify-center text-txt-2"
-                  >
-                    <ChevronDown
-                      size={22}
-                      strokeWidth={2.5}
-                      aria-hidden="true"
-                      className="transition-transform duration-200"
-                      style={{ transform: shopExpanded ? 'rotate(180deg)' : 'none' }}
-                    />
-                  </button>
-                </div>
-                {shopExpanded && (
-                  <div
-                    className="mb-3 ml-3 flex flex-col border-l-2 pl-5"
-                    style={{ borderColor: 'var(--space-line)' }}
-                  >
-                    <Link
-                      to="/products"
+              return (
+                <div
+                  key={link.to}
+                  className="border-b"
+                  style={{
+                    borderColor: 'var(--space-line)',
+                    animation: `mobile-nav-in 400ms var(--ease-expo) ${delayMs}ms both`,
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <NavLink
+                      to={link.to}
                       onClick={() => setMenuOpen(false)}
-                      className={cn(
-                        'py-2 text-lg font-extrabold tracking-wide',
-                        pathname === '/products' && !currentCat ? 'text-pink-soft' : 'text-txt-2',
-                      )}
+                      className="flex flex-1 items-baseline gap-4 py-4"
                     >
-                      全部商品
-                    </Link>
-                    {PRODUCT_CATEGORIES.map((c) => (
+                      <span
+                        aria-hidden="true"
+                        className="font-mono text-[11px] font-medium tracking-[0.2em]"
+                        style={{ color: 'rgba(245,197,24,0.45)' }}
+                      >
+                        {String(index).padStart(2, '0')}
+                      </span>
+                      <span
+                        className={cn(
+                          'font-serif-tc text-2xl font-semibold',
+                          active ? 'text-pink-soft' : 'text-txt-1',
+                        )}
+                      >
+                        {link.label}
+                      </span>
+                      {active && (
+                        <span aria-hidden="true" className="ml-auto text-sm text-pink-soft">
+                          ✦
+                        </span>
+                      )}
+                    </NavLink>
+                    <button
+                      type="button"
+                      aria-label={shopExpanded ? '收起商品分類' : '展開商品分類'}
+                      aria-expanded={shopExpanded}
+                      onClick={() => setShopExpanded((v) => !v)}
+                      className="flex min-h-11 min-w-11 items-center justify-center text-txt-2"
+                    >
+                      <ChevronDown
+                        size={22}
+                        strokeWidth={2.5}
+                        aria-hidden="true"
+                        className="transition-transform duration-200"
+                        style={{ transform: shopExpanded ? 'rotate(180deg)' : 'none' }}
+                      />
+                    </button>
+                  </div>
+                  {shopExpanded && (
+                    <div
+                      className="mb-3 ml-3 flex flex-col border-l-2 pl-5"
+                      style={{ borderColor: 'rgba(245,197,24,0.22)' }}
+                    >
                       <Link
-                        key={c.value}
-                        to={`/products?category=${c.value}`}
+                        to="/products"
                         onClick={() => setMenuOpen(false)}
                         className={cn(
                           'py-2 text-lg font-extrabold tracking-wide',
-                          pathname === '/products' && currentCat === c.value
-                            ? 'text-pink-soft'
-                            : 'text-txt-2',
+                          pathname === '/products' && !currentCat && !currentLiveDate ? 'text-pink-soft' : 'text-txt-2',
                         )}
                       >
-                        {c.label}
+                        全部商品
                       </Link>
-                    ))}
-                    {/* 📺 直播場次（2026-09-29 F8）：有場次貨先顯示；撳日期展開場次 */}
-                    {liveGroups.length > 0 && (
-                      <>
-                        <p className="pt-3 text-sm font-bold tracking-[0.18em] text-txt-3">📺 直播場次</p>
-                        {liveGroups.map((g) => (
-                          <div key={g.liveDate}>
-                            <button
-                              type="button"
-                              onClick={() => setLiveDateOpen((v) => (v === g.liveDate ? null : g.liveDate))}
-                              aria-expanded={liveDateOpen === g.liveDate}
-                              className="flex w-full items-center justify-between py-2 text-lg font-extrabold tracking-wide text-txt-2"
-                            >
-                              {fmtLiveDate(g.liveDate)}
-                              <ChevronDown
-                                size={18}
-                                strokeWidth={2.5}
-                                aria-hidden="true"
-                                className="transition-transform duration-200"
-                                style={{ transform: liveDateOpen === g.liveDate ? 'rotate(180deg)' : 'none' }}
-                              />
-                            </button>
-                            {liveDateOpen === g.liveDate &&
-                              g.sessions.map((s) => (
-                                <Link
-                                  key={s}
-                                  to={`/products?liveDate=${g.liveDate}&liveSession=${encodeURIComponent(s)}`}
-                                  onClick={() => setMenuOpen(false)}
-                                  className={cn(
-                                    'block py-2 pl-4 text-lg font-extrabold tracking-wide',
-                                    pathname === '/products' && currentLiveDate === g.liveDate && currentLiveSession === s
-                                      ? 'text-pink-soft'
-                                      : 'text-txt-2',
-                                  )}
+                      {PRODUCT_CATEGORIES.map((c) => (
+                        <Link
+                          key={c.value}
+                          to={`/products?category=${c.value}`}
+                          onClick={() => setMenuOpen(false)}
+                          className={cn(
+                            'py-2 text-lg font-extrabold tracking-wide',
+                            pathname === '/products' && currentCat === c.value
+                              ? 'text-pink-soft'
+                              : 'text-txt-2',
+                          )}
+                        >
+                          {c.label}
+                        </Link>
+                      ))}
+                      {/* 📺 直播場次（v2.2.13 老闆指令）：年-月 → 日期 → 場次，一個月30日唔會排晒出嚟；預設開最新月 */}
+                      {liveMonths.length > 0 && (
+                        <>
+                          <p className="flex items-center gap-3 pb-1 pt-3">
+                            <span
+                              aria-hidden="true"
+                              className="h-px w-6"
+                              style={{ background: 'linear-gradient(90deg, var(--gold), transparent)' }}
+                            />
+                            <span className="text-sm font-bold tracking-[0.18em] text-txt-3">📺 直播場次</span>
+                          </p>
+                          {liveMonths.map((m) => (
+                            <div key={m.key}>
+                              <button
+                                type="button"
+                                onClick={() => setLiveMonthOpen((v) => (v === m.key ? null : m.key))}
+                                aria-expanded={liveMonthOpen === m.key}
+                                className="flex w-full items-center justify-between py-2 text-lg font-extrabold tracking-wide text-txt-2"
+                              >
+                                {m.label}
+                                <span className="flex items-center gap-2">
+                                  <span className="font-mono text-[11px] font-medium text-txt-disabled">
+                                    {m.sessionCount}場
+                                  </span>
+                                  <ChevronDown
+                                    size={18}
+                                    strokeWidth={2.5}
+                                    aria-hidden="true"
+                                    className="transition-transform duration-200"
+                                    style={{ transform: liveMonthOpen === m.key ? 'rotate(180deg)' : 'none' }}
+                                  />
+                                </span>
+                              </button>
+                              {liveMonthOpen === m.key && (
+                                <div
+                                  className="mb-2 ml-1 flex flex-col border-l pl-4"
+                                  style={{ borderColor: 'rgba(245,197,24,0.16)' }}
                                 >
-                                  第{s}場
-                                </Link>
-                              ))}
-                          </div>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <NavLink
+                                  {m.days.map((g) => (
+                                    <div key={g.liveDate} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-1.5">
+                                      <span
+                                        className="w-10 shrink-0 font-mono text-[13px] font-bold"
+                                        style={{ color: 'var(--gold)' }}
+                                      >
+                                        {Number(g.liveDate.slice(6, 8))}日
+                                      </span>
+                                      {g.sessions.map((s) => {
+                                        const activeChip =
+                                          pathname === '/products' &&
+                                          currentLiveDate === g.liveDate &&
+                                          currentLiveSession === s;
+                                        return (
+                                          <Link
+                                            key={s}
+                                            to={`/products?liveDate=${g.liveDate}&liveSession=${encodeURIComponent(s)}`}
+                                            onClick={() => setMenuOpen(false)}
+                                            className={cn(
+                                              'rounded-full border px-3.5 py-1.5 font-mono text-[13px] font-bold transition-colors',
+                                              activeChip ? 'text-pink-soft' : 'text-txt-2 hover:text-txt-1',
+                                            )}
+                                            style={{ borderColor: activeChip ? 'var(--pink)' : 'var(--glass-border)' }}
+                                          >
+                                            第{s}場
+                                          </Link>
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            return (
+              <DrawerRow
                 key={link.to}
                 to={link.to}
-                end={link.to === '/'}
-                onClick={() => setMenuOpen(false)}
-                className="border-b py-4 font-serif-tc text-2xl font-semibold text-txt-1"
-                style={{
-                  borderColor: 'var(--space-line)',
-                  animation: `mobile-nav-in 400ms var(--ease-expo) ${i * 50}ms both`,
-                  ...(link.to === '/admin' ? { color: 'var(--gold)' } : {}),
-                }}
-              >
-                {link.label}
-              </NavLink>
-            ),
+                label={link.label}
+                index={index}
+                active={active}
+                delayMs={delayMs}
+                onNavigate={() => setMenuOpen(false)}
+              />
+            );
+          })}
+          {/* 更多資訊（老闆指定順序：順豐站點查詢 → VIP會員制度 → 關於我們，擺會員中心下面） */}
+          <p
+            className="flex items-center gap-3 pb-1 pt-6"
+            style={{ animation: `mobile-nav-in 400ms var(--ease-expo) ${mobileMainLinks.length * 45}ms both` }}
+          >
+            <span
+              aria-hidden="true"
+              className="h-px w-7"
+              style={{ background: 'linear-gradient(90deg, var(--gold), transparent)' }}
+            />
+            <span className="font-mono text-[10px] font-bold tracking-[0.32em] text-txt-3">更多資訊 MORE</span>
+          </p>
+          {INFO_LINKS.map((link, j) => {
+            const index = mobileMainLinks.length + j + 1;
+            return (
+              <DrawerRow
+                key={link.to}
+                to={link.to}
+                label={link.label}
+                index={index}
+                active={pathname.startsWith(link.to)}
+                delayMs={(index - 1) * 45}
+                onNavigate={() => setMenuOpen(false)}
+              />
+            );
+          })}
+          {isStaff && (
+            <DrawerRow
+              to="/admin"
+              label="後台管理"
+              index={mobileMainLinks.length + INFO_LINKS.length + 1}
+              active={pathname.startsWith('/admin')}
+              gold
+              delayMs={(mobileMainLinks.length + INFO_LINKS.length) * 45}
+              onNavigate={() => setMenuOpen(false)}
+            />
           )}
           {/* 2026-08-04 Glo 要求：手機選單加登出（desktop 頂欄一早有，呢度補返） */}
           {user && (
@@ -526,7 +775,7 @@ export default function Navbar() {
               className="border-b py-4 text-left font-serif-tc text-2xl font-semibold text-txt-3"
               style={{
                 borderColor: 'var(--space-line)',
-                animation: `mobile-nav-in 400ms var(--ease-expo) ${mobileLinks.length * 50}ms both`,
+                animation: `mobile-nav-in 400ms var(--ease-expo) ${(mobileMainLinks.length + INFO_LINKS.length + (isStaff ? 1 : 0)) * 45}ms both`,
               }}
             >
               登出

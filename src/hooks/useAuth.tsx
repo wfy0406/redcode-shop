@@ -19,7 +19,7 @@ type AuthUser = {
   // 預設取貨方式（2026-08-08 Glo 要求）：結帳自動帶入；會員中心可改
   deliveryMethod?: 'address' | 'sf_station' | 'sf_locker';
   pickupPoint?: string | null;
-  // v2.1.0（VIP+免運）：預設收件地區＋順豐站點；VIP 級別（Navbar badge 用 vip.getMyVip 攞，呢度都補埋型別）
+  // v2.1.0（VIP+免運）：預設收件地區＋順豐站點；VIP 級別（v2.2.13 起 Navbar badge 直接用呢個 auth.me 有效級別）
   defaultRegion?: 'HK' | 'MO' | 'OVERSEAS' | null;
   defaultStationId?: string | null;
   vipTier?: 'NONE' | 'SILVER' | 'GOLD';
@@ -119,6 +119,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setHasToken(false);
     utils.auth.me.reset();
     utils.cart.list.reset();
+    // v2.2.13（老闆指令 bug fix）：VIP 快取都要清——唔係上個帳號嘅級別會留低，下一個帳號可能撞見
+    utils.vip.getMyVip.reset();
   }, [utils]);
 
   const value = useMemo<AuthContextValue>(() => {

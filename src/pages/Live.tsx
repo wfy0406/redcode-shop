@@ -1,4 +1,4 @@
-import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Sun, Sunrise, Zap } from 'lucide-react';
+import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Sparkles, Sun, Sunrise, Zap } from 'lucide-react';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import LiveNowSection from '@/components/push/LiveNowSection';
 import LiveHistorySection from '@/components/push/LiveHistorySection';
@@ -158,15 +158,24 @@ export default function Live() {
                 <Facebook size={18} aria-hidden="true" />
                 去 Facebook 睇直播
               </a>
-              <a
-                href={WHATSAPP_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-whatsapp"
+              {/* v2.2.13（老闆指令）：WhatsApp 問款 改做「睇直播回顧」——撳落去碌落下面直播回顧區。
+                  粒制要閃令令發光：外層 blur 光暈淨係玩 opacity、內層掃光淨係玩 transform（老闆鐵律）。
+                  注意唔可以用 <a href="#...">（HashRouter 會黑屏），用 JS scrollIntoView。 */}
+              <button
+                type="button"
+                className="btn-replay"
+                aria-label="睇直播回顧，碌落直播回顧區"
+                onClick={() =>
+                  document.getElementById('live-history')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }
               >
-                <MessageCircle size={18} aria-hidden="true" />
-                WhatsApp 問款
-              </a>
+                <span aria-hidden="true" className="btn-replay-glow" />
+                <span className="btn-replay-inner">
+                  <span aria-hidden="true" className="btn-replay-shine" />
+                  <Sparkles size={18} aria-hidden="true" />
+                  睇直播回顧
+                </span>
+              </button>
             </div>
           </div>
         </div>
@@ -208,7 +217,10 @@ export default function Live() {
       </section>
 
       {/* ============ 2.5 直播回顧（v2.2.5 老闆指令）：最近 10 場已落畫場次，撳入去 FB app 重溫 ============ */}
-      <LiveHistorySection />
+      {/* v2.2.13：hero 粒「睇直播回顧」制嘅 scroll 目標；scroll-mt 避開 sticky 頂欄（60/72px） */}
+      <div id="live-history" className="scroll-mt-20 md:scroll-mt-24">
+        <LiveHistorySection />
+      </div>
 
       {/* ============ 3. 直播時間表卡 ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
@@ -331,6 +343,67 @@ export default function Live() {
         }
         @media (prefers-reduced-motion: reduce) {
           .hero-enter { opacity: 1; animation: none; }
+        }
+
+        /* v2.2.13（老闆指令）：hero「睇直播回顧」閃令令發光掣——
+           光暈用獨立 blur 層淨係玩 opacity、掃光淨係玩 transform（老闆鐵律：動畫只可以 opacity/transform） */
+        .btn-replay {
+          position: relative;
+          display: inline-flex;
+          align-self: flex-start;
+          border: none;
+          background: none;
+          padding: 0;
+          cursor: pointer;
+          border-radius: 9999px;
+        }
+        .btn-replay-glow {
+          position: absolute;
+          inset: -7px;
+          border-radius: 9999px;
+          background: linear-gradient(115deg, var(--gold), var(--pink));
+          filter: blur(16px);
+          opacity: 0.55;
+          animation: replay-glow 2.4s ease-in-out infinite;
+        }
+        .btn-replay-inner {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          overflow: hidden;
+          border-radius: 9999px;
+          padding: 14px 30px;
+          background: linear-gradient(115deg, #F5C518 0%, #FFDE6B 45%, #F5C518 100%);
+          color: #241A02;
+          font-weight: 800;
+          font-size: 15px;
+          letter-spacing: 0.06em;
+          transition: transform var(--dur-micro) var(--ease-expo);
+        }
+        .btn-replay:hover .btn-replay-inner { transform: translateY(-1px); }
+        .btn-replay:active .btn-replay-inner { transform: translateY(0); }
+        .btn-replay-shine {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          left: 0;
+          width: 40%;
+          background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.85), transparent);
+          transform: translateX(-160%) skewX(-18deg);
+          animation: replay-shine 2.8s ease-in-out infinite;
+        }
+        @keyframes replay-glow {
+          0%, 100% { opacity: 0.45; transform: scale(0.98); }
+          50% { opacity: 0.9; transform: scale(1.02); }
+        }
+        @keyframes replay-shine {
+          0% { transform: translateX(-160%) skewX(-18deg); }
+          55%, 100% { transform: translateX(330%) skewX(-18deg); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .btn-replay-glow, .btn-replay-shine { animation: none; }
+          .btn-replay-glow { opacity: 0.6; }
         }
       `}</style>
     </div>

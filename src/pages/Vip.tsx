@@ -14,6 +14,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { useReveal } from '@/hooks/useReveal';
+import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import heroImg from '@/assets/vip/hero.jpg';
 import cardSilverImg from '@/assets/vip/card-silver.png';
@@ -201,6 +202,7 @@ export default function Vip() {
   const shipRef = useReveal<HTMLDivElement>();
   const stepsRef = useReveal<HTMLDivElement>();
   const fineRef = useReveal<HTMLDivElement>();
+  const { user } = useAuth();
 
   // v2.2.0：VIP＋免運全部規則數值由後台攞（publicQuery）；未返嚟之前數字位顯示 skeleton
   const configQuery = trpc.vip.getPublicVipConfig.useQuery(undefined, {
@@ -299,7 +301,8 @@ export default function Vip() {
               className="hero-enter mt-10 flex flex-col gap-4 sm:flex-row sm:items-center"
               style={{ animationDelay: '0.74s' }}
             >
-              <Link to="/register" className="btn btn-primary btn-pulse">
+              {/* v2.2.13 老闆指令：已登入會員撳註冊制直去會員中心，唔好再彈註冊頁 */}
+              <Link to={user ? '/account' : '/register'} className="btn btn-primary btn-pulse">
                 免費註冊做會員
               </Link>
               {/* v2.1.1 修正：本站係 HashRouter，href="#tiers" 會被當成路由跳轉（冇呢條 route → 黑屏），
@@ -702,7 +705,8 @@ export default function Vip() {
 
           {/* CTA 列 */}
           <div className="reveal mt-12 flex flex-col items-center gap-4 sm:flex-row sm:justify-center" style={{ transitionDelay: '200ms' }}>
-            <Link to="/register" className="btn btn-primary btn-pulse">
+            {/* v2.2.13 老闆指令：已登入會員撳註冊制直去會員中心，唔好再彈註冊頁 */}
+            <Link to={user ? '/account' : '/register'} className="btn btn-primary btn-pulse">
               立即免費註冊
             </Link>
             <Link to="/products" className="btn btn-secondary">

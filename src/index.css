@@ -232,6 +232,8 @@
     font-size: 15px;
     font-weight: 500;
     padding: 4px 2px;
+    /* v2.2.13（老闆指令）：電腦版導航標題唔准摺做兩行（格式跑晒） */
+    white-space: nowrap;
     transition: color var(--dur-micro) var(--ease-expo);
   }
 

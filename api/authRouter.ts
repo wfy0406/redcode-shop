@@ -9,7 +9,7 @@ import { hashPassword, verifyPassword, signToken } from "./auth";
 import { logAudit } from "./audit";
 import { sendPasswordResetEmail, sendWelcomeEmail } from "./email";
 import { forwardMemberToWms } from "./wmsMemberSync";
-import { normalizeDeliveryMethod, normalizeRegion } from "./vip";
+import { effectiveVipTier, normalizeDeliveryMethod, normalizeRegion } from "./vip";
 
 /**
  * 電話正規化（2026-08-04 Glo 規則）：香港號碼統一儲 8 位本地號。
@@ -43,7 +43,9 @@ const publicUser = (u: typeof users.$inferSelect) => ({
   defaultRegion: u.defaultRegion,
   defaultStationId: u.defaultStationId,
   // v2.1.0（VIP+免運）：VIP 級別＋到期日（導覽列 badge／會員中心顯示用；規則詳情用 vip.getMyVip）
-  vipTier: u.vipTier,
+  // v2.2.13（老闆指令 bug fix）：auth.me 直接回有效級別（過期即 NONE），
+  // 同 vip.getMyVip 同一套 effectiveVipTier——首頁同導覽列唔會再一個寶寶一個金VIP
+  vipTier: effectiveVipTier(u),
   vipExpiresAt: u.vipExpiresAt,
   age: u.age,
   birthMonth: u.birthMonth,
