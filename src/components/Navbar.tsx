@@ -47,6 +47,8 @@ const NAV_LINKS = [
   { to: '/', label: '首頁' },
   { to: '/products', label: '商品' },
   { to: '/live', label: '直播' },
+  // v2.2.12（老闆指令）：目錄加「VIP會員制度」，頁面/drawer 頭嘅「了解會員制度 →」唔再要
+  { to: '/vip', label: 'VIP會員制度' },
   // v2.2.0：順豐站點查詢（公開頁，客人同員工都用）；desktop nav 同手機 drawer 共用 NAV_LINKS
   { to: '/sf-stations', label: '順豐站點查詢' },
   { to: '/about', label: '關於我們' },
@@ -365,7 +367,8 @@ export default function Navbar() {
               {user.name}寶寶，{greetingNow()}💕！
             </p>
           )}
-          {/* VIP 級別 chip（v2.2.0 vipTheme；NONE 唔出）：手機選單問候下面顯示，撳落去 /vip 介紹頁 */}
+          {/* VIP 級別 chip（v2.2.0 vipTheme；NONE 唔出）：手機選單問候下面顯示，撳落去 /vip 介紹頁。
+              v2.2.12（老闆指令）：「了解會員制度 →」文字連結刪走——會員制度已經搬咗落目錄選項 */}
           {user && vipTier && vipTheme.isVip && (
             <div
               className="border-b pb-4 pt-3"
@@ -378,13 +381,10 @@ export default function Navbar() {
                 to="/vip"
                 onClick={() => setMenuOpen(false)}
                 className="inline-flex items-center gap-2"
-                aria-label="了解會員制度"
+                aria-label={`會員級別：${vipTheme.label}`}
               >
                 <span className={vipTheme.chipClass}>
                   {vipTheme.seal} {vipTheme.shortLabel}
-                </span>
-                <span className="text-[13px] text-txt-3 underline underline-offset-4">
-                  了解會員制度 →
                 </span>
               </Link>
             </div>

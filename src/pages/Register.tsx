@@ -125,6 +125,14 @@ export default function Register() {
         ...(birthMonth ? { birthMonth: Number(birthMonth) } : {}),
         marketingOptIn: agreeMarketing,
       } as Parameters<typeof register>[0]);
+      // v2.2.12 修復（老闆回報「剔咗通知但註冊後無反應」）：剔咗開播通知
+      // 就要停一停彈綁定講解——之前漏咗呢步，直頭跳去會員中心，
+      // PushPermissionGuide 永遠冇機會彈。guide onClose 入面會 navigate 去 /account。
+      if (wantLivePush) {
+        setShowPushGuide(true);
+        setSubmitting(false);
+        return;
+      }
       navigate('/account', { replace: true });
     } catch (err) {
       if (isConflict(err)) {

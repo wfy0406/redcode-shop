@@ -6,18 +6,17 @@ import { useReveal } from '@/hooks/useReveal';
 import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
 
 /**
- * 直播回顧（v2.2.6 老闆指令「高度美化・聚光燈之下・最好可以預覽 FB 片」）：
- * 直播頁保留最近 10 場已落畫嘅直播，每場一張「舞台卡」——
+ * 直播回顧（v2.2.12 老闆指令：「比例係打直嘅，諗下點排版」）
  *
- * 設計概念：每場直播係一個舞台。
- * · 頁區上方兩支聚光燈射落嚟（旋轉漸層光錐，呼吸明暗；只郁 opacity，跟動效鐵律）
- * · 卡嘅 16:9「舞台」預設係設計好嘅 poster：頂部聚光燈 radial 光池＋
- *   地面 pink 反光＋中央金圈 ▶（脈衝環 scale/opacity）；
- * · v2.2.11：舞台有真・影片縮圖就放縮圖（冇先用聚光燈 poster）；
- *   撳 ▶ → 官網內全屏直度（9:16）播放器（直播一定打直），唔彈 FB；
- *   認唔到影片 ID 就 openFacebookLive 彈去 FB app。
- *   撳「去 Facebook 睇 ↗」→ openFacebookLive（有 app 彈 app）。
- * · 第一場（最新）做 featured，桌面版佔滿兩欄。
+ * 呈現方式：橫向滑動「回顧長廊」——直播一定係打直，所以每場係一張直度卡
+ * （3:4，似限時動態架），唔再硬塞 16:9：
+ * · 卡面全幅放真・影片縮圖（冇縮圖先跌落聚光燈 poster）
+ * · 頂：[01] 編號＋[日期] mono 金；REPLAY 膠囊；中央金圈 ▶（脈衝環）
+ * · 底：暗 gradient 壓 serif 場次名
+ * · 撳 ▶ → 官網內全屏直度（9:16）播放器（FbPlayerOverlay），唔彈 FB
+ * · 卡底 meta：「去 Facebook 睇 ↗」→ openFacebookLive 直彈 FB app
+ *   （老闆明言要保留：有寶寶想返 FB app 睇／留言）
+ * · 手機左右滑動（scroll-snap），右邊緣淡出提示仲有下一張
  * 冇回顧時成區唔 render。
  */
 
@@ -38,172 +37,167 @@ interface HistoryItem {
   thumbUrl?: string | null;
 }
 
-/* ---------- 單場舞台卡 ---------- */
-function StageCard({ item, index, featured }: { item: HistoryItem; index: number; featured: boolean }) {
-  // v2.2.11（老闆指令「播之前整返縮圖」「比例要直」「放大唔好彈 FB」）：
-  // · 有 thumbUrl → 舞台直接放真・縮圖（載入失敗跌落設計 poster）
-  // · 撳 ▶ → 官網內全屏直度（9:16）播放器，唔再喺 16:9 舞台入面硬塞、唔彈 FB
+/* ---------- 單場直度回顧卡 ---------- */
+function ReplayCard({ item, index }: { item: HistoryItem; index: number }) {
   const [playing, setPlaying] = useState(false);
   const [thumbOk, setThumbOk] = useState(true);
   const embedUrl = item.embedUrl ?? null;
   const showThumb = !!item.thumbUrl && thumbOk;
 
   return (
-    <article
-      className={`group overflow-hidden rounded-2xl border bg-space-2 ${featured ? 'md:col-span-2' : ''}`}
-      style={{ borderColor: 'var(--glass-border)' }}
-    >
-      {/* ===== 舞台（16:9）：poster → 撳 ▶ 原位變 FB 播放器 ===== */}
-      <div className="relative aspect-video w-full overflow-hidden" style={{ background: '#07040F' }}>
-        {
-          <button
-            type="button"
-            onClick={() => (embedUrl ? setPlaying(true) : openFacebookLive(item.url))}
-            className="absolute inset-0 block h-full w-full cursor-pointer text-left"
-            aria-label={`播放 ${fmtDate(item.liveDate)} ${item.liveSession} 回顧`}
-          >
-            {/* v2.2.11：有真・縮圖就放縮圖（＋暗角壓字）；冇先至用聚光燈設計 poster */}
-            {showThumb ? (
-              <>
-                <img
-                  src={item.thumbUrl ?? ''}
-                  alt={`${fmtDate(item.liveDate)} ${item.liveSession} 直播縮圖`}
-                  loading="lazy"
-                  onError={() => setThumbOk(false)}
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-                <span
-                  aria-hidden="true"
-                  className="absolute inset-0"
-                  style={{
-                    background:
-                      'linear-gradient(180deg, rgba(7,4,15,0.55) 0%, transparent 30%, transparent 55%, rgba(7,4,15,0.82) 100%)',
-                  }}
-                />
-              </>
-            ) : (
-              <>
-                {/* 聚光燈光池（頂中 radial）＋地面反光（pink ellipse）＋兩支光錐 */}
-                <span
-                  aria-hidden="true"
-                  className="stage-spot absolute inset-0"
-                  style={{
-                    background:
-                      'radial-gradient(ellipse 55% 70% at 50% 0%, rgba(245,213,138,0.20) 0%, rgba(255,0,84,0.06) 45%, transparent 72%)',
-                  }}
-                />
-                <span
-                  aria-hidden="true"
-                  className="stage-beam stage-beam-l absolute -top-1/4 left-[16%] h-[150%] w-[26%]"
-                  style={{
-                    background: 'linear-gradient(180deg, rgba(245,213,138,0.14) 0%, transparent 78%)',
-                    clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
-                    transform: 'rotate(-9deg)',
-                  }}
-                />
-                <span
-                  aria-hidden="true"
-                  className="stage-beam stage-beam-r absolute -top-1/4 right-[16%] h-[150%] w-[26%]"
-                  style={{
-                    background: 'linear-gradient(180deg, rgba(255,0,84,0.12) 0%, transparent 78%)',
-                    clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
-                    transform: 'rotate(9deg)',
-                  }}
-                />
-                <span
-                  aria-hidden="true"
-                  className="absolute inset-x-[12%] bottom-0 h-[26%]"
-                  style={{
-                    background: 'radial-gradient(ellipse 50% 100% at 50% 100%, rgba(255,0,84,0.16) 0%, transparent 70%)',
-                  }}
-                />
-              </>
-            )}
+    <article className="group w-[62vw] max-w-[272px] shrink-0 snap-start md:w-[264px]">
+      {/* ===== 直度舞台（3:4）：真縮圖／聚光燈 poster ===== */}
+      <div
+        className="relative aspect-[3/4] w-full overflow-hidden rounded-2xl border"
+        style={{ borderColor: 'var(--glass-border)', background: '#07040F' }}
+      >
+        <button
+          type="button"
+          onClick={() => (embedUrl ? setPlaying(true) : openFacebookLive(item.url))}
+          className="absolute inset-0 block h-full w-full cursor-pointer text-left"
+          aria-label={`播放 ${fmtDate(item.liveDate)} ${item.liveSession} 回顧`}
+        >
+          {showThumb ? (
+            <>
+              <img
+                src={item.thumbUrl ?? ''}
+                alt={`${fmtDate(item.liveDate)} ${item.liveSession} 直播縮圖`}
+                loading="lazy"
+                onError={() => setThumbOk(false)}
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+              <span
+                aria-hidden="true"
+                className="absolute inset-0"
+                style={{
+                  background:
+                    'linear-gradient(180deg, rgba(7,4,15,0.55) 0%, transparent 28%, transparent 52%, rgba(7,4,15,0.85) 100%)',
+                }}
+              />
+            </>
+          ) : (
+            <>
+              {/* 聚光燈光池（頂中 radial）＋地面反光（pink ellipse）＋兩支光錐 */}
+              <span
+                aria-hidden="true"
+                className="stage-spot absolute inset-0"
+                style={{
+                  background:
+                    'radial-gradient(ellipse 55% 70% at 50% 0%, rgba(245,213,138,0.20) 0%, rgba(255,0,84,0.06) 45%, transparent 72%)',
+                }}
+              />
+              <span
+                aria-hidden="true"
+                className="stage-beam stage-beam-l absolute -top-1/4 left-[16%] h-[150%] w-[26%]"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(245,213,138,0.14) 0%, transparent 78%)',
+                  clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
+                  transform: 'rotate(-9deg)',
+                }}
+              />
+              <span
+                aria-hidden="true"
+                className="stage-beam stage-beam-r absolute -top-1/4 right-[16%] h-[150%] w-[26%]"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(255,0,84,0.12) 0%, transparent 78%)',
+                  clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
+                  transform: 'rotate(9deg)',
+                }}
+              />
+              <span
+                aria-hidden="true"
+                className="absolute inset-x-[12%] bottom-0 h-[26%]"
+                style={{
+                  background: 'radial-gradient(ellipse 50% 100% at 50% 100%, rgba(255,0,84,0.16) 0%, transparent 70%)',
+                }}
+              />
+            </>
+          )}
 
-            {/* 頂行：場次編號＋日期（左）／REPLAY tag（右） */}
-            <span className="absolute left-4 top-4 flex items-baseline gap-3 md:left-5 md:top-5">
-              <span
-                className="font-mono text-[12px] text-purple-text"
-                style={{ fontVariantNumeric: 'tabular-nums' }}
-              >
-                {String(index + 1).padStart(2, '0')}
-              </span>
-              <span
-                className="font-mono text-[12px] tracking-[0.12em] text-gold md:text-[13px]"
-                style={{ fontVariantNumeric: 'tabular-nums' }}
-              >
-                [{fmtDate(item.liveDate)}]
-              </span>
+          {/* 頂行：場次編號＋日期（左）／REPLAY tag（右） */}
+          <span className="absolute left-4 top-4 flex items-baseline gap-3">
+            <span
+              className="font-mono text-[12px] text-purple-text"
+              style={{ fontVariantNumeric: 'tabular-nums' }}
+            >
+              {String(index + 1).padStart(2, '0')}
             </span>
             <span
-              className="absolute right-4 top-4 rounded-full border px-2.5 py-1 font-mono text-[10px] tracking-[0.22em] text-txt-3 md:right-5 md:top-5"
-              style={{ borderColor: 'var(--glass-border)', background: 'rgba(10,6,20,0.5)' }}
+              className="font-mono text-[12px] tracking-[0.12em] text-gold"
+              style={{ fontVariantNumeric: 'tabular-nums' }}
             >
-              REPLAY
+              [{fmtDate(item.liveDate)}]
             </span>
+          </span>
+          <span
+            className="absolute right-4 top-4 rounded-full border px-2.5 py-1 font-mono text-[10px] tracking-[0.22em] text-txt-3"
+            style={{ borderColor: 'var(--glass-border)', background: 'rgba(10,6,20,0.5)' }}
+          >
+            REPLAY
+          </span>
 
-            {/* 中央 ▶：金圈＋pink 核心＋脈衝環（transform/opacity） */}
-            <span className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-              <span className="relative flex h-16 w-16 items-center justify-center md:h-[72px] md:w-[72px]">
-                <span
-                  aria-hidden="true"
-                  className="stage-pulse absolute inset-0 rounded-full border"
-                  style={{ borderColor: 'rgba(245,197,24,0.55)' }}
-                />
-                <span
-                  className="flex h-full w-full items-center justify-center rounded-full border transition-transform duration-200 group-hover:scale-105"
-                  style={{
-                    borderColor: 'var(--gold)',
-                    background: 'rgba(10,6,20,0.72)',
-                    boxShadow: '0 0 32px rgba(245,197,24,0.25), 0 0 64px rgba(255,0,84,0.18)',
-                  }}
-                >
-                  <Play size={featured ? 26 : 22} className="ml-0.5 text-gold" fill="currentColor" aria-hidden="true" />
-                </span>
-              </span>
-              <span className="text-[12px] font-medium tracking-[0.18em] text-txt-2">
-                {embedUrl ? '撳掣即刻睇' : '去 Facebook 睇'}
+          {/* 中央 ▶：金圈＋脈衝環（transform/opacity） */}
+          <span className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            <span className="relative flex h-16 w-16 items-center justify-center">
+              <span
+                aria-hidden="true"
+                className="stage-pulse absolute inset-0 rounded-full border"
+                style={{ borderColor: 'rgba(245,197,24,0.55)' }}
+              />
+              <span
+                className="flex h-full w-full items-center justify-center rounded-full border transition-transform duration-200 group-hover:scale-105"
+                style={{
+                  borderColor: 'var(--gold)',
+                  background: 'rgba(10,6,20,0.72)',
+                  boxShadow: '0 0 32px rgba(245,197,24,0.25), 0 0 64px rgba(255,0,84,0.18)',
+                }}
+              >
+                <Play size={22} className="ml-0.5 text-gold" fill="currentColor" aria-hidden="true" />
               </span>
             </span>
+            <span className="text-[12px] font-medium tracking-[0.18em] text-txt-2">
+              {embedUrl ? '撳掣即刻睇' : '去 Facebook 睇'}
+            </span>
+          </span>
 
-            {/* 場次名壓舞台底（大字 serif） */}
-            <span className="absolute inset-x-4 bottom-3.5 md:inset-x-5 md:bottom-4">
-              <span className="block truncate font-serif-tc text-lg font-semibold leading-snug text-starlight md:text-xl">
-                {item.liveSession}
-              </span>
+          {/* 場次名壓卡底（大字 serif） */}
+          <span className="absolute inset-x-4 bottom-3.5">
+            <span className="block truncate font-serif-tc text-lg font-semibold leading-snug text-starlight">
+              {item.liveSession}
             </span>
-          </button>
-        }
+          </span>
+        </button>
       </div>
 
-      {/* v2.2.11：撳 ▶ → 官網內全屏直度播放器（唔彈 FB、唔硬塞 16:9） */}
-      {playing && embedUrl && (
-        <FbPlayerOverlay
-          src={embedUrl}
-          title={`${item.liveDate} ${item.liveSession} 直播回顧`}
-          onClose={() => setPlaying(false)}
-        />
-      )}
-
-      {/* ===== 卡底 meta 行：日期・場次｜去 Facebook 睇 ===== */}
-      <div className="flex items-center justify-between gap-4 px-4 py-3.5 md:px-5">
-        <p className="min-w-0 text-[13px] text-txt-3">
-          <span className="font-mono text-[12px] text-gold" style={{ fontVariantNumeric: 'tabular-nums' }}>
+      {/* ===== 卡底 meta 行：日期・場次｜去 Facebook 睇（老闆明言保留） ===== */}
+      <div className="flex items-center justify-between gap-3 px-1 pt-2.5">
+        <p className="min-w-0 truncate text-[12px] text-txt-3">
+          <span className="font-mono text-[11px] text-gold" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {fmtDate(item.liveDate)}
           </span>
-          <span className="mx-2 text-txt-disabled">·</span>
+          <span className="mx-1.5 text-txt-disabled">·</span>
           <span className="text-txt-2">{item.liveSession}</span>
         </p>
         <button
           type="button"
           onClick={() => openFacebookLive(item.url)}
-          className="inline-flex shrink-0 items-center gap-1.5 text-[13px] font-medium text-pink-soft transition-opacity hover:opacity-75"
+          className="inline-flex shrink-0 items-center gap-1 text-[12px] font-medium text-pink-soft transition-opacity hover:opacity-75"
           aria-label={`去 Facebook 睇 ${fmtDate(item.liveDate)} ${item.liveSession}`}
         >
           去 Facebook 睇
-          <ExternalLink size={13} aria-hidden="true" />
+          <ExternalLink size={12} aria-hidden="true" />
         </button>
       </div>
+
+      {/* 撳 ▶ → 官網內全屏直度播放器（唔彈 FB、唔硬塞 16:9） */}
+      {playing && embedUrl && (
+        <FbPlayerOverlay
+          src={embedUrl}
+          fbUrl={item.url}
+          title={`${item.liveDate} ${item.liveSession} 直播回顧`}
+          onClose={() => setPlaying(false)}
+        />
+      )}
     </article>
   );
 }
@@ -247,14 +241,22 @@ export default function LiveHistorySection() {
             直播回顧
           </h2>
           <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-txt-3">
-            最近 {items.length} 場 · 撳 ▶ 即刻重溫
+            最近 {items.length} 場 · 左右滑動 · 撳 ▶ 重溫
           </p>
         </div>
 
-        <div className="mt-8 grid gap-6 md:grid-cols-2">
-          {items.map((item, i) => (
-            <StageCard key={item.id} item={item} index={i} featured={i === 0} />
-          ))}
+        {/* 直度卡長廊：橫向 scroll-snap；右邊緣淡出提示仲有下一張 */}
+        <div className="relative mt-8">
+          <div className="replay-shelf -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto px-5 pb-2 md:mx-0 md:px-0">
+            {items.map((item, i) => (
+              <ReplayCard key={item.id} item={item} index={i} />
+            ))}
+          </div>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 w-14 md:hidden"
+            style={{ background: 'linear-gradient(90deg, transparent 0%, var(--space-1) 100%)' }}
+          />
         </div>
 
         <p className="mt-5 text-[13px] leading-relaxed text-txt-3">
@@ -264,6 +266,8 @@ export default function LiveHistorySection() {
 
       {/* 舞台燈呼吸＋▶ 脈衝：淨 opacity/transform（老闆鐵律）；reduced-motion 全停 */}
       <style>{`
+        .replay-shelf { scrollbar-width: none; }
+        .replay-shelf::-webkit-scrollbar { display: none; }
         .stage-beam-l { animation: stage-beam-a 5.2s ease-in-out infinite; }
         .stage-beam-r { animation: stage-beam-b 5.2s ease-in-out infinite; }
         @keyframes stage-beam-a { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }

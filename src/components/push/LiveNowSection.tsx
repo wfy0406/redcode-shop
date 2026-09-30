@@ -205,6 +205,19 @@ export default function LiveNowSection() {
               >
                 放大睇 ⛶
               </button>
+              {/* v2.2.12（老闆指令）：播放器底下都有「去 Facebook 睇」——
+                  有寶寶想返 FB app 睇／留言 */}
+              <div className="flex justify-center border-t px-4 py-2.5" style={{ borderColor: 'rgba(255,0,84,0.25)' }}>
+                <button
+                  type="button"
+                  onClick={() => openFacebookLive(live.url)}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-medium text-pink-soft transition-opacity hover:opacity-75"
+                  aria-label="去 Facebook 睇直播（有裝 app 會開 app）"
+                >
+                  去 Facebook 睇
+                  <ExternalLink size={12} aria-hidden="true" />
+                </button>
+              </div>
             </div>
           ) : (
           <button
@@ -280,7 +293,7 @@ export default function LiveNowSection() {
 
       {/* 全屏直度播放器（官網內，唔彈 FB） */}
       {full && live.embedUrl && (
-        <FbPlayerOverlay src={live.embedUrl} title="Facebook 直播" onClose={() => setFull(false)} />
+        <FbPlayerOverlay src={live.embedUrl} fbUrl={live.url} title="Facebook 直播" onClose={() => setFull(false)} />
       )}
 
       {/* 權限講解 modal（訂閱成功會 invalidate 狀態，副掣即轉「已開啟 ✓」） */}
