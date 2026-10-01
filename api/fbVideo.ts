@@ -69,15 +69,12 @@ function idFromHtml(html: string): string | null {
   return null;
 }
 
-export function embedForId(id: string, opts?: { muted?: boolean }): string {
+export function embedForId(id: string): string {
   const canonical = `https://www.facebook.com/watch/?v=${id}`;
-  // v2.2.26（老闆實測：Android 撳唔郁、iPhone 一撳黑屏，得放大睇正常）：
-  // FB 官方文件寫明 autoplay 唔適用流動裝置；手機瀏覽器亦只准「靜音」自動播。
-  // 未靜音嘅 autoplay=1 會令 FB 播放器卡喺黑屏狀態，所以直播原位播嗰條加 muted=1
-  // （社羣實測 video.php 認呢個參數；客人撳播放器喇叭制開聲）。
-  // 回顧／放大睇（撳掣先載入，有手勢）照舊唔靜音，一播有聲。
-  const mute = opts?.muted ? "&muted=1" : "";
-  return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(canonical)}&show_text=false&autoplay=1${mute}`;
+  // v2.2.27 備註：v2.2.26 試過加 muted=1 做靜音自動播，老闆實測 FB 播放器照樣
+  // 唔理（Samsung 撳唔郁／iPhone 黑屏）——手機上唯一穩陣係「手勢先載入 iframe」，
+  // 所以唔再出靜音版；autoplay=1 留低，係為咗手勢載入後即播有聲。
+  return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(canonical)}&show_text=false&autoplay=1`;
 }
 
 /**

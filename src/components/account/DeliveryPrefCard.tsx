@@ -5,7 +5,8 @@ import RegionStationPicker from '@/components/shop/RegionStationPicker';
 
 /**
  * 預設取貨方式卡（2026-08-08 Glo 要求）
- * 會員喺度揀默認 送貨上門／順豐站自取／順豐智能櫃自取。
+ * 會員喺度揀默認 送貨上門／自取（順豐站／自提點／智能櫃一粒制，v2.2.27 統一）；
+ * 揀站時按站點類型自動歸類 sf_station／sf_locker（同註冊／結帳一致）。
  * v2.1.0（2026-09-29 VIP+免運）：自取站點改用 RegionStationPicker 下拉（先揀地區 HK/MO 再揀站），
  * 唔再自由填字；save 埋 region + stationId（authRouter updateProfile 已接）。
  * 結帳時會自動帶入呢個選項，客人到時照樣可以臨時改、自己打地址。
@@ -15,10 +16,11 @@ import RegionStationPicker from '@/components/shop/RegionStationPicker';
 type Method = 'address' | 'sf_station' | 'sf_locker';
 type Region = 'HK' | 'MO';
 
+// v2.2.27（老闆指令「會員中心都要同註冊一樣」）：自取一粒制搞掂，
+// 揀站時按站點類型自動歸類 sf_station／sf_locker；附近搜尋＋手動輸入都保留
 const METHOD_OPTIONS: readonly [Method, string][] = [
   ['address', '送貨上門'],
-  ['sf_station', '順豐站'],
-  ['sf_locker', '智能櫃'],
+  ['sf_station', '順豐站／自提點／智能櫃'],
 ];
 
 const METHOD_FULL_LABEL: Record<Method, string> = {
@@ -82,7 +84,7 @@ export default function DeliveryPrefCard({
     setError(null);
     // 自取必揀站點（同結帳頁一致）
     if (method !== 'address' && !stationId) {
-      setError(`請先揀返${method === 'sf_station' ? '順豐站' : '智能櫃'}站點`);
+      setError('請先揀返自取站點（順豐站／自提點／智能櫃）');
       return;
     }
     try {
@@ -136,21 +138,24 @@ export default function DeliveryPrefCard({
         <p className="mt-4 text-[15px] leading-relaxed text-txt-1">{summary}</p>
       ) : (
         <div className="mt-4">
-          <div className="grid grid-cols-3 gap-2" role="group" aria-label="預設取貨方式">
+          <div className="grid grid-cols-2 gap-2" role="group" aria-label="預設取貨方式">
             {METHOD_OPTIONS.map(([value, label]) => {
-              const active = method === value;
+              // v2.2.27：自取一粒制——亮起條件＝非送貨上門（自動歸類去 sf_locker 都照樣亮）
+              const active =
+                value === 'address' ? method === 'address' : method !== 'address';
               return (
                 <button
                   key={value}
                   type="button"
                   onClick={() => {
+                    if (active) return;
                     setMethod(value);
                     // 轉方式 → 舊站點唔啱用，要重新揀
                     setStationId(undefined);
                     setStationName(undefined);
                   }}
                   aria-pressed={active}
-                  className="h-11 rounded-xl border text-[13px] transition-colors"
+                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border px-2 text-center text-[13px] leading-[1.25] transition-colors"
                   style={
                     active
                       ? {
@@ -166,6 +171,17 @@ export default function DeliveryPrefCard({
                         }
                   }
                 >
+                  {/* 選中提示點（radar-node 式發光環） */}
+                  {active && value !== 'address' && (
+                    <span
+                      className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{
+                        background: 'var(--pink)',
+                        boxShadow: '0 0 0 3px rgba(254,1,126,0.22)',
+                      }}
+                      aria-hidden="true"
+                    />
+                  )}
                   {label}
                 </button>
               );
@@ -211,12 +227,15 @@ export default function DeliveryPrefCard({
               <div className="mt-3">
                 <RegionStationPicker
                   region={region}
-                  method={method}
+                  method={method === 'sf_locker' ? 'sf_locker' : 'sf_station'}
                   value={stationId}
-                  onChange={(id, name) => {
+                  onChange={(id, name, type) => {
                     setStationId(id);
                     setStationName(name);
                     if (error) setError(null);
+                    // v2.2.27：揀咗邊型，類別自動跟（同註冊／結帳一致）
+                    if (type === 'SF_LOCKER') setMethod('sf_locker');
+                    else if (type === 'SF_STATION' || type === 'SERVICE_POINT') setMethod('sf_station');
                   }}
                 />
               </div>

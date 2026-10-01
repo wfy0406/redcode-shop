@@ -284,7 +284,12 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
 
   // 預設取貨方式（2026-08-08 Glo 要求）：會員設咗順豐站/智能櫃就自動帶入（連站點 ID）；
   // 預設地區係國外就唔帶自取（國外只可以送貨上門）；客人撳過其他方式就唔好再覆蓋
+  // v2.2.27（老闆指令「結帳可以唔用預設，用客人果次想要嘅地址，下一次就會轉翻預設」）：
+  // 客人一撳過方式制（包括撳送貨上門），就永久停止帶入——auth.me 再更新都唔准翻兜；
+  // 預設本身唔會被改寫，下次入嚟照舊帶入
+  const methodTouchedRef = useRef(false);
   useEffect(() => {
+    if (methodTouchedRef.current) return;
     const m = user?.deliveryMethod;
     if (m === 'sf_station' || m === 'sf_locker') {
       if (vipUser?.defaultRegion === 'OVERSEAS') return;
@@ -364,6 +369,9 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   };
 
   const onMethodChange = (m: 'address' | 'sf_station' | 'sf_locker') => {
+    // v2.2.27（老闆指令「結帳可以唔用預設，下一次轉翻預設」）：
+    // 客人一撳過取貨方式，預設帶入即刻收工，唔准再覆蓋客人今次嘅選擇
+    methodTouchedRef.current = true;
     setDeliveryMethod(m);
     setStationId(undefined);
   };
@@ -452,7 +460,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
     // 自取必揀站點（v2.1.0）：唔再接受自由文字站點
     if (effectiveMethod !== 'address' && !stationId) {
       setError(
-        `請先揀返${effectiveMethod === 'sf_station' ? '順豐站／自提點' : '智能櫃'}站點先好落單`,
+        '請先揀返自取站點（順豐站／自提點／智能櫃）先好落單',
       );
       return;
     }
@@ -752,26 +760,30 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
         {/* 取貨方式（順豐站／智能櫃自取要去下面揀站點；國外單只可以送貨上門） */}
         <div className="mt-5">
           <span className="text-sm text-txt-2">取貨方式</span>
-          <div className="mt-2 grid grid-cols-3 gap-2">
+          <div className="mt-2 grid grid-cols-2 gap-2">
             {(
               [
                 ['address', '送貨上門'],
-                ['sf_station', '順豐站／自提點'],
-                ['sf_locker', '智能櫃'],
+                ['sf_station', '順豐站／自提點／智能櫃'],
               ] as const
             ).map(([value, label]) => {
-              const active = deliveryMethod === value;
+              // v2.2.27（老闆指令「一個按鈕搞掂」）：自取一粒制——揀站時自動歸類；
+              // 自取制亮起條件＝非送貨上門（揀咗智能櫃自動轉 sf_locker 都照樣亮）
+              const active =
+                value === 'address'
+                  ? deliveryMethod === 'address'
+                  : deliveryMethod !== 'address';
               const disabled = region === 'OVERSEAS' && value !== 'address';
               return (
                 <button
                   key={value}
                   type="button"
                   onClick={() => {
-                    if (!disabled) onMethodChange(value);
+                    if (!disabled && !active) onMethodChange(value);
                   }}
                   disabled={disabled}
                   aria-pressed={active}
-                  className="h-11 rounded-xl border text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border px-2 text-center text-[13px] leading-[1.25] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                   style={
                     active
                       ? {
@@ -787,6 +799,17 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                         }
                   }
                 >
+                  {/* 選中提示點（radar-node 式發光環，靜態 box-shadow 唔會觸發動畫限制） */}
+                  {active && value !== 'address' && (
+                    <span
+                      className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{
+                        background: 'var(--pink)',
+                        boxShadow: '0 0 0 3px rgba(254,1,126,0.22)',
+                      }}
+                      aria-hidden="true"
+                    />
+                  )}
                   {label}
                 </button>
               );

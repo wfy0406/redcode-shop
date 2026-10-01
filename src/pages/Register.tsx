@@ -291,28 +291,32 @@ export default function Register() {
               </span>
               <span className="text-[13px] text-txt-3">結帳嗰陣自動帶入</span>
             </span>
-            <div className="grid grid-cols-3 gap-2" role="group" aria-label="預設取貨方式">
+            <div className="grid grid-cols-2 gap-2" role="group" aria-label="預設取貨方式">
               {(
                 [
                   ['address', '送貨上門'],
-                  ['sf_station', '順豐站／自提點'],
-                  ['sf_locker', '智能櫃'],
+                  ['sf_station', '順豐站／自提點／智能櫃'],
                 ] as const
               ).map(([value, label]) => {
-                const active = deliveryMethod === value;
+                // v2.2.27（老闆指令「一個按鈕搞掂」）：自取一粒制——揀站時自動歸類；
+                // 自取制亮起條件＝非送貨上門（揀咗智能櫃自動轉 sf_locker 都照樣亮）
+                const active =
+                  value === 'address'
+                    ? deliveryMethod === 'address'
+                    : deliveryMethod !== 'address';
                 const disabled = region === 'OVERSEAS' && value !== 'address';
                 return (
                   <button
                     key={value}
                     type="button"
                     onClick={() => {
-                      if (disabled) return;
+                      if (disabled || active) return;
                       setDeliveryMethod(value);
                       setStationId(undefined);
                     }}
                     disabled={disabled}
                     aria-pressed={active}
-                    className="h-12 rounded-xl border text-[14px] transition-[border-color,box-shadow] duration-200 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl border px-2 text-center text-[14px] leading-[1.25] transition-[border-color,box-shadow] duration-200 disabled:cursor-not-allowed disabled:opacity-40"
                     style={
                       active
                         ? {
@@ -328,6 +332,17 @@ export default function Register() {
                           }
                     }
                   >
+                    {/* 選中提示點（radar-node 式發光環，靜態 box-shadow 唔會觸發動畫限制） */}
+                    {active && value !== 'address' && (
+                      <span
+                        className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                        style={{
+                          background: 'var(--pink)',
+                          boxShadow: '0 0 0 3px rgba(254,1,126,0.22)',
+                        }}
+                        aria-hidden="true"
+                      />
+                    )}
                     {label}
                   </button>
                 );

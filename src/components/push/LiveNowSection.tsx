@@ -29,9 +29,11 @@ export default function LiveNowSection() {
   const navigate = useNavigate();
   const utils = trpc.useUtils();
   const [showGuide, setShowGuide] = useState(false);
-  // v2.2.11（老闆指令「直播一上官網就開始自動播」）：預設即播；
-  // 只有嵌入連結（embedUrl）先會真係 render 播放器，冇就照舊海報卡
-  const [playing, setPlaying] = useState(true);
+  // v2.2.27（老闆實測：Samsung 瀏覽器撳唔郁、iPhone 淨係放大先播到、Chrome 唔自動播）：
+  // FB 嵌入播放器喺手機一定要「用戶手勢」入面新鮮載入先穩陣（所以放大睇度度都 work），
+  // 且有聲 autoplay 三大手機瀏覽器全部封晒。改做「真・縮圖海報 → 一撳即播（有聲）」：
+  // 撳嗰下先 mount iframe，等於將放大睇嘅成功路線搬埋落原位播放器。
+  const [playing, setPlaying] = useState(false);
   const [full, setFull] = useState(false);
 
   const liveQuery = trpc.push.currentLive.useQuery(undefined, {
@@ -189,11 +191,10 @@ export default function LiveNowSection() {
                     className="absolute inset-0 h-full w-full object-cover"
                   />
                 )}
-                {/* v2.2.26（老闆實測黑屏）：原位播放用靜音版 embedUrlMuted——
-                    手機瀏覽器只准靜音自動播；客人撳播放器喇叭制開聲。
-                    舊版直接用有聲 autoplay，Android 撳唔郁、iPhone 一撳黑屏。 */}
+                {/* v2.2.27：iframe 只會喺客人撳 ▶ 嗰下先 mount（手勢載入）——
+                    用返有聲版 embedUrl，一播有聲，Samsung／iPhone／Chrome 都穩 */}
                 <iframe
-                  src={live.embedUrlMuted ?? live.embedUrl}
+                  src={live.embedUrl}
                   className="absolute inset-0 h-full w-full border-0"
                   allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                   allowFullScreen
@@ -211,11 +212,7 @@ export default function LiveNowSection() {
               </button>
               {/* v2.2.12（老闆指令）：播放器底下都有「去 Facebook 睇」——
                   有寶寶想返 FB app 睇／留言 */}
-              <div className="flex flex-col items-center gap-1 border-t px-4 py-2.5" style={{ borderColor: 'rgba(255,0,84,0.25)' }}>
-                {/* v2.2.26：靜音自動播提示——客人唔使估點解冇聲 */}
-                <p className="text-[11px] leading-[1.5] text-txt-3">
-                  靜音自動播放中——撳播放器個喇叭制開聲 🔊
-                </p>
+              <div className="flex justify-center border-t px-4 py-2.5" style={{ borderColor: 'rgba(255,0,84,0.25)' }}>
                 <button
                   type="button"
                   onClick={() => openFacebookLive(live.url)}
@@ -227,13 +224,93 @@ export default function LiveNowSection() {
                 </button>
               </div>
             </div>
+          ) : live.embedUrl ? (
+          // v2.2.27（老闆實測：Samsung 撳唔郁／iPhone 黑屏／Chrome 唔自動播）：
+          // 真・縮圖直度海報（同播放器一樣 9:16，撳完唔跳 layout），一撳即播有聲——
+          // 手機瀏覽器政策下唯一穩陣路線；畫面係真直播縮圖，唔係黑屏
+          <div
+            className="relative mx-auto w-full max-w-[340px] overflow-hidden rounded-2xl border"
+            style={{ borderColor: 'rgba(255, 0, 84, 0.4)', background: 'var(--space-1)' }}
+          >
+            <button
+              type="button"
+              onClick={() => setPlaying(true)}
+              className="livenow-poster group relative block w-full text-left"
+              aria-label="一撳即播直播（有聲）"
+            >
+              <div className="relative aspect-[9/16] w-full">
+                {live.thumbUrl ? (
+                  <img
+                    src={live.thumbUrl}
+                    alt="直播現場縮圖"
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                ) : (
+                  <div
+                    className="pointer-events-none absolute inset-0"
+                    style={{
+                      background:
+                        'radial-gradient(420px 500px at 50% 45%, rgba(255, 0, 84, 0.22) 0%, transparent 70%)',
+                    }}
+                    aria-hidden="true"
+                  />
+                )}
+                {/* 頂部 LIVE pill（同播放器嘅「直播」badge 呼應） */}
+                <span
+                  className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-[11px] font-medium tracking-[0.2em]"
+                  style={{ background: 'rgba(10,6,20,0.72)', color: 'var(--pink-tint)', border: '1px solid rgba(255,0,84,0.5)' }}
+                >
+                  <span className="livenow-dot inline-block h-1.5 w-1.5 rounded-full" style={{ background: 'var(--pink)' }} aria-hidden="true" />
+                  LIVE
+                </span>
+                {/* 中央播放掣＋ping 環（兩環錯相位擴散） */}
+                <span className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
+                  <span className="relative flex h-20 w-20 items-center justify-center">
+                    <span
+                      className="livenow-ping absolute inset-0 rounded-full"
+                      style={{ border: '2px solid rgba(245, 197, 24, 0.55)' }}
+                    />
+                    <span
+                      className="livenow-ping absolute inset-0 rounded-full"
+                      style={{ border: '2px solid rgba(255, 0, 84, 0.45)', animationDelay: '0.9s' }}
+                    />
+                    <span
+                      className="relative flex h-16 w-16 items-center justify-center rounded-full transition-transform duration-200 group-hover:scale-110"
+                      style={{ background: 'var(--gold)', color: 'var(--space-1)' }}
+                    >
+                      <Play size={26} fill="currentColor" />
+                    </span>
+                  </span>
+                </span>
+                {/* 底部提示條（漸變壓底，字唔會被縮圖食咗） */}
+                <span
+                  className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-0.5 px-4 pb-4 pt-10 text-center"
+                  style={{ background: 'linear-gradient(180deg, transparent 0%, rgba(10,6,20,0.85) 100%)' }}
+                >
+                  <span className="font-serif-tc text-base font-semibold text-starlight">一撳即播・有聲 🔊</span>
+                  <span className="text-[11px] text-txt-3">想留言互動可以撳下面「去 Facebook 睇」</span>
+                </span>
+              </div>
+            </button>
+            <div className="flex justify-center border-t px-4 py-2.5" style={{ borderColor: 'rgba(255,0,84,0.25)' }}>
+              <button
+                type="button"
+                onClick={() => openFacebookLive(live.url)}
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-pink-soft transition-opacity hover:opacity-75"
+                aria-label="去 Facebook 睇直播（有裝 app 會開 app）"
+              >
+                去 Facebook 睇
+                <ExternalLink size={12} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
           ) : (
           <button
             type="button"
-            onClick={() => (live.embedUrl ? setPlaying(true) : openFacebookLive(live.url))}
+            onClick={() => openFacebookLive(live.url)}
             className="livenow-poster group relative block w-full overflow-hidden rounded-2xl border text-left"
             style={{ borderColor: 'rgba(255, 0, 84, 0.4)', background: 'var(--space-1)' }}
-            aria-label={live.embedUrl ? '官網直接睇直播' : '入 Facebook 睇直播'}
+            aria-label="入 Facebook 睇直播"
           >
             <div className="relative flex aspect-video flex-col items-center justify-center gap-4 px-6">
               {/* 背景紅光暈（radial）＋浮動光斑 */}
@@ -286,12 +363,10 @@ export default function LiveNowSection() {
                 </span>
               </span>
               <span className="font-serif-tc text-lg font-semibold text-starlight">
-                {live.embedUrl ? '撳 ▶ 官網直接睇' : '入 Facebook 睇直播'}
+                入 Facebook 睇直播
               </span>
               <span className="text-[12px] text-txt-3">
-                {live.embedUrl
-                  ? '唔離開官網都睇到；想留言互動可以撳左邊「立即入直播」開 FB app'
-                  : '有裝 Facebook 會直接開 app；冇裝就開網頁版'}
+                有裝 Facebook 會直接開 app；冇裝就開網頁版
               </span>
             </div>
           </button>
