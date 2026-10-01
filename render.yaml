@@ -21,10 +21,14 @@ services:
     disk:
       name: redcode-uploads
       mountPath: /app/uploads
-      sizeGB: 1
+      # v2.2.34：對返 live 實際 10GB——Render 唔俾 blueprint 縮細 disk，
+      # 寫細過 live 會 sync 失敗（cannot decrease disk size）
+      sizeGB: 10
 
 databases:
   - name: redcode-shop-db
     databaseName: redcode_shop
     region: singapore
-    plan: free
+    # v2.2.34：對返 live 實際 basic-256mb——Render 唔俾 blueprint 降 plan
+    # （cannot downgrade database）；第日想降要喺 dashboard 手動搞
+    plan: basic-256mb

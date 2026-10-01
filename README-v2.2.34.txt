@@ -43,7 +43,9 @@ RedCode Shop v2.2.34（2026-10-02）
 刪除：public/logo-live.mp4、public/logo-live.webp、public/home/glo-poke-loop.mp4、
       public/home/glo-heart-loop.mp4、README-v2.2.33.txt
 改：GloCutout.tsx（三層真透底）、AnimatedLogo.tsx（同上）、Home.tsx（關於區三卡
-   改 MovingPhoto＋cutout 換真 alpha 源）
+   改 MovingPhoto＋cutout 換真 alpha 源）、render.yaml（對返 live 實際：
+   disk 10GB、DB basic-256mb——Render 唔俾 blueprint 降配，寫細過 live 會
+   sync 失敗 cannot downgrade / cannot decrease）
 
 唔准郁清單全部原封：BillPage、sw.js、api/livePush.ts、src/lib/pushClient.ts、
 live-go*.html、package.json、LivePushEntry 三態邏輯、BillPage 免責聲明。
