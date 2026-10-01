@@ -805,12 +805,14 @@ export default function MemberList({
 
   const removeMutation = trpc.members.remove.useMutation({
     onSuccess: (result) => {
-      toast(
-        result?.deletedOrders
-          ? `已刪除會員（連埋 ${result.deletedOrders} 張訂單）`
-          : '已刪除會員',
-        'success',
-      );
+      // v2.2.22：刪會員會連埋推播裝置一齊清（後端計數回嚟）
+      const extras = [
+        result?.deletedOrders ? `${result.deletedOrders} 張訂單` : '',
+        result?.removedDevices ? `${result.removedDevices} 部推播裝置` : '',
+      ]
+        .filter(Boolean)
+        .join('、');
+      toast(`已刪除會員${extras ? `（連埋 ${extras}）` : ''}`, 'success');
       setSelectedId(null);
       void utils.members.list.invalidate();
       void utils.analytics.summary.invalidate();

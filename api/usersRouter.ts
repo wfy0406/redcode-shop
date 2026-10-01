@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { asc, eq, ne } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { users } from "@db/schema";
+import { pushSubscriptions, users } from "@db/schema";
 import { hashPassword } from "./auth";
 import { createRouter, adminProcedure } from "./middleware";
 import { logAudit } from "./audit";
@@ -119,6 +119,9 @@ export const usersRouter = createRouter({
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "帳號不存在" });
       }
+      // v2.2.22：推播訂閱有 FK 連住 users（無 cascade），先清埋裝置先刪到帳號；
+      // endpoint／p256dh／auth 永遠唔回前端、唔落 log。
+      await db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, input.id));
       // 有訂單／購物車紀錄嘅帳號會被外鍵擋住，畀個友善提示
       try {
         await db.delete(users).where(eq(users.id, input.id));

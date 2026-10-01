@@ -529,16 +529,31 @@ export const membersRouter = createRouter({
         await db.delete(orders).where(eq(orders.userId, input.id));
       }
       await db.delete(cartItems).where(eq(cartItems.userId, input.id));
-      await db.delete(users).where(eq(users.id, input.id));
+      // v2.2.22（老闆報障）：pushSubscriptions.userId 有 FK 連住 users（無 cascade）——
+      // 會員一訂閱直播通知就會被資料庫擋住刪除。連埋裝置一併刪；
+      // 安全鐵律：endpoint／p256dh／auth 永遠唔回前端、唔落 log，淨係計數。
+      const removedDevices = await db
+        .delete(pushSubscriptions)
+        .where(eq(pushSubscriptions.userId, input.id))
+        .returning({ id: pushSubscriptions.id });
+      try {
+        await db.delete(users).where(eq(users.id, input.id));
+      } catch {
+        // 防禦：日後新表再加 FK 都唔會將 raw SQL 彈出管理後台
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "呢個會員仲有其他紀錄連住，暫時刪唔到，請通知技術員處理",
+        });
+      }
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
         action: "member.remove",
         targetType: "member",
         targetId: input.id,
-        detail: `刪除會員「${target.name}」${orderRows.length > 0 ? `（連埋 ${orderRows.length} 張訂單）` : ""}`,
+        detail: `刪除會員「${target.name}」${orderRows.length > 0 ? `（連埋 ${orderRows.length} 張訂單）` : ""}${removedDevices.length > 0 ? `（連埋 ${removedDevices.length} 部推播裝置）` : ""}`,
       });
-      return { ok: true, id: input.id, deletedOrders: orderRows.length };
+      return { ok: true, id: input.id, deletedOrders: orderRows.length, removedDevices: removedDevices.length };
     }),
 
   // ─── v2.2.1（合約 §9）：會員直播推送管理（admin 專用）────────────────────
