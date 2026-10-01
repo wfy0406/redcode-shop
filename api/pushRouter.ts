@@ -322,6 +322,9 @@ export const pushRouter = createRouter({
         url: live.url,
         sentAt: live.sentAt,
         embedUrl: vid ? embedForId(vid) : null,
+        // v2.2.26：首頁／直播頁「一入嚟即播」用靜音版（手機 autoplay 政策）；
+        // 放大睇全屏播放器照舊用 embedUrl（撳掣手勢載入，可以有聲）
+        embedUrlMuted: vid ? embedForId(vid, { muted: true }) : null,
         // v2.2.23：手動上傳縮圖優先（FB 摷圖喺 Render 長期失敗嘅根治路線）；冇先落自動 endpoint
         thumbUrl: live.thumbUrl ?? (vid ? `/api/live-thumb/${vid}` : null),
       },

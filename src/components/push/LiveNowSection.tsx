@@ -189,8 +189,11 @@ export default function LiveNowSection() {
                     className="absolute inset-0 h-full w-full object-cover"
                   />
                 )}
+                {/* v2.2.26（老闆實測黑屏）：原位播放用靜音版 embedUrlMuted——
+                    手機瀏覽器只准靜音自動播；客人撳播放器喇叭制開聲。
+                    舊版直接用有聲 autoplay，Android 撳唔郁、iPhone 一撳黑屏。 */}
                 <iframe
-                  src={live.embedUrl}
+                  src={live.embedUrlMuted ?? live.embedUrl}
                   className="absolute inset-0 h-full w-full border-0"
                   allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                   allowFullScreen
@@ -208,7 +211,11 @@ export default function LiveNowSection() {
               </button>
               {/* v2.2.12（老闆指令）：播放器底下都有「去 Facebook 睇」——
                   有寶寶想返 FB app 睇／留言 */}
-              <div className="flex justify-center border-t px-4 py-2.5" style={{ borderColor: 'rgba(255,0,84,0.25)' }}>
+              <div className="flex flex-col items-center gap-1 border-t px-4 py-2.5" style={{ borderColor: 'rgba(255,0,84,0.25)' }}>
+                {/* v2.2.26：靜音自動播提示——客人唔使估點解冇聲 */}
+                <p className="text-[11px] leading-[1.5] text-txt-3">
+                  靜音自動播放中——撳播放器個喇叭制開聲 🔊
+                </p>
                 <button
                   type="button"
                   onClick={() => openFacebookLive(live.url)}
