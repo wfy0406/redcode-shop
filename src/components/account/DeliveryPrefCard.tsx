@@ -64,12 +64,26 @@ export default function DeliveryPrefCard({
     user.deliveryMethod === 'sf_station' || user.deliveryMethod === 'sf_locker'
       ? user.deliveryMethod
       : 'address';
+  // v2.2.28（老闆回報「註冊揀咗站但會員中心寫未揀」）：舊路線可能得 defaultStationId
+  // 冇 pickupPoint 站名快照；摘要用站點清單反查站名補位（淨喺缺快照時先查）
+  const needResolve =
+    currentMethod !== 'address' && !user.pickupPoint?.trim() && !!user.defaultStationId;
+  const resolveQuery = trpc.vip.listStations.useQuery(
+    { region: user.defaultRegion === 'MO' ? 'MO' : 'HK' },
+    { enabled: needResolve, retry: false },
+  );
+  const resolvedStationName = needResolve
+    ? ((resolveQuery.data ?? []) as { id: string; name: string }[]).find(
+        (s) => s.id === user.defaultStationId,
+      )?.name
+    : undefined;
+  const stationLabel = user.pickupPoint?.trim() || resolvedStationName || '';
   const summary =
     currentMethod === 'address'
       ? user.address?.trim()
         ? `送貨上門（${user.address.trim()}）`
         : '送貨上門（地址未填寫，可以喺上面資料卡「地址」行填）'
-      : `${METHOD_FULL_LABEL[currentMethod]}${user.pickupPoint?.trim() ? `：${user.pickupPoint.trim()}` : '（未揀站點）'}${user.defaultRegion === 'MO' ? '（澳門）' : ''}`;
+      : `${METHOD_FULL_LABEL[currentMethod]}${stationLabel ? `：${stationLabel}` : '（未揀站點）'}${user.defaultRegion === 'MO' ? '（澳門）' : ''}`;
 
   const startEdit = () => {
     setEditing(true);
@@ -77,7 +91,8 @@ export default function DeliveryPrefCard({
     setMethod(currentMethod);
     setRegion(user.defaultRegion === 'MO' ? 'MO' : 'HK');
     setStationId(user.defaultStationId ?? undefined);
-    setStationName(user.pickupPoint?.trim() || undefined);
+    // v2.2.28：冇站名快照就用反查返嚟嘅名，儲存時順手補寫返快照
+    setStationName(user.pickupPoint?.trim() || resolvedStationName || undefined);
   };
 
   const save = async () => {

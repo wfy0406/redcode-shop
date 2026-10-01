@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ExternalLink, Play } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
@@ -35,6 +35,9 @@ export default function LiveNowSection() {
   // 撳嗰下先 mount iframe，等於將放大睇嘅成功路線搬埋落原位播放器。
   const [playing, setPlaying] = useState(false);
   const [full, setFull] = useState(false);
+  // v2.2.28（老闆回報「縮圖壞咗」）：thumbUrl 係後端代摷 FB 圖，FB 對 server IP 時好時壞；
+  // 載入失敗即刻落品牌光暈海報，永遠唔出 broken icon；換場直播自動重試新縮圖
+  const [thumbBroken, setThumbBroken] = useState(false);
 
   const liveQuery = trpc.push.currentLive.useQuery(undefined, {
     refetchInterval: 60_000,
@@ -48,6 +51,11 @@ export default function LiveNowSection() {
   });
 
   const live = liveQuery.data?.live ?? null;
+  // 換咗另一場直播（url 變）→ 縮圖狀態重設，新縮圖照試載
+  const liveUrl = live?.url ?? null;
+  useEffect(() => {
+    setThumbBroken(false);
+  }, [liveUrl]);
   if (!live) return null;
 
   const subscribed = !!statusQuery.data?.optIn && (statusQuery.data?.activeDevices ?? 0) > 0;
@@ -183,12 +191,13 @@ export default function LiveNowSection() {
               style={{ borderColor: 'rgba(255, 0, 84, 0.4)', background: 'var(--space-1)' }}
             >
               <div className="relative aspect-[9/16] w-full">
-                {live.thumbUrl && (
+                {live.thumbUrl && !thumbBroken && (
                   <img
                     src={live.thumbUrl}
                     alt=""
                     aria-hidden="true"
                     className="absolute inset-0 h-full w-full object-cover"
+                    onError={() => setThumbBroken(true)}
                   />
                 )}
                 {/* v2.2.27：iframe 只會喺客人撳 ▶ 嗰下先 mount（手勢載入）——
@@ -239,11 +248,12 @@ export default function LiveNowSection() {
               aria-label="一撳即播直播（有聲）"
             >
               <div className="relative aspect-[9/16] w-full">
-                {live.thumbUrl ? (
+                {live.thumbUrl && !thumbBroken ? (
                   <img
                     src={live.thumbUrl}
                     alt="直播現場縮圖"
                     className="absolute inset-0 h-full w-full object-cover"
+                    onError={() => setThumbBroken(true)}
                   />
                 ) : (
                   <div

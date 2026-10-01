@@ -490,13 +490,30 @@ export default function SfStations() {
             >
               {busy && nearest.mode === 'address' ? '搵緊…' : '搵最近站點'}
             </button>
+            {/* v2.2.28（老闆指令「GPS logo 整靚啲，站點查詢都要」）：
+                雷達 GPS 晶片＋聲納光圈，同註冊／結帳／會員中心嘅定位制同一套設計 */}
             <button
               type="button"
               onClick={findByGeolocation}
               disabled={busy}
-              className="inline-flex shrink-0 items-center gap-1.5 self-start text-[13px] text-txt-3 transition-colors duration-150 hover:text-txt-1 disabled:opacity-40 sm:self-auto"
+              className="inline-flex shrink-0 items-center gap-2 self-start text-[13px] font-medium text-gold transition-colors duration-150 hover:text-gold-soft disabled:opacity-40 sm:self-auto"
             >
-              <LocateFixed size={14} aria-hidden="true" />
+              <span
+                className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                style={{
+                  background: 'rgba(245,197,24,0.10)',
+                  border: '1px solid rgba(245,197,24,0.4)',
+                }}
+              >
+                <LocateFixed size={14} aria-hidden="true" />
+                {!busy && (
+                  <span
+                    className="sfst-geo-ring pointer-events-none absolute inset-0 rounded-full"
+                    style={{ border: '1px solid rgba(245,197,24,0.45)' }}
+                    aria-hidden="true"
+                  />
+                )}
+              </span>
               {busy && nearest.mode === 'geo' ? '定位中…' : '用我而家嘅位置'}
             </button>
           </div>
@@ -807,6 +824,18 @@ export default function SfStations() {
 
       {/* 設預設成功 toast（跟會員中心玻璃 toast pattern） */}
       <AccountToastStack toasts={toasts} />
+
+      {/* GPS 聲納光圈：淨 transform/opacity（老闆鐵律）；reduced-motion 停 */}
+      <style>{`
+        .sfst-geo-ring { animation: sfst-geo-sonar 2s cubic-bezier(0, 0, 0.2, 1) infinite; will-change: transform, opacity; }
+        @keyframes sfst-geo-sonar {
+          0% { transform: scale(1); opacity: 0.85; }
+          80%, 100% { transform: scale(1.8); opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .sfst-geo-ring { animation: none; }
+        }
+      `}</style>
     </div>
   );
 }

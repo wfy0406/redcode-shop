@@ -66,6 +66,9 @@ export default function Register() {
   const [deliveryMethod, setDeliveryMethod] = useState<'address' | 'sf_station' | 'sf_locker'>('address');
   // 自取站點（v2.1.0）：RegionStationPicker 揀（唔再自由填字）；國外單唔揀得自取
   const [stationId, setStationId] = useState<string | undefined>(undefined);
+  // v2.2.28（老闆回報「註冊揀咗站但會員中心寫未揀」）：連站名快照一齊存，
+  // 會員中心摘要／結帳顯示／WMS／email 都係用呢個名
+  const [stationName, setStationName] = useState<string | undefined>(undefined);
   const [age, setAge] = useState('');
   const [birthMonth, setBirthMonth] = useState('');
   // 直接促銷同意（2026-08-05 Glo 要求，PDPO：唔可以預先剔選，要會員主動剔先算同意）
@@ -120,7 +123,9 @@ export default function Register() {
         ...(address.trim() ? { address: address.trim() } : {}),
         deliveryMethod: effectiveMethod,
         region,
-        ...(effectiveMethod !== 'address' && stationId ? { stationId } : {}),
+        ...(effectiveMethod !== 'address' && stationId
+          ? { stationId, pickupPoint: stationName }
+          : {}),
         ...(age.trim() ? { age: Number(age) } : {}),
         ...(birthMonth ? { birthMonth: Number(birthMonth) } : {}),
         marketingOptIn: agreeMarketing,
@@ -313,6 +318,7 @@ export default function Register() {
                       if (disabled || active) return;
                       setDeliveryMethod(value);
                       setStationId(undefined);
+                      setStationName(undefined);
                     }}
                     disabled={disabled}
                     aria-pressed={active}
@@ -354,8 +360,9 @@ export default function Register() {
                   region={region === 'MO' ? 'MO' : 'HK'}
                   method={deliveryMethod}
                   value={stationId}
-                  onChange={(id, _name, type) => {
+                  onChange={(id, name, type) => {
                     setStationId(id);
+                    setStationName(name);
                     // v2.2.25：附近清單揀咗邊型，類別自動跟（順豐站／自提點→sf_station；智能櫃→sf_locker）
                     if (type === 'SF_LOCKER') setDeliveryMethod('sf_locker');
                     else if (type === 'SF_STATION' || type === 'SERVICE_POINT') setDeliveryMethod('sf_station');

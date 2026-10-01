@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { keepPreviousData } from '@tanstack/react-query';
-import { ChevronDown, MapPin, Search, X } from 'lucide-react';
+import { ChevronDown, LocateFixed, MapPin, Search, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 
 /**
@@ -340,11 +340,22 @@ export default function RegionStationPicker({
               color: 'var(--gold)',
             }}
           >
+            {/* v2.2.28（老闆指令「整個 GPS logo 靚啲」）：雷達 GPS 晶片＋聲納光圈
+                （淨 transform/opacity，合鐵律；reduced-motion 停） */}
             <span
-              className="rsp-locate-dot inline-block h-2 w-2 shrink-0 rounded-full"
-              style={{ background: 'var(--gold)' }}
-              aria-hidden="true"
-            />
+              className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+              style={{
+                background: 'rgba(245,197,24,0.15)',
+                border: '1px solid rgba(245,197,24,0.45)',
+              }}
+            >
+              <LocateFixed size={15} aria-hidden="true" />
+              <span
+                className="rsp-locate-ring pointer-events-none absolute inset-0 rounded-full"
+                style={{ border: '1px solid rgba(245,197,24,0.5)' }}
+                aria-hidden="true"
+              />
+            </span>
             用我位置搵最近
             <span className="text-[11px] font-normal text-txt-3">三類站點一齊搵</span>
           </button>
@@ -595,13 +606,13 @@ export default function RegionStationPicker({
         .rsp-locate { transition: opacity 200ms ease, transform 200ms ease; }
         .rsp-locate:hover { opacity: 0.92; }
         .rsp-locate:active { transform: scale(0.985); }
-        .rsp-locate-dot { animation: rsp-locate-pulse 1.8s ease-in-out infinite; }
-        @keyframes rsp-locate-pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.35; transform: scale(1.45); }
+        .rsp-locate-ring { animation: rsp-locate-sonar 2s cubic-bezier(0, 0, 0.2, 1) infinite; will-change: transform, opacity; }
+        @keyframes rsp-locate-sonar {
+          0% { transform: scale(1); opacity: 0.85; }
+          80%, 100% { transform: scale(1.8); opacity: 0; }
         }
         @media (prefers-reduced-motion: reduce) {
-          .rsp-locate-dot { animation: none; }
+          .rsp-locate-ring { animation: none; }
         }
       `}</style>
     </div>
