@@ -66,9 +66,9 @@ export default function LiveNowSection() {
   // Samsung Internet「智能防追蹤」個別機會擋死 FB 嵌入播放器 → 呢類機全部
   // 行 v6 跳板直開 FB（app／網頁版），唔再喺官網入面塞 iframe
   const samsung = isSamsungInternet();
-  // v2.2.30（老闆實測：iPhone 原位播睇唔到、放大睇 overlay 播到）：
-  // iOS Safari iframe＋overflow-hidden 圓角容器 hit-test bug → iPhone 海報一撳
-  // 直接開全屏 overlay（實證 work 嘅路線），唔再試原位 iframe
+  // v2.2.32（老闆指令「iphone 淨係直播唔係站內播，用 live go 果頁轉去 facebook」）：
+  // iPhone／iPad 睇直播一撳就行 v6 跳板去 FB（4 秒自動網頁版條片＋金掣試 app），
+  // 唔再開站內全屏 overlay；直播重溫嗰邊維持 overlay 唔郁
   const apple = isAppleMobile();
 
   const subscribed = !!statusQuery.data?.optIn && (statusQuery.data?.activeDevices ?? 0) > 0;
@@ -268,19 +268,15 @@ export default function LiveNowSection() {
               type="button"
               onClick={() => {
                 // Samsung 機防追蹤會擋死 FB iframe → 直接行跳板去 FB，保證睇到
-                if (samsung) {
+                // iPhone（v2.2.32 老闆指令）：直播唔站內播，一樣行 v6 跳板去 FB
+                if (samsung || apple) {
                   openFacebookLive(live.url);
-                  return;
-                }
-                // iPhone 原位 iframe 撳唔郁（iOS overflow-hidden bug）→ 直開全屏 overlay
-                if (apple) {
-                  setFull(true);
                   return;
                 }
                 setPlaying(true);
               }}
               className="livenow-poster group relative block w-full text-left"
-              aria-label={samsung ? '去 Facebook 睇直播' : '一撳即播直播'}
+              aria-label={samsung || apple ? '去 Facebook 睇直播' : '一撳即播直播'}
             >
               <div className="relative aspect-[9/16] w-full">
                 {live.thumbUrl && !thumbBroken ? (
@@ -329,16 +325,20 @@ export default function LiveNowSection() {
                   {/* v2.2.30（老闆實測「寫住有聲按左都係無聲」）：手機瀏覽器硬規定，
                       iframe 載入嗰下手勢窗口已過，聲音一定被封，要喺播放器入面
                       再撳一下開聲——唔再承諾「有聲」，改教開聲 */}
-                  {samsung ? (
+                  {samsung || apple ? (
                     <>
                       <span className="font-serif-tc text-base font-semibold text-starlight">一撳去 Facebook 睇直播</span>
-                      <span className="text-[11px] text-txt-3">你部 Samsung 機會擋嵌入播放器，直接開 FB 最穩</span>
+                      <span className="text-[11px] text-txt-3">
+                        {samsung
+                          ? '你部 Samsung 機會擋嵌入播放器，直接開 FB 最穩'
+                          : '自動開 FB 網頁版，想用 FB App 撳金色掣就得'}
+                      </span>
                     </>
                   ) : (
                     <>
                       <span className="font-serif-tc text-base font-semibold text-starlight">一撳即播直播</span>
                       <span className="text-[11px] text-txt-3">
-                        {apple ? '會開全屏播放器，' : ''}無聲嘅話喺播放器入面撳一下開聲 🔊
+                        無聲嘅話喺播放器入面撳一下開聲 🔊
                       </span>
                     </>
                   )}

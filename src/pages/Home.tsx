@@ -530,10 +530,10 @@ export default function Home() {
           className="bottom-[8%] right-[4%] hidden w-40 xl:block"
         />
         {/* 手機版：細卡移去文字段以下左下角（唔再壓主標/介紹段），右下係 tonight's pick 卡 */}
-        {/* v2.2.31（老闆指令）：換做後備池 replay-17 嗰張（舉住手），動態同寶寶揮手打招呼 */}
+        {/* v2.2.31（老闆指令）：同關於我們對調——花裙轉圈動態相放首頁左下角，眼鏡揮手搬咗去主播專區 */}
         <FloatCard
-          src="/home/card-wave.jpg"
-          videoSrc="/home/card-wave.mp4"
+          src="/home/card-dress.jpg"
+          videoSrc="/home/card-dress.mp4"
           caption="live ♡"
           rotate={-4}
           parallax={0.8}

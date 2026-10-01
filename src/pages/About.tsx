@@ -238,9 +238,9 @@ export default function About() {
           <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
             {[
               // v2.2.31（老闆指令）：撤走本身 3 張靜態相，改播 3 條 AI 動態影片
-              // （後備縮圖池抽過嚟嘅 3 張：花裙／珍珠奶茶／紅外套工作枱），
+              // （眼鏡揮手／珍珠奶茶／紅外套工作枱；花裙嗰條對調咗去首頁左下浮卡），
               // 揮手／擺 pose 但人樣唔郁；mp4 未就位就靜態相兜底
-              { poster: '/about/host-1.jpg', video: '/about/host-1.mp4', alt: 'Glo Glo 花裙直播造型', cls: '' },
+              { poster: '/about/host-1.jpg', video: '/about/host-1.mp4', alt: 'Glo Glo 眼鏡造型同寶寶揮手', cls: '' },
               { poster: '/about/host-2.jpg', video: '/about/host-2.mp4', alt: 'Glo Glo 歎珍珠奶茶', cls: 'md:mt-10' },
               { poster: '/about/host-3.jpg', video: '/about/host-3.mp4', alt: 'Glo Glo 直播工作枱', cls: 'col-span-2 md:col-span-1 md:mt-20' },
             ].map((photo, i) => (

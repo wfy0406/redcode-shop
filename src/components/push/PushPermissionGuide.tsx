@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Bell, Check, ExternalLink, X } from 'lucide-react';
 import { subscribeLivePush } from '@/lib/pushClient';
 
@@ -183,7 +184,11 @@ export default function PushPermissionGuide({
 
   const close = () => onClose(step === 'success');
 
-  return (
+  // v2.2.32（老闆實測：Samsung「開播通知」modal 跑晒位、iPhone 要放大先睇到）：
+  // 首頁嗰個掛載點喺 hero-enter 動畫 div 入面——transform 緊嘅祖先會令 position:fixed
+  // 以佢做定位基準（唔再係 viewport），成個 modal 縮埋一角落。改 portal 直掛 body，
+  // 邊度 mount 都一定全屏置中；純排版修正，三態邏輯（LivePushEntry）完全冇郁。
+  return createPortal(
     <div
       className="fixed inset-0 z-[80] flex items-end justify-center px-4 pb-6 sm:items-center sm:pb-0"
       role="dialog"
@@ -410,6 +415,7 @@ export default function PushPermissionGuide({
           .push-guide-in { animation: none; }
         }
       `}</style>
-    </div>
+    </div>,
+    document.body,
   );
 }
