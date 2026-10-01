@@ -6,6 +6,55 @@ import path from "path";
 
 type App = Hono<{ Bindings: HttpBindings }>;
 
+// v2.2.21（E2）逐頁 SEO：BrowserRouter 遷移後每條路由係真 URL，server 喺 notFound
+// fallback 出 index.html 前按頁面注入專屬 title/description/og:url/canonical。
+// 文案同 src/lib/seo.ts PAGE_SEO 保持一致（嗰邊係前端轉頁後嘅動態更新；
+// 呢邊係 server 首口 HTML，crawler 唔行 JS 全靠佢）。
+const ROUTE_SEO: Record<string, { title: string; description: string }> = {
+  "/products": {
+    title: "全部貨品｜RedCode Fashion Design",
+    description:
+      "RedCode 直播精選女裝全部貨品，直播優惠價發售，順豐站/自提點/智能櫃自取，香港女裝網購。",
+  },
+  "/live": {
+    title: "直播重溫｜RedCode Fashion Design",
+    description: "錯過直播唔緊要，RedCode 直播重溫隨時睇，直播優惠繼續生效，睇中即刻落單。",
+  },
+  "/about": {
+    title: "關於我們｜RedCode Fashion Design",
+    description:
+      "RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。",
+  },
+  "/vip": {
+    title: "VIP 會員｜RedCode Fashion Design",
+    description: "RedCode VIP 會員專享折扣同禮遇，消費累積升級，直播粉絲專屬福利。",
+  },
+  "/sf-stations": {
+    title: "順豐自取點｜RedCode Fashion Design",
+    description: "搜尋全港順豐站、自提點同智能櫃，落單揀最近嘅自取點，香港女裝網購取貨更方便。",
+  },
+  "/privacy": {
+    title: "私隱政策｜RedCode Fashion Design",
+    description: "RedCode Fashion Design 私隱政策——我哋點樣收集、使用同保障你嘅個人資料。",
+  },
+  "/terms": {
+    title: "服務條款｜RedCode Fashion Design",
+    description: "RedCode Fashion Design 服務條款——購物、退換貨同會員制度嘅使用細則。",
+  },
+};
+
+// 私人/工具頁：唔入搜尋索引，robots 改 noindex, nofollow（title/description 照預設）
+const NOINDEX_EXACT = [
+  "/cart",
+  "/checkout",
+  "/account",
+  "/orders",
+  "/payment",
+  "/login",
+  "/register",
+  "/vip-verify",
+];
+
 export function serveStaticFiles(app: App) {
   const distPath = path.resolve(import.meta.dirname, "../dist/public");
 
@@ -69,6 +118,22 @@ export function serveStaticFiles(app: App) {
       const proto = c.req.header("x-forwarded-proto") ?? new URL(c.req.url).protocol.replace(":", "");
       const host = c.req.header("x-forwarded-host") ?? c.req.header("host") ?? new URL(c.req.url).host;
       content = await injectProductOg(content, Number(productMatch[1]), `${proto}://${host}`);
+    } else {
+      // v2.2.21（E2）逐頁 SEO：公開頁注入專屬 meta；私人/工具頁 noindex；
+      // 其他未知路徑照舊派預設 index.html
+      const { injectRouteMeta } = await import("./og");
+      const normPath = reqPath.length > 1 ? reqPath.replace(/\/+$/, "") : reqPath;
+      const pageSeo = ROUTE_SEO[normPath];
+      if (pageSeo) {
+        content = injectRouteMeta(content, { ...pageSeo, path: normPath });
+      } else if (
+        NOINDEX_EXACT.includes(normPath) ||
+        normPath.startsWith("/receipt/") ||
+        normPath === "/admin" ||
+        normPath.startsWith("/admin/")
+      ) {
+        content = injectRouteMeta(content, { noindex: true });
+      }
     }
     return c.html(content);
   });

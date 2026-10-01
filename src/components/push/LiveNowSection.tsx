@@ -22,7 +22,7 @@ import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
  * - 右側海報卡：慢浮（translateY）＋播放掣 ping 環（scale＋opacity 擴散）
  * - 右側海報卡：v2.2.8 起後端 resolveFbEmbedUrl 認到影片 ID（短鏈都解）
  *   → 撳 ▶ 原位載入 FB 播放器，唔離開官網都睇到直播；
- *   認唔到 → 成張卡撳得，openFacebookLive 深鏈直入 FB app（冇裝→網頁版）。
+ *   認唔到 → 成張卡撳得，openFacebookLive 經 /live-go-v6.html 跳板去條片（推播成功路線：iPhone 網頁版條片＋金掣試 app、Android https-intent 直開 app）。
  */
 export default function LiveNowSection() {
   const { user } = useAuth();
@@ -169,7 +169,7 @@ export default function LiveNowSection() {
           {/*
             右：海報卡（v2.2.8）
             後端認到影片 ID → 撳 ▶ 原位變 FB 播放器（官網直接睇直播）；
-            認唔到 → 成張卡撳得，openFacebookLive 深鏈直入 FB app。
+            認唔到 → 成張卡撳得，openFacebookLive 經 v6 跳板去 FB 條片（推播成功路線）。
             動感：成卡慢浮（translateY）、播放掣 ping 環擴散（scale＋opacity）。
           */}
           {playing && live.embedUrl ? (

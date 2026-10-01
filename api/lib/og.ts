@@ -18,6 +18,68 @@ function esc(s: string): string {
  * og:title / og:description / og:image。 crawler 唔行 JS，一定要 server 出。
  * 搵唔到商品或 DB 出错：原封不動回 html（OG 失敗唔可以阻正常出頁）。
  */
+/** 逐頁 SEO 注入參數；title/description/path 唔俾就照 index.html 預設 */
+export interface RouteMeta {
+  title?: string;
+  description?: string;
+  path?: string;
+  noindex?: boolean;
+}
+
+/**
+ * 逐頁 SEO（v2.2.21 E2）：BrowserRouter 遷移後每條路由係真 URL，server 喺
+ * notFound fallback 出 index.html 前，按頁面注入專屬 title / description /
+ * og:title / og:description / og:url / canonical（https://redcode.red{path}）；
+ * noindex=true 時 robots meta 改做 `noindex, nofollow`（冇就先加一條）。
+ * 純字串操作，pattern 對唔上就靜靜雞 skip，絕對唔可以阻正常出頁。
+ */
+export function injectRouteMeta(html: string, meta: RouteMeta): string {
+  try {
+    let out = html;
+    if (meta.title) {
+      const t = esc(meta.title);
+      out = out.replace(/<title>[^<]*<\/title>/, `<title>${t}</title>`);
+      out = out.replace(
+        /<meta\s+property="og:title"\s+content="[^"]*"\s*\/>/,
+        `<meta property="og:title" content="${t}" />`,
+      );
+    }
+    if (meta.description) {
+      const d = esc(meta.description);
+      out = out.replace(
+        /<meta\s+name="description"\s+content="[^"]*"\s*\/>/,
+        `<meta name="description" content="${d}" />`,
+      );
+      out = out.replace(
+        /<meta\s+property="og:description"\s+content="[^"]*"\s*\/>/,
+        `<meta property="og:description" content="${d}" />`,
+      );
+    }
+    if (meta.path) {
+      const url = esc(`https://redcode.red${meta.path}`);
+      out = out.replace(
+        /<meta\s+property="og:url"\s+content="[^"]*"\s*\/>/,
+        `<meta property="og:url" content="${url}" />`,
+      );
+      out = out.replace(
+        /<link\s+rel="canonical"\s+href="[^"]*"\s*\/>/,
+        `<link rel="canonical" href="${url}" />`,
+      );
+    }
+    if (meta.noindex) {
+      const robots = '<meta name="robots" content="noindex, nofollow" />';
+      if (/<meta\s+name="robots"\s+content="[^"]*"\s*\/>/.test(out)) {
+        out = out.replace(/<meta\s+name="robots"\s+content="[^"]*"\s*\/>/, robots);
+      } else {
+        out = out.replace("</head>", `    ${robots}\n  </head>`);
+      }
+    }
+    return out;
+  } catch {
+    return html;
+  }
+}
+
 export async function injectProductOg(html: string, id: number, origin: string): Promise<string> {
   try {
     const db = getDb();
@@ -91,6 +153,19 @@ export async function injectProductOg(html: string, id: number, origin: string):
           itemCondition: "https://schema.org/NewCondition",
         },
       };
+      // SEO（v2.2.21 E2）：BreadcrumbList JSON-LD（首頁 > 全部貨品 > 產品名），
+      // 放 Product JSON-LD 隔籬；同樣防 </script> 截斷做 < escape。
+      const breadcrumbLd = {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "首頁", item: `${origin}/` },
+          { "@type": "ListItem", position: 2, name: "全部貨品", item: `${origin}/products` },
+          { "@type": "ListItem", position: 3, name: p.name, item: pageUrl },
+        ],
+      };
+      const breadcrumbTag = `<script type="application/ld+json">${JSON.stringify(breadcrumbLd).replace(/</g, "\\u003c")}</script>`;
+      out = out.replace("</head>", `    ${breadcrumbTag}\n  </head>`);
       // 防 </script> 截斷：JSON 入面所有 < 換做 \u003c
       const jsonLdTag = `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>`;
       out = out.replace("</head>", `    ${jsonLdTag}\n  </head>`);

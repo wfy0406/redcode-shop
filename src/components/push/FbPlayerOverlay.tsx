@@ -23,7 +23,7 @@ export default function FbPlayerOverlay({
   onClose,
 }: {
   src: string;
-  /** v2.2.12（老闆指令）：底部「去 Facebook 睇」——有寶寶想返 FB app 留言互動 */
+  /** v2.2.12（老闆指令）：底部「去 Facebook 睇」——有寶寶想返 FB 留言互動；v2.2.21 起經 /live-go-v6.html 跳板（推播成功路線），保證落到指定條片 */
   fbUrl?: string;
   title: string;
   onClose: () => void;
@@ -66,7 +66,7 @@ export default function FbPlayerOverlay({
           title={title}
         />
       </div>
-      {/* 底部「去 Facebook 睇」：想留言互動嘅寶寶一撳返 FB app */}
+      {/* 底部「去 Facebook 睇」：想留言互動嘅寶寶一撳經 v6 跳板去 FB 條片（推播成功路線） */}
       {fbUrl && (
         <button
           type="button"

@@ -14,7 +14,7 @@ import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
  * · 頂：[01] 編號＋[日期] mono 金；REPLAY 膠囊；中央金圈 ▶（脈衝環）
  * · 底：暗 gradient 壓 serif 場次名
  * · 撳 ▶ → 官網內全屏直度（9:16）播放器（FbPlayerOverlay），唔彈 FB
- * · 卡底 meta：「去 Facebook 睇 ↗」→ openFacebookLive 直彈 FB app
+ * · 卡底 meta：「去 Facebook 睇 ↗」→ openFacebookLive 經 /live-go-v6.html 跳板（推播成功路線：iPhone 去網頁版條片＋金掣試 app、Android https-intent 直開 app 指定條片）
  *   （老闆明言要保留：有寶寶想返 FB app 睇／留言）
  * · 手機左右滑動（scroll-snap），右邊緣淡出提示仲有下一張
  * 冇回顧時成區唔 render。

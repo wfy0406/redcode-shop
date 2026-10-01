@@ -1,10 +1,9 @@
 /// <reference types="vite/client" />
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { trpc } from '@/providers/trpc';
 
 /**
- * v2.2.0 公開會員驗證頁（/#/vip-verify?c=RC-000128&s=hex）
+ * v2.2.0 公開會員驗證頁（/vip-verify?c=RC-000128&s=hex）
  * 客人用第二部手機掃證書 QR 之後見到嘅門面 —— 英倫 heritage 奢侈感：
  * 深 espresso 底 #17100b、奶油字 #f5ead6、金 accent #c9a35f、次級 #fce1b6。
  *
@@ -47,26 +46,15 @@ type VerifyOk = {
   durationMonths: number;
 };
 
-/* ===== HashRouter query 解析：URL 係 /#/vip-verify?c=…&s=…，
-   query 藏喺 location.hash 入面（唔係 location.search） ===== */
-function readHashQuery(): { c: string; s: string } {
-  const hash = window.location.hash;
-  const qIdx = hash.indexOf('?');
-  const params = new URLSearchParams(qIdx >= 0 ? hash.slice(qIdx + 1) : '');
+/* ===== BrowserRouter query 解析：URL 係 /vip-verify?c=…&s=…，
+   舊 hash 連結（/#/vip-verify?c=…&s=…）由 main.tsx 開機收容 replaceState 去正式路徑，
+   所以呢度同 Payment/Checkout 一樣用 useSearchParams 讀 location.search ===== */
+function useVerifyQuery(): { c: string; s: string } {
+  const [searchParams] = useSearchParams();
   return {
-    c: (params.get('c') ?? '').trim(),
-    s: (params.get('s') ?? '').trim(),
+    c: (searchParams.get('c') ?? '').trim(),
+    s: (searchParams.get('s') ?? '').trim(),
   };
-}
-
-function useHashQuery() {
-  const [query, setQuery] = useState(readHashQuery);
-  useEffect(() => {
-    const onHashChange = () => setQuery(readHashQuery());
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
-  return query;
 }
 
 /* ===== 顯示格式 helper ===== */
@@ -333,7 +321,7 @@ function LoadingState() {
 }
 
 export default function VipVerify() {
-  const { c, s } = useHashQuery();
+  const { c, s } = useVerifyQuery();
   const linkComplete = c.length > 0 && s.length > 0;
 
   const query = trpc.vip.verifyVipCert.useQuery(

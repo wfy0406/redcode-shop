@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 import { Clock, ExternalLink, Facebook, MessageCircle, Moon, Sparkles, Sun, Sunrise, Zap } from 'lucide-react';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import LiveNowSection from '@/components/push/LiveNowSection';
@@ -75,6 +77,20 @@ const STEPS = [
 ];
 
 export default function Live() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // 首頁 hero「直播重溫」直達（<Link state={{ scrollTo: 'live-history' }}>）：
+  // 等頁面 render 完（約 150ms）先 smooth scroll 落 #live-history，然後清 state 免 refresh 再碌
+  useEffect(() => {
+    if ((location.state as { scrollTo?: string } | null)?.scrollTo !== 'live-history') return;
+    const timer = window.setTimeout(() => {
+      document.getElementById('live-history')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      navigate('.', { replace: true, state: null });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [location.state, navigate]);
+
   const embedRef = useReveal<HTMLDivElement>();
   const scheduleRef = useReveal<HTMLDivElement>();
   const stepsRef = useReveal<HTMLDivElement>();

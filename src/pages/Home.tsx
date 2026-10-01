@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { Link } from 'react-router';
-import { Clapperboard, Facebook, MessageCircle, Play } from 'lucide-react';
+import { Bell, Clapperboard, Facebook, MessageCircle, Play, ShoppingBag } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
@@ -54,6 +60,17 @@ function mapDbProduct(p: {
 // TODO: 換返 RedCode 真 WhatsApp 號碼
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
+
+/* ---------- Hero CTA pointer spotlight（musepool 方向，GPU-only） ----------
+   pointermove/pointerdown 將指針相對座標寫入 --mx/--my CSS 變數；
+   光暈層用 transform: translate3d(calc(var(--mx)…)) 跟手，唔郁 layout 屬性。
+   手機無 hover：pointerdown 嗰下光暈喺觸點閃一下（opacity 交俾 :active）。 */
+function trackCtaSpotlight(e: ReactPointerEvent<HTMLElement>) {
+  const el = e.currentTarget;
+  const rect = el.getBoundingClientRect();
+  el.style.setProperty('--mx', `${e.clientX - rect.left}px`);
+  el.style.setProperty('--my', `${e.clientY - rect.top}px`);
+}
 
 /* ---------- §4.3 Hero 浮卡（拍立得樣式 + scroll 視差） ---------- */
 interface FloatCardProps {
@@ -192,8 +209,9 @@ const STATIC_WALL_PHOTOS = [
   { src: '/gloglo-2.jpg', alt: 'Glo Glo 同店狗合照二' },
 ];
 
-/* ---------- 直播開播通知常設入口（v2.2.0）：低調底線文字掣；冇直播都見到 ----------
-   未登入 → Link /login；登入未訂閱 → PushPermissionGuide；已訂閱 →「已開啟通知 ✓」 */
+/* ---------- 直播開播通知常設入口（v2.2.0）：冇直播都見到 ----------
+   未登入 → Link /login；登入未訂閱 → PushPermissionGuide；已訂閱 →「已開啟通知 ✓」
+   （邏輯一字唔郁；淨係換皮融入 hero CTA pill cluster，第四粒 ghost 掣） */
 function LivePushEntry() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -207,33 +225,54 @@ function LivePushEntry() {
 
   if (!user) {
     return (
-      <Link
-        to="/login"
-        className="inline-flex w-fit items-center gap-2 border-b pb-1 text-sm font-medium text-txt-3 transition-opacity hover:opacity-70"
-        style={{ borderColor: 'var(--space-line)' }}
+      <div
+        className="hero-enter col-span-2 sm:col-span-1"
+        style={{ animationDelay: '0.89s' }}
       >
-        🔴 接收直播開播通知
-      </Link>
+        <Link
+          to="/login"
+          onPointerMove={trackCtaSpotlight}
+          onPointerDown={trackCtaSpotlight}
+          className="hero-cta hero-cta-ghost w-full sm:w-auto"
+        >
+          <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-gold" />
+          <span className="relative z-10 inline-flex items-center justify-center gap-2">
+            <Bell size={15} aria-hidden="true" />
+            接收直播開播通知
+          </span>
+        </Link>
+      </div>
     );
   }
 
   if (subscribed) {
     return (
-      <span className="inline-flex w-fit items-center gap-2 pb-1 text-sm text-txt-3">
+      <span
+        className="hero-enter col-span-2 inline-flex w-full items-center justify-center gap-2 py-2 text-sm text-txt-3 sm:col-span-1 sm:w-auto"
+        style={{ animationDelay: '0.89s' }}
+      >
         🔴 已開啟通知 ✓
       </span>
     );
   }
 
   return (
-    <>
+    <div
+      className="hero-enter col-span-2 sm:col-span-1"
+      style={{ animationDelay: '0.89s' }}
+    >
       <button
         type="button"
         onClick={() => setShowGuide(true)}
-        className="inline-flex w-fit items-center gap-2 border-b pb-1 text-sm font-medium text-txt-3 transition-opacity hover:opacity-70"
-        style={{ borderColor: 'var(--space-line)' }}
+        onPointerMove={trackCtaSpotlight}
+        onPointerDown={trackCtaSpotlight}
+        className="hero-cta hero-cta-ghost w-full sm:w-auto"
       >
-        🔴 接收直播開播通知
+        <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-gold" />
+        <span className="relative z-10 inline-flex items-center justify-center gap-2">
+          <Bell size={15} aria-hidden="true" />
+          接收直播開播通知
+        </span>
       </button>
       <PushPermissionGuide
         open={showGuide}
@@ -245,7 +284,7 @@ function LivePushEntry() {
           }
         }}
       />
-    </>
+    </div>
   );
 }
 
@@ -476,28 +515,60 @@ export default function Home() {
               RedCode Fashion Design —— 香港女裝直播品牌。主播 Glo Glo 每晚喺 Facebook
               開直播，即場著身、即場開賣。睇啱嘅款，呢度全部搵得返。
             </p>
-            <div
-              className="hero-enter mt-10 flex flex-col gap-4 sm:flex-row sm:items-center"
-              style={{ animationDelay: '0.65s' }}
-            >
-              <Link
-                to="/live"
-                className="inline-flex w-fit items-center gap-2 border-b pb-1 font-serif-tc text-lg font-semibold text-gold-soft transition-opacity hover:opacity-70"
-                style={{ borderColor: 'var(--gold)' }}
-              >
-                去最新直播款 →
-              </Link>
-              <a
-                href={WHATSAPP_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex w-fit items-center gap-2 border-b pb-1 text-sm font-medium text-txt-2 transition-opacity hover:opacity-70"
-                style={{ borderColor: 'var(--space-line)' }}
-              >
-                <MessageCircle size={16} aria-hidden="true" />
-                WhatsApp 問款
-              </a>
-              {/* 直播開播通知常設入口（v2.2.0）：低調第三掣，冇直播都見到 */}
+            {/* Hero CTA 掣組（musepool 方向）：pill cluster，手機 2×2 grid（primary 全闊做主角），
+                sm 以上 flex wrap 橫排；hero-enter 0.65s 起逐粒 +80ms stagger。
+                光暈/掃光/hover 全部淨係 transform + opacity（GPU-only，唔整慢客人電話）。 */}
+            <div className="mt-10 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center sm:gap-4">
+              {/* 1. 即睇商品（primary 最搶眼）：實心品牌粉紅 + 獨有 skew 掃光 loop */}
+              <div className="hero-enter col-span-2 sm:col-span-1" style={{ animationDelay: '0.65s' }}>
+                <Link
+                  to="/products"
+                  onPointerMove={trackCtaSpotlight}
+                  onPointerDown={trackCtaSpotlight}
+                  className="hero-cta hero-cta-primary w-full sm:w-auto"
+                >
+                  <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-pink" />
+                  <span aria-hidden="true" className="hero-cta-shine" />
+                  <span className="relative z-10 inline-flex items-center justify-center gap-2">
+                    <ShoppingBag size={18} aria-hidden="true" />
+                    即睇商品
+                  </span>
+                </Link>
+              </div>
+              {/* 2. 追蹤 Facebook 專頁（outline 款） */}
+              <div className="hero-enter" style={{ animationDelay: '0.73s' }}>
+                <a
+                  href={FACEBOOK_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onPointerMove={trackCtaSpotlight}
+                  onPointerDown={trackCtaSpotlight}
+                  className="hero-cta hero-cta-outline w-full sm:w-auto"
+                >
+                  <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-pink" />
+                  <span className="relative z-10 inline-flex items-center justify-center gap-2 text-center leading-[1.35]">
+                    <Facebook size={16} aria-hidden="true" className="shrink-0" />
+                    追蹤我地 Facebook 專頁
+                  </span>
+                </a>
+              </div>
+              {/* 3. 直播重溫（outline/ghost 款）：直達 /live 嘅直播回顧區（Live.tsx 接 state 碌落 #live-history） */}
+              <div className="hero-enter" style={{ animationDelay: '0.81s' }}>
+                <Link
+                  to="/live"
+                  state={{ scrollTo: 'live-history' }}
+                  onPointerMove={trackCtaSpotlight}
+                  onPointerDown={trackCtaSpotlight}
+                  className="hero-cta hero-cta-outline w-full sm:w-auto"
+                >
+                  <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-gold" />
+                  <span className="relative z-10 inline-flex items-center justify-center gap-2">
+                    <Play size={16} aria-hidden="true" />
+                    直播重溫
+                  </span>
+                </Link>
+              </div>
+              {/* 4. 接收直播開播通知（LivePushEntry 邏輯唔郁，換皮融入 cluster） */}
               <LivePushEntry />
             </div>
           </div>
@@ -802,6 +873,100 @@ export default function Home() {
         }
         @media (prefers-reduced-motion: reduce) {
           .hero-enter { opacity: 1; animation: none; }
+        }
+
+        /* ===== Hero CTA 掣組（pill cluster + pointer spotlight）=====
+           老闆鐵律：動畫/transition 淨係 transform + opacity；
+           光暈層用 transform: translate3d 跟手（GPU-only），唔郁 width/top/left/box-shadow/filter。
+           淨係 primary 一粒有 looping 掃光，其餘三粒冇 loop 動畫。 */
+        .hero-cta {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          border-radius: 9999px;
+          text-decoration: none;
+          cursor: pointer;
+          transform: translateZ(0);
+          transition: transform var(--dur-micro) var(--ease-expo);
+        }
+        .hero-cta:hover { transform: translateY(-1px) translateZ(0); }
+        .hero-cta:active { transform: translateY(0) translateZ(0); }
+
+        /* primary：實心品牌粉紅，深字 var(--space-1) 對比 ≈4.9:1 過 AA；尺寸大一碼做主角 */
+        .hero-cta-primary {
+          padding: 15px 32px;
+          background: var(--pink);
+          color: var(--space-1);
+          font-size: 15px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+        }
+        /* outline：玻璃底 + hairline 邊，視覺重量次級 */
+        .hero-cta-outline {
+          padding: 12px 22px;
+          border: 1px solid var(--glass-border);
+          background: rgba(255, 255, 255, 0.05);
+          color: var(--text-1);
+          font-size: 14px;
+          font-weight: 600;
+        }
+        /* ghost（通知掣）：最收斂，融入 cluster 但唔搶戲 */
+        .hero-cta-ghost {
+          padding: 11px 20px;
+          border: 1px solid var(--space-line);
+          background: transparent;
+          color: var(--text-2);
+          font-size: 13px;
+          font-weight: 500;
+        }
+
+        /* pointer spotlight 光暈：固定 160px 圓，JS 寫 --mx/--my，translate3d 跟手；
+           平時 opacity 0，hover/按壓（:active 包手機 pointerdown）淡入 */
+        .hero-cta-glow {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 160px;
+          height: 160px;
+          border-radius: 9999px;
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 200ms ease-out;
+          transform: translate3d(calc(var(--mx, 80px) - 80px), calc(var(--my, 80px) - 80px), 0);
+        }
+        .hero-cta:hover .hero-cta-glow,
+        .hero-cta:active .hero-cta-glow { opacity: 1; }
+        .hero-cta-glow-pink {
+          background: radial-gradient(circle, rgba(255, 143, 191, 0.5) 0%, rgba(255, 143, 191, 0) 70%);
+        }
+        .hero-cta-glow-gold {
+          background: radial-gradient(circle, rgba(245, 197, 24, 0.42) 0%, rgba(245, 197, 24, 0) 70%);
+        }
+
+        /* primary 獨有掃光 loop（跟 btn-replay-shine 手法：淨 transform） */
+        .hero-cta-shine {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          left: 0;
+          width: 40%;
+          pointer-events: none;
+          background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+          transform: translateX(-160%) skewX(-18deg);
+          animation: hero-cta-shine 2.8s ease-in-out infinite;
+        }
+        @keyframes hero-cta-shine {
+          0% { transform: translateX(-160%) skewX(-18deg); }
+          55%, 100% { transform: translateX(330%) skewX(-18deg); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .hero-cta { transition: none; }
+          .hero-cta:hover, .hero-cta:active { transform: translateZ(0); }
+          .hero-cta-glow { display: none; }
+          .hero-cta-shine { display: none; animation: none; }
         }
       `}</style>
     </div>

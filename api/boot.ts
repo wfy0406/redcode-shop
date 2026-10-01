@@ -15,6 +15,8 @@ import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushEnd, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
+import { resolveFbThumb } from "./fbVideo";
+import { buildMerchantFeedXml } from "./merchantFeed";
 import { env } from "./lib/env";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
@@ -276,7 +278,12 @@ app.get("/sitemap.xml", async (c) => {
   const maskForLog = (msg: string) =>
     msg.replace(/https?:\/\/[^\s)】]+/gi, "〈網址已遮罩〉").slice(0, 300);
   const homeUrl = `<url><loc>https://redcode.red/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`;
-  let urls = homeUrl;
+  // v2.2.21（項目 F1）：公開靜態頁——weekly 0.6；首頁＋產品頁現有邏輯唔郁
+  const staticUrls = ["/products", "/live", "/about", "/vip", "/sf-stations", "/privacy", "/terms"].map(
+    (path) =>
+      `<url><loc>https://redcode.red${path}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>`,
+  );
+  let urls = [homeUrl, ...staticUrls].join("\n  ");
   try {
     const db = getDb();
     // 產品表冇 updatedAt 欄，lastmod 用 listedDate（上架日期，YYYY-MM-DD）
@@ -298,10 +305,10 @@ app.get("/sitemap.xml", async (c) => {
       const lastmod = Number.isNaN(d.getTime()) ? "" : `<lastmod>${d.toISOString().slice(0, 10)}</lastmod>`;
       return `<url><loc>${xmlEscape(`https://redcode.red/products/${p.id}`)}</loc>${lastmod}<priority>0.8</priority></url>`;
     });
-    urls = [homeUrl, ...productUrls].join("\n  ");
+    urls = [homeUrl, ...staticUrls, ...productUrls].join("\n  ");
   } catch (e) {
     console.error(
-      "[sitemap] 讀產品出錯（照出淨首頁版）:",
+      "[sitemap] 讀產品出錯（照出淨首頁＋靜態頁版）:",
       maskForLog(e instanceof Error ? e.message : String(e)),
     );
   }
@@ -310,6 +317,27 @@ app.get("/sitemap.xml", async (c) => {
     "Content-Type": "application/xml; charset=utf-8",
     "Cache-Control": "public, max-age=3600",
   });
+});
+
+// Google Merchant Center 產品 feed（v2.2.21 項目 F1）：RSS 2.0＋g namespace。
+// 同 sitemap 一樣註冊喺 serveStaticFiles(app) 之前，唔係會俾 SPA fallback 派 HTML。
+// 鐵律：壞咗回 500，但 error log 要遮罩 URL／明文。
+app.get("/merchant-feed.xml", async (c) => {
+  const maskForLog = (msg: string) =>
+    msg.replace(/https?:\/\/[^\s)】]+/gi, "〈網址已遮罩〉").slice(0, 300);
+  try {
+    const xml = await buildMerchantFeedXml();
+    return c.body(xml, 200, {
+      "Content-Type": "application/rss+xml; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    });
+  } catch (e) {
+    console.error(
+      "[merchant-feed] 出 feed 失敗:",
+      maskForLog(e instanceof Error ? e.message : String(e)),
+    );
+    return c.json({ error: "Feed temporarily unavailable" }, 500);
+  }
 });
 
 app.use("/api/trpc/*", async (c) => {
@@ -395,6 +423,74 @@ app.get("/api/products/:sku/images", async (c) => {
   const archived = Array.isArray(a?.imageUrls) ? (a.imageUrls as string[]) : [];
   if (archived.length === 0) return c.json({ imageUrls: null }, 404);
   return c.json({ imageUrls: archived.map((u) => `${base}${u}`) });
+});
+
+// v2.2.21（老闆實測：直播重溫縮圖全部跌落聚光燈 poster）：按需縮圖 proxy。
+// 舊做法係 server 摷 scontent CDN URL 畀客人部機直載——URL 有時效（oe/oh 參數）
+// 兼 FB 對 server IP 時好時壞 → 成日 404/灰圖。而家客人部機載我哋自己域名：
+// server 代摷（resolveFbThumb：oEmbed 先行，HTML og:image 兜底）→ 代載 bytes →
+// in-memory cache，唔會過期。任何失敗一律 404，前端 onError 跌落 poster，
+// 同舊行為一致，唔會更差。註冊一定要喺 app.all("/api/*") 同 serveStaticFiles 之前。
+// 鐵律：URL／明文唔准落 log——錯誤 log 淨落原因類別＋id 長度。
+const LIVE_THUMB_CACHE_CAP = 200;
+const LIVE_THUMB_MAX_BYTES = 2 * 1024 * 1024; // 2MB 上限，超過即棄（防大檔拖冧 memory）
+const liveThumbCache = new Map<string, { bytes: Buffer; contentType: string; at: number }>();
+app.get("/api/live-thumb/:id", async (c) => {
+  const id = c.req.param("id");
+  // 只准數字影片 ID（5–30 位）——擋 open proxy，唔畀任咩字串變成上游摷圖目標
+  if (!/^\d{5,30}$/.test(id)) {
+    return c.json({ error: "Not Found" }, 404);
+  }
+  const hit = liveThumbCache.get(id);
+  if (hit) {
+    // LRU：中咗就 delete+set 搬去尾（最近用），等逐出時淨係趕最耐冇用嗰啲
+    liveThumbCache.delete(id);
+    liveThumbCache.set(id, hit);
+    return c.body(hit.bytes, 200, {
+      "Content-Type": hit.contentType,
+      "Cache-Control": "public, max-age=86400",
+    });
+  }
+  const fail = (reason: string) => {
+    console.error(`[live-thumb] 摷唔到（${reason}，id 長度 ${id.length}）`);
+    return c.json({ error: "Not Found" }, 404);
+  };
+  const url = await resolveFbThumb(id).catch(() => null);
+  if (!url) return fail("no_thumb");
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: ctrl.signal,
+      headers: {
+        // 同 fbVideo 一款：扮普通瀏覽器
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
+      },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return fail("upstream_http");
+    // 上游 content-type 要 image/* 開頭先收，唔係就當摷唔到（防 FB 回 HTML 錯誤頁）
+    const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (!contentType.startsWith("image/")) return fail("bad_type");
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length > LIVE_THUMB_MAX_BYTES) return fail("too_big");
+    // in-memory LRU：滿咗逐出最耐冇用嗰條（Map 迭代序＝插入序，第一個 key 係最舊）
+    if (liveThumbCache.size >= LIVE_THUMB_CACHE_CAP) {
+      const oldest = liveThumbCache.keys().next().value;
+      if (oldest !== undefined) liveThumbCache.delete(oldest);
+    }
+    liveThumbCache.set(id, { bytes, contentType, at: Date.now() });
+    return c.body(bytes, 200, {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=86400",
+    });
+  } catch {
+    return fail("fetch_error");
+  }
 });
 
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));

@@ -89,8 +89,10 @@ export function thumbForId(id: string): string {
  * 做法：假扮嵌入播放器自己，問 plugins/video.php 攞播放器 HTML
  * （v2.2.9 實證呢條路 FB 對 data center IP 封得冇咁盡），
  * 喺 HTML 入面摷 og:image／"thumbnailImage" uri——係 scontent CDN 嘅真縮圖。
- * 摷到就回條 CDN URL 畀客人部機直載（唔經伺服器 proxy，慳流量）；
- * 摷唔到／被封 → null，前端自行跌落設計 poster。
+ * v2.2.21：scontent URL 有時效（oe/oh 參數），直載成日 404——所以而家由
+ * GET /api/live-thumb/:id（boot.ts）經呢度摷 URL 再代載 bytes 自 host，
+ * 客人部機淨係載我哋自己域名；摷唔到／被封 → null，endpoint 回 404，
+ * 前端自行跌落設計 poster。
  * cache：摷到 cache 6 個鐘（scontent URL 有時效，唔好 cache 死）；
  *        摷唔到只 cache 15 分鐘（等 FB 解封後快啲恢復）。
  */
@@ -126,16 +128,60 @@ function thumbFromHtml(html: string): string | null {
     if (m?.[1]) {
       const url = unescapeFbUrl(m[1]);
       // 安全：只准 FB CDN 域——唔好畀 HTML 入面嘅任咩 URL 變成我哋嘅「縮圖」
-      if (/^https:\/\/[^/]*\.(fbcdn\.net|fbsbx\.com)\//.test(url)) return url;
+      if (isFbCdnUrl(url)) return url;
     }
   }
   return null;
 }
 
-/** 摷縮圖嘅實際工序——分開埋「點解摷唔到」，後台預覽診斷用（v2.2.15） */
-type ThumbProbe = { url: string | null; reason: "ok" | "fetch_fail" | "no_match" };
+/** 摷縮圖嘅實際工序——分開埋「點解摷唔到」＋「邊個來源摷中」，後台預覽診斷用（v2.2.15） */
+type ThumbProbe = {
+  url: string | null;
+  reason: "ok_oembed" | "ok_html" | "fetch_fail" | "no_match";
+};
+
+/** 扮普通瀏覽器嘅 headers——oEmbed／video.php 兩條路線共用（同 resolveFbVideoId 一款） */
+const THUMB_FETCH_HEADERS = {
+  "user-agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
+} as const;
+
+/** 只准 FB CDN 域——唔好畀上游回嘅任咩 URL 變成我哋嘅「縮圖」 */
+function isFbCdnUrl(url: string): boolean {
+  return /^https:\/\/[^/]*\.(fbcdn\.net|fbsbx\.com)\//.test(url);
+}
 
 async function fetchThumb(id: string): Promise<ThumbProbe> {
+  // v2.2.21（老闆實測：縮圖全部跌落 poster）：第一來源改做 FB oEmbed。
+  // 舊路線摷 video.php 播放器 HTML，FB 對 data center IP 時好時壞 → 成日 fetch_fail；
+  // oEmbed 係官方公開 endpoint，回 JSON 直出 thumbnail_url，輕身兼冇咁易封。
+  // 摷唔到先落返原本嘅 HTML og:image 路線兜底。URL 唔落 log（鐵律）。
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(
+      `https://www.facebook.com/plugins/video/oembed.json?url=${encodeURIComponent(canonicalForId(id))}`,
+      {
+        method: "GET",
+        redirect: "follow",
+        signal: ctrl.signal,
+        headers: THUMB_FETCH_HEADERS,
+      },
+    );
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = (await res.json().catch(() => null)) as {
+        thumbnail_url?: unknown;
+      } | null;
+      const thumb = typeof data?.thumbnail_url === "string" ? data.thumbnail_url : null;
+      if (thumb && isFbCdnUrl(thumb)) return { url: thumb, reason: "ok_oembed" };
+    }
+    // oEmbed 非 200／冇 thumbnail_url／域唔啱：唔算敗，落返 HTML 路線
+  } catch {
+    // oEmbed 撞牆（timeout／網絡）：落返 HTML 路線
+  }
+
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
@@ -145,18 +191,13 @@ async function fetchThumb(id: string): Promise<ThumbProbe> {
         method: "GET",
         redirect: "follow",
         signal: ctrl.signal,
-        headers: {
-          // 同 resolveFbVideoId 一款：扮普通瀏覽器，fb 先肯回播放器 HTML
-          "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-          "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
-        },
+        headers: THUMB_FETCH_HEADERS,
       },
     );
     clearTimeout(timer);
     if (!res.ok) return { url: null, reason: "fetch_fail" };
     const thumb = thumbFromHtml(await res.text());
-    return thumb ? { url: thumb, reason: "ok" } : { url: null, reason: "no_match" };
+    return thumb ? { url: thumb, reason: "ok_html" } : { url: null, reason: "no_match" };
   } catch {
     return { url: null, reason: "fetch_fail" };
   }
@@ -174,10 +215,11 @@ export async function resolveFbThumb(id: string): Promise<string | null> {
   return probe.url;
 }
 
-/** 後台預覽診斷用（v2.2.15 老闆指令）：唔經 cache 即場摷，連「點解摷唔到」一齊回 */
+/** 後台預覽診斷用（v2.2.15 老闆指令）：唔經 cache 即場摷，連「點解摷唔到」一齊回；
+ *  v2.2.21 起 reason 標註邊個來源摷中：ok_oembed（官方 oEmbed JSON）／ok_html（播放器 HTML og:image） */
 export async function probeFbThumb(
   id: string,
-): Promise<{ url: string | null; reason: "ok" | "fetch_fail" | "no_match" }> {
+): Promise<{ url: string | null; reason: "ok_oembed" | "ok_html" | "fetch_fail" | "no_match" }> {
   return fetchThumb(id);
 }
 
