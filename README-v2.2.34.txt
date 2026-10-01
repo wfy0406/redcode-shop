@@ -1,6 +1,13 @@
-RedCode Shop v2.2.34（2026-10-02）
+RedCode Shop v2.2.34（2026-10-02，第二次打包：白線修正版）
 ==================================
 老闆指令逐條覆：
+0.「點解 logo 會出現一條白線？」→ 病根：舊 logo 摳圖用亮度 alpha 反預乘
+   （fg = rgb ÷ alpha），霓虹光暈邊緣 alpha 得 0.001–0.1 嘅微塵像素會被放大
+   幾百至一千倍，微弱反光＋噪點變成「FASHION DESIGN」下面一條淡白線。
+   修正：放大上限封頂 1÷0.35 ≈ 2.86 倍（微光保持微光，忠於原片）、
+   alpha < 8/255 全部歸零、透明區 RGB 清零（防編碼器漏色）。
+   三個 logo 檔全部重出（alpha 平面重新逐幀驗證），頁面 live 截圖放大 4 倍：
+   標語以下 0 個近白像素，白線已絕跡。
 1.「點解個 logo 係深色背景？」→ 你電話（Android／FB WebView）唔支持 mix-blend-screen
    疊影片，黑底現形。今版頂欄 logo 改真 alpha 影片，唔再靠 blend。
 2.「右邊跳緊果個有白邊」→ 白邊係 AI 影片帧本身殘留。今版用 RVM（Robust Video
@@ -31,9 +38,9 @@ RedCode Shop v2.2.34（2026-10-02）
   Android／桌面完全唔會載到
 
 新檔案：
-  public/logo-live-alpha.webm   309KB（頂欄動態 logo，真 alpha）
-  public/logo-live-anim.webp    611KB（iOS 動畫版，240w/10fps）
-  public/logo-live-poster.webp   35KB（透明靜態 logo＋小 Gloria，兜底）
+  public/logo-live-alpha.webm   164KB（頂欄動態 logo，真 alpha，白線修正版）
+  public/logo-live-anim.webp    580KB（iOS 動畫版，240w/10fps，同上修正）
+  public/logo-live-poster.webp   32KB（透明靜態 logo＋小 Gloria，同上修正）
   public/home/glo-poke-alpha.webm   284KB（左 cutout 真 alpha）
   public/home/glo-poke-anim.webp    358KB（iOS 動畫版）
   public/home/glo-heart-alpha.webm  318KB（右 cutout 真 alpha）
@@ -60,3 +67,6 @@ OpenArt：今輪用 175 credits（boba Kling 3.0 一條），餘額 3475。
   頁內 canvas 讀回每條都有 4000+ 真半透明像素（唔係黑磚），
   poster 播放後收埋，三張卡影片播放中，無水平溢出，無 404
 - 白邊檢查：v2 摳圖喺 magenta 底上無白圈無黑邊（截圖存證）
+- 白線覆查：新舊 webm 解碼逐幀對比（舊版標語下有淡白拖尾，新版乾淨）；
+  vite preview 實頁 1440＋390 截圖放大 4 倍，標語以下 0 個近白像素；
+  頁內 canvas probe 讀回 7200+ 真透明像素，alpha 運作正常
