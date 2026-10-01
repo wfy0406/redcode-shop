@@ -81,14 +81,35 @@ export default function Live() {
   const navigate = useNavigate();
 
   // 首頁 hero「直播重溫」直達（<Link state={{ scrollTo: 'live-history' }}>）：
-  // 等頁面 render 完（約 150ms）先 smooth scroll 落 #live-history，然後清 state 免 refresh 再碌
+  // v2.2.23 老闆實測修正：頁面載入後 LiveNowSection／圖片等內容再 render（layout shift），
+  // 第一次 scroll 完成後 anchor 會被推移位，落點「差小小」。改做兩段式修正：
+  // 1) 150ms 後第一次 smooth scroll 落 #live-history，即刻清 state 免 refresh 再碌
+  // 2) 900ms／1800ms 各做一次漂移檢查：實際 rect.top 同預期落點
+  //    （頂欄高 60/72 + el 嘅 scroll-margin-top）偏差 > 24px 就再 scroll 修正
   useEffect(() => {
     if ((location.state as { scrollTo?: string } | null)?.scrollTo !== 'live-history') return;
-    const timer = window.setTimeout(() => {
+
+    const scrollToHistory = () => {
       document.getElementById('live-history')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      navigate('.', { replace: true, state: null });
-    }, 150);
-    return () => window.clearTimeout(timer);
+    };
+    // 漂移檢查：layout shift 推移咗 anchor 就再 scroll 一次
+    const driftCheck = () => {
+      const el = document.getElementById('live-history');
+      if (!el) return;
+      const headerH = window.innerWidth >= 768 ? 72 : 60;
+      const expected = headerH + (parseFloat(getComputedStyle(el).scrollMarginTop) || 0);
+      if (Math.abs(el.getBoundingClientRect().top - expected) > 24) scrollToHistory();
+    };
+
+    const timers = [
+      window.setTimeout(() => {
+        scrollToHistory();
+        navigate('.', { replace: true, state: null });
+      }, 150),
+      window.setTimeout(driftCheck, 900),
+      window.setTimeout(driftCheck, 1800),
+    ];
+    return () => timers.forEach((t) => window.clearTimeout(t));
   }, [location.state, navigate]);
 
   const embedRef = useReveal<HTMLDivElement>();

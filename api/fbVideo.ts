@@ -135,9 +135,9 @@ function thumbFromHtml(html: string): string | null {
 }
 
 /** 摷縮圖嘅實際工序——分開埋「點解摷唔到」＋「邊個來源摷中」，後台預覽診斷用（v2.2.15） */
-type ThumbProbe = {
+export type ThumbProbe = {
   url: string | null;
-  reason: "ok_oembed" | "ok_html" | "fetch_fail" | "no_match";
+  reason: "ok_oembed" | "ok_html" | "ok_mwatch" | "fetch_fail" | "no_match";
 };
 
 /** 扮普通瀏覽器嘅 headers——oEmbed／video.php 兩條路線共用（同 resolveFbVideoId 一款） */
@@ -182,6 +182,7 @@ async function fetchThumb(id: string): Promise<ThumbProbe> {
     // oEmbed 撞牆（timeout／網絡）：落返 HTML 路線
   }
 
+  let fallbackReason: "fetch_fail" | "no_match" = "fetch_fail";
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
@@ -195,12 +196,38 @@ async function fetchThumb(id: string): Promise<ThumbProbe> {
       },
     );
     clearTimeout(timer);
-    if (!res.ok) return { url: null, reason: "fetch_fail" };
-    const thumb = thumbFromHtml(await res.text());
-    return thumb ? { url: thumb, reason: "ok_html" } : { url: null, reason: "no_match" };
+    if (res.ok) {
+      const thumb = thumbFromHtml(await res.text());
+      if (thumb) return { url: thumb, reason: "ok_html" };
+      fallbackReason = "no_match";
+    }
+    // 非 200／摷唔到 og:image：唔算完，落第三條路線
   } catch {
-    return { url: null, reason: "fetch_fail" };
+    // video.php 撞牆（timeout／網絡）：落第三條路線
   }
+
+  // v2.2.23（老闆實測：oEmbed／video.php 喺 Render 長期失敗）：第三條路線——
+  // m.facebook.com 行動版 watch 頁，對 data center IP 封得冇咁盡，HTML 照有 og:image
+  // （重用 thumbFromHtml）。URL 唔落 log（鐵律）。
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(`https://m.facebook.com/watch/?v=${id}`, {
+      method: "GET",
+      redirect: "follow",
+      signal: ctrl.signal,
+      headers: THUMB_FETCH_HEADERS,
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const thumb = thumbFromHtml(await res.text());
+      if (thumb) return { url: thumb, reason: "ok_mwatch" };
+      fallbackReason = "no_match";
+    }
+  } catch {
+    // 三條路線全敗
+  }
+  return { url: null, reason: fallbackReason };
 }
 
 export async function resolveFbThumb(id: string): Promise<string | null> {
@@ -216,10 +243,9 @@ export async function resolveFbThumb(id: string): Promise<string | null> {
 }
 
 /** 後台預覽診斷用（v2.2.15 老闆指令）：唔經 cache 即場摷，連「點解摷唔到」一齊回；
- *  v2.2.21 起 reason 標註邊個來源摷中：ok_oembed（官方 oEmbed JSON）／ok_html（播放器 HTML og:image） */
-export async function probeFbThumb(
-  id: string,
-): Promise<{ url: string | null; reason: "ok_oembed" | "ok_html" | "fetch_fail" | "no_match" }> {
+ *  v2.2.21 起 reason 標註邊個來源摷中：ok_oembed（官方 oEmbed JSON）／ok_html（播放器 HTML og:image）；
+ *  v2.2.23 加 ok_mwatch（行動版 watch 頁 og:image）——三條路線全敗先回 fetch_fail／no_match */
+export async function probeFbThumb(id: string): Promise<ThumbProbe> {
   return fetchThumb(id);
 }
 

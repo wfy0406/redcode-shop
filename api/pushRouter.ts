@@ -15,6 +15,7 @@
  * ─ listLivePush（員工級）：近 50 筆批次紀錄
  * ─ endLiveNow（員工級）：一掣落直播畫（寫 endedAt）
  * ─ deleteLiveCampaign（員工級）：刪除直播回顧（顯示緊／pending 唔准刪）
+ * ─ setLiveCampaignThumb（員工級）：手動上傳回顧縮圖（/uploads/...）；null＝還原自動摷圖
  * 發送引擎喺 api/livePush.ts（never-throw）；endpoint/keys/secret 永遠唔准落 log／audit。
  */
 import { z } from "zod";
@@ -321,7 +322,8 @@ export const pushRouter = createRouter({
         url: live.url,
         sentAt: live.sentAt,
         embedUrl: vid ? embedForId(vid) : null,
-        thumbUrl: vid ? `/api/live-thumb/${vid}` : null,
+        // v2.2.23：手動上傳縮圖優先（FB 摷圖喺 Render 長期失敗嘅根治路線）；冇先落自動 endpoint
+        thumbUrl: live.thumbUrl ?? (vid ? `/api/live-thumb/${vid}` : null),
       },
     };
   }),
@@ -339,7 +341,15 @@ export const pushRouter = createRouter({
         canonicalUrl: id ? canonicalForId(id) : input.url,
         changed: id ? canonicalForId(id) !== input.url : false,
         thumbUrl: probe?.url ?? null,
-        thumbNote: !id ? null : (probe?.reason ?? "fetch_fail"),
+        // v2.2.23 修正映射：任何 ok_* 來源（ok_oembed／ok_html／ok_mwatch）統一映射做 'ok'，
+        // 前端 LivePushPanel 只認 'ok'／fetch_fail／no_match 三態
+        thumbNote: !id
+          ? null
+          : probe?.reason
+            ? probe.reason.startsWith("ok_")
+              ? "ok"
+              : probe.reason
+            : "fetch_fail",
       };
     }),
 
@@ -376,7 +386,8 @@ export const pushRouter = createRouter({
         url: r.url,
         sentAt: r.sentAt,
         embedUrl: vids[i] ? embedForId(vids[i] as string) : null,
-        thumbUrl: vids[i] ? `/api/live-thumb/${vids[i]}` : null,
+        // v2.2.23：手動上傳縮圖優先；冇先出 /api/live-thumb 自動摷圖路徑
+        thumbUrl: r.thumbUrl ?? (vids[i] ? `/api/live-thumb/${vids[i]}` : null),
       })),
     };
   }),
@@ -508,6 +519,8 @@ export const pushRouter = createRouter({
         endedAt: r.endedAt,
         // v2.2.16：回顧排序欄（後台 ↑↓ 調順序用）
         replayOrder: r.replayOrder,
+        // v2.2.23：手動上傳縮圖（/uploads/... 或 null＝自動摷圖；後台上傳／還原用）
+        thumbUrl: r.thumbUrl,
       })),
     };
   }),
@@ -528,6 +541,45 @@ export const pushRouter = createRouter({
         });
       }
       return res;
+    }),
+
+  // ─── setLiveCampaignThumb（員工級）：手動上傳直播回顧縮圖（v2.2.23 老闆實測：FB 摷圖長期失敗根治）───
+  // thumbUrl 只准 "/uploads/" 開頭（即係經 /api/upload 上傳嘅本地檔）；null＝還原自動摷圖。
+  setLiveCampaignThumb: staffProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        thumbUrl: z
+          .string()
+          .trim()
+          .max(512)
+          .regex(/^\/uploads\//, "縮圖路徑必須以 /uploads/ 開頭")
+          .nullable(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const campaign = await db.query.pushCampaigns.findFirst({
+        where: eq(pushCampaigns.id, input.id),
+      });
+      if (!campaign) {
+        return { ok: false as const, message: "推送批次唔存在（可能已經刪咗）" };
+      }
+      await db
+        .update(pushCampaigns)
+        .set({ thumbUrl: input.thumbUrl })
+        .where(eq(pushCampaigns.id, input.id));
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "push.setLiveCampaignThumb",
+        targetType: "pushCampaign",
+        targetId: input.id,
+        detail: input.thumbUrl
+          ? `手動設定直播回顧縮圖（批次 #${input.id}，${campaign.liveDate} ${campaign.liveSession}）`
+          : `還原直播回顧自動摷圖（批次 #${input.id}，${campaign.liveDate} ${campaign.liveSession}）`,
+      });
+      return { ok: true as const, id: input.id };
     }),
 
   // ─── endLiveNow（員工級）：一掣落直播畫（v2.2.2 老闆指令）─────────────

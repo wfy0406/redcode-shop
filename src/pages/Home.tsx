@@ -6,7 +6,16 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Link } from 'react-router';
-import { Bell, Clapperboard, Facebook, MessageCircle, Play, ShoppingBag } from 'lucide-react';
+import {
+  ArrowRight,
+  BadgeCheck,
+  Bell,
+  Clapperboard,
+  Facebook,
+  MessageCircle,
+  Play,
+  ShoppingBag,
+} from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
@@ -226,19 +235,30 @@ function LivePushEntry() {
   if (!user) {
     return (
       <div
-        className="hero-enter col-span-2 sm:col-span-1"
+        className="hero-enter col-span-2 h-full sm:col-span-1"
         style={{ animationDelay: '0.89s' }}
       >
         <Link
           to="/login"
           onPointerMove={trackCtaSpotlight}
           onPointerDown={trackCtaSpotlight}
-          className="hero-cta hero-cta-ghost w-full sm:w-auto"
+          className="hero-cta hero-cta-ghost h-full w-full sm:w-auto"
         >
           <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-gold" />
           <span className="relative z-10 inline-flex items-center justify-center gap-2">
-            <Bell size={15} aria-hidden="true" />
-            接收直播開播通知
+            <Bell size={15} aria-hidden="true" className="shrink-0" />
+            <span className="cta-flip">
+              <span className="cta-flip-inner">
+                <span className="cta-label">
+                  <span className="cta-micro">LIVE ALERT</span>
+                  <span className="cta-title">接收直播開播通知</span>
+                </span>
+                <span aria-hidden="true" className="cta-label">
+                  <span className="cta-micro">LIVE ALERT</span>
+                  <span className="cta-title">接收直播開播通知</span>
+                </span>
+              </span>
+            </span>
           </span>
         </Link>
       </div>
@@ -246,19 +266,27 @@ function LivePushEntry() {
   }
 
   if (subscribed) {
+    // 已訂閱 → 被動狀態 pill（唔係掣）：呼吸粉點 + BadgeCheck + 雙行標籤，融入 cluster
     return (
       <span
-        className="hero-enter col-span-2 inline-flex w-full items-center justify-center gap-2 py-2 text-sm text-txt-3 sm:col-span-1 sm:w-auto"
+        className="hero-enter col-span-2 h-full sm:col-span-1"
         style={{ animationDelay: '0.89s' }}
       >
-        🔴 已開啟通知 ✓
+        <span role="status" className="cta-status-pill w-full sm:w-auto">
+          <span aria-hidden="true" className="cta-status-dot" />
+          <BadgeCheck size={15} aria-hidden="true" className="shrink-0 text-gold" />
+          <span className="cta-label">
+            <span className="cta-micro">LIVE ALERT ON</span>
+            <span className="cta-title">已開啟通知</span>
+          </span>
+        </span>
       </span>
     );
   }
 
   return (
     <div
-      className="hero-enter col-span-2 sm:col-span-1"
+      className="hero-enter col-span-2 h-full sm:col-span-1"
       style={{ animationDelay: '0.89s' }}
     >
       <button
@@ -266,12 +294,23 @@ function LivePushEntry() {
         onClick={() => setShowGuide(true)}
         onPointerMove={trackCtaSpotlight}
         onPointerDown={trackCtaSpotlight}
-        className="hero-cta hero-cta-ghost w-full sm:w-auto"
+        className="hero-cta hero-cta-ghost h-full w-full sm:w-auto"
       >
         <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-gold" />
         <span className="relative z-10 inline-flex items-center justify-center gap-2">
-          <Bell size={15} aria-hidden="true" />
-          接收直播開播通知
+          <Bell size={15} aria-hidden="true" className="shrink-0" />
+          <span className="cta-flip">
+            <span className="cta-flip-inner">
+              <span className="cta-label">
+                <span className="cta-micro">LIVE ALERT</span>
+                <span className="cta-title">接收直播開播通知</span>
+              </span>
+              <span aria-hidden="true" className="cta-label">
+                <span className="cta-micro">LIVE ALERT</span>
+                <span className="cta-title">接收直播開播通知</span>
+              </span>
+            </span>
+          </span>
         </span>
       </button>
       <PushPermissionGuide
@@ -518,58 +557,97 @@ export default function Home() {
             {/* Hero CTA 掣組（musepool 方向）：pill cluster，手機 2×2 grid（primary 全闊做主角），
                 sm 以上 flex wrap 橫排；hero-enter 0.65s 起逐粒 +80ms stagger。
                 光暈/掃光/hover 全部淨係 transform + opacity（GPU-only，唔整慢客人電話）。 */}
-            <div className="mt-10 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center sm:gap-4">
-              {/* 1. 即睇商品（primary 最搶眼）：實心品牌粉紅 + 獨有 skew 掃光 loop */}
-              <div className="hero-enter col-span-2 sm:col-span-1" style={{ animationDelay: '0.65s' }}>
-                <Link
-                  to="/products"
-                  onPointerMove={trackCtaSpotlight}
-                  onPointerDown={trackCtaSpotlight}
-                  className="hero-cta hero-cta-primary w-full sm:w-auto"
-                >
-                  <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-pink" />
-                  <span aria-hidden="true" className="hero-cta-shine" />
-                  <span className="relative z-10 inline-flex items-center justify-center gap-2">
-                    <ShoppingBag size={18} aria-hidden="true" />
-                    即睇商品
-                  </span>
-                </Link>
+            {/* 星光裝飾層包住成個 cluster：absolute 漂移星塵圖喺掣底下，純 transform loop */}
+            <div className="relative">
+              <div aria-hidden="true" className="cta-sparkle-layer" />
+              <div className="relative z-10 mt-10 grid grid-cols-2 items-stretch gap-3 sm:flex sm:flex-wrap sm:items-center sm:gap-4">
+                {/* 1. 即睇商品（primary 最搶眼）：實心品牌粉紅 + 獨有 skew 掃光 loop */}
+                <div className="hero-enter col-span-2 h-full sm:col-span-1" style={{ animationDelay: '0.65s' }}>
+                  <Link
+                    to="/products"
+                    onPointerMove={trackCtaSpotlight}
+                    onPointerDown={trackCtaSpotlight}
+                    className="hero-cta hero-cta-primary h-full w-full sm:w-auto"
+                  >
+                    <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-pink" />
+                    <span aria-hidden="true" className="hero-cta-shine" />
+                    <span className="relative z-10 inline-flex items-center justify-center gap-2">
+                      <ShoppingBag size={18} aria-hidden="true" className="shrink-0" />
+                      <span className="cta-flip">
+                        <span className="cta-flip-inner">
+                          <span className="cta-label">
+                            <span className="cta-micro">SHOP NOW</span>
+                            <span className="cta-title">即睇商品</span>
+                          </span>
+                          <span aria-hidden="true" className="cta-label">
+                            <span className="cta-micro">SHOP NOW</span>
+                            <span className="cta-title">即睇商品</span>
+                          </span>
+                        </span>
+                      </span>
+                    </span>
+                  </Link>
+                </div>
+                {/* 2. 追蹤 Facebook 專頁（outline 款 + 箭嘴 micro-interaction） */}
+                <div className="hero-enter h-full" style={{ animationDelay: '0.73s' }}>
+                  <a
+                    href={FACEBOOK_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onPointerMove={trackCtaSpotlight}
+                    onPointerDown={trackCtaSpotlight}
+                    className="hero-cta hero-cta-outline h-full w-full sm:w-auto"
+                  >
+                    <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-pink" />
+                    <span className="relative z-10 inline-flex items-center justify-center gap-2 text-center">
+                      <Facebook size={16} aria-hidden="true" className="shrink-0" />
+                      <span className="cta-flip">
+                        <span className="cta-flip-inner">
+                          <span className="cta-label">
+                            <span className="cta-micro">FOLLOW US</span>
+                            <span className="cta-title">追蹤我地 Facebook 專頁</span>
+                          </span>
+                          <span aria-hidden="true" className="cta-label">
+                            <span className="cta-micro">FOLLOW US</span>
+                            <span className="cta-title">追蹤我地 Facebook 專頁</span>
+                          </span>
+                        </span>
+                      </span>
+                      <ArrowRight size={14} aria-hidden="true" className="cta-arrow shrink-0" />
+                    </span>
+                  </a>
+                </div>
+                {/* 3. 直播重溫（outline/ghost 款）：直達 /live 嘅直播回顧區（Live.tsx 接 state 碌落 #live-history） */}
+                <div className="hero-enter h-full" style={{ animationDelay: '0.81s' }}>
+                  <Link
+                    to="/live"
+                    state={{ scrollTo: 'live-history' }}
+                    onPointerMove={trackCtaSpotlight}
+                    onPointerDown={trackCtaSpotlight}
+                    className="hero-cta hero-cta-outline h-full w-full sm:w-auto"
+                  >
+                    <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-gold" />
+                    <span className="relative z-10 inline-flex items-center justify-center gap-2">
+                      <Play size={16} aria-hidden="true" className="shrink-0" />
+                      <span className="cta-flip">
+                        <span className="cta-flip-inner">
+                          <span className="cta-label">
+                            <span className="cta-micro">LIVE REPLAY</span>
+                            <span className="cta-title">直播重溫</span>
+                          </span>
+                          <span aria-hidden="true" className="cta-label">
+                            <span className="cta-micro">LIVE REPLAY</span>
+                            <span className="cta-title">直播重溫</span>
+                          </span>
+                        </span>
+                      </span>
+                      <ArrowRight size={14} aria-hidden="true" className="cta-arrow shrink-0" />
+                    </span>
+                  </Link>
+                </div>
+                {/* 4. 接收直播開播通知（LivePushEntry 邏輯唔郁，換皮融入 cluster） */}
+                <LivePushEntry />
               </div>
-              {/* 2. 追蹤 Facebook 專頁（outline 款） */}
-              <div className="hero-enter" style={{ animationDelay: '0.73s' }}>
-                <a
-                  href={FACEBOOK_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onPointerMove={trackCtaSpotlight}
-                  onPointerDown={trackCtaSpotlight}
-                  className="hero-cta hero-cta-outline w-full sm:w-auto"
-                >
-                  <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-pink" />
-                  <span className="relative z-10 inline-flex items-center justify-center gap-2 text-center leading-[1.35]">
-                    <Facebook size={16} aria-hidden="true" className="shrink-0" />
-                    追蹤我地 Facebook 專頁
-                  </span>
-                </a>
-              </div>
-              {/* 3. 直播重溫（outline/ghost 款）：直達 /live 嘅直播回顧區（Live.tsx 接 state 碌落 #live-history） */}
-              <div className="hero-enter" style={{ animationDelay: '0.81s' }}>
-                <Link
-                  to="/live"
-                  state={{ scrollTo: 'live-history' }}
-                  onPointerMove={trackCtaSpotlight}
-                  onPointerDown={trackCtaSpotlight}
-                  className="hero-cta hero-cta-outline w-full sm:w-auto"
-                >
-                  <span aria-hidden="true" className="hero-cta-glow hero-cta-glow-gold" />
-                  <span className="relative z-10 inline-flex items-center justify-center gap-2">
-                    <Play size={16} aria-hidden="true" />
-                    直播重溫
-                  </span>
-                </Link>
-              </div>
-              {/* 4. 接收直播開播通知（LivePushEntry 邏輯唔郁，換皮融入 cluster） */}
-              <LivePushEntry />
             </div>
           </div>
         </div>
@@ -962,11 +1040,131 @@ export default function Home() {
           55%, 100% { transform: translateX(330%) skewX(-18deg); }
         }
 
+        /* ===== 第二輪美化（musepool editorial 方向）=====
+           1) 雙行標籤：上行 DM Mono micro-label（拉丁字先用，中文唔准用）+ 下行中文主標
+           2) slide-up hover swap：cta-flip 固定高度 overflow:hidden，內部兩份一模一樣
+              標籤直排；hover 成條 column translateY 碌上一格（純 transform，GPU-only）。
+              高度唔寫死——第二份標籤 absolute 擺喺第一份下面，容器高由第一份自然撐開，
+              咁 FB 掣主標手機版縮行都唔會 clipping；translateY(-100%) 等同 -50% 效果。
+           3) 箭嘴 micro-interaction：outline 掣 hover 時 ArrowRight 向右 4px。 */
+        .cta-flip {
+          position: relative;
+          display: inline-flex;
+          overflow: hidden;
+          max-width: 100%;
+        }
+        .cta-flip-inner {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          transition: transform 350ms var(--ease-expo);
+          will-change: transform;
+        }
+        .cta-flip-inner .cta-label + .cta-label {
+          position: absolute;
+          top: 100%;
+          left: 0;
+          width: 100%;
+        }
+        .hero-cta:hover .cta-flip-inner,
+        .hero-cta:focus-visible .cta-flip-inner {
+          transform: translateY(-100%);
+        }
+        .cta-label {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 2px;
+          text-align: center;
+        }
+        .cta-micro {
+          font-family: 'DM Mono', 'Noto Sans TC', monospace;
+          font-size: 10px;
+          font-weight: 400;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          line-height: 1.2;
+        }
+        .cta-title { line-height: 1.35; }
+        /* micro-label 細微金/粉色；primary 實心粉底上用深字保對比 */
+        .hero-cta-primary .cta-micro { color: rgba(10, 6, 20, 0.62); }
+        .hero-cta-outline .cta-micro { color: var(--gold); opacity: 0.8; }
+        .hero-cta-ghost .cta-micro { color: var(--pink-tint); opacity: 0.75; }
+
+        .cta-arrow {
+          transition: transform 300ms var(--ease-expo);
+        }
+        .hero-cta:hover .cta-arrow,
+        .hero-cta:focus-visible .cta-arrow {
+          transform: translateX(4px);
+        }
+
+        /* ===== 訂閱態 status pill（被動，唔係掣）=====
+           同 cluster 同款 pill 外形：rounded-full + hairline border + 同 ghost 高度；
+           呼吸粉點 loop 淨 transform + opacity。 */
+        .cta-status-pill {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          height: 100%;
+          padding: 11px 20px;
+          border: 1px solid var(--space-line);
+          border-radius: 9999px;
+          background: rgba(255, 143, 191, 0.06);
+          color: var(--text-1);
+          font-size: 13px;
+          font-weight: 600;
+        }
+        .cta-status-pill .cta-micro { color: var(--gold); opacity: 0.8; }
+        .cta-status-dot {
+          width: 8px;
+          height: 8px;
+          flex-shrink: 0;
+          border-radius: 9999px;
+          background: var(--pink);
+          animation: cta-status-breathe 2.4s ease-in-out infinite alternate;
+        }
+        @keyframes cta-status-breathe {
+          from { transform: scale(1); opacity: 1; }
+          to { transform: scale(1.35); opacity: 0.45; }
+        }
+
+        /* ===== 星光裝飾層：星塵圖喺掣底下慢慢漂移（淨 translate3d loop）===== */
+        .cta-sparkle-layer {
+          position: absolute;
+          top: -40px;
+          bottom: -40px;
+          left: -24px;
+          right: -24px;
+          background-image: url(/cta-sparkles.png);
+          background-position: center;
+          background-repeat: no-repeat;
+          background-size: contain;
+          pointer-events: none;
+          opacity: 0.5;
+          animation: cta-sparkle-drift 26s linear infinite alternate;
+        }
+        @keyframes cta-sparkle-drift {
+          from { transform: translate3d(-12px, -8px, 0); }
+          to { transform: translate3d(12px, 8px, 0); }
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .hero-cta { transition: none; }
           .hero-cta:hover, .hero-cta:active { transform: translateZ(0); }
           .hero-cta-glow { display: none; }
           .hero-cta-shine { display: none; animation: none; }
+          /* flip swap / 箭嘴 / 呼吸點 / 星光漂移全部停 */
+          .cta-flip-inner { transition: none; }
+          .hero-cta:hover .cta-flip-inner,
+          .hero-cta:focus-visible .cta-flip-inner { transform: none; }
+          .cta-arrow { transition: none; }
+          .hero-cta:hover .cta-arrow,
+          .hero-cta:focus-visible .cta-arrow { transform: none; }
+          .cta-status-dot { animation: none; }
+          .cta-sparkle-layer { animation: none; }
         }
       `}</style>
     </div>

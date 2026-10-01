@@ -361,6 +361,9 @@ export const pushCampaigns = pgTable("pushCampaigns", {
   endedAt: timestamp("endedAt"),
   // v2.2.16（老闆指令）：直播回顧顯示順序——細數排前；NULL＝未設定（跟 sentAt 新→舊排尾）
   replayOrder: integer("replayOrder"),
+  // v2.2.23（老闆實測：FB 縮圖喺 Render 長期摷唔到）：管理員手動上傳嘅縮圖 path（/uploads/...）；
+  // 有值就用佢，冇先落 /api/live-thumb 自動摷圖
+  thumbUrl: varchar("thumbUrl", { length: 512 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 

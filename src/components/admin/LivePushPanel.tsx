@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, Radio, Send, Square, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
+import { ChevronDown, ChevronUp, ImagePlus, Radio, Send, Square, Trash2 } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
+import { getToken } from '@/lib/auth';
 import WishingStar from './WishingStar';
 import type { ToastKind } from './useToasts';
 
@@ -37,6 +39,8 @@ type Campaign = {
   endedAt: string | Date | null;
   // v2.2.16：直播回顧顯示順序（後台 ↑↓ 調；null＝跟日期新→舊）
   replayOrder: number | null;
+  // v2.2.23：手動上傳嘅回顧縮圖（/uploads/...；null＝自動摷圖）
+  thumbUrl: string | null;
 };
 
 const STATUS_META: Record<string, { label: string; color: string; border: string }> = {
@@ -85,6 +89,117 @@ function fmtDateTime(d: string | Date | null | undefined): string {
     minute: '2-digit',
     hour12: false,
   }).format(date);
+}
+
+/** 上傳圖片去 /api/upload，回傳伺服器 path（做法同 PraiseManager 一模一樣：Bearer JWT + FormData file 欄位，回 {path}） */
+async function uploadImage(file: File): Promise<string> {
+  const token = getToken();
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/upload', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? '上傳失敗，請稍後再試');
+  }
+  const { path } = (await res.json()) as { path: string };
+  return path;
+}
+
+/**
+ * v2.2.23（老闆實測：FB 縮圖喺 Render 長期摷唔到）：每個已發送批次嘅縮圖格。
+ * 有自訂縮圖（/uploads/ 開頭）→ 顯示細預覽＋「還原自動摷圖」；冇 → 顯示「自動」狀態。
+ * 「上傳縮圖」行 /api/upload 攞 path，再經 push.setLiveCampaignThumb 落庫。
+ */
+function ThumbCell({
+  c,
+  toast,
+}: {
+  c: Campaign;
+  toast: (text: string, kind?: ToastKind) => void;
+}) {
+  const utils = trpc.useUtils();
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [busy, setBusy] = useState(false);
+  const custom = typeof c.thumbUrl === 'string' && c.thumbUrl.startsWith('/uploads/');
+
+  const setThumbMutation = trpc.push.setLiveCampaignThumb.useMutation({
+    onSuccess: async (_r, vars) => {
+      toast(vars.thumbUrl ? '縮圖已更新 ✓' : '已還原自動摷圖', 'success');
+      await utils.push.listLivePush.invalidate();
+      await utils.push.liveHistory.invalidate();
+    },
+    onError: (err) => toast(err.message || '縮圖更新失敗，請再試', 'error'),
+    onSettled: () => setBusy(false),
+  });
+
+  const onPick = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || busy) return;
+    setBusy(true);
+    try {
+      const path = await uploadImage(file);
+      setThumbMutation.mutate({ id: c.id, thumbUrl: path });
+    } catch (err) {
+      setBusy(false);
+      toast(err instanceof Error ? err.message : '上傳失敗，請稍後再試', 'error');
+    }
+  };
+
+  const restoreAuto = () => {
+    if (busy) return;
+    setBusy(true);
+    setThumbMutation.mutate({ id: c.id, thumbUrl: null });
+  };
+
+  return (
+    <div className="mt-2 space-y-1.5 text-left">
+      {custom && c.thumbUrl ? (
+        <img
+          src={c.thumbUrl}
+          alt={`${c.liveDate} ${c.liveSession} 回顧縮圖`}
+          className="h-[54px] w-24 rounded-md object-cover"
+          style={{ border: '1px solid var(--glass-border)' }}
+        />
+      ) : (
+        <p className="text-[11px] text-txt-3">縮圖：自動摷圖</p>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        aria-hidden="true"
+        onChange={onPick}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+          style={{ borderColor: 'var(--space-line)', color: 'var(--gold-soft)' }}
+        >
+          <ImagePlus size={12} aria-hidden="true" />
+          {busy ? '上傳緊…' : '上傳縮圖'}
+        </button>
+        {custom && (
+          <button
+            type="button"
+            onClick={restoreAuto}
+            disabled={busy}
+            className="text-[11px] text-txt-3 underline underline-offset-2 transition-opacity hover:opacity-80 disabled:opacity-50"
+          >
+            還原自動摷圖
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function LivePushPanel({
@@ -703,6 +818,8 @@ export default function LivePushPanel({
                           <Trash2 size={14} aria-hidden="true" />
                         </button>
                       </div>
+                      {/* v2.2.23（老闆實測：FB 摷圖長期失敗）：已發送批次可以手動上傳回顧縮圖 */}
+                      {c.status === 'sent' && <ThumbCell c={c} toast={toast} />}
                     </td>
                   </tr>
                 ))}

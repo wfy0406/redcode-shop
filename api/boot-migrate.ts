@@ -395,6 +395,8 @@ CREATE INDEX IF NOT EXISTS pushcampaigns_status_sent ON "pushCampaigns" (status,
 ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "endedAt" timestamp;
 -- v2.2.16（老闆指令）：直播回顧顯示順序——細數排前；NULL＝跟 sentAt 新→舊排尾
 ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "replayOrder" integer;
+-- v2.2.23（老闆實測：FB 縮圖喺 Render 長期摷唔到）：管理員手動上傳縮圖 path；有值優先用，冇先 /api/live-thumb 自動摷
+ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "thumbUrl" varchar(512);
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：
