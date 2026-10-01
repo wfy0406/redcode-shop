@@ -17,3 +17,23 @@ export function openFacebookLive(url: string): void {
   }
   window.location.assign(`/live-go-v6.html?u=${encodeURIComponent(url)}`);
 }
+
+/**
+ * v2.2.30（老闆實測：人哋部 Samsung 睇到，佢部機睇唔到直播條片）：
+ * Samsung Internet 嘅「智能防追蹤」（個別機揀咗「總是」）會擋第三方
+ * cookie／storage → FB 嵌入播放器喺嗰啲機上直接罷工（撳落去無反應／黑屏）。
+ * 偵測到 SamsungBrowser 就唔好 mount FB iframe，全部改用 v6 跳板路線
+ * （live-go-v6.html 已內建 Samsung 12s 保底開網頁版），保證睇到。
+ */
+export function isSamsungInternet(): boolean {
+  return /SamsungBrowser/i.test(navigator.userAgent || '');
+}
+
+/**
+ * v2.2.30（老闆實測：iPhone 原位播放器睇唔到，但放大睇全屏 overlay 播到）：
+ * iOS Safari 老牌 bug——iframe 放喺 overflow-hidden＋圓角容器入面，hit-test
+ * 會穿唔入 iframe，撳極無反應。iPhone／iPad 原位播放唔可靠，改用全屏 overlay。
+ */
+export function isAppleMobile(): boolean {
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+}

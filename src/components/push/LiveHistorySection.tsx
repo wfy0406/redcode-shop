@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ExternalLink, Play } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
-import { openFacebookLive } from '@/lib/openLive';
+import { openFacebookLive, isSamsungInternet } from '@/lib/openLive';
 import { useReveal } from '@/hooks/useReveal';
 import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
+import BackupThumb, { dealReplayBackups } from '@/components/push/BackupThumb';
 
 /**
  * 直播回顧（v2.2.12 老闆指令：「比例係打直嘅，諗下點排版」）
@@ -38,7 +39,7 @@ interface HistoryItem {
 }
 
 /* ---------- 單場直度回顧卡 ---------- */
-function ReplayCard({ item, index }: { item: HistoryItem; index: number }) {
+function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: number; backupIdx: number }) {
   const [playing, setPlaying] = useState(false);
   const [thumbOk, setThumbOk] = useState(true);
   const embedUrl = item.embedUrl ?? null;
@@ -53,7 +54,12 @@ function ReplayCard({ item, index }: { item: HistoryItem; index: number }) {
       >
         <button
           type="button"
-          onClick={() => (embedUrl ? setPlaying(true) : openFacebookLive(item.url))}
+          onClick={() => {
+            // v2.2.30：Samsung Internet 防追蹤會擋死 FB iframe（老闆部機實測），
+            // Samsung 機一撳直接行 v6 跳板去 FB，唔開官網內播放器
+            if (embedUrl && !isSamsungInternet()) setPlaying(true);
+            else openFacebookLive(item.url);
+          }}
           className="absolute inset-0 block h-full w-full cursor-pointer text-left"
           aria-label={`播放 ${fmtDate(item.liveDate)} ${item.liveSession} 回顧`}
         >
@@ -76,39 +82,18 @@ function ReplayCard({ item, index }: { item: HistoryItem; index: number }) {
               />
             </>
           ) : (
+            // v2.2.30（老闆指令「哈利波特式會郁嘅後備縮圖」）：摷唔到真縮圖 →
+            // 會郁嘅後備卡（Glo Glo 動態＋RedCode logo 疊面）；每場唔同張——
+            // 父層洗牌派位，同屏 10 條保證唔重複
             <>
-              {/* 聚光燈光池（頂中 radial）＋地面反光（pink ellipse）＋兩支光錐 */}
+              <BackupThumb kind="replay" index={backupIdx} logoPos="br" />
+              {/* 壓暗漸變：頂行場次＋卡底場名保持好睇（同真縮圖嗰款一致） */}
               <span
                 aria-hidden="true"
-                className="stage-spot absolute inset-0"
+                className="absolute inset-0"
                 style={{
                   background:
-                    'radial-gradient(ellipse 55% 70% at 50% 0%, rgba(245,213,138,0.20) 0%, rgba(255,0,84,0.06) 45%, transparent 72%)',
-                }}
-              />
-              <span
-                aria-hidden="true"
-                className="stage-beam stage-beam-l absolute -top-1/4 left-[16%] h-[150%] w-[26%]"
-                style={{
-                  background: 'linear-gradient(180deg, rgba(245,213,138,0.14) 0%, transparent 78%)',
-                  clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
-                  transform: 'rotate(-9deg)',
-                }}
-              />
-              <span
-                aria-hidden="true"
-                className="stage-beam stage-beam-r absolute -top-1/4 right-[16%] h-[150%] w-[26%]"
-                style={{
-                  background: 'linear-gradient(180deg, rgba(255,0,84,0.12) 0%, transparent 78%)',
-                  clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0% 100%)',
-                  transform: 'rotate(9deg)',
-                }}
-              />
-              <span
-                aria-hidden="true"
-                className="absolute inset-x-[12%] bottom-0 h-[26%]"
-                style={{
-                  background: 'radial-gradient(ellipse 50% 100% at 50% 100%, rgba(255,0,84,0.16) 0%, transparent 70%)',
+                    'linear-gradient(180deg, rgba(7,4,15,0.55) 0%, transparent 28%, transparent 52%, rgba(7,4,15,0.85) 100%)',
                 }}
               />
             </>
@@ -156,7 +141,7 @@ function ReplayCard({ item, index }: { item: HistoryItem; index: number }) {
               </span>
             </span>
             <span className="text-[12px] font-medium tracking-[0.18em] text-txt-2">
-              {embedUrl ? '撳掣即刻睇' : '去 Facebook 睇'}
+              {embedUrl && !isSamsungInternet() ? '撳掣即刻睇' : '去 Facebook 睇'}
             </span>
           </span>
 
@@ -209,6 +194,9 @@ export default function LiveHistorySection() {
     retry: false,
   });
   const items = (historyQuery.data?.items ?? []) as HistoryItem[];
+  // v2.2.30：後備縮圖洗牌派位——40 張洗勻拎頭 N 張，同屏（最多 10 條）唔會撞圖
+  // （老闆指令）。items 數量唔變就唔重新洗，避免 refetch 時啲圖跳嚟跳去
+  const backupDeal = useMemo(() => dealReplayBackups(items.length), [items.length]);
 
   if (items.length === 0) return null;
 
@@ -249,7 +237,7 @@ export default function LiveHistorySection() {
         <div className="relative mt-8">
           <div className="replay-shelf -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto px-5 pb-2 md:mx-0 md:px-0">
             {items.map((item, i) => (
-              <ReplayCard key={item.id} item={item} index={i} />
+              <ReplayCard key={item.id} item={item} index={i} backupIdx={backupDeal[i] ?? ((i % 40) + 1)} />
             ))}
           </div>
           <div

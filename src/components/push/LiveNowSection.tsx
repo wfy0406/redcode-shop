@@ -4,9 +4,10 @@ import { ExternalLink, Play } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { isPushSupported } from '@/lib/pushClient';
-import { openFacebookLive } from '@/lib/openLive';
+import { openFacebookLive, isSamsungInternet, isAppleMobile } from '@/lib/openLive';
 import PushPermissionGuide from '@/components/push/PushPermissionGuide';
 import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
+import BackupThumb, { pickLiveBackup } from '@/components/push/BackupThumb';
 
 /**
  * 直播進行中展示區（v2.2.2 高度美化版，2026-09-30 老闆指令：要生動、要動感）
@@ -36,8 +37,11 @@ export default function LiveNowSection() {
   const [playing, setPlaying] = useState(false);
   const [full, setFull] = useState(false);
   // v2.2.28（老闆回報「縮圖壞咗」）：thumbUrl 係後端代摷 FB 圖，FB 對 server IP 時好時壞；
-  // 載入失敗即刻落品牌光暈海報，永遠唔出 broken icon；換場直播自動重試新縮圖
+  // 載入失敗即刻落後備縮圖，永遠唔出 broken icon；換場直播自動重試新縮圖
   const [thumbBroken, setThumbBroken] = useState(false);
+  // v2.2.30（老闆指令「哈利波特式會郁嘅後備縮圖」）：直播後備 10 條隨機一條，
+  // mount 嗰刻揀定，成個 session 唔變
+  const [liveBackupIdx] = useState(pickLiveBackup);
 
   const liveQuery = trpc.push.currentLive.useQuery(undefined, {
     refetchInterval: 60_000,
@@ -57,6 +61,15 @@ export default function LiveNowSection() {
     setThumbBroken(false);
   }, [liveUrl]);
   if (!live) return null;
+
+  // v2.2.30（老闆實測：佢部 Samsung 機撲咗 iframe 都無反應，人哋部 Samsung 睇到）：
+  // Samsung Internet「智能防追蹤」個別機會擋死 FB 嵌入播放器 → 呢類機全部
+  // 行 v6 跳板直開 FB（app／網頁版），唔再喺官網入面塞 iframe
+  const samsung = isSamsungInternet();
+  // v2.2.30（老闆實測：iPhone 原位播睇唔到、放大睇 overlay 播到）：
+  // iOS Safari iframe＋overflow-hidden 圓角容器 hit-test bug → iPhone 海報一撳
+  // 直接開全屏 overlay（實證 work 嘅路線），唔再試原位 iframe
+  const apple = isAppleMobile();
 
   const subscribed = !!statusQuery.data?.optIn && (statusQuery.data?.activeDevices ?? 0) > 0;
 
@@ -182,7 +195,7 @@ export default function LiveNowSection() {
             認唔到 → 成張卡撳得，openFacebookLive 經 v6 跳板去 FB 條片（推播成功路線）。
             動感：成卡慢浮（translateY）、播放掣 ping 環擴散（scale＋opacity）。
           */}
-          {playing && live.embedUrl ? (
+          {playing && !samsung && live.embedUrl ? (
             // v2.2.11（老闆指令「反正直播一定係打直」）：直度 9:16 播放器置中，
             // 入官網即自動播；背底先放真・縮圖（載入緊嗰秒唔会黑屏）；
             // 「放大睇」開官網內全屏直度播放器，唔再彈去 FB
@@ -191,7 +204,7 @@ export default function LiveNowSection() {
               style={{ borderColor: 'rgba(255, 0, 84, 0.4)', background: 'var(--space-1)' }}
             >
               <div className="relative aspect-[9/16] w-full">
-                {live.thumbUrl && !thumbBroken && (
+                {live.thumbUrl && !thumbBroken ? (
                   <img
                     src={live.thumbUrl}
                     alt=""
@@ -199,9 +212,16 @@ export default function LiveNowSection() {
                     className="absolute inset-0 h-full w-full object-cover"
                     onError={() => setThumbBroken(true)}
                   />
+                ) : (
+                  // v2.2.30：真縮圖摷唔到 → 後備靜態海報墊底（iframe 載入嗰秒唔會黑屏）
+                  <img
+                    src={`/live-backup/live-${String(liveBackupIdx).padStart(2, '0')}.jpg`}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
                 )}
-                {/* v2.2.27：iframe 只會喺客人撳 ▶ 嗰下先 mount（手勢載入）——
-                    用返有聲版 embedUrl，一播有聲，Samsung／iPhone／Chrome 都穩 */}
+                {/* v2.2.27：iframe 只會喺客人撳 ▶ 嗰下先 mount（手勢載入） */}
                 <iframe
                   src={live.embedUrl}
                   className="absolute inset-0 h-full w-full border-0"
@@ -210,6 +230,8 @@ export default function LiveNowSection() {
                   title="Facebook 直播"
                 />
               </div>
+              {/* Samsung 機唔會入到呢個分支（上面已擋），呢粒掣照埋喺非 Samsung 先顯示 */}
+              {!samsung && (
               <button
                 type="button"
                 onClick={() => setFull(true)}
@@ -219,6 +241,7 @@ export default function LiveNowSection() {
               >
                 放大睇 ⛶
               </button>
+              )}
               {/* v2.2.12（老闆指令）：播放器底下都有「去 Facebook 睇」——
                   有寶寶想返 FB app 睇／留言 */}
               <div className="flex justify-center border-t px-4 py-2.5" style={{ borderColor: 'rgba(255,0,84,0.25)' }}>
@@ -243,9 +266,21 @@ export default function LiveNowSection() {
           >
             <button
               type="button"
-              onClick={() => setPlaying(true)}
+              onClick={() => {
+                // Samsung 機防追蹤會擋死 FB iframe → 直接行跳板去 FB，保證睇到
+                if (samsung) {
+                  openFacebookLive(live.url);
+                  return;
+                }
+                // iPhone 原位 iframe 撳唔郁（iOS overflow-hidden bug）→ 直開全屏 overlay
+                if (apple) {
+                  setFull(true);
+                  return;
+                }
+                setPlaying(true);
+              }}
               className="livenow-poster group relative block w-full text-left"
-              aria-label="一撳即播直播（有聲）"
+              aria-label={samsung ? '去 Facebook 睇直播' : '一撳即播直播'}
             >
               <div className="relative aspect-[9/16] w-full">
                 {live.thumbUrl && !thumbBroken ? (
@@ -256,14 +291,8 @@ export default function LiveNowSection() {
                     onError={() => setThumbBroken(true)}
                   />
                 ) : (
-                  <div
-                    className="pointer-events-none absolute inset-0"
-                    style={{
-                      background:
-                        'radial-gradient(420px 500px at 50% 45%, rgba(255, 0, 84, 0.22) 0%, transparent 70%)',
-                    }}
-                    aria-hidden="true"
-                  />
+                  // v2.2.30：摷唔到真縮圖 → 會郁嘅後備海報（Glo Glo 動態＋logo）
+                  <BackupThumb kind="live" index={liveBackupIdx} logoPos="tr" />
                 )}
                 {/* 頂部 LIVE pill（同播放器嘅「直播」badge 呼應） */}
                 <span
@@ -297,8 +326,22 @@ export default function LiveNowSection() {
                   className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-0.5 px-4 pb-4 pt-10 text-center"
                   style={{ background: 'linear-gradient(180deg, transparent 0%, rgba(10,6,20,0.85) 100%)' }}
                 >
-                  <span className="font-serif-tc text-base font-semibold text-starlight">一撳即播・有聲 🔊</span>
-                  <span className="text-[11px] text-txt-3">想留言互動可以撳下面「去 Facebook 睇」</span>
+                  {/* v2.2.30（老闆實測「寫住有聲按左都係無聲」）：手機瀏覽器硬規定，
+                      iframe 載入嗰下手勢窗口已過，聲音一定被封，要喺播放器入面
+                      再撳一下開聲——唔再承諾「有聲」，改教開聲 */}
+                  {samsung ? (
+                    <>
+                      <span className="font-serif-tc text-base font-semibold text-starlight">一撳去 Facebook 睇直播</span>
+                      <span className="text-[11px] text-txt-3">你部 Samsung 機會擋嵌入播放器，直接開 FB 最穩</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-serif-tc text-base font-semibold text-starlight">一撳即播直播</span>
+                      <span className="text-[11px] text-txt-3">
+                        {apple ? '會開全屏播放器，' : ''}無聲嘅話喺播放器入面撳一下開聲 🔊
+                      </span>
+                    </>
+                  )}
                 </span>
               </div>
             </button>
