@@ -81,35 +81,51 @@ export default function Live() {
   const navigate = useNavigate();
 
   // 首頁 hero「直播重溫」直達（<Link state={{ scrollTo: 'live-history' }}>）：
-  // v2.2.23 老闆實測修正：頁面載入後 LiveNowSection／圖片等內容再 render（layout shift），
-  // 第一次 scroll 完成後 anchor 會被推移位，落點「差小小」。改做兩段式修正：
-  // 1) 150ms 後第一次 smooth scroll 落 #live-history，即刻清 state 免 refresh 再碌
-  // 2) 900ms／1800ms 各做一次漂移檢查：實際 rect.top 同預期落點
-  //    （頂欄高 60/72 + el 嘅 scroll-margin-top）偏差 > 24px 就再 scroll 修正
+  // v2.2.24 老闆實測修正：v2.2.23 嘅漂移檢查其實從來冇跑到——
+  // 150ms 嗰下 navigate 清 state 會即刻觸發呢個 effect 嘅 cleanup，
+  // 將 900／1800ms 嘅修正 timer 全部殺晒。而且 FB 帖子 embed iframe 會
+  // 遲載入撐高頁面，係將 anchor 推離位嘅元兇。
+  // 而家做法：
+  // 1) 全部修正跑晒先清 state（唔會再自己殺自己嘅 timer）
+  // 2) ResizeObserver 監住 body 高度——embed／圖片一撐高即時修正
+  // 3) 預期落點 = el 嘅 scroll-margin-top（scrollIntoView block:'start' 嘅實際停位）
   useEffect(() => {
     if ((location.state as { scrollTo?: string } | null)?.scrollTo !== 'live-history') return;
 
-    const scrollToHistory = () => {
-      document.getElementById('live-history')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const getEl = () => document.getElementById('live-history');
+    const scrollToHistory = (smooth: boolean) => {
+      getEl()?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' });
     };
-    // 漂移檢查：layout shift 推移咗 anchor 就再 scroll 一次
-    const driftCheck = () => {
-      const el = document.getElementById('live-history');
-      if (!el) return;
-      const headerH = window.innerWidth >= 768 ? 72 : 60;
-      const expected = headerH + (parseFloat(getComputedStyle(el).scrollMarginTop) || 0);
-      if (Math.abs(el.getBoundingClientRect().top - expected) > 24) scrollToHistory();
+    const isDrifted = () => {
+      const el = getEl();
+      if (!el) return false;
+      const margin = parseFloat(getComputedStyle(el).scrollMarginTop) || 0;
+      return Math.abs(el.getBoundingClientRect().top - margin) > 24;
+    };
+    const fix = (smooth: boolean) => {
+      if (isDrifted()) scrollToHistory(smooth);
     };
 
+    let observer: ResizeObserver | null = null;
     const timers = [
       window.setTimeout(() => {
-        scrollToHistory();
-        navigate('.', { replace: true, state: null });
+        scrollToHistory(true);
+        // 第一次 scroll 後先開始監（唔好喺 smooth 動畫途中搶閘即時跳）
+        observer = new ResizeObserver(() => fix(false));
+        observer.observe(document.body);
       }, 150),
-      window.setTimeout(driftCheck, 900),
-      window.setTimeout(driftCheck, 1800),
+      window.setTimeout(() => fix(true), 900),   // smooth 動畫完成後複核
+      window.setTimeout(() => fix(false), 1800),
+      window.setTimeout(() => fix(false), 3200), // FB embed 遲載兜底
+      window.setTimeout(() => {
+        observer?.disconnect();
+        navigate('.', { replace: true, state: null }); // 修正全部跑完先清 state
+      }, 3600),
     ];
-    return () => timers.forEach((t) => window.clearTimeout(t));
+    return () => {
+      timers.forEach((t) => window.clearTimeout(t));
+      observer?.disconnect();
+    };
   }, [location.state, navigate]);
 
   const embedRef = useReveal<HTMLDivElement>();
