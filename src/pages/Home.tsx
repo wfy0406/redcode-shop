@@ -848,10 +848,11 @@ export default function Home() {
       <HairlineDivider />
 
       {/* ============ 6. 品牌故事條 + Glo Glo 主播介紹 ============ */}
-      {/* v2.2.33（老闆指令）：兩個透明 Glo Glo 一左一右夾住故事，仲要「會郁」——
-          黑底循環影片 mix-blend-screen 融入夜空（GloCutout），webp 兜底永遠喺度；
+      {/* v2.2.34（老闆指令）：兩個透明 Glo Glo 一左一右夾住故事，仲要「會郁」——
+          真・透明影片：RVM 逐幀 matting 出真 alpha，VP9 WebM 行先，
+          Safari 經 canvas probe 自動轉動畫 WebP，透明 poster 兜底（GloCutout）；
           後景巨型花體水印俾 cutout 遮住一半做層次；故事下面三張即影即有
-          （攝影棚／攬攬／珍珠奶茶）用唔同角度散貼，hover 先執平。
+          （攝影棚／攬攬／珍珠奶茶）用唔同角度散貼，hover 先執平，相入面都會郁。
           動畫齋 transform/opacity（glo-sway / glo-hop / spark-twinkle / logo-poke，
           見 index.css），reduced-motion 自動停；cutout 已去白邊，logo FASHION DESIGN 白字。 */}
       <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
@@ -896,25 +897,25 @@ export default function Home() {
                 認識 Glo Glo →
               </Link>
 
-              {/* 即影即有拼貼：唔同角度散貼，hover 執平（齋 transform transition） */}
+              {/* 即影即有拼貼：唔同角度散貼，hover 執平（齋 transform transition）。
+                  v2.2.34 老闆指令「中間3張卡張相都要郁」：全部改用 MovingPhoto 播循環片，
+                  靜態 jpg 做 poster 兜底（影片 404／reduced-motion 自動淨顯示相） */}
               <div className="mt-8 flex items-start justify-center gap-3 md:gap-5">
                 {[
-                  { src: '/home/card-studio.jpg', alt: 'Glo Glo 喺攝影棚俾閃光燈包圍', cap: 'flash!', rot: '-rotate-[5deg]' },
-                  { src: '/home/card-openarms.jpg', alt: 'Glo Glo 張開雙手想攬住你', cap: 'big hug', rot: 'rotate-[3deg]' },
-                  { src: '/about/host-boba.jpg', alt: 'Glo Glo 飲珍珠奶茶', cap: 'boba break', rot: '-rotate-[2deg]' },
+                  { src: '/home/card-studio.jpg', video: '/home/card-studio.mp4', alt: 'Glo Glo 喺攝影棚俾閃光燈包圍', cap: 'flash!', rot: '-rotate-[5deg]' },
+                  { src: '/home/card-openarms.jpg', video: '/home/card-openarms.mp4', alt: 'Glo Glo 張開雙手想攬住你', cap: 'big hug', rot: 'rotate-[3deg]' },
+                  { src: '/about/host-boba.jpg', video: '/about/host-boba.mp4', alt: 'Glo Glo 飲珍珠奶茶', cap: 'boba break', rot: '-rotate-[2deg]' },
                 ].map((p) => (
                   <figure
                     key={p.src}
                     className={`w-24 shrink-0 rounded-[4px] bg-white p-1.5 pb-3 shadow-[0_10px_28px_rgba(0,0,0,0.45)] transition-transform duration-300 hover:-translate-y-1 hover:rotate-0 md:w-28 ${p.rot}`}
                   >
-                    <img
-                      src={p.src}
+                    <MovingPhoto
+                      videoSrc={p.video}
+                      poster={p.src}
                       alt={p.alt}
-                      width={224}
-                      height={280}
-                      loading="lazy"
-                      decoding="async"
-                      className="aspect-[4/5] w-full rounded-[2px] object-cover"
+                      wrapperClassName="rounded-[2px]"
+                      imgClassName="aspect-[4/5] w-full rounded-[2px] object-cover"
                     />
                     <figcaption className="script mt-1.5 text-center text-[13px] leading-none text-neutral-500">
                       {p.cap}
@@ -925,11 +926,12 @@ export default function Home() {
             </div>
 
             {/* 左：會郁嘅 Glo Glo 篤住 RedCode logo（logo 白字透底，指尖位輕彈；
-                粉紫光晕已經焗入影片，唔使 CSS glow） */}
+                v2.2.34 真 alpha 影片，唔使再焗底色， watermark 透出嚟仲有層次） */}
             <div className="relative col-start-1 row-start-2 lg:col-start-1 lg:row-start-1 lg:-mr-10 lg:w-60 xl:-mr-14 xl:w-72">
               <div className="relative mx-auto w-32 sm:w-36 lg:w-full">
                 <GloCutout
-                  videoSrc="/home/glo-poke-loop.mp4"
+                  videoSrc="/home/glo-poke-alpha.webm"
+                  animSrc="/home/glo-poke-anim.webp"
                   poster="/home/glo-poke-poster.webp"
                   alt="Glo Glo 伸手指篤住 RedCode logo"
                   animClass="glo-sway"
@@ -954,11 +956,12 @@ export default function Home() {
               </svg>
             </div>
 
-            {/* 右：會郁嘅 Glo Glo 比心單腳跳（紫光晕已焗入影片） */}
+            {/* 右：會郁嘅 Glo Glo 比心單腳跳（v2.2.34 真 alpha 影片） */}
             <div className="relative col-start-2 row-start-2 lg:col-start-3 lg:row-start-1 lg:-ml-10 lg:w-56 xl:-ml-14 xl:w-64">
               <div className="relative mx-auto w-32 sm:w-36 lg:w-full">
                 <GloCutout
-                  videoSrc="/home/glo-heart-loop.mp4"
+                  videoSrc="/home/glo-heart-alpha.webm"
+                  animSrc="/home/glo-heart-anim.webp"
                   poster="/home/glo-heart-poster.webp"
                   alt="Glo Glo 單腳跳起雙手比心"
                   animClass="glo-hop"

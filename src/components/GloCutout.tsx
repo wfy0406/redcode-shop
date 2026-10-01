@@ -1,36 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
+import { videoHasRealAlpha } from '@/lib/alphaVideo';
 
 /**
- * v2.2.33（老闆指令）：關於區兩個「會郁」嘅透明 Glo Glo —— 哈利波特式會郁嘅相。
- * 影片做咗「假透底」：出片時已經將畫面 screen-blend 落實 --space-1（#0A0614，關於區平底色）
- * ＋淡粉／淡紫光晕，所以影片本身不透明都同頁面底無縫融合——任何瀏覽器都穩陣，
- * 唔使靠 mix-blend-mode（headless/舊 WebView 對 video blend 支援唔穩，會變黑磚），
- * 仲慳咗每幀 GPU blend。底色日後如果改，要重焗影片。
- * 透明 webp poster 即刻顯示，兼做 reduced-motion／影片 404 兜底。
+ * v2.2.34（老闆指令）：關於區兩個「會郁」嘅透明 Glo Glo —— 真・透明背景影片。
+ * 上版用「假透底」（將畫面焗落頁底色），但人一跳、transform 一郁，
+ * 焗死咗嘅背景就走位——成塊背景出晒嚟（老闆電話實測發現）。
+ * 而家改用 RVM 逐幀 matting 出真 alpha：VP9 alpha WebM 行先，
+ * 瀏覽器解唔到 alpha（Safari）→ canvas probe 一驗即知，轉真 alpha 動畫 WebP；
+ * 再兜底係透明 webp poster。三層都係真透底，任何底色都唔會甩。
  *
  * 設計守鐵律（唔好整慢客人電話）：
- * - 影片未整好／404 → onError 即刻收埋 video，永遠有靜態 webp 兜底
- * - prefers-reduced-motion → 淨顯示靜態 webp
  * - 入 viewport（提前 240px）先 mount <video>，慳數據慳電
+ * - prefers-reduced-motion → 淨顯示靜態 webp
  * - 冇 CSS looping 背景動畫；淨係影片本身郁＋video/poster 嘅 transform 微動畫（見 index.css）
  */
 export default function GloCutout({
   videoSrc,
+  animSrc,
   poster,
   alt,
   className,
   animClass,
   eager = false,
 }: {
-  /** 黑底循環 mp4（9:16，figure 置中） */
+  /** 真 alpha VP9 WebM（Chrome/Android/Firefox/Edge） */
   videoSrc: string;
-  /** 透明 webp poster（同影片一樣 9:16 畫布） */
+  /** 真 alpha 動畫 WebP（Safari／解唔到 alpha 嘅瀏覽器） */
+  animSrc: string;
+  /** 透明 webp poster（載入前／reduced-motion／兩條片都掛嘅最終兜底） */
   poster: string;
   alt: string;
   className?: string;
-  /** 微動畫 class（glo-sway / glo-hop）——直接落喺 video＋poster 度，
-      唔可以落外層 wrapper：transform animation 會起 stacking context，
-      隔斷 mix-blend-screen 嘅 backdrop，黑底會變返黑磚 */
+  /** 微動畫 class（glo-sway / glo-hop）——直接落喺 video＋img 度 */
   animClass?: string;
   eager?: boolean;
 }) {
@@ -39,8 +40,8 @@ export default function GloCutout({
   );
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [near, setNear] = useState(eager);
-  const [videoOk, setVideoOk] = useState(true);
-  const [playing, setPlaying] = useState(false);
+  // poster=靜態兜底；video=真 alpha WebM 播緊；anim=動畫 WebP（Safari 或 WebM 掛咗）
+  const [mode, setMode] = useState<'poster' | 'video' | 'anim'>('poster');
 
   useEffect(() => {
     if (near || reduced) return;
@@ -64,7 +65,7 @@ export default function GloCutout({
 
   return (
     <div ref={hostRef} className={`relative ${className ?? ''}`}>
-      {/* 影片一播就收 poster：否則靜態 poster 會透過影片黑色位疊出殘影（透底唔變色嘅關鍵） */}
+      {/* 靜態透底 poster：影片一播／動畫 WebP 一上就收（opacity transition） */}
       <img
         src={poster}
         alt={alt}
@@ -73,10 +74,10 @@ export default function GloCutout({
         loading={eager ? 'eager' : 'lazy'}
         decoding="async"
         className={`h-auto w-full transition-opacity duration-300 ${animClass ?? ''} ${
-          playing ? 'opacity-0' : 'opacity-100'
+          mode === 'poster' ? 'opacity-100' : 'opacity-0'
         }`}
       />
-      {near && !reduced && videoOk && (
+      {near && !reduced && mode !== 'anim' && (
         <video
           src={videoSrc}
           className={`absolute inset-0 h-full w-full object-contain ${animClass ?? ''}`}
@@ -86,8 +87,20 @@ export default function GloCutout({
           playsInline
           preload="metadata"
           aria-hidden="true"
-          onPlaying={() => setPlaying(true)}
-          onError={() => setVideoOk(false)}
+          onPlaying={(e) => setMode(videoHasRealAlpha(e.currentTarget) ? 'video' : 'anim')}
+          onError={() => setMode('anim')}
+        />
+      )}
+      {/* Safari／解唔到 WebM alpha：真 alpha 動畫 WebP，<img> 直出，乜瀏覽器都透 */}
+      {mode === 'anim' && !reduced && (
+        <img
+          src={animSrc}
+          alt=""
+          aria-hidden="true"
+          width={360}
+          height={640}
+          className={`absolute inset-0 h-full w-full object-contain ${animClass ?? ''}`}
+          onError={() => setMode('poster')}
         />
       )}
     </div>
