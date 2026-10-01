@@ -295,7 +295,7 @@ export default function Register() {
               {(
                 [
                   ['address', '送貨上門'],
-                  ['sf_station', '順豐站'],
+                  ['sf_station', '順豐站／自提點'],
                   ['sf_locker', '智能櫃'],
                 ] as const
               ).map(([value, label]) => {
@@ -339,7 +339,12 @@ export default function Register() {
                   region={region === 'MO' ? 'MO' : 'HK'}
                   method={deliveryMethod}
                   value={stationId}
-                  onChange={(id) => setStationId(id)}
+                  onChange={(id, _name, type) => {
+                    setStationId(id);
+                    // v2.2.25：附近清單揀咗邊型，類別自動跟（順豐站／自提點→sf_station；智能櫃→sf_locker）
+                    if (type === 'SF_LOCKER') setDeliveryMethod('sf_locker');
+                    else if (type === 'SF_STATION' || type === 'SERVICE_POINT') setDeliveryMethod('sf_station');
+                  }}
                 />
               </div>
             )}

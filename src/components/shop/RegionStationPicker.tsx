@@ -10,6 +10,9 @@ import { trpc } from '@/providers/trpc';
  * - region 由 parent 控制（HK／MO；國外單唔會用到呢個組件，parent 唔好 render）
  * - 類型跟取貨方式：sf_station → SF_STATION＋SERVICE_POINT（服務點都可以自取，v2.2.7）；
  *   sf_locker → SF_LOCKER
+ * - v2.2.25（老闆指令）：「搵最近」三類站一齊顯示（順豐站／自提點／智能櫃逐行有類型 badge），
+ *   客人揀邊個型，onChange 第三參數回傳 type，parent 自動轉對應取貨方式類別；
+ *   唔想揀可以照舊自己打字搜尋（全部站點清單仍跟類別範圍）
  * - 資料：vip.listStations（公開，後台 DB 可改）；按 district 分組 + 搜尋過濾
  * - 揀咗之後收埋做一張站點卡（站名＋地址＋「更改」）；站喺後台被刪/停用會自動叫 parent 清返
  */
@@ -41,7 +44,8 @@ interface RegionStationPickerProps {
   region: Region;
   method: Method;
   value: string | undefined;
-  onChange: (stationId: string | undefined, stationName: string | undefined) => void;
+  /** v2.2.25：第三參數回傳站點類型（SF_STATION／SERVICE_POINT／SF_LOCKER），parent 自動轉類別用 */
+  onChange: (stationId: string | undefined, stationName: string | undefined, stationType?: string) => void;
   /** 外層 label（預設跟 method：順豐站／智能櫃） */
   label?: string;
 }
@@ -57,6 +61,26 @@ const DEFAULT_LABEL: Record<Method, string> = {
   sf_station: '順豐站',
   sf_locker: '智能櫃',
 };
+
+// v2.2.25：站點類型 badge（附近搜尋三類混排時逐行標示；全部站點清單都加埋，一望知係咩型）
+const STATION_TYPE_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  SF_STATION: { label: '順豐站', color: '#FF8FBF', bg: 'var(--pink-haze)', border: 'rgba(254,1,126,0.35)' },
+  SERVICE_POINT: { label: '自提點', color: 'var(--gold)', bg: 'rgba(245,197,24,0.10)', border: 'rgba(245,197,24,0.38)' },
+  SF_LOCKER: { label: '智能櫃', color: '#7DD3FC', bg: 'rgba(125,211,252,0.10)', border: 'rgba(125,211,252,0.35)' },
+};
+
+function TypeBadge({ type }: { type: string }) {
+  const meta = STATION_TYPE_META[type];
+  if (!meta) return null;
+  return (
+    <span
+      className="inline-block shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold leading-[1.7]"
+      style={{ color: meta.color, background: meta.bg, border: `1px solid ${meta.border}` }}
+    >
+      {meta.label}
+    </span>
+  );
+}
 
 export default function RegionStationPicker({
   region,
@@ -134,7 +158,7 @@ export default function RegionStationPicker({
   const flatFiltered = useMemo(() => groups.flatMap(([, arr]) => arr), [groups]);
 
   const pick = (station: Station) => {
-    onChange(station.id, station.name);
+    onChange(station.id, station.name, station.type);
     setOpen(false);
     setQuery('');
     setActiveIndex(-1);
@@ -370,7 +394,7 @@ export default function RegionStationPicker({
             <div>
               <div className="sticky top-0 flex items-center justify-between gap-2 bg-space-2 px-4 pb-1 pt-2.5">
                 <p className="text-[12px] font-medium tracking-wide text-gold">
-                  最近你嘅站點
+                  最近你嘅站點<span className="ml-1.5 font-normal text-txt-3">（順豐站／自提點／智能櫃一齊顯示）</span>
                 </p>
                 <button
                   type="button"
@@ -393,12 +417,15 @@ export default function RegionStationPicker({
                         className="flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition-colors hover:bg-[var(--pink-haze)]"
                       >
                         <span className="min-w-0 flex-1">
-                          <span
-                            className={`block truncate text-[14px] leading-snug ${
-                              isSelected ? 'font-medium text-pink-soft' : 'text-txt-1'
-                            }`}
-                          >
-                            {s.name}
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <TypeBadge type={s.type} />
+                            <span
+                              className={`truncate text-[14px] leading-snug ${
+                                isSelected ? 'font-medium text-pink-soft' : 'text-txt-1'
+                              }`}
+                            >
+                              {s.name}
+                            </span>
                           </span>
                           <span className="mt-0.5 block text-[12px] leading-relaxed text-gold">
                             約 {s.distanceKm.toFixed(1)} 公里
@@ -485,12 +512,15 @@ export default function RegionStationPicker({
                           }}
                         >
                           <span className="min-w-0 flex-1">
-                            <span
-                              className={`block truncate text-[14px] leading-snug ${
-                                isSelected ? 'font-medium text-pink-soft' : 'text-txt-1'
-                              }`}
-                            >
-                              {s.name}
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <TypeBadge type={s.type} />
+                              <span
+                                className={`truncate text-[14px] leading-snug ${
+                                  isSelected ? 'font-medium text-pink-soft' : 'text-txt-1'
+                                }`}
+                              >
+                                {s.name}
+                              </span>
                             </span>
                             {s.address && (
                               <span className="mt-0.5 block text-[12px] leading-relaxed text-txt-3">
