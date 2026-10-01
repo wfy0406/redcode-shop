@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from 'react';
  * 「live 後備隨機選」「重溫後備隨機選但同屏唔准重複」）
  *
  * FB 摷唔到真縮圖（封 IP／直播中冇 og:image）時，跌落呢度：
- * 50 條 AI 生成 mp4（10 條直播 9:16＋40 條回顧 3:4，Glo Glo 樣貌參考生成，
+ * 45 條 AI 生成 mp4（9 條直播 9:16＋36 條回顧 3:4，Glo Glo 樣貌參考生成，
  * 唔同場景／動作／衣著）＋同名 jpg 海報，全部係自家 public/live-backup/
  * 靜態檔——唔受 FB 封 IP 影響，永遠出到。
+ * （v2.2.31 老闆指令：live-07＋replay-15/17/29/36 抽出咗做首頁浮卡同
+ * 關於我們動態相，後備池刪除兼重新編號：live 1–9、replay 1–36）
  *
  * 設計守鐵律：
  * - 自家 mp4 靜音＋playsInline 循環 autoplay——手機瀏覽器准（唔似 FB embed 要手勢）
@@ -16,15 +18,15 @@ import { useEffect, useRef, useState } from 'react';
  * - RedCode logo 係 HTML overlay（透明底 PNG），jpg／mp4 原檔保持乾淨，
  *   日後換 logo 淨係換一個檔
  */
-export const LIVE_BACKUP_COUNT = 10;
-export const REPLAY_BACKUP_COUNT = 40;
+export const LIVE_BACKUP_COUNT = 9;
+export const REPLAY_BACKUP_COUNT = 36;
 
-/** 直播後備：隨機揀一條（1–10） */
+/** 直播後備：隨機揀一條（1–9） */
 export function pickLiveBackup(): number {
   return 1 + Math.floor(Math.random() * LIVE_BACKUP_COUNT);
 }
 
-/** 回顧後備：洗牌 1–40 拎頭 n 張——同屏保證唔重複（老闆指令：最多 10 條唔可以撞圖） */
+/** 回顧後備：洗牌 1–36 拎頭 n 張——同屏保證唔重複（老闆指令：最多 10 條唔可以撞圖） */
 export function dealReplayBackups(n: number): number[] {
   const pool = Array.from({ length: REPLAY_BACKUP_COUNT }, (_, i) => i + 1);
   for (let i = pool.length - 1; i > 0; i--) {

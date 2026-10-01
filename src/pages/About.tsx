@@ -1,13 +1,15 @@
 import { Facebook, MessageCircle } from 'lucide-react';
-import DuotoneImage from '@/components/DuotoneImage';
+import MovingPhoto from '@/components/MovingPhoto';
 import { useReveal } from '@/hooks/useReveal';
 import MessengerIcon from '@/components/MessengerIcon';
 
 /**
  * RedCode 關於我們（design-system.md §P4）
- * 1. Hero：左 Glo Glo 大像（duotone→全彩進場）+ 右花體「Hi, I'm Glo Glo ✦」+ 第一人稱介紹
+ * 1. Hero：左 Boss＋Glo Glo 合照（v2.2.31 哈利波特式動態：AI 由張相本身做第一格，
+ *    兩個人齊齊揮手打招呼，人樣唔郁；mp4 未就位就靜態相兜底）+ 右花體「Hi, I'm Glo Glo ✦」+ 第一人稱介紹
  * 2. 品牌故事：時間線直排，節點用金色四角星（資料源自 brief.md 真實品牌事實）
- * 3. Glo Glo 專區：gloglo-1/2/3 duotone 相片 + 寵粉文化
+ * 3. Glo Glo 專區：v2.2.31 起改用 3 條動態影片（老闆指令：後備池抽 live-07／replay-15／36
+ *    過嚟，揮手／擺 pose，人樣唔郁；本身 3 張靜態相撤走）+ 寵粉文化
  * 4. 點解揀我哋：大字編號 01–04（DM Mono --purple-text，唔用 icon 卡）
  * 5. 聯絡區：全寬列（WhatsApp／Messenger／Facebook），hover 整行 --space-2 亮起
  * 6. Facebook + Messenger + WhatsApp CTA 區塊
@@ -102,19 +104,15 @@ export default function About() {
           }}
         />
         <div className="relative z-10 mx-auto grid max-w-[1280px] items-center gap-10 px-5 pb-16 pt-12 md:px-8 md:pt-20 lg:grid-cols-2 xl:px-12">
-          {/* 左：Glo Glo 大像（全彩顯示） */}
+          {/* 左：Boss＋Glo Glo 大合照（v2.2.31 動態版：齊齊揮手；機艙自拍高清相，人樣唔郁） */}
           <div className="relative">
-            <DuotoneImage
-              off
-              src="/boss-glo.jpg"
+            <MovingPhoto
+              eager
+              videoSrc="/boss-glo.mp4"
+              poster="/boss-glo.jpg"
               alt="Boss 同主播 Glo Glo 合照"
               wrapperClassName="hero-enter rounded-[20px] border"
-              className="aspect-[4/5] w-full object-cover"
-              onError={(e) => {
-                // boss-glo.jpg 未上傳時 fallback 去 Glo Glo 造型相
-                const img = e.currentTarget;
-                if (!img.src.endsWith('/gloglo-2.jpg')) img.src = '/gloglo-2.jpg';
-              }}
+              imgClassName="aspect-[4/5] w-full object-cover"
             />
             {/* 散佈小浮卡（拍立得樣式，常態旋轉） */}
             <div
@@ -239,21 +237,24 @@ export default function About() {
           </div>
           <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6">
             {[
-              { src: '/gloglo-1.jpg', alt: 'Glo Glo 直播造型一', cls: '' },
-              { src: '/gloglo-4.jpg', alt: 'Glo Glo 同店狗合照', cls: 'md:mt-10' },
-              { src: '/gloglo-3.jpg', alt: 'Glo Glo 聖誕造型', cls: 'col-span-2 md:col-span-1 md:mt-20' },
+              // v2.2.31（老闆指令）：撤走本身 3 張靜態相，改播 3 條 AI 動態影片
+              // （後備縮圖池抽過嚟嘅 3 張：花裙／珍珠奶茶／紅外套工作枱），
+              // 揮手／擺 pose 但人樣唔郁；mp4 未就位就靜態相兜底
+              { poster: '/about/host-1.jpg', video: '/about/host-1.mp4', alt: 'Glo Glo 花裙直播造型', cls: '' },
+              { poster: '/about/host-2.jpg', video: '/about/host-2.mp4', alt: 'Glo Glo 歎珍珠奶茶', cls: 'md:mt-10' },
+              { poster: '/about/host-3.jpg', video: '/about/host-3.mp4', alt: 'Glo Glo 直播工作枱', cls: 'col-span-2 md:col-span-1 md:mt-20' },
             ].map((photo, i) => (
               <div
-                key={photo.src}
+                key={photo.poster}
                 className={`reveal ${photo.cls}`}
                 style={{ transitionDelay: `${Math.min(i * 80, 400)}ms` }}
               >
-                <DuotoneImage
-                  off
-                  src={photo.src}
+                <MovingPhoto
+                  videoSrc={photo.video}
+                  poster={photo.poster}
                   alt={photo.alt}
                   wrapperClassName="rounded-2xl border"
-                  className="aspect-[4/5] w-full object-cover"
+                  imgClassName="aspect-[4/5] w-full object-cover"
                 />
               </div>
             ))}

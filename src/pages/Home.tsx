@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
+import MovingPhoto from '@/components/MovingPhoto';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import { PRODUCTS } from '@/data/products';
 import type { Product } from '@/data/products';
@@ -89,9 +90,11 @@ interface FloatCardProps {
   parallax: number;
   className?: string;
   dim?: boolean;
+  /** v2.2.31（老闆指令「首頁果2張相要動態」）：有 mp4 就用 MovingPhoto 播動態版 */
+  videoSrc?: string;
 }
 
-function FloatCard({ src, caption, rotate, parallax, className, dim }: FloatCardProps) {
+function FloatCard({ src, caption, rotate, parallax, className, dim, videoSrc }: FloatCardProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -126,13 +129,25 @@ function FloatCard({ src, caption, rotate, parallax, className, dim }: FloatCard
         filter: dim ? 'brightness(.7) blur(1px)' : undefined,
       }}
     >
-      <img
-        src={src}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        className="h-full max-h-40 w-full rounded-xl object-cover"
-      />
+      {videoSrc ? (
+        // v2.2.31：動態浮卡（揮手／抱抱，人樣唔郁）；reduced-motion／mp4 未就位 → 靜態相兜底
+        <MovingPhoto
+          eager
+          videoSrc={videoSrc}
+          poster={src}
+          alt=""
+          wrapperClassName="rounded-xl"
+          imgClassName="h-full max-h-40 w-full object-cover"
+        />
+      ) : (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="h-full max-h-40 w-full rounded-xl object-cover"
+        />
+      )}
       <p className="script mt-1.5 text-center text-base leading-none">{caption}</p>
     </div>
   );
@@ -497,8 +512,10 @@ export default function Home() {
           parallax={0.8}
           className="right-[6%] top-[14%] hidden w-52 md:block"
         />
+        {/* v2.2.31（老闆指令）：換做後備池 replay-29 嗰張（抱住今晚嘅衫＝tonight's pick），動態抱抱 */}
         <FloatCard
-          src="/gloglo-4.jpg"
+          src="/home/card-hug.jpg"
+          videoSrc="/home/card-hug.mp4"
           caption="tonight's pick"
           rotate={3}
           parallax={0.5}
@@ -513,8 +530,10 @@ export default function Home() {
           className="bottom-[8%] right-[4%] hidden w-40 xl:block"
         />
         {/* 手機版：細卡移去文字段以下左下角（唔再壓主標/介紹段），右下係 tonight's pick 卡 */}
+        {/* v2.2.31（老闆指令）：換做後備池 replay-17 嗰張（舉住手），動態同寶寶揮手打招呼 */}
         <FloatCard
-          src="/gloglo-5.jpg"
+          src="/home/card-wave.jpg"
+          videoSrc="/home/card-wave.mp4"
           caption="live ♡"
           rotate={-4}
           parallax={0.8}

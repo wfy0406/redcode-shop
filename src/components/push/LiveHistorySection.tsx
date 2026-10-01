@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ExternalLink, Play } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
-import { openFacebookLive, isSamsungInternet } from '@/lib/openLive';
+import { openFacebookLive } from '@/lib/openLive';
 import { useReveal } from '@/hooks/useReveal';
 import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
 import BackupThumb, { dealReplayBackups } from '@/components/push/BackupThumb';
@@ -55,9 +55,10 @@ function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: numb
         <button
           type="button"
           onClick={() => {
-            // v2.2.30：Samsung Internet 防追蹤會擋死 FB iframe（老闆部機實測），
-            // Samsung 機一撳直接行 v6 跳板去 FB，唔開官網內播放器
-            if (embedUrl && !isSamsungInternet()) setPlaying(true);
+            // v2.2.31（老闆 Samsung 實測：「直播重溫放大好似係可以睇，唔洗直接入facebook」）：
+            // 重溫唔再分機種，全部撳 ▶ 開官網內全屏播放器；認唔到 embedUrl 先行 v6 跳板去 FB
+            // （留意：直播嗰區 Samsung 依然跳 FB——老闆已應承嗰個安排，呢度淨係改重溫）
+            if (embedUrl) setPlaying(true);
             else openFacebookLive(item.url);
           }}
           className="absolute inset-0 block h-full w-full cursor-pointer text-left"
@@ -141,7 +142,7 @@ function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: numb
               </span>
             </span>
             <span className="text-[12px] font-medium tracking-[0.18em] text-txt-2">
-              {embedUrl && !isSamsungInternet() ? '撳掣即刻睇' : '去 Facebook 睇'}
+              {embedUrl ? '撳掣即刻睇' : '去 Facebook 睇'}
             </span>
           </span>
 
@@ -194,8 +195,8 @@ export default function LiveHistorySection() {
     retry: false,
   });
   const items = (historyQuery.data?.items ?? []) as HistoryItem[];
-  // v2.2.30：後備縮圖洗牌派位——40 張洗勻拎頭 N 張，同屏（最多 10 條）唔會撞圖
-  // （老闆指令）。items 數量唔變就唔重新洗，避免 refetch 時啲圖跳嚟跳去
+  // v2.2.31：後備池抽走 4 張做首頁／關於我們動態相，而家 36 張——洗勻拎頭 N 張，
+  // 同屏（最多 10 條）唔會撞圖（老闆指令）。items 數量唔變就唔重新洗，避免 refetch 時啲圖跳嚟跳去
   const backupDeal = useMemo(() => dealReplayBackups(items.length), [items.length]);
 
   if (items.length === 0) return null;
@@ -237,7 +238,7 @@ export default function LiveHistorySection() {
         <div className="relative mt-8">
           <div className="replay-shelf -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto px-5 pb-2 md:mx-0 md:px-0">
             {items.map((item, i) => (
-              <ReplayCard key={item.id} item={item} index={i} backupIdx={backupDeal[i] ?? ((i % 40) + 1)} />
+              <ReplayCard key={item.id} item={item} index={i} backupIdx={backupDeal[i] ?? ((i % 36) + 1)} />
             ))}
           </div>
           <div
