@@ -7,6 +7,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import type { CartLine } from '@/components/cart/types';
 import MessengerIcon from '@/components/MessengerIcon';
+import AnimatedLogo from '@/components/AnimatedLogo';
 import { normalizeVipTier } from '@/components/VipBadge';
 import { vipTierTheme } from '@/lib/vipTheme';
 import { PRODUCT_CATEGORIES } from '@contracts/types';
@@ -209,10 +210,8 @@ export default function Navbar() {
       }}
     >
       <div className="mx-auto flex h-full max-w-[1280px] items-center justify-between px-5 md:px-8 xl:px-12">
-        {/* 左：Logo */}
-        <Link to="/" aria-label="RedCode Fashion Design 首頁" className="flex shrink-0 items-center">
-          <img src="/logo.png" alt="RedCode Fashion Design" className="h-10 w-auto md:h-14" />
-        </Link>
+        {/* 左：動態 Logo（v2.2.33 老闆指令：logo 喺左上角，小 Gloria 推 logo→推唔郁→雙手揮手，循環播） */}
+        <AnimatedLogo />
 
         {/* 中：連結（desktop）——v2.2.13 老闆指令：主連結瘦身成四條＋「更多」dropdown，唔再摺行 */}
         <nav className="hidden items-center gap-5 md:flex lg:gap-8" aria-label="主導航">

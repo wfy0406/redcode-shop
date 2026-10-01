@@ -115,6 +115,8 @@ export default function About() {
               imgClassName="aspect-[4/5] w-full object-cover"
             />
             {/* 散佈小浮卡（拍立得樣式，常態旋轉） */}
+            {/* v2.2.33（老闆指令「換晒動態版」）：珍珠奶茶工作枱——笑住 wink 搖吓杯，
+                真人樣 100% 唔郁；reduced-motion／mp4 未到 → 靜態相兜底 */}
             <div
               aria-hidden="true"
               className="hero-enter absolute -right-4 bottom-8 hidden w-36 rounded-2xl border bg-space-2 p-2 pb-3 md:block lg:-right-10 lg:w-44"
@@ -124,12 +126,12 @@ export default function About() {
                 animationDelay: '0.6s',
               }}
             >
-              <img
-                src="/gloglo-1.jpg"
+              <MovingPhoto
+                videoSrc="/about/host-boba.mp4"
+                poster="/about/host-boba.jpg"
                 alt=""
-                loading="lazy"
-                decoding="async"
-                className="aspect-square w-full rounded-xl object-cover"
+                wrapperClassName="rounded-xl"
+                imgClassName="aspect-square w-full object-cover"
               />
               <p className="mt-1.5 text-center font-mono text-xs leading-none text-pink-tint">
                 your host ♡

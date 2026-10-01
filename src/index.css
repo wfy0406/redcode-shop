@@ -416,6 +416,103 @@
   }
 }
 
+/* ===== v2.2.33（老闆指令：關於區大改——透明 Glo Glo 篤 logo＋比心單腳跳）=====
+   鐵律：齋 transform（GPU composited），唔郁 layout/box-shadow/background */
+@keyframes glo-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(2deg);
+  }
+  50% {
+    transform: translateY(-9px) rotate(2deg);
+  }
+}
+
+/* logo 俾 Glo Glo 篤一下咁：大部分時間靜，每循環初段輕彈一下 */
+@keyframes logo-poke-wobble {
+  0%,
+  100% {
+    transform: rotate(-4deg) scale(1);
+  }
+  10% {
+    transform: rotate(-1.2deg) scale(1.045);
+  }
+  22% {
+    transform: rotate(-4deg) scale(1);
+  }
+}
+
+.glo-float {
+  animation: glo-float 3.2s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* 左 cutout：身體輕輕左右搖（腳底做軸心，似真人罨企） */
+@keyframes glo-sway {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1.1deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(1.3deg);
+  }
+}
+
+/* 右 cutout：開心咁細力跳（快上慢落，似單腳跳嘅回彈） */
+@keyframes glo-hop {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  38% {
+    transform: translateY(-13px) rotate(-1.8deg);
+  }
+  62% {
+    transform: translateY(-11px) rotate(-1.4deg);
+  }
+}
+
+.glo-sway {
+  animation: glo-sway 3.8s ease-in-out infinite;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+
+.glo-hop {
+  animation: glo-hop 1.9s ease-in-out infinite;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+
+/* 星閃：齋 opacity + scale（transform），冇 background/box-shadow */
+@keyframes spark-twinkle {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.72) rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08) rotate(18deg);
+  }
+}
+
+.spark-twinkle {
+  animation: spark-twinkle 2.6s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+.spark-twinkle-slow {
+  animation-duration: 3.7s;
+  animation-delay: 0.9s;
+}
+
+.logo-poke {
+  animation: logo-poke-wobble 2.8s ease-in-out infinite;
+  transform-origin: 78% 82%;
+  will-change: transform;
+}
+
 /* ===== §6.1 Reduced motion：動態星空降格做靜態星空 ===== */
 @media (prefers-reduced-motion: reduce) {
   html {
@@ -425,6 +522,11 @@
   .nebula-1,
   .nebula-2,
   .nebula-3,
+  .glo-float,
+  .glo-sway,
+  .glo-hop,
+  .spark-twinkle,
+  .logo-poke,
   .btn-primary.btn-pulse {
     animation: none;
   }

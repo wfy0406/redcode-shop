@@ -19,6 +19,7 @@ import {
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
 import MovingPhoto from '@/components/MovingPhoto';
+import GloCutout from '@/components/GloCutout';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import { PRODUCTS } from '@/data/products';
 import type { Product } from '@/data/products';
@@ -505,9 +506,11 @@ export default function Home() {
         />
 
         {/* 散佈浮卡（文字之下/兩側，常態旋轉，scroll 視差） */}
+        {/* v2.2.33（老闆指令「換晒動態版」）：攝影棚造型，後面好多相機閃光燈影佢；真人樣 100% 唔郁 */}
         <FloatCard
-          src="/gloglo-1.jpg"
-          caption="last night live ♡"
+          src="/home/card-studio.jpg"
+          videoSrc="/home/card-studio.mp4"
+          caption="photo shoot ✦"
           rotate={-4}
           parallax={0.8}
           className="right-[6%] top-[14%] hidden w-52 md:block"
@@ -521,13 +524,15 @@ export default function Home() {
           parallax={0.5}
           className="bottom-6 right-4 w-28 sm:w-32 md:bottom-[10%] md:right-[8%] lg:bottom-[16%] lg:right-[22%] lg:w-44"
         />
+        {/* v2.2.33（老闆指令）：張開雙手想擁抱嘅動作——直播房暖光，真人樣 100% 唔郁。
+            註：唔再用 dim（blur filter 會令影片逐格重繪，守「唔好整慢客人電話」鐵律） */}
         <FloatCard
-          src="/gloglo-2.jpg"
-          caption="wish granted ✦"
+          src="/home/card-openarms.jpg"
+          videoSrc="/home/card-openarms.mp4"
+          caption="big hug ♡"
           rotate={-2}
           parallax={0.3}
-          dim
-          className="bottom-[8%] right-[4%] hidden w-40 xl:block"
+          className="bottom-[8%] right-[4%] hidden w-40 opacity-80 xl:block"
         />
         {/* 手機版：細卡移去文字段以下左下角（唔再壓主標/介紹段），右下係 tonight's pick 卡 */}
         {/* v2.2.31（老闆指令）：同關於我們對調——花裙轉圈動態相放首頁左下角，眼鏡揮手搬咗去主播專區 */}
@@ -843,55 +848,131 @@ export default function Home() {
       <HairlineDivider />
 
       {/* ============ 6. 品牌故事條 + Glo Glo 主播介紹 ============ */}
+      {/* v2.2.33（老闆指令）：兩個透明 Glo Glo 一左一右夾住故事，仲要「會郁」——
+          黑底循環影片 mix-blend-screen 融入夜空（GloCutout），webp 兜底永遠喺度；
+          後景巨型花體水印俾 cutout 遮住一半做層次；故事下面三張即影即有
+          （攝影棚／攬攬／珍珠奶茶）用唔同角度散貼，hover 先執平。
+          動畫齋 transform/opacity（glo-sway / glo-hop / spark-twinkle / logo-poke，
+          見 index.css），reduced-motion 自動停；cutout 已去白邊，logo FASHION DESIGN 白字。 */}
       <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
-        <div ref={storyRef} className="reveal grid items-center gap-10 lg:grid-cols-2">
-          {/* 左：Glo Glo 相片（全彩） */}
-          <div className="grid grid-cols-2 gap-4">
-            <DuotoneImage
-              off
-              src="/gloglo-1.jpg"
-              alt="主播 Glo Glo 直播造型一"
-              wrapperClassName="rounded-2xl border"
-              className="aspect-[4/5] h-full w-full object-cover"
-            />
-            <DuotoneImage
-              off
-              src="/gloglo-2.jpg"
-              alt="主播 Glo Glo 直播造型二"
-              wrapperClassName="mt-10 rounded-2xl border"
-              className="aspect-[4/5] h-full w-full object-cover"
-            />
-          </div>
+        <div ref={storyRef} className="reveal relative">
+          {/* 後景巨型花體水印（層次深度；DOM 先出所以自然墊底，唔落 z-index——
+              z-index/stacking context 會隔斷 cutout 影片嘅 mix-blend-screen backdrop） */}
+          <span
+            aria-hidden="true"
+            className="script pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 -rotate-6 select-none whitespace-nowrap text-[110px] text-pink opacity-[0.07] md:text-[180px]"
+          >
+            Glo Glo
+          </span>
 
-          {/* 右：花體大字 + 3 行故事 + 連結 */}
-          <div>
-            <p className="script text-[28px] leading-[1.3] md:text-[36px]">
-              From a little live room in Hong Kong
-            </p>
-            <h2 className="mt-2 font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
-              關於 Glo Glo 同 RedCode
-            </h2>
-            <div className="mt-5 space-y-4 text-[15px] leading-[1.75] text-txt-2">
-              <p>
-                RedCode 由一個小小嘅香港直播房開始。Glo Glo 每晚開住 Facebook
-                直播，逐件衫著上身俾大家睇，邊講邊笑，好似同閨蜜視像咁。
+          <div className="relative grid grid-cols-2 items-end gap-x-2 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-0">
+            {/* 中：花體大字 + 3 行故事 + 連結 + 即影即有拼貼（手機先出，lg 居中欄） */}
+            <div className="col-span-2 min-w-0 text-center lg:col-span-1 lg:col-start-2 lg:row-start-1 lg:px-6">
+              <p className="script text-[28px] leading-[1.3] md:text-[36px]">
+                From a little live room in Hong Kong
               </p>
-              <p>
-                我哋相信買衫唔使靠估 —— 直播睇到真實著身效果、質地同尺寸，
-                有問題即場問，WhatsApp 隨時搵到人。
-              </p>
-              <p>
-                由揀款、落單到對數發貨，每一步都希望令你覺得：
-                呢單唔係交易，係一粒小小嘅願望成真。
-              </p>
+              <h2 className="mt-2 font-serif-tc text-2xl font-semibold leading-[1.3] text-txt-1 md:text-[32px]">
+                關於 Glo Glo 同 RedCode
+              </h2>
+              <div className="mx-auto mt-5 max-w-xl space-y-4 text-[15px] leading-[1.75] text-txt-2">
+                <p>
+                  RedCode 由一個小小嘅香港直播房開始。Glo Glo 每晚開住 Facebook
+                  直播，逐件衫著上身俾大家睇，邊講邊笑，好似同閨蜜視像咁。
+                </p>
+                <p>
+                  我哋相信買衫唔使靠估 —— 直播睇到真實著身效果、質地同尺寸，
+                  有問題即場問，WhatsApp 隨時搵到人。
+                </p>
+                <p>
+                  由揀款、落單到對數發貨，每一步都希望令你覺得：
+                  呢單唔係交易，係一粒小小嘅願望成真。
+                </p>
+              </div>
+              <Link
+                to="/about"
+                className="mt-6 inline-block border-b text-sm font-medium text-pink-soft transition-colors hover:text-pink-tint"
+                style={{ borderColor: 'var(--pink)' }}
+              >
+                認識 Glo Glo →
+              </Link>
+
+              {/* 即影即有拼貼：唔同角度散貼，hover 執平（齋 transform transition） */}
+              <div className="mt-8 flex items-start justify-center gap-3 md:gap-5">
+                {[
+                  { src: '/home/card-studio.jpg', alt: 'Glo Glo 喺攝影棚俾閃光燈包圍', cap: 'flash!', rot: '-rotate-[5deg]' },
+                  { src: '/home/card-openarms.jpg', alt: 'Glo Glo 張開雙手想攬住你', cap: 'big hug', rot: 'rotate-[3deg]' },
+                  { src: '/about/host-boba.jpg', alt: 'Glo Glo 飲珍珠奶茶', cap: 'boba break', rot: '-rotate-[2deg]' },
+                ].map((p) => (
+                  <figure
+                    key={p.src}
+                    className={`w-24 shrink-0 rounded-[4px] bg-white p-1.5 pb-3 shadow-[0_10px_28px_rgba(0,0,0,0.45)] transition-transform duration-300 hover:-translate-y-1 hover:rotate-0 md:w-28 ${p.rot}`}
+                  >
+                    <img
+                      src={p.src}
+                      alt={p.alt}
+                      width={224}
+                      height={280}
+                      loading="lazy"
+                      decoding="async"
+                      className="aspect-[4/5] w-full rounded-[2px] object-cover"
+                    />
+                    <figcaption className="script mt-1.5 text-center text-[13px] leading-none text-neutral-500">
+                      {p.cap}
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
             </div>
-            <Link
-              to="/about"
-              className="mt-6 inline-block border-b text-sm font-medium text-pink-soft transition-colors hover:text-pink-tint"
-              style={{ borderColor: 'var(--pink)' }}
-            >
-              認識 Glo Glo →
-            </Link>
+
+            {/* 左：會郁嘅 Glo Glo 篤住 RedCode logo（logo 白字透底，指尖位輕彈；
+                粉紫光晕已經焗入影片，唔使 CSS glow） */}
+            <div className="relative col-start-1 row-start-2 lg:col-start-1 lg:row-start-1 lg:-mr-10 lg:w-60 xl:-mr-14 xl:w-72">
+              <div className="relative mx-auto w-32 sm:w-36 lg:w-full">
+                <GloCutout
+                  videoSrc="/home/glo-poke-loop.mp4"
+                  poster="/home/glo-poke-poster.webp"
+                  alt="Glo Glo 伸手指篤住 RedCode logo"
+                  animClass="glo-sway"
+                />
+                <img
+                  src="/home/redcode-logo.webp"
+                  alt="RedCode logo"
+                  width={480}
+                  height={191}
+                  loading="lazy"
+                  decoding="async"
+                  className="logo-poke absolute -left-[26%] -top-[6%] w-[62%]"
+                />
+              </div>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                className="spark-twinkle absolute -right-2 top-6 h-5 w-5 text-gold"
+                fill="currentColor"
+              >
+                <path d="M12 0l2.6 9.4L24 12l-9.4 2.6L12 24l-2.6-9.4L0 12l9.4-2.6z" />
+              </svg>
+            </div>
+
+            {/* 右：會郁嘅 Glo Glo 比心單腳跳（紫光晕已焗入影片） */}
+            <div className="relative col-start-2 row-start-2 lg:col-start-3 lg:row-start-1 lg:-ml-10 lg:w-56 xl:-ml-14 xl:w-64">
+              <div className="relative mx-auto w-32 sm:w-36 lg:w-full">
+                <GloCutout
+                  videoSrc="/home/glo-heart-loop.mp4"
+                  poster="/home/glo-heart-poster.webp"
+                  alt="Glo Glo 單腳跳起雙手比心"
+                  animClass="glo-hop"
+                />
+              </div>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                className="spark-twinkle spark-twinkle-slow absolute -left-2 top-16 h-4 w-4 text-pink-soft"
+                fill="currentColor"
+              >
+                <path d="M12 0l2.6 9.4L24 12l-9.4 2.6L12 24l-2.6-9.4L0 12l9.4-2.6z" />
+              </svg>
+            </div>
           </div>
         </div>
       </section>
