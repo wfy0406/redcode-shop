@@ -15,7 +15,7 @@ import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushEnd, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
-import { resolveFbThumb } from "./fbVideo";
+import { evictFbThumb, probeFbThumb, resolveFbThumb } from "./fbVideo";
 import { buildMerchantFeedXml } from "./merchantFeed";
 import { env } from "./lib/env";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
@@ -455,42 +455,60 @@ app.get("/api/live-thumb/:id", async (c) => {
     console.error(`[live-thumb] 摷唔到（${reason}，id 長度 ${id.length}）`);
     return c.json({ error: "Not Found" }, 404);
   };
-  const url = await resolveFbThumb(id).catch(() => null);
-  if (!url) return fail("no_thumb");
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      signal: ctrl.signal,
-      headers: {
-        // 同 fbVideo 一款：扮普通瀏覽器
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
-      },
-    });
-    clearTimeout(timer);
-    if (!res.ok) return fail("upstream_http");
-    // 上游 content-type 要 image/* 開頭先收，唔係就當摷唔到（防 FB 回 HTML 錯誤頁）
-    const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    if (!contentType.startsWith("image/")) return fail("bad_type");
-    const bytes = Buffer.from(await res.arrayBuffer());
-    if (bytes.length > LIVE_THUMB_MAX_BYTES) return fail("too_big");
-    // in-memory LRU：滿咗逐出最耐冇用嗰條（Map 迭代序＝插入序，第一個 key 係最舊）
-    if (liveThumbCache.size >= LIVE_THUMB_CACHE_CAP) {
-      const oldest = liveThumbCache.keys().next().value;
-      if (oldest !== undefined) liveThumbCache.delete(oldest);
+  // v2.2.29（老闆實測：回顧縮圖「又無晒」）：代載 bytes 失敗時自愈——
+  // scontent URL 有時效，thumbCache 入面嗰條可能已過期；丟 cache 即場重摷一次再試，
+  // 唔使等 6 個鐘 TTL 先恢復。兩次都失敗先 404（前端 onError 跌落 poster，同舊行為一致）。
+  const fetchBytes = async (url: string): Promise<{ bytes: Buffer; contentType: string } | null> => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const res = await fetch(url, {
+        method: "GET",
+        redirect: "follow",
+        signal: ctrl.signal,
+        headers: {
+          // 同 fbVideo 一款：扮普通瀏覽器
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
+        },
+      });
+      clearTimeout(timer);
+      if (!res.ok) return null;
+      // 上游 content-type 要 image/* 開頭先收，唔係就當摷唔到（防 FB 回 HTML 錯誤頁）
+      const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      if (!contentType.startsWith("image/")) return null;
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length > LIVE_THUMB_MAX_BYTES) return null;
+      return { bytes, contentType };
+    } catch {
+      return null;
     }
-    liveThumbCache.set(id, { bytes, contentType, at: Date.now() });
-    return c.body(bytes, 200, {
-      "Content-Type": contentType,
-      "Cache-Control": "public, max-age=86400",
-    });
-  } catch {
-    return fail("fetch_error");
+  };
+  let url = await resolveFbThumb(id).catch(() => null);
+  if (!url) return fail("no_thumb");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const got = await fetchBytes(url);
+    if (got) {
+      // in-memory LRU：滿咗逐出最耐冇用嗰條（Map 迭代序＝插入序，第一個 key 係最舊）
+      if (liveThumbCache.size >= LIVE_THUMB_CACHE_CAP) {
+        const oldest = liveThumbCache.keys().next().value;
+        if (oldest !== undefined) liveThumbCache.delete(oldest);
+      }
+      liveThumbCache.set(id, { bytes: got.bytes, contentType: got.contentType, at: Date.now() });
+      return c.body(got.bytes, 200, {
+        "Content-Type": got.contentType,
+        "Cache-Control": "public, max-age=86400",
+      });
+    }
+    if (attempt === 0) {
+      evictFbThumb(id);
+      const retry = await probeFbThumb(id).catch(() => null);
+      if (!retry?.url) return fail("no_thumb");
+      url = retry.url;
+    }
   }
+  return fail("upstream_http");
 });
 
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));

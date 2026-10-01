@@ -140,13 +140,28 @@ function thumbFromHtml(html: string): string | null {
 /** 摷縮圖嘅實際工序——分開埋「點解摷唔到」＋「邊個來源摷中」，後台預覽診斷用（v2.2.15） */
 export type ThumbProbe = {
   url: string | null;
-  reason: "ok_oembed" | "ok_html" | "ok_mwatch" | "fetch_fail" | "no_match";
+  reason:
+    | "ok_oembed"
+    | "ok_noembed"
+    | "ok_html"
+    | "ok_mwatch"
+    | "ok_watch"
+    | "fetch_fail"
+    | "no_match";
 };
 
-/** 扮普通瀏覽器嘅 headers——oEmbed／video.php 兩條路線共用（同 resolveFbVideoId 一款） */
+/** 扮普通瀏覽器嘅 headers——oEmbed／video.php 路線用（同 resolveFbVideoId 一款） */
 const THUMB_FETCH_HEADERS = {
   "user-agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
+} as const;
+
+/** v2.2.29：行動版 UA——m.facebook.com 對桌面 UA 嘅 data center IP 特別盡封，
+ *  扮 iPhone Safari 先肯回真 watch 頁 HTML（og:image 喺入面） */
+const THUMB_FETCH_HEADERS_MOBILE = {
+  "user-agent":
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
   "accept-language": "zh-HK,zh;q=0.9,en;q=0.8",
 } as const;
 
@@ -155,82 +170,104 @@ function isFbCdnUrl(url: string): boolean {
   return /^https:\/\/[^/]*\.(fbcdn\.net|fbsbx\.com)\//.test(url);
 }
 
-async function fetchThumb(id: string): Promise<ThumbProbe> {
-  // v2.2.21（老闆實測：縮圖全部跌落 poster）：第一來源改做 FB oEmbed。
-  // 舊路線摷 video.php 播放器 HTML，FB 對 data center IP 時好時壞 → 成日 fetch_fail；
-  // oEmbed 係官方公開 endpoint，回 JSON 直出 thumbnail_url，輕身兼冇咁易封。
-  // 摷唔到先落返原本嘅 HTML og:image 路線兜底。URL 唔落 log（鐵律）。
+/** 摷 JSON 回應入面嘅 thumbnail_url（oEmbed／noembed 兩條路線共用）；fetch 失敗 → undefined（當撞牆） */
+async function jsonThumb(
+  url: string,
+  headers: Record<string, string>,
+): Promise<string | null | undefined> {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(
-      `https://www.facebook.com/plugins/video/oembed.json?url=${encodeURIComponent(canonicalForId(id))}`,
-      {
-        method: "GET",
-        redirect: "follow",
-        signal: ctrl.signal,
-        headers: THUMB_FETCH_HEADERS,
-      },
-    );
-    clearTimeout(timer);
-    if (res.ok) {
-      const data = (await res.json().catch(() => null)) as {
-        thumbnail_url?: unknown;
-      } | null;
-      const thumb = typeof data?.thumbnail_url === "string" ? data.thumbnail_url : null;
-      if (thumb && isFbCdnUrl(thumb)) return { url: thumb, reason: "ok_oembed" };
-    }
-    // oEmbed 非 200／冇 thumbnail_url／域唔啱：唔算敗，落返 HTML 路線
-  } catch {
-    // oEmbed 撞牆（timeout／網絡）：落返 HTML 路線
-  }
-
-  let fallbackReason: "fetch_fail" | "no_match" = "fetch_fail";
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(
-      `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(canonicalForId(id))}&show_text=false`,
-      {
-        method: "GET",
-        redirect: "follow",
-        signal: ctrl.signal,
-        headers: THUMB_FETCH_HEADERS,
-      },
-    );
-    clearTimeout(timer);
-    if (res.ok) {
-      const thumb = thumbFromHtml(await res.text());
-      if (thumb) return { url: thumb, reason: "ok_html" };
-      fallbackReason = "no_match";
-    }
-    // 非 200／摷唔到 og:image：唔算完，落第三條路線
-  } catch {
-    // video.php 撞牆（timeout／網絡）：落第三條路線
-  }
-
-  // v2.2.23（老闆實測：oEmbed／video.php 喺 Render 長期失敗）：第三條路線——
-  // m.facebook.com 行動版 watch 頁，對 data center IP 封得冇咁盡，HTML 照有 og:image
-  // （重用 thumbFromHtml）。URL 唔落 log（鐵律）。
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(`https://m.facebook.com/watch/?v=${id}`, {
+    const res = await fetch(url, {
       method: "GET",
       redirect: "follow",
       signal: ctrl.signal,
-      headers: THUMB_FETCH_HEADERS,
+      headers,
     });
     clearTimeout(timer);
-    if (res.ok) {
-      const thumb = thumbFromHtml(await res.text());
-      if (thumb) return { url: thumb, reason: "ok_mwatch" };
-      fallbackReason = "no_match";
-    }
+    if (!res.ok) return undefined;
+    const data = (await res.json().catch(() => null)) as {
+      thumbnail_url?: unknown;
+    } | null;
+    const thumb = typeof data?.thumbnail_url === "string" ? data.thumbnail_url : null;
+    // 安全：只准 FB CDN 域——唔好畀上游回嘅任咩 URL 變成我哋嘅「縮圖」
+    return thumb && isFbCdnUrl(thumb) ? thumb : null;
   } catch {
-    // 三條路線全敗
+    return undefined;
   }
-  return { url: null, reason: fallbackReason };
+}
+
+/** 摷 HTML 頁入面嘅 og:image／thumbnailImage（video.php／m.facebook／www watch 共用） */
+async function htmlThumb(
+  url: string,
+  headers: Record<string, string>,
+): Promise<string | null | undefined> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: ctrl.signal,
+      headers,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return undefined;
+    return thumbFromHtml(await res.text());
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchThumb(id: string): Promise<ThumbProbe> {
+  // v2.2.29（老闆實測：回顧縮圖「又無晒」——部署重開清 cache 後三條舊路線全被封）：
+  // 擴成五條路線逐條試，一條中即回。undefined＝撞牆（timeout／非 200），null＝回咗但冇圖。
+  // 順序：官方 oEmbed → noembed 代摷（第三方 oEmbed proxy，免 key）→ video.php 播放器 HTML
+  // → m.facebook 行動版（電話 UA）→ www watch 桌面頁。URL 唔落 log（鐵律）。
+  const canonical = canonicalForId(id);
+  const routes: Array<() => Promise<{ url: string; reason: ThumbProbe["reason"] } | null | undefined>> = [
+    async () => {
+      const t = await jsonThumb(
+        `https://www.facebook.com/plugins/video/oembed.json?url=${encodeURIComponent(canonical)}`,
+        THUMB_FETCH_HEADERS,
+      );
+      return t === undefined ? undefined : t ? { url: t, reason: "ok_oembed" } : null;
+    },
+    async () => {
+      const t = await jsonThumb(
+        `https://noembed.com/embed?url=${encodeURIComponent(canonical)}`,
+        THUMB_FETCH_HEADERS,
+      );
+      return t === undefined ? undefined : t ? { url: t, reason: "ok_noembed" } : null;
+    },
+    async () => {
+      const t = await htmlThumb(
+        `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(canonical)}&show_text=false`,
+        THUMB_FETCH_HEADERS,
+      );
+      return t === undefined ? undefined : t ? { url: t, reason: "ok_html" } : null;
+    },
+    async () => {
+      const t = await htmlThumb(
+        `https://m.facebook.com/watch/?v=${id}`,
+        THUMB_FETCH_HEADERS_MOBILE,
+      );
+      return t === undefined ? undefined : t ? { url: t, reason: "ok_mwatch" } : null;
+    },
+    async () => {
+      const t = await htmlThumb(canonical, THUMB_FETCH_HEADERS);
+      return t === undefined ? undefined : t ? { url: t, reason: "ok_watch" } : null;
+    },
+  ];
+
+  let sawNoMatch = false;
+  for (const route of routes) {
+    const hit = await route();
+    if (hit) return hit;
+    if (hit === null) sawNoMatch = true;
+  }
+  // 全部路線回咗但冇圖 → no_match（FB 真係冇提供）；有撞牆 → fetch_fail（遲啲會自動好返）
+  return { url: null, reason: sawNoMatch ? "no_match" : "fetch_fail" };
 }
 
 export async function resolveFbThumb(id: string): Promise<string | null> {
@@ -245,9 +282,19 @@ export async function resolveFbThumb(id: string): Promise<string | null> {
   return probe.url;
 }
 
+/**
+ * v2.2.29：丟咗某條 ID 嘅 cache——boot.ts 代載 bytes 失敗時用。
+ * scontent URL 有時效（oe/oh 參數），cache 咗 6 個鐘內可能已過期；
+ * 丟 cache 即場重摷，等 endpoint 可以自愈，唔使等 TTL 先恢復。
+ */
+export function evictFbThumb(id: string): void {
+  thumbCache.delete(id);
+}
+
 /** 後台預覽診斷用（v2.2.15 老闆指令）：唔經 cache 即場摷，連「點解摷唔到」一齊回；
- *  v2.2.21 起 reason 標註邊個來源摷中：ok_oembed（官方 oEmbed JSON）／ok_html（播放器 HTML og:image）；
- *  v2.2.23 加 ok_mwatch（行動版 watch 頁 og:image）——三條路線全敗先回 fetch_fail／no_match */
+ *  reason 標註邊個來源摷中：ok_oembed（官方 oEmbed JSON）／ok_noembed（第三方 oEmbed proxy）／
+ *  ok_html（播放器 HTML og:image）／ok_mwatch（行動版 watch 頁，電話 UA）／ok_watch（桌面 watch 頁）；
+ *  五條路線全敗先回 fetch_fail／no_match（v2.2.29 擴路線） */
 export async function probeFbThumb(id: string): Promise<ThumbProbe> {
   return fetchThumb(id);
 }
