@@ -141,6 +141,7 @@ function thumbFromHtml(html: string): string | null {
 export type ThumbProbe = {
   url: string | null;
   reason:
+    | "ok_microlink"
     | "ok_oembed"
     | "ok_noembed"
     | "ok_html"
@@ -219,13 +220,55 @@ async function htmlThumb(
   }
 }
 
+/**
+ * v2.2.39（老闆實測：五條 FB 路線又全數被封，deploy 清 cache 後縮圖全軍跌 poster）：
+ * 第六條路線——microlink（api.microlink.io，免 key 第三方 metadata proxy）。
+ * 佢哋用自己嘅 server 摷 FB og:image 再回 JSON，我哋 server 全程唔掂 facebook.com，
+ * FB 點封我哋 IP 都照摷到。v2.2.39 起排第一——其餘五條全部直連 FB，封緊嗰陣
+ * 逐條試只係嘥時間；microlink 冇效先跌落去舊路線碰運氣。
+ * 留意：microlink 免費額有限（每 IP 每日幾十次）——thumbCache 6 個鐘＋
+ * v2.2.38 persistent disk 雙保險之下，每條片實際只會摷一兩次，用量極低。
+ * 佢回嘅 image.url 照過 isFbCdnUrl 白名單先收，唔會變成任咩 URL 嘅 proxy。
+ */
+async function microlinkThumb(canonical: string): Promise<string | null | undefined> {
+  try {
+    const ctrl = new AbortController();
+    // microlink 代摷要行佢哋自己嘅流程，比直摷慢——畀佢 12 秒
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    const res = await fetch(`https://api.microlink.io/?url=${encodeURIComponent(canonical)}`, {
+      method: "GET",
+      redirect: "follow",
+      signal: ctrl.signal,
+      headers: { accept: "application/json" },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return undefined;
+    const data = (await res.json().catch(() => null)) as {
+      status?: unknown;
+      data?: { image?: { url?: unknown } | null } | null;
+    } | null;
+    if (data?.status !== "success") return null;
+    const raw = data?.data?.image?.url;
+    const thumb = typeof raw === "string" ? raw : null;
+    // 安全：只准 FB CDN 域——同其他路線一款規矩
+    return thumb && isFbCdnUrl(thumb) ? thumb : null;
+  } catch {
+    return undefined;
+  }
+}
+
 async function fetchThumb(id: string): Promise<ThumbProbe> {
   // v2.2.29（老闆實測：回顧縮圖「又無晒」——部署重開清 cache 後三條舊路線全被封）：
   // 擴成五條路線逐條試，一條中即回。undefined＝撞牆（timeout／非 200），null＝回咗但冇圖。
-  // 順序：官方 oEmbed → noembed 代摷（第三方 oEmbed proxy，免 key）→ video.php 播放器 HTML
-  // → m.facebook 行動版（電話 UA）→ www watch 桌面頁。URL 唔落 log（鐵律）。
+  // v2.2.39：六條路線。順序：microlink 代摷（唔經 FB，封唔到）→ 官方 oEmbed
+  // → noembed 代摷 → video.php 播放器 HTML → m.facebook 行動版（電話 UA）→ www watch 桌面頁。
+  // URL 唔落 log（鐵律）。
   const canonical = canonicalForId(id);
   const routes: Array<() => Promise<{ url: string; reason: ThumbProbe["reason"] } | null | undefined>> = [
+    async () => {
+      const t = await microlinkThumb(canonical);
+      return t === undefined ? undefined : t ? { url: t, reason: "ok_microlink" } : null;
+    },
     async () => {
       const t = await jsonThumb(
         `https://www.facebook.com/plugins/video/oembed.json?url=${encodeURIComponent(canonical)}`,
@@ -292,9 +335,10 @@ export function evictFbThumb(id: string): void {
 }
 
 /** 後台預覽診斷用（v2.2.15 老闆指令）：唔經 cache 即場摷，連「點解摷唔到」一齊回；
- *  reason 標註邊個來源摷中：ok_oembed（官方 oEmbed JSON）／ok_noembed（第三方 oEmbed proxy）／
- *  ok_html（播放器 HTML og:image）／ok_mwatch（行動版 watch 頁，電話 UA）／ok_watch（桌面 watch 頁）；
- *  五條路線全敗先回 fetch_fail／no_match（v2.2.29 擴路線） */
+ *  reason 標註邊個來源摷中：ok_microlink（第三方代摷，唔經 FB，v2.2.39）／ok_oembed（官方 oEmbed JSON）／
+ *  ok_noembed（第三方 oEmbed proxy）／ok_html（播放器 HTML og:image）／
+ *  ok_mwatch（行動版 watch 頁，電話 UA）／ok_watch（桌面 watch 頁）；
+ *  六條路線全敗先回 fetch_fail／no_match */
 export async function probeFbThumb(id: string): Promise<ThumbProbe> {
   return fetchThumb(id);
 }

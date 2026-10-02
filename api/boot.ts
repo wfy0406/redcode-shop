@@ -510,11 +510,16 @@ app.get("/api/live-thumb/:id", async (c) => {
   // v2.2.29（老闆實測：回顧縮圖「又無晒」）：代載 bytes 失敗時自愈——
   // scontent URL 有時效，thumbCache 入面嗰條可能已過期；丟 cache 即場重摷一次再試，
   // 唔使等 6 個鐘 TTL 先恢復。兩次都失敗先 404（前端 onError 跌落 poster，同舊行為一致）。
-  const fetchBytes = async (url: string): Promise<{ bytes: Buffer; contentType: string } | null> => {
+  // v2.2.39（老闆實測：FB 五條路線全被封）：落 bytes 加多層 weserv 代載——
+  // 直摷 scontent 失敗（FB 連 CDN 都封我哋 server IP）嗰陣，改經 images.weserv.nl
+  // （免 key 圖片 proxy）由佢哋 server 代落再轉手。配合 fbVideo 嘅 microlink 路線，
+  // 成條鏈可以全程唔掂 facebook.com／fbcdn.net，FB 點封都照有圖。
+  // 規矩照舊：6–8 秒 timeout、image/* 先收、2MB 上限、URL 唔落 log。
+  const grabBytes = async (target: string, timeoutMs: number): Promise<{ bytes: Buffer; contentType: string } | null> => {
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6000);
-      const res = await fetch(url, {
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      const res = await fetch(target, {
         method: "GET",
         redirect: "follow",
         signal: ctrl.signal,
@@ -537,6 +542,11 @@ app.get("/api/live-thumb/:id", async (c) => {
       return null;
     }
   };
+  const fetchBytes = (url: string): Promise<{ bytes: Buffer; contentType: string } | null> =>
+    // 直摷唔到先經 weserv 代載；weserv 要時間問上游，畀佢 8 秒
+    grabBytes(url, 6000).then(
+      (got) => got ?? grabBytes(`https://images.weserv.nl/?url=${encodeURIComponent(url)}`, 8000),
+    );
   let url = await resolveFbThumb(id).catch(() => null);
   if (!url) return fail("no_thumb");
   for (let attempt = 0; attempt < 2; attempt++) {

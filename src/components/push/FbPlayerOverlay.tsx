@@ -27,6 +27,9 @@ import { openFacebookLive } from '@/lib/openLive';
  *    百分比闊度喺 iOS aspect-ratio 盒會度出怪尺寸）；
  * 3. 底部加「重新載入」掣：真係再卡住，一撳 remount 成個播放器（key 跳），
  *    唔使閂咗 overlay 再開。
+ *
+ * v2.2.39 修復（老闆實測「放大睇片粒制跑咗位」）：底部掣行加 w-max——
+ * absolute＋left-1/2 嘅 shrink-to-fit 闊度得半個屏幕，兩粒掣會俾壓到字直排。
  */
 export default function FbPlayerOverlay({
   src,
@@ -118,15 +121,19 @@ export default function FbPlayerOverlay({
           </div>
         )}
       </div>
-      {/* 底部掣行：重新載入（卡住自救）＋「去 Facebook 睇」（想返 FB 留言互動，經 v6 跳板） */}
-      <div className="absolute bottom-5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3">
+      {/* 底部掣行：重新載入（卡住自救）＋「去 Facebook 睇」（想返 FB 留言互動，經 v6 跳板）
+          v2.2.39 修復（老闆實測「放大睇片粒制跑咗位」——兩粒掣壓扁、字逐隻換行）：
+          absolute＋left-1/2 嘅 shrink-to-fit 可用闊度淨係半個屏幕（containing block − left），
+          兩粒掣加埋超過 50vw 就俾 flex 壓到變直排。補 w-max 拎返真身闊度（translate 照置中），
+          max-w 防超窄屏爆界，掣本身 shrink-0＋whitespace-nowrap 唔准再俾人壓。 */}
+      <div className="absolute bottom-5 left-1/2 z-10 flex w-max max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-3">
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
             setReloadKey((k) => k + 1);
           }}
-          className="inline-flex items-center gap-1.5 rounded-full border px-4 py-2.5 text-[13px] font-medium text-gold-soft"
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-4 py-2.5 text-[13px] font-medium text-gold-soft"
           style={{ borderColor: 'rgba(245,197,24,0.4)', background: 'rgba(10,6,20,0.8)' }}
           aria-label="重新載入播放器（卡住時撳）"
         >
@@ -140,7 +147,7 @@ export default function FbPlayerOverlay({
               e.stopPropagation();
               openFacebookLive(fbUrl);
             }}
-            className="inline-flex items-center gap-1.5 rounded-full border px-5 py-2.5 text-[13px] font-medium text-pink-soft"
+            className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-5 py-2.5 text-[13px] font-medium text-pink-soft"
             style={{ borderColor: 'rgba(255,0,84,0.4)', background: 'rgba(10,6,20,0.8)' }}
             aria-label="去 Facebook 睇（有裝 app 會開 app）"
           >
