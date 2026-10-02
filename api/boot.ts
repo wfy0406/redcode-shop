@@ -433,9 +433,51 @@ app.get("/api/products/:sku/images", async (c) => {
 // in-memory cache，唔會過期。任何失敗一律 404，前端 onError 跌落 poster，
 // 同舊行為一致，唔會更差。註冊一定要喺 app.all("/api/*") 同 serveStaticFiles 之前。
 // 鐵律：URL／明文唔准落 log——錯誤 log 淨落原因類別＋id 長度。
+// v2.2.38（老闆實測：每次 deploy 後回顧縮圖「又無晒」）：縮圖 bytes 落 persistent disk。
+// 舊設計淨係 in-memory cache——deploy/重開即清，重摷時 FB 又封 server IP（v2.2.21/23/29
+// 打完又打嗰場仗），結果全軍跌 poster。而家三層：memory → disk（UPLOAD_DIR/live-thumb/，
+// Render Persistent Disk，deploy 唔會冧）→ 先至代摷 FB。摷到一次就永久有，
+// 以後點 deploy 都唔使再靠 FB 心情。
 const LIVE_THUMB_CACHE_CAP = 200;
 const LIVE_THUMB_MAX_BYTES = 2 * 1024 * 1024; // 2MB 上限，超過即棄（防大檔拖冧 memory）
 const liveThumbCache = new Map<string, { bytes: Buffer; contentType: string; at: number }>();
+// disk 層：每條片兩個檔——{id} 係圖 bytes，{id}.ct 係 content-type。
+// id 入到嚟已過 ^\d{5,30}$ 校驗，純數字，冇 path traversal 風險。
+const LIVE_THUMB_DISK_DIR = path.join(UPLOAD_DIR, "live-thumb");
+const liveThumbDiskReady = mkdir(LIVE_THUMB_DISK_DIR, { recursive: true }).then(() => true).catch(() => false);
+const readLiveThumbDisk = async (id: string): Promise<{ bytes: Buffer; contentType: string } | null> => {
+  try {
+    await liveThumbDiskReady;
+    const file = path.join(LIVE_THUMB_DISK_DIR, id);
+    const [bytes, ct] = await Promise.all([readFile(file), readFile(`${file}.ct`, "utf8")]);
+    const contentType = ct.trim().toLowerCase();
+    if (!bytes.length || !contentType.startsWith("image/")) return null;
+    return { bytes, contentType };
+  } catch {
+    return null;
+  }
+};
+const writeLiveThumbDisk = (id: string, bytes: Buffer, contentType: string): void => {
+  // fire-and-forget：寫唔入都唔阻回圖（memory cache 頂住今次，下個 request 再試寫）
+  void liveThumbDiskReady.then(async (ok) => {
+    if (!ok) return;
+    try {
+      const file = path.join(LIVE_THUMB_DISK_DIR, id);
+      await writeFile(file, bytes);
+      await writeFile(`${file}.ct`, contentType);
+    } catch {
+      // 靜默——下個 request 會再試，唔洗 retry 邏輯
+    }
+  });
+};
+// in-memory LRU 寫入：滿咗逐出最耐冇用嗰條（Map 迭代序＝插入序，第一個 key 係最舊）
+const cacheLiveThumbMem = (id: string, bytes: Buffer, contentType: string): void => {
+  if (liveThumbCache.size >= LIVE_THUMB_CACHE_CAP) {
+    const oldest = liveThumbCache.keys().next().value;
+    if (oldest !== undefined) liveThumbCache.delete(oldest);
+  }
+  liveThumbCache.set(id, { bytes, contentType, at: Date.now() });
+};
 app.get("/api/live-thumb/:id", async (c) => {
   const id = c.req.param("id");
   // 只准數字影片 ID（5–30 位）——擋 open proxy，唔畀任咩字串變成上游摷圖目標
@@ -449,6 +491,15 @@ app.get("/api/live-thumb/:id", async (c) => {
     liveThumbCache.set(id, hit);
     return c.body(hit.bytes, 200, {
       "Content-Type": hit.contentType,
+      "Cache-Control": "public, max-age=86400",
+    });
+  }
+  // v2.2.38 第二層：persistent disk——deploy/重開都仲在，摷到過一次就唔使再靠 FB
+  const diskHit = await readLiveThumbDisk(id);
+  if (diskHit) {
+    cacheLiveThumbMem(id, diskHit.bytes, diskHit.contentType);
+    return c.body(diskHit.bytes, 200, {
+      "Content-Type": diskHit.contentType,
       "Cache-Control": "public, max-age=86400",
     });
   }
@@ -491,12 +542,8 @@ app.get("/api/live-thumb/:id", async (c) => {
   for (let attempt = 0; attempt < 2; attempt++) {
     const got = await fetchBytes(url);
     if (got) {
-      // in-memory LRU：滿咗逐出最耐冇用嗰條（Map 迭代序＝插入序，第一個 key 係最舊）
-      if (liveThumbCache.size >= LIVE_THUMB_CACHE_CAP) {
-        const oldest = liveThumbCache.keys().next().value;
-        if (oldest !== undefined) liveThumbCache.delete(oldest);
-      }
-      liveThumbCache.set(id, { bytes: got.bytes, contentType: got.contentType, at: Date.now() });
+      cacheLiveThumbMem(id, got.bytes, got.contentType);
+      writeLiveThumbDisk(id, got.bytes, got.contentType);
       return c.body(got.bytes, 200, {
         "Content-Type": got.contentType,
         "Cache-Control": "public, max-age=86400",
