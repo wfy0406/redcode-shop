@@ -397,6 +397,10 @@ ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "endedAt" timestamp;
 ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "replayOrder" integer;
 -- v2.2.23（老闆實測：FB 縮圖喺 Render 長期摷唔到）：管理員手動上傳縮圖 path；有值優先用，冇先 /api/live-thumb 自動摷
 ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "thumbUrl" varchar(512);
+-- v2.2.37（老闆指令）：直播推送三功能——唔送通知／直接進回顧／延長分鐘數
+ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "skipNotify" boolean NOT NULL DEFAULT false;
+ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "directReplay" boolean NOT NULL DEFAULT false;
+ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "extendedMinutes" integer NOT NULL DEFAULT 0;
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：

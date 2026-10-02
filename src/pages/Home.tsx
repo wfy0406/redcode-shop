@@ -854,7 +854,7 @@ export default function Home() {
           後景巨型花體水印俾 cutout 遮住一半做層次；故事下面三張即影即有
           （攝影棚／攬攬／珍珠奶茶）用唔同角度散貼，hover 先執平，相入面都會郁。
           動畫齋 transform/opacity（glo-sway / glo-hop / spark-twinkle / logo-poke，
-          見 index.css），reduced-motion 自動停；cutout 已去白邊，logo FASHION DESIGN 白字。 */}
+          見 index.css），reduced-motion 自動停；cutout 已去白邊，logo 係正版清晰素材（v2.2.36）。 */}
       <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
         <div ref={storyRef} className="reveal relative">
           {/* 後景巨型花體水印（層次深度；DOM 先出所以自然墊底，唔落 z-index——
@@ -936,14 +936,27 @@ export default function Home() {
                   alt="Glo Glo 伸手指篤住 RedCode logo"
                   animClass="glo-sway"
                 />
+                {/* v2.2.36 老闆指令：logo 換返正版清晰靜態版（AI 畫嘅霓虹版溶咗一團，落架）；
+                    logo 繼續跟主播篤郁（logo-poke 0.63s）；小精靈唔跟篤——獨立透明層自己飛舞，
+                    放喺 logo 前面（DOM 後出自然壓頂），身形喺素材放大咗 5%（再大翼尖會俾
+                    畫框裁到，5% 係唔穿崩嘅上限）。兩層同位同大，精靈飛舞軌道先對得返 logo。 */}
                 <div className="logo-poke absolute -left-[26%] top-[2%] w-[62%]">
-                  {/* v2.2.35 老闆指令：小 Glo Glo 精靈版霓虹 logo——飛黎飛去＋跳舞轉圈圈；
-                      精靈永遠喺 logo 後面（合成壓層保證），所以一定唔會遮到 RedCode 字 */}
+                  <img
+                    src="/logo-crisp.webp"
+                    alt="RedCode Fashion Design"
+                    width={512}
+                    height={256}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-auto w-full"
+                  />
+                </div>
+                <div className="pointer-events-none absolute -left-[26%] top-[2%] w-[62%]">
                   <GloCutout
-                    videoSrc="/logo-fairy-alpha.webm"
-                    animSrc="/logo-fairy-anim.webp"
-                    poster="/logo-fairy-poster.webp"
-                    alt="RedCode Fashion Design 霓虹 logo 同跳舞小精靈"
+                    videoSrc="/fairy-fly-alpha.webm"
+                    animSrc="/fairy-fly-anim.webp"
+                    poster="/fairy-fly-poster.webp"
+                    alt="飛舞小精靈 Glo Glo"
                     posterW={512}
                     posterH={256}
                   />

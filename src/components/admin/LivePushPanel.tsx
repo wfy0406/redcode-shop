@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { ChevronDown, ChevronUp, ImagePlus, Radio, Send, Square, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Clock, ImagePlus, Radio, Send, Square, Trash2 } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { getToken } from '@/lib/auth';
@@ -41,6 +41,10 @@ type Campaign = {
   replayOrder: number | null;
   // v2.2.23：手動上傳嘅回顧縮圖（/uploads/...；null＝自動摷圖）
   thumbUrl: string | null;
+  // v2.2.37（老闆指令）：三功能欄位
+  skipNotify: boolean;
+  directReplay: boolean;
+  extendedMinutes: number;
 };
 
 const STATUS_META: Record<string, { label: string; color: string; border: string }> = {
@@ -216,6 +220,10 @@ export default function LivePushPanel({
   const [liveSession, setLiveSession] = useState('晚上場');
   const [url, setUrl] = useState('');
   const [message, setMessage] = useState('');
+  // v2.2.37（老闆指令）：兩個互斥剔選——剔咗其中一個另一個即刻唔俾剔；
+  // 取消剔選先可以揀返（避免一場直播又唔送通知又入回顧嘅矛盾組合）
+  const [skipNotify, setSkipNotify] = useState(false);
+  const [directReplay, setDirectReplay] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   // 每張待批卡嘅拒絕/批准備註（key = campaign id）
   const [notes, setNotes] = useState<Record<number, string>>({});
@@ -246,15 +254,23 @@ export default function LivePushPanel({
   const pending = campaigns.filter((c) => c.status === 'pending');
 
   const requestMutation = trpc.push.requestLivePush.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (_r, vars) => {
+      // v2.2.37：toast 講明剔選效果，等老闆知發生緊咩事
+      const flagTail = vars.directReplay
+        ? '——已剔「直接放入直播回顧」：唔會送通知，唔會出現直播中'
+        : vars.skipNotify
+          ? '——已剔「不發送直播通知」：首頁照樣顯示直播中'
+          : '';
       toast(
         canSendDirect
-          ? '直播開播通知發送緊，紀錄會顯示成功/失敗數'
-          : '已提交申請，等主管審批',
+          ? `直播批次已送出${flagTail || '，通知發送緊，紀錄會顯示成功/失敗數'}`
+          : `已提交申請，等主管審批${flagTail}`,
         'success',
       );
       setUrl('');
       setMessage('');
+      setSkipNotify(false);
+      setDirectReplay(false);
       setFormError(null);
       await utils.push.listLivePush.invalidate();
     },
@@ -293,6 +309,9 @@ export default function LivePushPanel({
       liveSession: liveSession.trim(),
       url: url.trim(),
       ...(message.trim() ? { message: message.trim() } : {}),
+      // v2.2.37：兩個剔選照實落批次（互斥由 UI 把關）
+      skipNotify,
+      directReplay,
     });
   };
 
@@ -326,6 +345,24 @@ export default function LivePushPanel({
     endLiveMutation.mutate();
   };
 
+  // ─── v2.2.37（老闆指令）：直播中延長 60 分鐘——90 分鐘到可以自己延，每掣 +60（累計上限 240）───
+  const extendLiveMutation = trpc.push.extendLiveNow.useMutation({
+    onSuccess: async (r) => {
+      if (r.ok) {
+        toast(`已延長 60 分鐘（累計延長 ${r.extendedMinutes} 分鐘）`, 'success');
+      } else {
+        toast(r.message ?? '延唔到，請再試', 'info');
+      }
+      await utils.push.currentLive.invalidate();
+      await utils.push.listLivePush.invalidate();
+    },
+    onError: (err) => toast(err.message || '延長失敗，請再試', 'error'),
+  });
+  const extendLive = () => {
+    if (extendLiveMutation.isPending) return;
+    extendLiveMutation.mutate();
+  };
+
   // ─── v2.2.5（老闆指令）：刪除直播回顧 ───────────────
   // 規則同後端一致：顯示緊（sent＋90 分鐘內＋未落畫）／pending／sending 唔俾刪。
   const deleteMutation = trpc.push.deleteLiveCampaign.useMutation({
@@ -342,6 +379,9 @@ export default function LivePushPanel({
   });
   const [deleteBusyId, setDeleteBusyId] = useState<number | null>(null);
   const nowMs = Date.now();
+  // v2.2.37：顯示窗口要跟延長（90 分鐘＋extendedMinutes）——同後端 effectiveLiveWindowMs 對齊
+  const liveWindowOf = (c: (typeof campaigns)[number]) =>
+    90 * 60 * 1000 + Math.max(0, c.extendedMinutes ?? 0) * 60 * 1000;
   const canDelete = (c: (typeof campaigns)[number]) =>
     c.status !== 'pending' &&
     c.status !== 'sending' &&
@@ -349,7 +389,7 @@ export default function LivePushPanel({
       c.status === 'sent' &&
       !c.endedAt &&
       c.sentAt != null &&
-      nowMs - new Date(c.sentAt).getTime() < 90 * 60 * 1000
+      nowMs - new Date(c.sentAt).getTime() < liveWindowOf(c)
     );
 
   // ─── v2.2.16（老闆指令）：直播回顧順序 ↑↓ 調 ───────────────
@@ -370,7 +410,7 @@ export default function LivePushPanel({
   const isReplay = (c: (typeof campaigns)[number]) =>
     c.status === 'sent' &&
     (c.endedAt != null ||
-      (c.sentAt != null && nowMs - new Date(c.sentAt).getTime() >= 90 * 60 * 1000));
+      (c.sentAt != null && nowMs - new Date(c.sentAt).getTime() >= liveWindowOf(c)));
   const moveReplay = (id: number, direction: 'up' | 'down') => {
     if (moveBusyId != null) return;
     setMoveBusyId(id);
@@ -402,20 +442,46 @@ export default function LivePushPanel({
                   官網而家顯示緊：{nowLive.liveDate}・{nowLive.liveSession}
                 </p>
                 <p className="mt-0.5 text-[12px] text-txt-3">
-                  首頁同直播頁會顯示到推播後 90 分鐘；想即刻收返就撳「立即落畫」。
+                  {/* v2.2.37：顯示窗口講明 90 分鐘＋已延長幾多；到點可以自己延 */}
+                  首頁同直播頁會顯示到推播後 90 分鐘
+                  {(nowLive.extendedMinutes ?? 0) > 0
+                    ? `＋已延長 ${nowLive.extendedMinutes} 分鐘`
+                    : ''}
+                  ；想即刻收返就撳「立即落畫」。
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={endLive}
-              disabled={endLiveMutation.isPending}
-              className="inline-flex items-center gap-2 rounded-full border px-5 py-2 text-[13px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-60"
-              style={{ borderColor: 'rgba(255, 77, 141, 0.6)', color: 'var(--pink-soft)' }}
-            >
-              <Square size={14} aria-hidden="true" />
-              {endLiveMutation.isPending ? '落畫緊…' : '立即落畫'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* v2.2.37（老闆指令）：直播中可自己延長——每掣 +60 分鐘（累計上限 240） */}
+              <button
+                type="button"
+                onClick={extendLive}
+                disabled={
+                  extendLiveMutation.isPending ||
+                  (nowLive.extendedMinutes ?? 0) >= 240
+                }
+                title={
+                  (nowLive.extendedMinutes ?? 0) >= 240
+                    ? '已達延長上限（額外 240 分鐘）'
+                    : '顯示窗口延長 60 分鐘'
+                }
+                className="inline-flex items-center gap-2 rounded-full border px-5 py-2 text-[13px] font-semibold transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ borderColor: 'rgba(245, 197, 24, 0.55)', color: 'var(--gold-soft)' }}
+              >
+                <Clock size={14} aria-hidden="true" />
+                {extendLiveMutation.isPending ? '延長緊…' : '延長 60 分鐘'}
+              </button>
+              <button
+                type="button"
+                onClick={endLive}
+                disabled={endLiveMutation.isPending}
+                className="inline-flex items-center gap-2 rounded-full border px-5 py-2 text-[13px] font-semibold transition-opacity hover:opacity-80 disabled:opacity-60"
+                style={{ borderColor: 'rgba(255, 77, 141, 0.6)', color: 'var(--pink-soft)' }}
+              >
+                <Square size={14} aria-hidden="true" />
+                {endLiveMutation.isPending ? '落畫緊…' : '立即落畫'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -562,6 +628,47 @@ export default function LivePushPanel({
               />
             </div>
 
+            {/* v2.2.37（老闆指令）：兩個互斥剔選——剔咗其中一個，另一個即刻唔俾剔；
+                取消剔選先可以揀返。兩個都唔剔＝正常送通知＋顯示直播中。 */}
+            <div className="space-y-2.5 rounded-xl border border-space-line bg-space-2 px-4 py-3.5">
+              <label
+                className="flex cursor-pointer items-start gap-2.5 text-[13px] text-txt-2"
+                style={directReplay ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+              >
+                <input
+                  type="checkbox"
+                  checked={skipNotify}
+                  disabled={directReplay}
+                  onChange={(e) => setSkipNotify(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-pink"
+                />
+                <span>
+                  不發送直播通知
+                  <span className="mt-0.5 block text-[12px] leading-[1.5] text-txt-3">
+                    唔會送 push 通知；首頁同直播頁照樣顯示「直播中」90 分鐘
+                  </span>
+                </span>
+              </label>
+              <label
+                className="flex cursor-pointer items-start gap-2.5 text-[13px] text-txt-2"
+                style={skipNotify ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+              >
+                <input
+                  type="checkbox"
+                  checked={directReplay}
+                  disabled={skipNotify}
+                  onChange={(e) => setDirectReplay(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-pink"
+                />
+                <span>
+                  直接放入直播回顧
+                  <span className="mt-0.5 block text-[12px] leading-[1.5] text-txt-3">
+                    唔會送通知，亦唔會出現「直播中」——直接就落入直播回顧
+                  </span>
+                </span>
+              </label>
+            </div>
+
             {formError && (
               <p role="alert" className="text-[13px] text-pink-soft">
                 {formError}
@@ -621,6 +728,17 @@ export default function LivePushPanel({
               預覽僅供參考，實際顯示跟唔同裝置/瀏覽器會有少少出入；發送時間係伺服器實際發出嗰刻。
               撳預覽卡會試真通知嘅跳轉：手機有裝 Facebook 會直接開 app，冇裝就開網頁版。
             </p>
+            {/* v2.2.37：剔咗選項要喺預覽下方講明實際效果，唔好以為照樣送通知 */}
+            {directReplay && (
+              <p className="mt-2 text-[12px] font-medium leading-[1.6] text-gold-soft">
+                ⚠️ 已剔「直接放入直播回顧」：呢張通知<strong>唔會送出</strong>，直播唔會出現喺首頁「直播中」，直接就落入直播回顧。
+              </p>
+            )}
+            {!directReplay && skipNotify && (
+              <p className="mt-2 text-[12px] font-medium leading-[1.6] text-gold-soft">
+                ⚠️ 已剔「不發送直播通知」：呢張通知<strong>唔會送出</strong>，但首頁同直播頁照樣會顯示「直播中」90 分鐘。
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -651,6 +769,13 @@ export default function LivePushPanel({
                     申請人：{c.requestedByName ?? '—'}
                     {c.source === 'WMS' ? '（WMS）' : ''}
                   </p>
+                  {/* v2.2.37：審批人要睇到申請剔咗咩——批准之後會照旗號行事 */}
+                  {c.directReplay && (
+                    <p className="text-[12px] font-medium text-gold-soft">已剔：直接放入直播回顧</p>
+                  )}
+                  {!c.directReplay && c.skipNotify && (
+                    <p className="text-[12px] font-medium text-gold-soft">已剔：不發送直播通知</p>
+                  )}
                 </div>
                 <a
                   href={c.url}
@@ -743,6 +868,18 @@ export default function LivePushPanel({
                   >
                     <td className="py-2.5 pr-3">
                       <StatusBadge status={c.status} />
+                      {/* v2.2.37：三功能徽章——一眼睇到邊啲場無送通知／直入回顧／延長過 */}
+                      {c.directReplay && (
+                        <p className="mt-1.5 text-[11px] leading-[1.4] text-gold-soft">直入回顧</p>
+                      )}
+                      {!c.directReplay && c.skipNotify && (
+                        <p className="mt-1.5 text-[11px] leading-[1.4] text-txt-3">無發通知</p>
+                      )}
+                      {(c.extendedMinutes ?? 0) > 0 && (
+                        <p className="mt-1.5 text-[11px] leading-[1.4] text-txt-3">
+                          已延長 {c.extendedMinutes} 分鐘
+                        </p>
+                      )}
                     </td>
                     <td className="py-2.5 pr-3 text-txt-1">
                       {c.liveDate}

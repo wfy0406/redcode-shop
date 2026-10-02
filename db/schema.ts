@@ -364,6 +364,12 @@ export const pushCampaigns = pgTable("pushCampaigns", {
   // v2.2.23（老闆實測：FB 縮圖喺 Render 長期摷唔到）：管理員手動上傳嘅縮圖 path（/uploads/...）；
   // 有值就用佢，冇先落 /api/live-thumb 自動摷圖
   thumbUrl: varchar("thumbUrl", { length: 512 }),
+  // v2.2.37（老闆指令）：剔選「不發送直播通知」——照樣出現直播中，但唔送 web push
+  skipNotify: boolean("skipNotify").notNull().default(false),
+  // v2.2.37（老闆指令）：剔選「直接放入直播回顧」——唔送 push、唔出現直播中，直接落入回顧
+  directReplay: boolean("directReplay").notNull().default(false),
+  // v2.2.37（老闆指令）：直播中可自行延長，每掣 +60 分鐘（累計，上限 240）
+  extendedMinutes: integer("extendedMinutes").notNull().default(0),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 

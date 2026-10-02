@@ -11,6 +11,8 @@
  *     {secret, id, approve, reviewedByName, reviewNote?}（通過即發送）
  * ─ POST /api/wms/live-push/list {secret} → 近 50 筆全部紀錄欄位
  * ─ POST /api/wms/live-push/end {secret, byName} → 落播：顯示緊嘅直播寫 endedAt=now
+ * ─ POST /api/wms/live-push/extend {secret, byName} → 直播中延長 60 分鐘
+ *     （v2.2.37 老闆指令：90 分鐘到可以自己延，每掣 +60，累計上限 240）
  * ─ POST /api/wms/live-push/delete {secret, id, byName} → 刪除直播回顧
  *     （v2.2.5 老闆指令：WMS 官網中心同官網後台一樣可以落播＋刪回顧；
  *       顯示緊嘅直播要先落播先刪到；pending/sending 唔准刪）
@@ -22,11 +24,18 @@
  */
 import { timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
-import { and, desc, eq, gte, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { pushCampaigns } from "@db/schema";
 import { logAudit } from "./audit";
-import { PUSH_TITLE, buildLivePushBody, moveLiveReplay, sendLivePush } from "./livePush";
+import {
+  MAX_EXTEND_MINUTES,
+  PUSH_TITLE,
+  buildLivePushBody,
+  effectiveLiveWindowMs,
+  moveLiveReplay,
+  sendLivePush,
+} from "./livePush";
 import { canonicalForId, resolveFbVideoId } from "./fbVideo";
 
 /** WMS 員工角色白名單（其他→400） */
@@ -98,11 +107,15 @@ function campaignRow(r: typeof pushCampaigns.$inferSelect) {
     endedAt: r.endedAt,
     // v2.2.16（老闆指令）：直播回顧顯示順序（細數排前；null＝跟日期新→舊）
     replayOrder: r.replayOrder,
+    // v2.2.37：三功能欄位——WMS 面板徽章＋「直播中」判斷要用
+    skipNotify: r.skipNotify,
+    directReplay: r.directReplay,
+    extendedMinutes: r.extendedMinutes,
   };
 }
 
-/** 直播「進行中」窗口：sent 後 90 分鐘（同 pushRouter LIVE_WINDOW_MS 一致） */
-const LIVE_WINDOW_MS = 90 * 60 * 1000;
+/** v2.2.37（老闆指令）：「仲顯示緊」條件——窗口＝90 分鐘＋延長（每掣 +60 上限 240，逐行計） */
+const liveStillOnSql = sql`${pushCampaigns.sentAt} >= now() - (interval '90 minutes' + ${pushCampaigns.extendedMinutes} * interval '1 minute')`;
 
 /** POST /api/wms/live-push/request：WMS 員工申請／主管直接發送 */
 export async function wmsLivePushRequest(c: Context) {
@@ -128,6 +141,10 @@ export async function wmsLivePushRequest(c: Context) {
   const liveSession = (b.liveSession as string).trim();
   const url = (b.url as string).trim();
   const message = typeof b.message === "string" ? b.message.trim() : "";
+  // v2.2.37（老闆指令）：兩個剔選——唔送通知／直接放入直播回顧（互斥，UI 把關；
+  // 呢度防禦性處理：directReplay 優先，因為佢本身就唔會送通知）
+  const skipNotify = b.skipNotify === true;
+  const directReplay = b.directReplay === true;
 
   const db = getDb();
   const [{ id }] = await db
@@ -142,10 +159,17 @@ export async function wmsLivePushRequest(c: Context) {
       source: "WMS",
       requestedBy: null,
       requestedByName,
+      skipNotify,
+      directReplay,
     })
     .returning({ id: pushCampaigns.id });
 
   const direct = requesterRole === "supervisor" || requesterRole === "admin";
+  const flagNote = directReplay
+    ? "；已剔「直接放入直播回顧」"
+    : skipNotify
+      ? "；已剔「不發送直播通知」"
+      : "";
   void logAudit({
     actorId: null,
     actorRole: "system",
@@ -154,8 +178,8 @@ export async function wmsLivePushRequest(c: Context) {
     targetType: "pushCampaign",
     targetId: id,
     detail: direct
-      ? `WMS 直播推送直接發送（批次 #${id}，${liveDate} ${liveSession}，${requesterRole === "admin" ? "管理員" : "主管"}：${requestedByName}）`
-      : `WMS 直播推送申請（批次 #${id}，${liveDate} ${liveSession}，員工：${requestedByName}），等待主管審批`,
+      ? `WMS 直播推送直接發送（批次 #${id}，${liveDate} ${liveSession}，${requesterRole === "admin" ? "管理員" : "主管"}：${requestedByName}）${flagNote}`
+      : `WMS 直播推送申請（批次 #${id}，${liveDate} ${liveSession}，員工：${requestedByName}），等待主管審批${flagNote}`,
   });
   if (direct) {
     // 主管／管理員 → 直接發送（fire-and-forget，唔阻塞回應）
@@ -257,11 +281,10 @@ export async function wmsLivePushEnd(c: Context) {
   if (!byName) return c.json({ ok: false, error: "byName 必填（WMS 員工名）" }, 400);
 
   const db = getDb();
-  const since = new Date(Date.now() - LIVE_WINDOW_MS);
   const live = await db.query.pushCampaigns.findFirst({
     where: and(
       eq(pushCampaigns.status, "sent"),
-      gte(pushCampaigns.sentAt, since),
+      liveStillOnSql,
       isNull(pushCampaigns.endedAt),
     ),
     orderBy: [desc(pushCampaigns.sentAt)],
@@ -286,6 +309,62 @@ export async function wmsLivePushEnd(c: Context) {
   return c.json({ ok: true, id: live.id, liveDate: live.liveDate, liveSession: live.liveSession });
 }
 
+/** POST /api/wms/live-push/extend：直播中延長 60 分鐘（v2.2.37 老闆指令） */
+export async function wmsLivePushExtend(c: Context) {
+  const r = await readJsonWithSecret(c);
+  if ("res" in r) return r.res;
+  const b = r.b;
+  const byName = typeof b.byName === "string" ? b.byName.trim() : "";
+  if (!byName) return c.json({ ok: false, error: "byName 必填（WMS 員工名）" }, 400);
+
+  const db = getDb();
+  const live = await db.query.pushCampaigns.findFirst({
+    where: and(
+      eq(pushCampaigns.status, "sent"),
+      liveStillOnSql,
+      isNull(pushCampaigns.endedAt),
+    ),
+    orderBy: [desc(pushCampaigns.sentAt)],
+  });
+  if (!live) {
+    return c.json({ ok: false, error: "而家冇顯示緊嘅直播可以延長" }, 404);
+  }
+  const current = Math.max(0, live.extendedMinutes ?? 0);
+  if (current >= MAX_EXTEND_MINUTES) {
+    return c.json(
+      {
+        ok: false,
+        error: `已達延長上限（額外 ${MAX_EXTEND_MINUTES} 分鐘）`,
+        id: live.id,
+        extendedMinutes: current,
+      },
+      409,
+    );
+  }
+  const next = Math.min(MAX_EXTEND_MINUTES, current + 60);
+  await db
+    .update(pushCampaigns)
+    .set({ extendedMinutes: next })
+    .where(eq(pushCampaigns.id, live.id));
+  void logAudit({
+    actorId: null,
+    actorRole: "system",
+    actorNameFallback: "WMS",
+    action: "push.extendLiveNow",
+    targetType: "pushCampaign",
+    targetId: live.id,
+    detail: `WMS 延長直播顯示 60 分鐘（批次 #${live.id}，${live.liveDate} ${live.liveSession}，操作：${byName}，累計延長 ${next} 分鐘）`,
+  });
+  console.log(`[wms] live-push extend #${live.id} → +${next}min`);
+  return c.json({
+    ok: true,
+    id: live.id,
+    liveDate: live.liveDate,
+    liveSession: live.liveSession,
+    extendedMinutes: next,
+  });
+}
+
 /** POST /api/wms/live-push/delete：刪除直播回顧（v2.2.5） */
 export async function wmsLivePushDelete(c: Context) {
   const r = await readJsonWithSecret(c);
@@ -306,11 +385,12 @@ export async function wmsLivePushDelete(c: Context) {
   if (campaign.status === "pending" || campaign.status === "sending") {
     return c.json({ ok: false, error: "批次仲喺審批／發送流程，唔可以刪" }, 409);
   }
+  // v2.2.37：窗口要跟延長——延長緊嘅場次一樣唔准刪
   const stillLive =
     campaign.status === "sent" &&
     !campaign.endedAt &&
     campaign.sentAt != null &&
-    Date.now() - campaign.sentAt.getTime() < LIVE_WINDOW_MS;
+    Date.now() - campaign.sentAt.getTime() < effectiveLiveWindowMs(campaign.extendedMinutes);
   if (stillLive) {
     return c.json({ ok: false, error: "呢場直播仲顯示緊，請先落播再刪" }, 409);
   }

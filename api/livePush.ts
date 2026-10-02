@@ -17,7 +17,7 @@
  *   ⑤ audit log（push.sendLivePush，detail 只落 campaign id／計數，唔落 endpoint）。
  */
 import webpush from "web-push";
-import { and, asc, desc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { pushCampaigns, pushSubscriptions } from "@db/schema";
 import { logAudit } from "./audit";
@@ -60,6 +60,18 @@ export type SendLivePushResult = {
   error?: string;
 };
 
+/** v2.2.37（老闆指令）：直播「進行中」基本窗口＝sent 後 90 分鐘 */
+export const LIVE_WINDOW_BASE_MS = 90 * 60 * 1000;
+
+/** v2.2.37（老闆指令）：直播中可自己延長，每掣 +60 分鐘，累計上限 240 分鐘 */
+export const MAX_EXTEND_MINUTES = 240;
+
+/** 實際顯示窗口＝90 分鐘＋已延長分鐘數（夾返 0–240，防手滑寫壞 DB） */
+export function effectiveLiveWindowMs(extendedMinutes: number | null | undefined): number {
+  const ext = Math.max(0, Math.min(MAX_EXTEND_MINUTES, extendedMinutes ?? 0));
+  return LIVE_WINDOW_BASE_MS + ext * 60 * 1000;
+}
+
 /**
  * 發送一張推送批次（never-throw）。fire-and-forget 都得（void 調用唔阻塞回應）。
  * 只處理 status='pending' 嘅批次；其他狀態直接收檔（冪等，唔會重複發）。
@@ -77,6 +89,45 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
     if (campaign.status !== "pending") {
       console.log(`[push] 批次 #${campaignId} 狀態係 ${campaign.status}，唔重複發送`);
       return { ok: false, sentCount: 0, failCount: 0, error: `批次狀態係 ${campaign.status}` };
+    }
+
+    // v2.2.37（老闆指令）：剔咗「不發送直播通知」／「直接放入直播回顧」→ 唔經 VAPID、
+    // 一個通知都唔送，直接落帳做 sent（directReplay 連 endedAt 都即刻寫＝唔會出現直播中）。
+    // 照行 pending→sending→sent 轉態，等狀態機紀錄保持一致。
+    if (campaign.skipNotify || campaign.directReplay) {
+      const claimedNoPush = await db
+        .update(pushCampaigns)
+        .set({ status: "sending" })
+        .where(and(eq(pushCampaigns.id, campaignId), eq(pushCampaigns.status, "pending")))
+        .returning({ id: pushCampaigns.id });
+      if (claimedNoPush.length === 0) {
+        return { ok: false, sentCount: 0, failCount: 0, error: "批次已被其他流程處理" };
+      }
+      const nowNoPush = new Date();
+      const noPushNote = campaign.directReplay
+        ? "已剔「直接放入直播回顧」：無發送直播通知，唔會出現直播中"
+        : "已剔「不發送直播通知」：無發送直播通知";
+      await db
+        .update(pushCampaigns)
+        .set({
+          status: "sent",
+          sentCount: 0,
+          failCount: 0,
+          sentAt: nowNoPush,
+          ...(campaign.directReplay ? { endedAt: nowNoPush } : {}),
+          reviewNote: appendNote(campaign.reviewNote, noPushNote),
+        })
+        .where(eq(pushCampaigns.id, campaignId));
+      void logAudit({
+        actorId: null,
+        actorRole: "system",
+        action: "push.sendLivePush",
+        targetType: "pushCampaign",
+        targetId: campaignId,
+        detail: `直播推送批次 #${campaignId}（${campaign.liveDate} ${campaign.liveSession}）：${noPushNote}，狀態 sent`,
+      });
+      console.log(`[push] 批次 #${campaignId} ${noPushNote} → sent（0 通知）`);
+      return { ok: true, sentCount: 0, failCount: 0 };
     }
 
     // VAPID 未設 → 即敗（唔使逐個試），錯誤訊息落 reviewNote
@@ -255,8 +306,9 @@ export const REPLAY_ORDER_BY = [
   desc(pushCampaigns.sentAt),
 ] as const;
 
-/** 直播「進行中」窗口（同 pushRouter LIVE_WINDOW_MS 一致）：過咗先入回顧 */
-const REPLAY_WINDOW_MS = 90 * 60 * 1000;
+/** v2.2.37（老闆指令）：「可以入回顧」條件——已落畫，或者過咗實際顯示窗口
+ * （90 分鐘＋extendedMinutes 延長，逐行計；延長緊嘅場次唔會提早跌入回顧） */
+const replayReadySql = sql`(${pushCampaigns.endedAt} IS NOT NULL OR ${pushCampaigns.sentAt} < now() - (interval '90 minutes' + ${pushCampaigns.extendedMinutes} * interval '1 minute'))`;
 
 /** 回顧清單操作範圍：已落畫／過窗嘅 sent 批次，最新 20 筆（前台回顧顯示頭 10 筆） */
 const REPLAY_MANAGE_LIMIT = 20;
@@ -273,12 +325,8 @@ export async function moveLiveReplay(
   direction: "up" | "down",
 ): Promise<{ ok: boolean; error?: string }> {
   const db = getDb();
-  const since = new Date(Date.now() - REPLAY_WINDOW_MS);
   const rows = await db.query.pushCampaigns.findMany({
-    where: and(
-      eq(pushCampaigns.status, "sent"),
-      or(isNotNull(pushCampaigns.endedAt), lt(pushCampaigns.sentAt, since)),
-    ),
+    where: and(eq(pushCampaigns.status, "sent"), replayReadySql),
     orderBy: [...REPLAY_ORDER_BY],
     limit: REPLAY_MANAGE_LIMIT,
   });

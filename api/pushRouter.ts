@@ -20,7 +20,7 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 // v2.2.21：resolveFbThumb 唔再喺度用——縮圖搬咗去按需 endpoint /api/live-thumb/:id
 // （boot.ts），摷圖／cache 喺嗰邊做；呢度淨係出相對路徑畀前端。
@@ -35,9 +35,11 @@ import {
 } from "./middleware";
 import { logAudit } from "./audit";
 import {
+  MAX_EXTEND_MINUTES,
   PUSH_TITLE,
   REPLAY_ORDER_BY,
   buildLivePushBody,
+  effectiveLiveWindowMs,
   moveLiveReplay,
   sendLivePush,
 } from "./livePush";
@@ -48,11 +50,17 @@ function syncPushStateToWms(userId: number): void {
   void forwardMemberToWms(userId).catch((e) => console.error("[wms] member sync error:", e));
 }
 
-/** 直播推送「進行中」窗口：sent 後 90 分鐘內前台展示 */
-const LIVE_WINDOW_MS = 90 * 60 * 1000;
+/** v2.2.37（老闆指令）：「仲顯示緊」條件——sent 後未過實際窗口（90 分鐘＋後台延長，
+ * 每掣 +60 上限 240，逐行計）。配合 status='sent'＋endedAt IS NULL 用。 */
+const liveStillOnSql = sql`${pushCampaigns.sentAt} >= now() - (interval '90 minutes' + ${pushCampaigns.extendedMinutes} * interval '1 minute')`;
+
+/** v2.2.37：「可以入回顧」條件——已落畫，或者已過實際窗口（延長緊嘅唔會提早跌入） */
+const replayReadySql = sql`(${pushCampaigns.endedAt} IS NOT NULL OR ${pushCampaigns.sentAt} < now() - (interval '90 minutes' + ${pushCampaigns.extendedMinutes} * interval '1 minute'))`;
 
 /** requestLivePush 入參（合約 §8）：liveDate/liveSession 非空（max 32）、
- *  url 必須 https?://（max 500）、message 選填 max 200（有就取代 body 第一句） */
+ *  url 必須 https?://（max 500）、message 選填 max 200（有就取代 body 第一句）；
+ *  v2.2.37 加兩個剔選：skipNotify（唔送通知，照出現直播中）／
+ *  directReplay（唔送通知兼唔出現直播中，直接落入直播回顧） */
 const livePushInputSchema = z.object({
   liveDate: z.string().trim().min(1, "請填直播日期").max(32),
   liveSession: z.string().trim().min(1, "請填直播場次").max(32),
@@ -62,6 +70,8 @@ const livePushInputSchema = z.object({
     .max(500)
     .regex(/^https?:\/\//i, "網址必須以 http:// 或 https:// 開頭"),
   message: z.string().trim().max(200).optional(),
+  skipNotify: z.boolean().optional(),
+  directReplay: z.boolean().optional(),
 });
 
 /** 建立推送批次（status='pending'，由調用方決定跟手發唔發）；回新批次 id */
@@ -83,6 +93,9 @@ async function insertCampaign(
       source: "SHOP",
       requestedBy,
       requestedByName,
+      // v2.2.37：兩個剔選跟批次存（審批通過後 sendLivePush 會照旗號行事）
+      skipNotify: input.skipNotify === true,
+      directReplay: input.directReplay === true,
     })
     .returning({ id: pushCampaigns.id });
   return id;
@@ -291,15 +304,15 @@ export const pushRouter = createRouter({
       return { ok: true as const };
     }),
 
-  // ─── currentLive（公開）：最新一筆 90 分鐘內 sent 嘅直播 ────────────────
+  // ─── currentLive（公開）：最新一筆仲喺顯示窗口內 sent 嘅直播 ────────────────
+  // v2.2.37：窗口＝90 分鐘＋後台延長（每掣 +60，上限 240），逐行計
   currentLive: publicQuery.query(async () => {
     const db = getDb();
-    const since = new Date(Date.now() - LIVE_WINDOW_MS);
     const live = await db.query.pushCampaigns.findFirst({
       // v2.2.2（老闆指令）：endedAt 有值＝後台已落畫，即時唔再顯示
       where: and(
         eq(pushCampaigns.status, "sent"),
-        gte(pushCampaigns.sentAt, since),
+        liveStillOnSql,
         isNull(pushCampaigns.endedAt),
       ),
       orderBy: [desc(pushCampaigns.sentAt)],
@@ -324,6 +337,8 @@ export const pushRouter = createRouter({
         embedUrl: vid ? embedForId(vid) : null,
         // v2.2.23：手動上傳縮圖優先（FB 摷圖喺 Render 長期失敗嘅根治路線）；冇先落自動 endpoint
         thumbUrl: live.thumbUrl ?? (vid ? `/api/live-thumb/${vid}` : null),
+        // v2.2.37：後台「而家顯示緊」卡要話俾老闆知延長咗幾多（延長掣上限判斷用）
+        extendedMinutes: live.extendedMinutes,
       },
     };
   }),
@@ -358,12 +373,9 @@ export const pushRouter = createRouter({
   // 進行中嗰筆唔會出現喺度（佢喺 currentLive）。直播頁用嚟列「日期＋場次」畀客人重溫。
   liveHistory: publicQuery.query(async () => {
     const db = getDb();
-    const since = new Date(Date.now() - LIVE_WINDOW_MS);
     const rows = await db.query.pushCampaigns.findMany({
-      where: and(
-        eq(pushCampaigns.status, "sent"),
-        or(isNotNull(pushCampaigns.endedAt), lt(pushCampaigns.sentAt, since)),
-      ),
+      // v2.2.37：已落畫／過咗實際窗口（90 分鐘＋延長）先入回顧
+      where: and(eq(pushCampaigns.status, "sent"), replayReadySql),
       // v2.2.16（老闆指令）：回顧順序後台/WMS 改得——設咗 replayOrder 嘅排先
       orderBy: [...REPLAY_ORDER_BY],
       limit: 10,
@@ -398,6 +410,12 @@ export const pushRouter = createRouter({
     .mutation(async ({ ctx, input }) => {
       const requestedByName = await userNameOf(ctx.user.userId);
       const id = await insertCampaign(input, ctx.user.userId, requestedByName);
+      // v2.2.37：審計留低兩個剔選狀態（直入回顧其實都唔會送通知）
+      const flagNote = input.directReplay
+        ? "；已剔「直接放入直播回顧」"
+        : input.skipNotify
+          ? "；已剔「不發送直播通知」"
+          : "";
       if (ctx.user.role === "staff") {
         // 員工申請 → pending，等主管/管理員喺 approveLivePush 批
         void logAudit({
@@ -406,7 +424,7 @@ export const pushRouter = createRouter({
           action: "push.requestLivePush",
           targetType: "pushCampaign",
           targetId: id,
-          detail: `申請發送直播開播推送（批次 #${id}，${input.liveDate} ${input.liveSession}），等待主管審批`,
+          detail: `申請發送直播開播推送（批次 #${id}，${input.liveDate} ${input.liveSession}），等待主管審批${flagNote}`,
         });
         return { ok: true, id, status: "pending" as const };
       }
@@ -417,7 +435,7 @@ export const pushRouter = createRouter({
         action: "push.requestLivePush",
         targetType: "pushCampaign",
         targetId: id,
-        detail: `直接發送直播開播推送（批次 #${id}，${input.liveDate} ${input.liveSession}，${ctx.user.role === "admin" ? "管理員" : "主管"}免審批）`,
+        detail: `直接發送直播開播推送（批次 #${id}，${input.liveDate} ${input.liveSession}，${ctx.user.role === "admin" ? "管理員" : "主管"}免審批）${flagNote}`,
       });
       void sendLivePush(id).catch((e) => console.error(`[push] 批次 #${id} 發送出錯:`, e));
       return { ok: true, id, status: "sending" as const };
@@ -521,6 +539,10 @@ export const pushRouter = createRouter({
         replayOrder: r.replayOrder,
         // v2.2.23：手動上傳縮圖（/uploads/... 或 null＝自動摷圖；後台上傳／還原用）
         thumbUrl: r.thumbUrl,
+        // v2.2.37：三功能欄位——唔送通知／直入回顧／已延長分鐘數（後台徽章＋延長掣用）
+        skipNotify: r.skipNotify,
+        directReplay: r.directReplay,
+        extendedMinutes: r.extendedMinutes,
       })),
     };
   }),
@@ -588,11 +610,10 @@ export const pushRouter = createRouter({
   // 批次紀錄保留（歷史清單照見「已發送」），唔影響已發出嘅通知本身。
   endLiveNow: staffProcedure.mutation(async ({ ctx }) => {
     const db = getDb();
-    const since = new Date(Date.now() - LIVE_WINDOW_MS);
     const live = await db.query.pushCampaigns.findFirst({
       where: and(
         eq(pushCampaigns.status, "sent"),
-        gte(pushCampaigns.sentAt, since),
+        liveStillOnSql,
         isNull(pushCampaigns.endedAt),
       ),
       orderBy: [desc(pushCampaigns.sentAt)],
@@ -615,6 +636,54 @@ export const pushRouter = createRouter({
     return { ok: true as const, id: live.id, liveDate: live.liveDate, liveSession: live.liveSession };
   }),
 
+  // ─── extendLiveNow（員工級）：直播中延長 60 分鐘（v2.2.37 老闆指令）─────
+  // 90 分鐘窗口到咗可以自己延——每撳一掣 extendedMinutes +60（累計上限 240，
+  // 即最長 90+240＝330 分鐘）。currentLive／liveHistory／endLiveNow／刪除守衛
+  // 全部跟 extendedMinutes 逐行計窗口，所以延長即時生效，唔使郁其他嘢。
+  extendLiveNow: staffProcedure.mutation(async ({ ctx }) => {
+    const db = getDb();
+    const live = await db.query.pushCampaigns.findFirst({
+      where: and(
+        eq(pushCampaigns.status, "sent"),
+        liveStillOnSql,
+        isNull(pushCampaigns.endedAt),
+      ),
+      orderBy: [desc(pushCampaigns.sentAt)],
+    });
+    if (!live) {
+      return { ok: false as const, message: "而家冇顯示緊嘅直播可以延長" };
+    }
+    const current = Math.max(0, live.extendedMinutes ?? 0);
+    if (current >= MAX_EXTEND_MINUTES) {
+      return {
+        ok: false as const,
+        message: `已達延長上限（額外 ${MAX_EXTEND_MINUTES} 分鐘）`,
+        id: live.id,
+        extendedMinutes: current,
+      };
+    }
+    const next = Math.min(MAX_EXTEND_MINUTES, current + 60);
+    await db
+      .update(pushCampaigns)
+      .set({ extendedMinutes: next })
+      .where(eq(pushCampaigns.id, live.id));
+    void logAudit({
+      actorId: ctx.user.userId,
+      actorRole: ctx.user.role,
+      action: "push.extendLiveNow",
+      targetType: "pushCampaign",
+      targetId: live.id,
+      detail: `延長直播顯示 60 分鐘（批次 #${live.id}，${live.liveDate} ${live.liveSession}，累計延長 ${next} 分鐘）`,
+    });
+    return {
+      ok: true as const,
+      id: live.id,
+      liveDate: live.liveDate,
+      liveSession: live.liveSession,
+      extendedMinutes: next,
+    };
+  }),
+
   // ─── deleteLiveCampaign（員工級）：刪除直播回顧（v2.2.5 老闆指令）─────────────
   // 官網後台＋WMS 官網中心共用條規則：
   // · 顯示緊嘅直播（sent＋90 分鐘內＋未落畫）唔准刪——要先落播
@@ -633,11 +702,12 @@ export const pushRouter = createRouter({
       if (campaign.status === "pending" || campaign.status === "sending") {
         return { ok: false as const, message: "批次仲喺審批／發送流程，唔可以刪" };
       }
+      // v2.2.37：窗口要跟延長——延長緊嘅場次一樣唔准刪
       const stillLive =
         campaign.status === "sent" &&
         !campaign.endedAt &&
         campaign.sentAt != null &&
-        Date.now() - campaign.sentAt.getTime() < LIVE_WINDOW_MS;
+        Date.now() - campaign.sentAt.getTime() < effectiveLiveWindowMs(campaign.extendedMinutes);
       if (stillLive) {
         return { ok: false as const, message: "呢場直播仲顯示緊，請先按「落播」再刪" };
       }
