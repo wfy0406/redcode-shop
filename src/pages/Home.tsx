@@ -925,8 +925,8 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 左：會郁嘅 Glo Glo 篤住 RedCode logo（logo 白字透底，指尖位輕彈；
-                v2.2.34 真 alpha 影片，唔使再焗底色， watermark 透出嚟仲有層次） */}
+            {/* 左：會郁嘅 Glo Glo 篤住 RedCode logo（v2.2.35 老闆指令：logo 換霓虹動態版＝
+                靚啲生動啲；位置落低啲貼近指尖；logo-poke 彈跳節奏 0.63s＝手指篤嘅頻率） */}
             <div className="relative col-start-1 row-start-2 lg:col-start-1 lg:row-start-1 lg:-mr-10 lg:w-60 xl:-mr-14 xl:w-72">
               <div className="relative mx-auto w-32 sm:w-36 lg:w-full">
                 <GloCutout
@@ -936,15 +936,18 @@ export default function Home() {
                   alt="Glo Glo 伸手指篤住 RedCode logo"
                   animClass="glo-sway"
                 />
-                <img
-                  src="/home/redcode-logo.webp"
-                  alt="RedCode logo"
-                  width={480}
-                  height={191}
-                  loading="lazy"
-                  decoding="async"
-                  className="logo-poke absolute -left-[26%] -top-[6%] w-[62%]"
-                />
+                <div className="logo-poke absolute -left-[26%] top-[2%] w-[62%]">
+                  {/* v2.2.35 老闆指令：小 Glo Glo 精靈版霓虹 logo——飛黎飛去＋跳舞轉圈圈；
+                      精靈永遠喺 logo 後面（合成壓層保證），所以一定唔會遮到 RedCode 字 */}
+                  <GloCutout
+                    videoSrc="/logo-fairy-alpha.webm"
+                    animSrc="/logo-fairy-anim.webp"
+                    poster="/logo-fairy-poster.webp"
+                    alt="RedCode Fashion Design 霓虹 logo 同跳舞小精靈"
+                    posterW={512}
+                    posterH={256}
+                  />
+                </div>
               </div>
               <svg
                 aria-hidden="true"

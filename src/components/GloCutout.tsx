@@ -22,6 +22,8 @@ export default function GloCutout({
   className,
   animClass,
   eager = false,
+  posterW = 360,
+  posterH = 640,
 }: {
   /** 真 alpha VP9 WebM（Chrome/Android/Firefox/Edge） */
   videoSrc: string;
@@ -34,6 +36,9 @@ export default function GloCutout({
   /** 微動畫 class（glo-sway / glo-hop）——直接落喺 video＋img 度 */
   animClass?: string;
   eager?: boolean;
+  /** v2.2.35：素材原生寬高（CLS 用）——cutout 係 360x640，霓虹 logo 係 512x256 */
+  posterW?: number;
+  posterH?: number;
 }) {
   const [reduced] = useState(
     () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
@@ -69,8 +74,8 @@ export default function GloCutout({
       <img
         src={poster}
         alt={alt}
-        width={360}
-        height={640}
+        width={posterW}
+        height={posterH}
         loading={eager ? 'eager' : 'lazy'}
         decoding="async"
         className={`h-auto w-full transition-opacity duration-300 ${animClass ?? ''} ${
@@ -97,8 +102,8 @@ export default function GloCutout({
           src={animSrc}
           alt=""
           aria-hidden="true"
-          width={360}
-          height={640}
+          width={posterW}
+          height={posterH}
           className={`absolute inset-0 h-full w-full object-contain ${animClass ?? ''}`}
           onError={() => setMode('poster')}
         />

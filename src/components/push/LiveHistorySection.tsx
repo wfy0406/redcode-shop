@@ -17,7 +17,8 @@ import BackupThumb, { dealReplayBackups } from '@/components/push/BackupThumb';
  * · 撳 ▶ → 官網內全屏直度（9:16）播放器（FbPlayerOverlay），唔彈 FB
  * · 卡底 meta：「去 Facebook 睇 ↗」→ openFacebookLive 經 /live-go-v6.html 跳板（推播成功路線：iPhone 去網頁版條片＋金掣試 app、Android https-intent 直開 app 指定條片）
  *   （老闆明言要保留：有寶寶想返 FB app 睇／留言）
- * · 手機左右滑動（scroll-snap），右邊緣淡出提示仲有下一張
+ * · 手機左右滑動（scroll-snap），最尾張自然裁邊提示仲有下一張
+ *   （v2.2.35：拆走舊版右邊緣深色淡出——老闆實測話嗰浸暗影似污糟，唔要）
  * 冇回顧時成區唔 render。
  */
 
@@ -234,18 +235,14 @@ export default function LiveHistorySection() {
           </p>
         </div>
 
-        {/* 直度卡長廊：橫向 scroll-snap；右邊緣淡出提示仲有下一張 */}
+        {/* 直度卡長廊：橫向 scroll-snap；最尾嗰張自然裁邊已經提示「仲有下一張」，
+            v2.2.35 拆走右邊緣深色淡出（老闆：嗰浸暗影似污糟嘢，唔要） */}
         <div className="relative mt-8">
           <div className="replay-shelf -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto px-5 pb-2 md:mx-0 md:px-0">
             {items.map((item, i) => (
               <ReplayCard key={item.id} item={item} index={i} backupIdx={backupDeal[i] ?? ((i % 36) + 1)} />
             ))}
           </div>
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 right-0 w-14 md:hidden"
-            style={{ background: 'linear-gradient(90deg, transparent 0%, var(--space-1) 100%)' }}
-          />
         </div>
 
         <p className="mt-5 text-[13px] leading-relaxed text-txt-3">
