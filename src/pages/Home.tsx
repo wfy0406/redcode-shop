@@ -1109,14 +1109,17 @@ export default function Home() {
           font-size: 14px;
           font-weight: 600;
         }
-        /* ghost（通知掣）：最收斂，融入 cluster 但唔搶戲 */
+        /* ghost（通知掣）：v2.2.41 老闆指令「深色啲、突出啲」——
+           唔再透明ghost（會透出後面閃石星塵，成粒融埋背景），改實心深底
+           var(--space-1)＋金 hairline 邊＋金字：深色先壓得住場，金邊先搶眼。
+           用 var(--gold) 系，VIP 銀/金會員主題照自動跟色（TIER_HOME_VARS）。 */
         .hero-cta-ghost {
-          padding: 11px 20px;
-          border: 1px solid var(--space-line);
-          background: transparent;
-          color: var(--text-2);
+          padding: 12px 22px;
+          border: 1px solid var(--gold);
+          background: var(--space-1);
+          color: var(--gold-soft);
           font-size: 13px;
-          font-weight: 500;
+          font-weight: 600;
         }
 
         /* pointer spotlight 光暈：固定 160px 圓，JS 寫 --mx/--my，translate3d 跟手；
@@ -1209,7 +1212,7 @@ export default function Home() {
         /* micro-label 細微金/粉色；primary 實心粉底上用深字保對比 */
         .hero-cta-primary .cta-micro { color: rgba(10, 6, 20, 0.62); }
         .hero-cta-outline .cta-micro { color: var(--gold); opacity: 0.8; }
-        .hero-cta-ghost .cta-micro { color: var(--pink-tint); opacity: 0.75; }
+        .hero-cta-ghost .cta-micro { color: var(--gold); opacity: 0.95; }
 
         .cta-arrow {
           transition: transform 300ms var(--ease-expo);
