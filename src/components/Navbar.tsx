@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, NavLink, useLocation } from 'react-router';
 import { ChevronDown, Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
@@ -175,9 +175,17 @@ export default function Navbar() {
   const liveMonths = useMemo(() => groupLiveMonths(liveGroups), [liveGroups]);
   // 邊個月份展開緊（預設自動開最新嗰個月，客人一開就見到近期場次）
   const [liveMonthOpen, setLiveMonthOpen] = useState<string | null>(null);
+  // v2.2.42（老闆實測「直播場次收唔埋，按咗都係展開」）：舊 effect 見 null 就自動開返，
+  // 客人一撳收埋 → set null → effect 即刻開返，永遠收唔到。
+  // 加 ref 記住「自動開過未」——得第一次入數據嗰下先自動開最新月，
+  // 之後客人手動收埋就唔再碰佢。
+  const liveMonthAutoOpened = useRef(false);
   useEffect(() => {
-    if (liveMonthOpen === null && liveMonths.length > 0) setLiveMonthOpen(liveMonths[0].key);
-  }, [liveMonths, liveMonthOpen]);
+    if (!liveMonthAutoOpened.current && liveMonths.length > 0) {
+      liveMonthAutoOpened.current = true;
+      setLiveMonthOpen(liveMonths[0].key);
+    }
+  }, [liveMonths]);
 
   // VIP 級別 badge（v2.2.13 老闆指令 bug fix）：同首頁打招呼用同一數據源 auth.me——
   // 後端 publicUser 已用 effectiveVipTier 計好有效級別（過期即 NONE）。
