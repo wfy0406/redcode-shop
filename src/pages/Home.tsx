@@ -1270,6 +1270,18 @@ export default function Home() {
           to { transform: translate3d(12px, 8px, 0); }
         }
 
+        /* v2.2.40（老闆實測「電腦版背景有個正方形閃石框，位置唔啱大細唔啱」）：
+           原圖係正方形四角閃石框，contain 喺電腦版（sm 起掣橫排、盒變橫長）會縮做
+           正中一個正方形，先至見到「個框唔啱位」。sm 起改用闊版星塵圖＋100% 100%
+           拉滿成個盒——閃石永遠貼住盒四角，中間留空俾掣，咩屏幕闊度都啱位。
+           手機版（2×2 grid，盒近正方形）維持原圖 contain 唔變。 */
+        @media (min-width: 640px) {
+          .cta-sparkle-layer {
+            background-image: url(/cta-sparkles-wide.png);
+            background-size: 100% 100%;
+          }
+        }
+
         @media (prefers-reduced-motion: reduce) {
           .hero-cta { transition: none; }
           .hero-cta:hover, .hero-cta:active { transform: translateZ(0); }
