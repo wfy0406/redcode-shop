@@ -406,11 +406,13 @@ ALTER TABLE "pushSubscriptions" ADD COLUMN IF NOT EXISTS "deviceModel" varchar(1
 CREATE TABLE IF NOT EXISTS "pushDeliveries" (
   id serial PRIMARY KEY,
   "subscriptionId" integer NOT NULL REFERENCES "pushSubscriptions"("id"),
-  "campaignId" integer NOT NULL REFERENCES "pushCampaigns"("id"),
+  "campaignId" integer REFERENCES "pushCampaigns"("id"),
   ok boolean NOT NULL,
   reason varchar(32),
   "sentAt" timestamp NOT NULL DEFAULT now()
 );
+-- 中獎通知等非直播推送都落 pushDeliveries：campaignId 放 null 代表非直播推送
+ALTER TABLE "pushDeliveries" ALTER COLUMN "campaignId" DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS pushdeliveries_subscription_sent ON "pushDeliveries" ("subscriptionId", "sentAt" DESC);
 -- v2.2.46（老闆指令）：直播抽獎大輪盤——獎品池＋中獎紀錄
 CREATE TABLE IF NOT EXISTS "luckyPrizes" (
@@ -418,10 +420,14 @@ CREATE TABLE IF NOT EXISTS "luckyPrizes" (
   name varchar(255) NOT NULL,
   sku varchar(64) NOT NULL,
   price integer NOT NULL,
-  "imagePath" varchar(512) NOT NULL,
+  "imagePath" varchar(512),
+  "session" varchar(64) NOT NULL DEFAULT '',
   active boolean NOT NULL DEFAULT true,
   "createdAt" timestamp NOT NULL DEFAULT now()
 );
+-- 獎品名／圖改選填（老闆實測回饋）：imagePath 可以放 null；新增 session 分場次欄
+ALTER TABLE "luckyPrizes" ALTER COLUMN "imagePath" DROP NOT NULL;
+ALTER TABLE "luckyPrizes" ADD COLUMN IF NOT EXISTS "session" varchar(64) NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS "luckyDraws" (
   id serial PRIMARY KEY,
   "prizeId" integer NOT NULL REFERENCES "luckyPrizes"("id"),

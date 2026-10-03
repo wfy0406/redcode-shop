@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronLeft, ChevronRight, Search, Smartphone, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock3, Globe, Search, Send, Smartphone, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { fmtDateTime } from './format';
 import { LoadingBlock } from './WishingStar';
@@ -11,8 +11,19 @@ import { LoadingBlock } from './WishingStar';
  * v2.2.44（老闆指令）升級：
  * - Android 廠牌用 sec-ch-ua-model（Chrome 凍結咗 UA 型號）；有型號喺廠牌下細字顯示
  * - 撳任何一行彈方塊睇該機推送紀錄（成功／失敗＋原因），50 筆一頁
+ * v2.2.45（老闆截圖嫌醜）：手機卡重排——名＋格式化電話做主行、廠牌/瀏覽器改
+ * icon chip、時間加 icon、右邊 chevron 提示可以撳；電話 HK 格式 XXXX XXXX。
  * 純唯讀；訂閱敏感內容（endpoint/keys）後端根本唔會回嚟。
  */
+
+/** 香港電話格式化：8 位 → XXXX XXXX；852 開頭 11 位 → 852 XXXX XXXX；其他原樣 */
+function fmtPhone(p: string | null): string {
+  if (!p) return '';
+  const d = p.replace(/\D/g, '');
+  if (/^852\d{8}$/.test(d)) return `852 ${d.slice(3, 7)} ${d.slice(7)}`;
+  if (/^\d{8}$/.test(d)) return `${d.slice(0, 4)} ${d.slice(4)}`;
+  return p;
+}
 
 type BoundDeviceRow = {
   id: number;
@@ -31,9 +42,10 @@ type DeliveryRow = {
   ok: boolean;
   reason: string | null;
   sentAt: string;
-  campaignTitle: string;
-  liveDate: string;
-  liveSession: string;
+  // v2.2.49（老闆指令）：中獎推送都落 pushDeliveries（campaignId null）——三欄可 null
+  campaignTitle: string | null;
+  liveDate: string | null;
+  liveSession: string | null;
 };
 
 type DeliveryPage = {
@@ -119,7 +131,7 @@ function DeviceDeliveriesModal({
                 <li key={r.id} className="flex items-center justify-between gap-3 py-2.5">
                   <div className="min-w-0">
                     <p className="truncate text-[13px] font-medium text-txt-1">
-                      {r.liveDate} 第{r.liveSession}場
+                      {r.campaignTitle === null ? '🎉 中獎通知' : `${r.liveDate} 第${r.liveSession}場`}
                     </p>
                     <p className="mt-0.5 font-mono text-[12px] text-txt-3">
                       {fmtDateTime(r.sentAt)}
@@ -288,7 +300,7 @@ export default function BoundDeviceList() {
                     <td className="py-2.5 pr-3">
                       <span className="font-medium text-txt-1">{r.customerName}</span>
                       <span className="mt-0.5 block font-mono text-[12px] text-txt-3">
-                        {r.customerPhone || r.customerEmail || '—'}
+                        {fmtPhone(r.customerPhone) || r.customerEmail || '—'}
                       </span>
                     </td>
                     <td className="py-2.5 pr-3 text-txt-1">
@@ -312,33 +324,73 @@ export default function BoundDeviceList() {
             </table>
           </div>
 
-          {/* 手機版：逐部一卡（可撳） */}
+          {/* 手機版：逐部一卡（可撳）。v2.2.45 重排：avatar＋名/電話主行、
+              廠牌/瀏覽器 icon chip、時間 icon 行、右邊 chevron 提示可撳 */}
           <ul className="mt-4 space-y-3 lg:hidden">
             {filtered.map((r) => (
               <li key={r.id}>
                 <button
                   type="button"
                   onClick={() => setOpenDevice(r)}
-                  className="w-full cursor-pointer rounded-xl border p-3.5 text-left transition-colors hover:bg-white/5"
-                  style={{ borderColor: 'var(--space-line)' }}
+                  className="w-full cursor-pointer rounded-2xl border p-4 text-left transition-colors hover:bg-white/5"
+                  style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.02)' }}
                   aria-label={`睇 ${r.customerName} 呢部裝置嘅推送紀錄`}
                 >
-                  <span className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-txt-1">{r.customerName}</span>
-                    <span className="font-mono text-[12px] text-txt-3">
-                      {r.customerPhone || r.customerEmail || ''}
+                  {/* 主行：名＋電話 */}
+                  <span className="flex items-center gap-3">
+                    <span
+                      aria-hidden="true"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-[15px] font-bold"
+                      style={{
+                        borderColor: 'var(--glass-border)',
+                        background: 'var(--space-1)',
+                        color: 'var(--gold-soft)',
+                      }}
+                    >
+                      {r.customerName.trim().charAt(0) || '客'}
                     </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px] font-semibold text-txt-1">
+                        {r.customerName}
+                      </span>
+                      <span className="mt-0.5 block truncate font-mono text-[12px] text-txt-3">
+                        {fmtPhone(r.customerPhone) || r.customerEmail || '—'}
+                      </span>
+                    </span>
+                    <ChevronRight size={16} aria-hidden="true" className="shrink-0 text-txt-3" />
                   </span>
-                  <span className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
-                    <span className="text-txt-1">
+
+                  {/* 裝置 chips：廠牌（＋型號細字）／瀏覽器 */}
+                  <span className="mt-3 flex flex-wrap items-center gap-2">
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium text-txt-1"
+                      style={{ borderColor: 'var(--glass-border)' }}
+                    >
+                      <Smartphone size={12} aria-hidden="true" className="text-lavender" />
                       {r.brand}
-                      {r.model ? `（${r.model}）` : ''}
                     </span>
-                    <span className="text-txt-2">{r.browser}</span>
+                    {r.model && (
+                      <span className="font-mono text-[11px] text-txt-3">{r.model}</span>
+                    )}
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] text-txt-2"
+                      style={{ borderColor: 'var(--space-line)' }}
+                    >
+                      <Globe size={12} aria-hidden="true" className="text-txt-3" />
+                      {r.browser}
+                    </span>
                   </span>
-                  <span className="mt-2 block font-mono text-[12px] text-txt-3">
-                    綁定 {fmtDateTime(r.boundAt)}
-                    {r.lastSentAt ? `・最近推送 ${fmtDateTime(r.lastSentAt)}` : '・未推過'}
+
+                  {/* 時間行 */}
+                  <span className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-2.5 font-mono text-[11.5px] text-txt-3" style={{ borderColor: 'var(--space-line)' }}>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Clock3 size={12} aria-hidden="true" />
+                      綁定 {fmtDateTime(r.boundAt)}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Send size={11} aria-hidden="true" />
+                      {r.lastSentAt ? `最近推送 ${fmtDateTime(r.lastSentAt)}` : '未推過'}
+                    </span>
                   </span>
                 </button>
               </li>

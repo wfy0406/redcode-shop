@@ -373,7 +373,8 @@ export async function moveLiveReplay(
  * v2.2.46（直播抽獎，老闆指令）：中獎即時推送畀中獎人（佢全部 active 裝置）。
  * 同直播推送共用 VAPID；never-throw——抽獎流程唔會因推送失敗而彈錯。
  * 保安：日誌淨落 userId／計數／statusCode；endpoint/keys 永遠唔落 log。
- * 中獎推送唔係直播 campaign，唔寫 pushDeliveries（嗰張表係逐 campaign 對位用）。
+ * 中獎推送唔係直播 campaign，但照寫 pushDeliveries——campaignId=null 代表非直播推送
+ * （綁定手機→推送紀錄彈窗要睇到中獎通知有冇送到；原因類別規則同 sendLivePush 一致）。
  */
 export async function sendPrizeWinPush(
   userId: number,
@@ -414,12 +415,34 @@ export async function sendPrizeWinPush(
           .update(pushSubscriptions)
           .set({ lastSentAt: now })
           .where(eq(pushSubscriptions.id, sub.id));
+        // 逐機推送紀錄——寫低成功（campaignId=null＝非直播推送）；寫唔入唔阻主流程
+        await db
+          .insert(pushDeliveries)
+          .values({ subscriptionId: sub.id, campaignId: null, ok: true, reason: null, sentAt: now })
+          .catch(() => undefined);
       } catch (e) {
         failed++;
+        // 日誌淨落 subscription id＋statusCode；endpoint/keys/payload 原文永遠唔准落 log
         const statusCode =
           typeof (e as { statusCode?: unknown })?.statusCode === "number"
             ? (e as { statusCode: number }).statusCode
             : null;
+        // 逐機推送紀錄——寫低失敗＋原因類別（淨類別，唔落原文；規則同 sendLivePush 一致）
+        await db
+          .insert(pushDeliveries)
+          .values({
+            subscriptionId: sub.id,
+            campaignId: null,
+            ok: false,
+            reason:
+              statusCode === 404 || statusCode === 410
+                ? "gone"
+                : statusCode
+                  ? `http_${statusCode}`
+                  : "unknown",
+            sentAt: now,
+          })
+          .catch(() => undefined);
         if (statusCode === 404 || statusCode === 410) {
           await db
             .update(pushSubscriptions)

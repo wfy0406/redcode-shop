@@ -33,10 +33,12 @@ import { LoadingBlock } from './WishingStar';
 
 type Prize = {
   id: number;
-  name: string;
+  // 名/圖而家選填（server 會用貨號商品名/官網圖頂上）；舊 data 可能 null → 顯示時用 sku 頂
+  name: string | null;
   sku: string;
   price: number;
-  imagePath: string;
+  imagePath: string | null;
+  session: string; // 場次（空字串＝未分場）
   active: boolean;
   drawCount: number;
   takenBy: { name: string; status: string; drawDate: string } | null;
@@ -82,6 +84,20 @@ type HistoryRow = {
   prizePrice: number;
   prizeImagePath: string;
 };
+
+/** 錯誤 toast 美化：zod 陣列錯誤係 raw JSON（[{"origin":...}]），拆返第一條 message 出嚟 */
+function fmtErr(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.startsWith('[{')) {
+    try {
+      const arr = JSON.parse(msg);
+      if (Array.isArray(arr) && arr[0]?.message) return arr[0].message;
+    } catch {
+      /* fallthrough */
+    }
+  }
+  return msg;
+}
 
 // ───────────────────────────── 輪盤（canvas）─────────────────────────────
 
@@ -235,6 +251,10 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     allMembers: false,
     productId: null as number | null,
     pushBound: false,
+    thisMonthMinSpend: '' as string, // 空字串＝唔剔；剔咗先入金額
+    newThisMonth: false,
+    joinedBefore: '' as string, // YYYY-MM-DD，空＝唔剔
+    joinedAfter: '' as string,
   });
   const previewInput = useMemo(
     () => ({
@@ -244,12 +264,20 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       allMembers: flt.allMembers,
       productId: flt.productId,
       pushBound: flt.pushBound,
+      thisMonthMinSpend: flt.thisMonthMinSpend.trim()
+        ? Math.max(0, Math.floor(Number(flt.thisMonthMinSpend) || 0))
+        : null,
+      newThisMonth: flt.newThisMonth,
+      joinedBefore: flt.joinedBefore || null,
+      joinedAfter: flt.joinedAfter || null,
     }),
     [flt],
   );
   const hasAnySource =
     previewInput.thisMonth || previewInput.cumulative || (previewInput.minSpend ?? 0) > 0 ||
-    previewInput.allMembers || previewInput.productId != null || previewInput.pushBound;
+    previewInput.allMembers || previewInput.productId != null || previewInput.pushBound ||
+    (previewInput.thisMonthMinSpend ?? 0) > 0 || previewInput.newThisMonth ||
+    previewInput.joinedBefore != null || previewInput.joinedAfter != null;
   const participantsQuery = trpc.luckyDraw.adminPreviewParticipants.useQuery(previewInput, {
     enabled: hasAnySource && mode === 'member', // 自訂名單模式唔使預覽會員
     refetchOnWindowFocus: false,
@@ -267,8 +295,16 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   // 獎品
   const prizesQuery = trpc.luckyDraw.adminListPrizes.useQuery(undefined, { refetchOnWindowFocus: false });
   const prizes = (prizesQuery.data ?? []) as Prize[];
-  const availablePrizes = prizes.filter((p) => p.active && !p.takenBy);
-  const activeTotal = prizes.filter((p) => p.active).length;
+  // 場次（成個頁共用：揀邊場，獎品池＋獎品管理＋計數都係邊場；空字串＝未分場）
+  const [activeSession, setActiveSession] = useState('');
+  const sessions = useMemo(() => {
+    const set = new Set<string>(prizes.map((p) => p.session ?? ''));
+    set.add(activeSession); // 新場次仲未有獎品都要喺下拉見到
+    return [...set];
+  }, [prizes, activeSession]);
+  const sessionPrizes = prizes.filter((p) => (p.session ?? '') === activeSession);
+  const availablePrizes = sessionPrizes.filter((p) => p.active && !p.takenBy);
+  const activeTotal = sessionPrizes.filter((p) => p.active).length;
   const [prizeId, setPrizeId] = useState<number | null>(null);
   const prize = availablePrizes.find((p) => p.id === prizeId) ?? availablePrizes[0] ?? null;
 
@@ -370,7 +406,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       }
     } catch (e) {
       inFlightRef.current = false;
-      toast(e instanceof Error ? e.message : '抽獎失敗', 'error');
+      toast(fmtErr(e), 'error');
       return;
     }
     // 記低中獎人係官網會員定手打名（result card 分支用）；server 冇回 kind 就按抽獎模式推斷
@@ -466,7 +502,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       void utils.luckyDraw.adminListPrizes.invalidate();
       void utils.luckyDraw.adminHistory.invalidate();
     } catch (e) {
-      toast(e instanceof Error ? e.message : '取消失敗', 'error');
+      toast(fmtErr(e), 'error');
     }
   };
 
@@ -479,7 +515,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       void utils.luckyDraw.adminListPrizes.invalidate();
       finishAndNext();
     } catch (e) {
-      toast(e instanceof Error ? e.message : '確定失敗', 'error');
+      toast(fmtErr(e), 'error');
     }
   };
 
@@ -493,7 +529,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       setSelectedListId(r.id);
       return r.id;
     } catch (e) {
-      toast(e instanceof Error ? e.message : '建立名單失敗', 'error');
+      toast(fmtErr(e), 'error');
       return null;
     }
   };
@@ -506,14 +542,14 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       if (selectedListId === listId) setSelectedListId(null);
       void utils.luckyDraw.adminListLists.invalidate();
     } catch (e) {
-      toast(e instanceof Error ? e.message : '刪除名單失敗', 'error');
+      toast(fmtErr(e), 'error');
     }
   };
 
   /** 刪除抽獎紀錄（admin only；supervisor 會被 server FORBIDDEN 擋，錯誤 toast 照舊） */
   const deleteDraw = async (drawId: number, orderNo: string | null) => {
     if (
-      !window.confirm(`確定刪除呢筆抽獎紀錄？${orderNo ? '（0 元訂單會一併取消）' : ''}`)
+      !window.confirm(`確定刪除呢筆抽獎紀錄？${orderNo ? '（連官網張 0 元訂單一併刪除，刪咗唔返得轉）' : ''}`)
     ) {
       return;
     }
@@ -524,7 +560,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       void utils.luckyDraw.adminHistory.invalidate();
       void utils.luckyDraw.adminListPrizes.invalidate();
     } catch (e) {
-      toast(e instanceof Error ? e.message : '刪除失敗', 'error');
+      toast(fmtErr(e), 'error');
     }
   };
 
@@ -551,16 +587,22 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
         <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_340px]">
           {/* 左：輪盤 */}
           <div className="flex flex-col items-center">
-            {/* 剩餘獎品計數（確定咗就會又減一件） */}
+            {/* 場次選擇（成個頁共用：轉場次＝轉獎品池，「下拉列轉場次產品繼續抽」） */}
+            <p className="mb-2 flex w-full items-center justify-center gap-2 text-[12.5px] text-txt-2">
+              場次
+              <SessionSelect sessions={sessions} value={activeSession} onChange={setActiveSession} />
+            </p>
+
+            {/* 剩餘獎品計數（按場次計；確定咗就會又減一件） */}
             <p className="mb-2 w-full text-center font-serif-tc text-[15px] font-bold text-gold">
-              剩餘獎品 {availablePrizes.length} 件（總共 {activeTotal} 件）
+              呢場剩餘 {availablePrizes.length} 件（總共 {activeTotal} 件）
             </p>
 
             {/* 揀獎品（未抽出嘅先抽得） */}
             <div className="flex w-full flex-wrap items-center justify-center gap-2">
               {availablePrizes.length === 0 ? (
                 <p className="py-2 text-[13px] text-txt-3">
-                  冇抽得嘅獎品——去下面「獎品管理」加返，或者等客人回應後釋出
+                  呢場冇抽得嘅獎品——去下面「獎品管理」加返，或者轉場次繼續抽
                 </p>
               ) : (
                 availablePrizes.map((p) => (
@@ -577,8 +619,17 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                       background: prize?.id === p.id ? 'rgba(245,197,24,0.12)' : 'transparent',
                     }}
                   >
-                    <img src={p.imagePath} alt="" className="h-6 w-6 rounded-full object-cover" />
-                    {p.name}
+                    {p.imagePath ? (
+                      <img src={p.imagePath} alt="" className="h-6 w-6 rounded-full object-cover" />
+                    ) : (
+                      <span
+                        className="flex h-6 w-6 items-center justify-center rounded-full border text-txt-3"
+                        style={{ borderColor: 'var(--space-line)' }}
+                      >
+                        <Gift size={12} aria-hidden="true" />
+                      </span>
+                    )}
+                    {p.name || p.sku}
                     <span className="font-mono text-[11px] text-txt-3">HK${p.price}</span>
                   </button>
                 ))
@@ -669,14 +720,23 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                   <p className="mt-0.5 font-mono text-[13px] text-txt-3">{result.winner.phone}</p>
                 )}
                 <div className="mt-3 flex items-center justify-center gap-3">
-                  <img
-                    src={result.prize.imagePath}
-                    alt={result.prize.name}
-                    className="h-14 w-14 rounded-xl border object-cover"
-                    style={{ borderColor: 'rgba(245,197,24,0.4)' }}
-                  />
+                  {result.prize.imagePath ? (
+                    <img
+                      src={result.prize.imagePath}
+                      alt={result.prize.name ?? result.prize.sku}
+                      className="h-14 w-14 rounded-xl border object-cover"
+                      style={{ borderColor: 'rgba(245,197,24,0.4)' }}
+                    />
+                  ) : (
+                    <span
+                      className="flex h-14 w-14 items-center justify-center rounded-xl border text-txt-3"
+                      style={{ borderColor: 'rgba(245,197,24,0.4)' }}
+                    >
+                      <Gift size={20} aria-hidden="true" />
+                    </span>
+                  )}
                   <div className="text-left">
-                    <p className="text-[14px] font-semibold text-txt-1">{result.prize.name}</p>
+                    <p className="text-[14px] font-semibold text-txt-1">{result.prize.name || result.prize.sku}</p>
                     <p className="font-mono text-[12px] text-txt-3">
                       {result.prize.sku}・價值 HK${result.prize.price}
                     </p>
@@ -855,6 +915,74 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                 value={flt.productId}
                 onChange={(id) => setFlt((s) => ({ ...s, productId: id }))}
               />
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={flt.thisMonthMinSpend.trim() !== ''}
+                  onChange={(e) =>
+                    setFlt((s) => ({ ...s, thisMonthMinSpend: e.target.checked ? '1000' : '' }))
+                  }
+                  className="h-4 w-4 accent-[#F5C518]"
+                />
+                本月消費滿 HK$
+                <input
+                  type="number"
+                  min={0}
+                  value={flt.thisMonthMinSpend}
+                  onChange={(e) => setFlt((s) => ({ ...s, thisMonthMinSpend: e.target.value }))}
+                  placeholder="1000"
+                  disabled={flt.thisMonthMinSpend.trim() === ''}
+                  className="w-24 rounded-lg border bg-transparent px-2 py-1 text-[13px] text-txt-1 outline-none focus:border-lavender disabled:opacity-40"
+                  style={{ borderColor: 'var(--space-line)' }}
+                />
+              </label>
+              <label className="flex cursor-pointer items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={flt.newThisMonth}
+                  onChange={(e) => setFlt((s) => ({ ...s, newThisMonth: e.target.checked }))}
+                  className="h-4 w-4 accent-[#F5C518]"
+                />
+                本月新客戶
+              </label>
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={flt.joinedBefore !== ''}
+                  onChange={(e) =>
+                    setFlt((s) => ({ ...s, joinedBefore: e.target.checked ? new Date().toISOString().slice(0, 10) : '' }))
+                  }
+                  className="h-4 w-4 accent-[#F5C518]"
+                />
+                <input
+                  type="date"
+                  value={flt.joinedBefore}
+                  onChange={(e) => setFlt((s) => ({ ...s, joinedBefore: e.target.value }))}
+                  disabled={flt.joinedBefore === ''}
+                  className="rounded-lg border bg-transparent px-2 py-1 text-[12.5px] text-txt-1 outline-none focus:border-lavender disabled:opacity-40"
+                  style={{ borderColor: 'var(--space-line)' }}
+                />
+                之前註冊嘅客人
+              </label>
+              <label className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={flt.joinedAfter !== ''}
+                  onChange={(e) =>
+                    setFlt((s) => ({ ...s, joinedAfter: e.target.checked ? new Date().toISOString().slice(0, 10) : '' }))
+                  }
+                  className="h-4 w-4 accent-[#F5C518]"
+                />
+                <input
+                  type="date"
+                  value={flt.joinedAfter}
+                  onChange={(e) => setFlt((s) => ({ ...s, joinedAfter: e.target.value }))}
+                  disabled={flt.joinedAfter === ''}
+                  className="rounded-lg border bg-transparent px-2 py-1 text-[12.5px] text-txt-1 outline-none focus:border-lavender disabled:opacity-40"
+                  style={{ borderColor: 'var(--space-line)' }}
+                />
+                或之後註冊嘅客人
+              </label>
             </div>
 
             <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--space-line)' }}>
@@ -910,9 +1038,12 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
 
       {/* ════════ ③ 獎品管理 ════════ */}
       <PrizeManagerSection
-        prizes={prizes}
+        prizes={sessionPrizes}
         loading={prizesQuery.isLoading}
         busy={upsertMut.isPending || deleteMut.isPending}
+        activeSession={activeSession}
+        sessions={sessions}
+        onSessionChange={setActiveSession}
         onSave={async (input) => {
           try {
             await upsertMut.mutateAsync(input);
@@ -920,23 +1051,24 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             void utils.luckyDraw.adminListPrizes.invalidate();
             return true;
           } catch (e) {
-            toast(e instanceof Error ? e.message : '儲存失敗', 'error');
+            toast(fmtErr(e), 'error');
             return false;
           }
         }}
         onDelete={async (id) => {
           try {
             await deleteMut.mutateAsync({ id });
-            toast('獎品已移走', 'success');
+            toast('獎品已刪除', 'success');
             void utils.luckyDraw.adminListPrizes.invalidate();
           } catch (e) {
-            toast(e instanceof Error ? e.message : '移走失敗', 'error');
+            toast(fmtErr(e), 'error');
           }
         }}
       />
 
       {/* ════════ ④ 中獎紀錄（按日展開） ════════ */}
       <DrawHistorySection
+        toast={toast}
         onCancel={(id, label) => void cancelWin(id, label)}
         cancelling={cancelMut.isPending}
         onDelete={(id, orderNo) => void deleteDraw(id, orderNo)}
@@ -1276,19 +1408,106 @@ function NameListPicker({
   );
 }
 
+// ───────────────────────────── 場次選擇（主抽獎區＋獎品管理共用 state） ─────────────────────────────
+
+/** 文字制下拉：現有 distinct 場次（空字串顯示「未分場」）＋「＋ 新場次」（揀咗彈 input 輸入場次名） */
+function SessionSelect({
+  sessions,
+  value,
+  onChange,
+}: {
+  sessions: string[];
+  value: string;
+  onChange: (session: string) => void;
+}) {
+  const [making, setMaking] = useState(false);
+  const [newName, setNewName] = useState('');
+  const options = useMemo(() => {
+    const set = new Set<string>(['', ...sessions]);
+    set.add(value); // 新場次仲未有獎品都要顯示得到
+    return [...set];
+  }, [sessions, value]);
+
+  const commit = () => {
+    const v = newName.trim();
+    if (v) onChange(v);
+    setMaking(false);
+    setNewName('');
+  };
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      <select
+        value={making ? '__new__' : value}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === '__new__') {
+            setMaking(true);
+            setNewName('');
+          } else {
+            setMaking(false);
+            onChange(v);
+          }
+        }}
+        aria-label="選擇場次"
+        className="rounded-lg border bg-transparent px-2 py-1 text-[12.5px] text-txt-1 outline-none focus:border-lavender"
+        style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.04)' }}
+      >
+        {options.map((s) => (
+          <option key={s === '' ? '__none__' : s} value={s}>
+            {s === '' ? '未分場' : s}
+          </option>
+        ))}
+        <option value="__new__">＋ 新場次</option>
+      </select>
+      {making && (
+        <input
+          autoFocus
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') {
+              setMaking(false);
+              setNewName('');
+            }
+          }}
+          onBlur={commit}
+          placeholder="場次名，例：10月3日 晚場"
+          className="w-44 rounded-lg border bg-transparent px-2 py-1 text-[12.5px] text-txt-1 outline-none focus:border-lavender"
+          style={{ borderColor: GOLD }}
+        />
+      )}
+    </span>
+  );
+}
+
 // ───────────────────────────── 獎品管理 ─────────────────────────────
 
 function PrizeManagerSection({
   prizes,
   loading,
   busy,
+  activeSession,
+  sessions,
+  onSessionChange,
   onSave,
   onDelete,
 }: {
   prizes: Prize[];
   loading: boolean;
   busy: boolean;
-  onSave: (input: { id?: number; name: string; sku: string; price: number; imagePath: string }) => Promise<boolean>;
+  activeSession: string;
+  sessions: string[];
+  onSessionChange: (session: string) => void;
+  onSave: (input: {
+    id?: number;
+    name?: string;
+    sku: string;
+    price: number;
+    imagePath?: string;
+    session: string;
+  }) => Promise<boolean>;
   onDelete: (id: number) => Promise<void>;
 }) {
   const [name, setName] = useState('');
@@ -1313,7 +1532,7 @@ function PrizeManagerSection({
       if (!res.ok || !data.path) throw new Error(data.error ?? `HTTP ${res.status}`);
       setImagePath(data.path);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '上傳失敗');
+      setErr(fmtErr(e));
     } finally {
       setUploading(false);
     }
@@ -1321,11 +1540,18 @@ function PrizeManagerSection({
 
   const submit = async () => {
     const p = Math.floor(Number(price));
-    if (!name.trim() || !sku.trim() || !imagePath || !Number.isFinite(p) || p < 0) {
-      setErr('名、貨號、價錢（0 或以上）、圖片四樣都要齊');
+    // 名/圖選填（server 會用貨號商品名/官網圖頂上）；淨係貨號同價錢必填
+    if (!sku.trim() || !Number.isFinite(p) || p < 0) {
+      setErr('貨號同價錢（0 或以上）必填');
       return;
     }
-    const ok = await onSave({ name: name.trim(), sku: sku.trim(), price: p, imagePath });
+    const ok = await onSave({
+      name: name.trim(),
+      sku: sku.trim(),
+      price: p,
+      imagePath,
+      session: activeSession, // 自動帶入而家揀咗嘅場次（新場次就用新名）
+    });
     if (ok) {
       setName('');
       setSku('');
@@ -1340,17 +1566,27 @@ function PrizeManagerSection({
       className="rounded-2xl border p-5 backdrop-blur-xl md:p-6"
       style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
     >
-      <h3 className="flex items-center gap-2 text-[15px] font-bold text-txt-1">
+      <h3 className="flex flex-wrap items-center gap-2 text-[15px] font-bold text-txt-1">
         <Gift size={16} aria-hidden="true" className="text-gold" />
         獎品管理
         <span className="font-mono text-[12px] font-normal text-txt-3">（可加可減；抽中咗嘅會標示）</span>
+        <span className="ml-auto flex items-center gap-2 text-[12.5px] font-normal text-txt-2">
+          場次
+          <SessionSelect sessions={sessions} value={activeSession} onChange={onSessionChange} />
+        </span>
       </h3>
+      {/* 剩餘獎品計數按場次計 */}
+      <p className="mt-1.5 font-mono text-[12px] text-txt-3">
+        呢場剩餘 {prizes.filter((p) => p.active && !p.takenBy).length} 件（總共{' '}
+        {prizes.filter((p) => p.active).length} 件）
+      </p>
 
       {/* 新增獎品 */}
       <div
         className="mt-4 grid gap-3 rounded-xl border p-4 md:grid-cols-[140px_1fr_160px_120px_auto]"
         style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.02)' }}
       >
+        <div className="flex flex-col gap-1">
         <label
           className="flex h-[88px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed text-[12px] text-txt-3 transition-colors hover:text-txt-1"
           style={{ borderColor: 'var(--space-line)' }}
@@ -1360,7 +1596,7 @@ function PrizeManagerSection({
           ) : (
             <>
               <Upload size={16} aria-hidden="true" />
-              {uploading ? '上傳緊…' : '上傳獎品圖'}
+              {uploading ? '上傳緊…' : '上傳獎品圖（可唔上傳）'}
             </>
           )}
           <input
@@ -1375,10 +1611,12 @@ function PrizeManagerSection({
             }}
           />
         </label>
+        <p className="text-[12px] leading-snug text-txt-3">唔上傳會用返貨號商品嘅官網圖</p>
+        </div>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="獎品名（例如：星空閃閃頸鏈）"
+          placeholder="獎品名（唔填會用貨號商品名）"
           className="rounded-xl border bg-transparent px-3 py-2 text-[13.5px] text-txt-1 outline-none focus:border-lavender"
           style={{ borderColor: 'var(--space-line)' }}
         />
@@ -1415,7 +1653,7 @@ function PrizeManagerSection({
       {loading ? (
         <LoadingBlock text="許願星搬緊獎品…" />
       ) : prizes.length === 0 ? (
-        <p className="py-6 text-center text-[13.5px] text-txt-3">仲未有獎品，上面加第一件 ✦</p>
+        <p className="py-6 text-center text-[13.5px] text-txt-3">呢場仲未有獎品，上面加第一件 ✦</p>
       ) : (
         <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {prizes.map((p) => (
@@ -1429,14 +1667,23 @@ function PrizeManagerSection({
               }}
             >
               <div className="flex items-center gap-3">
-                <img
-                  src={p.imagePath}
-                  alt={p.name}
-                  className="h-14 w-14 shrink-0 rounded-lg border object-cover"
-                  style={{ borderColor: 'var(--space-line)' }}
-                />
+                {p.imagePath ? (
+                  <img
+                    src={p.imagePath}
+                    alt={p.name ?? p.sku}
+                    className="h-14 w-14 shrink-0 rounded-lg border object-cover"
+                    style={{ borderColor: 'var(--space-line)' }}
+                  />
+                ) : (
+                  <span
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border text-txt-3"
+                    style={{ borderColor: 'var(--space-line)' }}
+                  >
+                    <Gift size={20} aria-hidden="true" />
+                  </span>
+                )}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13.5px] font-semibold text-txt-1">{p.name}</p>
+                  <p className="truncate text-[13.5px] font-semibold text-txt-1">{p.name || p.sku}</p>
                   <p className="font-mono text-[11.5px] text-txt-3">
                     {p.sku}・HK${p.price}
                   </p>
@@ -1452,20 +1699,19 @@ function PrizeManagerSection({
                     )}
                   </p>
                 </div>
-                {p.active && !p.takenBy && (
-                  <button
-                    type="button"
-                    aria-label={`移走獎品 ${p.name}`}
-                    disabled={busy}
-                    onClick={() => {
-                      if (window.confirm(`移走「${p.name}」？`)) void onDelete(p.id);
-                    }}
-                    className="shrink-0 rounded-lg border p-2 text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-40"
-                    style={{ borderColor: 'var(--space-line)' }}
-                  >
-                    <Trash2 size={14} aria-hidden="true" />
-                  </button>
-                )}
+                {/* 任何狀態都刪得（真刪除）；有抽獎紀錄嘅 server 會 CONFLICT 彈原句 */}
+                <button
+                  type="button"
+                  aria-label={`刪除獎品 ${p.name ?? p.sku}`}
+                  disabled={busy}
+                  onClick={() => {
+                    if (window.confirm(`刪除「${p.name || p.sku}」？`)) void onDelete(p.id);
+                  }}
+                  className="shrink-0 rounded-lg border p-2 text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-40"
+                  style={{ borderColor: 'var(--space-line)' }}
+                >
+                  <Trash2 size={14} aria-hidden="true" />
+                </button>
               </div>
             </li>
           ))}
@@ -1514,11 +1760,13 @@ function historyBadge(r: HistoryRow): BadgeMeta {
 }
 
 function DrawHistorySection({
+  toast,
   onCancel,
   cancelling,
   onDelete,
   deleting,
 }: {
+  toast: (msg: string, kind?: 'success' | 'error') => void;
   onCancel: (drawId: number, label: string) => void;
   cancelling: boolean;
   onDelete: (drawId: number, orderNo: string | null) => void;
@@ -1527,9 +1775,32 @@ function DrawHistorySection({
   // 刪除紀錄係 admin only（跟 Admin.tsx 嘅 role pattern；supervisor 交畀 server FORBIDDEN 擋）
   const { user: me } = useAuth();
   const isAdmin = me?.role === 'admin';
+  const utils = trpc.useUtils();
   const [openDate, setOpenDate] = useState<string | null>(null);
   const historyQuery = trpc.luckyDraw.adminHistory.useQuery(undefined, { refetchOnWindowFocus: false });
   const days = (historyQuery.data ?? []) as { date: string; rows: HistoryRow[] }[];
+  const deleteDayMut = trpc.luckyDraw.adminDeleteDrawsByDate.useMutation();
+
+  /** 成日刪除（admin only）：未審批 0 元訂單一併取消；有已批訂單 server 會 CONFLICT 彈原句 */
+  const deleteDay = async (date: string, count: number) => {
+    const ymd = date.replaceAll('-', ''); // history date 係 YYYYMMDD；保險起見兼容 YYYY-MM-DD
+    const label = `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
+    if (
+      !window.confirm(
+        `確定刪除 ${label} 全部 ${count} 筆抽獎紀錄？連結嘅官網 0 元訂單會一併刪除（WMS 嗰邊自己處理），刪咗唔返得轉。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const r = await deleteDayMut.mutateAsync({ drawDate: ymd });
+      toast(`已刪除 ${r.deleted} 筆紀錄（官網訂單一併刪咗 ${r.ordersDeleted} 張）`, 'success');
+      void utils.luckyDraw.adminHistory.invalidate();
+      void utils.luckyDraw.adminListPrizes.invalidate();
+    } catch (e) {
+      toast(fmtErr(e), 'error');
+    }
+  };
 
   return (
     <section
@@ -1550,7 +1821,8 @@ function DrawHistorySection({
         <ul className="mt-4 space-y-2">
           {days.map((d) => {
             const open = openDate === d.date;
-            const dateLabel = `${d.date.slice(0, 4)}-${d.date.slice(4, 6)}-${d.date.slice(6, 8)}`;
+            const ymd = d.date.replaceAll('-', ''); // YYYYMMDD（兼容 YYYY-MM-DD）
+            const dateLabel = `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
             return (
               <li key={d.date} className="rounded-xl border" style={{ borderColor: 'var(--space-line)' }}>
                 <button
@@ -1565,6 +1837,28 @@ function DrawHistorySection({
                   </span>
                   <span className="flex items-center gap-3">
                     <span className="font-mono text-[12px] text-txt-3">{d.rows.length} 次抽獎</span>
+                    {isAdmin && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation(); // 唔好觸發展開/收合
+                          void deleteDay(d.date, d.rows.length);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.stopPropagation();
+                            void deleteDay(d.date, d.rows.length);
+                          }
+                        }}
+                        className={`text-[12px] underline-offset-2 transition-opacity hover:underline ${
+                          deleteDayMut.isPending ? 'pointer-events-none opacity-40' : ''
+                        }`}
+                        style={{ color: '#E88B8B' }}
+                      >
+                        刪除成日
+                      </span>
+                    )}
                     <span
                       aria-hidden="true"
                       className="inline-block text-txt-3"

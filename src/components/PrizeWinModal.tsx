@@ -184,42 +184,48 @@ export default function PrizeWinModal() {
       {/* 煙花層（DOM 後出自然壓頂；淨係第一步慶祝時爆） */}
       <canvas ref={fireworksRef} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true" />
 
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="恭喜中獎"
-        className="relative my-auto w-full max-w-md overflow-hidden rounded-3xl border"
-        style={{
-          borderColor: 'rgba(245,197,24,0.55)',
-          background: 'linear-gradient(180deg, #1B0E33 0%, #120C24 60%)',
-          boxShadow: '0 0 80px rgba(245,197,24,0.22)',
-          animation: reducedMotion ? undefined : 'prizeCardIn 500ms cubic-bezier(0.2,1.3,0.4,1)',
-        }}
-      >
-        {/* 小精靈 Glo Glo 飛入恭喜（alpha 影片；reduced-motion 自動靜態 poster） */}
+      {/* 外層 wrapper：卡片保持 overflow-hidden，小精靈用普通流（卡片上方 sibling）
+          以 marginBottom:-56px 企上卡頂邊——唔再 absolute，唔會再移位 */}
+      <div className="relative my-auto w-full max-w-md">
+        {/* 小精靈 Glo Glo 拍手恭喜（新正方素材；alpha 影片；reduced-motion 自動靜態 poster） */}
         {step === 'win' && (
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -left-6 top-2 w-[130px]"
+            className="pointer-events-none relative z-10 mx-auto w-[120px]"
             style={{
+              margin: '0 auto -56px',
               animation: reducedMotion ? undefined : 'fairyFlyIn 1400ms cubic-bezier(0.2,1.1,0.3,1) 200ms both',
             }}
           >
             <GloCutout
-              videoSrc="/fairy-fly-alpha.webm"
-              animSrc="/fairy-fly-anim.webp"
-              poster="/fairy-fly-poster.webp"
+              videoSrc="/fairy-clap-alpha.webm"
+              animSrc="/fairy-clap-anim.webp"
+              poster="/fairy-clap-poster.webp"
               alt=""
-              posterW={512}
-              posterH={256}
+              posterW={480}
+              posterH={480}
+              eager
             />
           </div>
         )}
 
-        <div className="relative px-6 pb-6 pt-7 text-center">
-          {step === 'win' && (
-            <>
-              <p className="script text-3xl text-gold">Congratulations ✦</p>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="恭喜中獎"
+          className="relative w-full overflow-hidden rounded-3xl border"
+          style={{
+            borderColor: 'rgba(245,197,24,0.55)',
+            background: 'linear-gradient(180deg, #1B0E33 0%, #120C24 60%)',
+            boxShadow: '0 0 80px rgba(245,197,24,0.22)',
+            animation: reducedMotion ? undefined : 'prizeCardIn 500ms cubic-bezier(0.2,1.3,0.4,1)',
+          }}
+        >
+          <div className="relative px-6 pb-6 pt-7 text-center">
+            {step === 'win' && (
+              <>
+                {/* mt-9 留位俾企喺卡頂嘅小精靈（56px overlap），唔會壓住標題 */}
+                <p className="script mt-9 text-3xl text-gold">Congratulations ✦</p>
               <h2 className="mt-1 font-serif-tc text-[24px] font-bold leading-[1.3] text-txt-1">
                 恭喜寶寶中獎！
               </h2>
@@ -383,12 +389,13 @@ export default function PrizeWinModal() {
           )}
 
           {err && <p className="mt-3 text-[12.5px] text-pink-soft">{err}</p>}
+          </div>
         </div>
       </div>
 
       <style>{`
         @keyframes prizeCardIn { 0% { transform: scale(0.82) translateY(24px); opacity: 0; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
-        @keyframes fairyFlyIn { 0% { transform: translate(-70px, 50px) rotate(-14deg); opacity: 0; } 60% { transform: translate(6px, -6px) rotate(4deg); opacity: 1; } 100% { transform: translate(0, 0) rotate(0deg); opacity: 1; } }
+        @keyframes fairyFlyIn { 0% { transform: translate(-40px, 30px) scale(0.6); opacity: 0; } 100% { transform: none; opacity: 1; } }
       `}</style>
     </div>,
     document.body,

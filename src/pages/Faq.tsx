@@ -376,20 +376,24 @@ const FAQ_CSS = /* css */ `
   }
   .faq-tab[data-active='true'] { color: #F5F1FA; border-bottom-color: #F5C518; }
 
-  /* ---------- 影片 16:9＋hairline 框，切換 opacity 交叉淡入 ---------- */
+  /* ---------- 影片 9:16 直式＋hairline 框，切換 opacity 交叉淡入 ---------- */
   .faq-videos { display: grid; }
   .faq-video-panel {
     grid-area: 1 / 1;
-    margin: 0;
+    margin: 0 auto;
+    max-width: 380px;
+    width: 100%;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s ease;
+    text-align: center;
   }
   .faq-video-panel[data-active='true'] { opacity: 1; pointer-events: auto; }
   .faq-video {
     display: block;
     width: 100%;
-    aspect-ratio: 16 / 9;
+    aspect-ratio: 9 / 16;
+    object-fit: cover;
     background: #120C24;
     border: 1px solid rgb(247 215 116 / 0.22);
   }

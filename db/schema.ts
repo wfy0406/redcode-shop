@@ -385,9 +385,8 @@ export const pushDeliveries = pgTable("pushDeliveries", {
   subscriptionId: integer("subscriptionId")
     .notNull()
     .references(() => pushSubscriptions.id),
-  campaignId: integer("campaignId")
-    .notNull()
-    .references(() => pushCampaigns.id),
+  // 直播 campaign 對位；中獎通知等非直播推送 campaignId＝null（彈窗顯示「🎉 中獎通知」）
+  campaignId: integer("campaignId").references(() => pushCampaigns.id),
   ok: boolean("ok").notNull(),
   // 失敗原因類別：gone（404/410 訂閱失效）／http_<code>／unknown——淨類別，唔落原文
   reason: varchar("reason", { length: 32 }),
@@ -484,9 +483,13 @@ export const luckyPrizes = pgTable("luckyPrizes", {
   sku: varchar("sku", { length: 64 }).notNull(),
   // 展示價錢（整數港元，同 orders.total 一個單位）；中獎訂單落 0 元，呢度淨係畀客睇價值
   price: integer("price").notNull(),
-  // 上傳圖（/uploads/...，POST /api/upload 攞）；WMS 睇圖同 email 商品圖都用佢
-  imagePath: varchar("imagePath", { length: 512 }).notNull(),
-  // 「減獎品」＝ active=false（軟刪，中獎紀錄要繼續睇到件獎品叫咩）
+  // 上傳圖（/uploads/...，POST /api/upload 攞）；WMS 睇圖同 email 商品圖都用佢。
+  // 選填：留空 → server 按 sku 用 products.image 頂上，冇就 null
+  imagePath: varchar("imagePath", { length: 512 }),
+  // 獎品分場次（直播第 N 場／自訂標籤；""＝未分場）
+  session: varchar("session", { length: 64 }).notNull().default(""),
+  // 「下架」＝ active=false（唔再抽得）；刪獎品係硬刪（adminDeletePrize），
+  // 有抽獎紀錄參照會被 FK 擋（要先刪晒嗰啲紀錄）
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });

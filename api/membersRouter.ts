@@ -724,7 +724,8 @@ export const membersRouter = createRouter({
           liveSession: pushCampaigns.liveSession,
         })
         .from(pushDeliveries)
-        .innerJoin(pushCampaigns, eq(pushDeliveries.campaignId, pushCampaigns.id))
+        // leftJoin：中獎通知等非直播推送 campaignId=null，campaign 欄位會係 null（前端顯示「🎉 中獎通知」）
+        .leftJoin(pushCampaigns, eq(pushDeliveries.campaignId, pushCampaigns.id))
         .where(eq(pushDeliveries.subscriptionId, input.deviceId))
         .orderBy(desc(pushDeliveries.sentAt))
         .limit(PAGE + 1)

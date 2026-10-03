@@ -2,11 +2,11 @@
  * v2.2.46 直播抽獎大輪盤（老闆 2026-10-03 指令，加註：即時取消／紀錄頁取消／煙花小精靈）
  * --------------------------------
  * 後台（supervisorProcedure＝主管＋管理員先用到，導覽列都係佢哋先睇到）：
- *   adminListPrizes／adminUpsertPrize／adminDeletePrize（軟刪）——獎品池（名／貨號／價錢／上傳圖）
+ *   adminListPrizes／adminUpsertPrize（名／圖選填，按 sku 兜底）／adminDeletePrize（硬刪；有紀錄擋住）——獎品池（名／貨號／價錢／上傳圖／場次）
  *   adminPreviewParticipants——抽獎名單剔選來源（可複選）：
  *     本月消費／累積消費／消費滿$X／官網會員／買過指定產品／已綁定推送客人
  *   adminDraw——抽一件獎品：server 隨機揀中獎人（crypto randomInt），
- *     強制「當日一人最多中一件」（全日任何狀態嘅中獎者都踢出名單）；
+ *     強制「當日一人最多中一件」（pending／confirmed 先鎖住；重抽/取消/客人唔要＝無接受，放返出嚟可以再抽）；
  *     抽中即寄 email（有 email 嘅話）＋即時推送（有綁定嘅話）
  *   adminRedraw——特別重抽：舊紀錄轉 cancelled（鏈 redrawOfId），同一件獎品再抽，
  *     舊中獎人永遠踢出呢件獎品嘅重抽池
@@ -26,7 +26,7 @@
 import { randomInt } from "node:crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, inArray, like, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like, lt, sql } from "drizzle-orm";
 import { createRouter, authedProcedure, supervisorProcedure, adminProcedure } from "./middleware";
 import { getDb } from "./queries/connection";
 import {
@@ -35,10 +35,12 @@ import {
   luckyPrizes,
   orderItems,
   orders,
+  paymentProofs,
   products,
   pushSubscriptions,
   sfStations,
   users,
+  wmsSyncLog,
 } from "@db/schema";
 import { sendPrizeWinEmail } from "./email";
 import { sendPrizeWinPush } from "./livePush";
@@ -88,6 +90,14 @@ const participantFilterInput = z.object({
   /** 買過指定官網產品（products.id；null＝唔用呢個條件） */
   productId: z.number().int().positive().nullable().default(null),
   pushBound: z.boolean().default(false),
+  /** 本月消費滿 $X（整數港元；null＝唔用） */
+  thisMonthMinSpend: z.number().int().min(0).nullable().default(null),
+  /** 本月新客戶（createdAt 喺今個月） */
+  newThisMonth: z.boolean().default(false),
+  /** 呢日之前註冊（YYYY-MM-DD；null＝唔用） */
+  joinedBefore: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+  /** 呢日或之後註冊（YYYY-MM-DD；null＝唔用） */
+  joinedAfter: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
 });
 
 type ParticipantFilter = z.infer<typeof participantFilterInput>;
@@ -169,6 +179,60 @@ async function collectParticipantIds(f: ParticipantFilter): Promise<Set<number>>
       })(),
     );
   }
+  // 本月消費滿 $X：paid orders 限今個月（香港時間），group by 後 sum(total) 夠數先入
+  if ((f.thisMonthMinSpend ?? 0) > 0) {
+    const minSpend = f.thisMonthMinSpend ?? 0;
+    jobs.push(
+      (async () => {
+        const rows = await db
+          .select({ userId: orders.userId, total: sql<number>`sum(${orders.total})` })
+          .from(orders)
+          .where(and(inArray(orders.status, [...PAID_STATUSES]), gte(orders.createdAt, hktMonthStart())))
+          .groupBy(orders.userId);
+        for (const r of rows) {
+          if (Number(r.total) >= minSpend) out.add(r.userId);
+        }
+      })(),
+    );
+  }
+  // 本月新客戶：官網會員 createdAt 喺今個月（香港時間）
+  if (f.newThisMonth) {
+    jobs.push(
+      (async () => {
+        const rows = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.role, "member"), gte(users.createdAt, hktMonthStart())));
+        for (const r of rows) out.add(r.id);
+      })(),
+    );
+  }
+  // 呢日之前註冊（YYYY-MM-DD 當香港時間 00:00 界線）
+  if (f.joinedBefore) {
+    const cutoff = new Date(`${f.joinedBefore}T00:00:00+08:00`);
+    jobs.push(
+      (async () => {
+        const rows = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.role, "member"), lt(users.createdAt, cutoff)));
+        for (const r of rows) out.add(r.id);
+      })(),
+    );
+  }
+  // 呢日或之後註冊（YYYY-MM-DD 當香港時間 00:00 界線）
+  if (f.joinedAfter) {
+    const cutoff = new Date(`${f.joinedAfter}T00:00:00+08:00`);
+    jobs.push(
+      (async () => {
+        const rows = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(and(eq(users.role, "member"), gte(users.createdAt, cutoff)));
+        for (const r of rows) out.add(r.id);
+      })(),
+    );
+  }
   await Promise.all(jobs);
   // v2.2.48：影子帳號（自訂名單中獎人，phone="DRAW#…"）永遠唔入會員池——
   // 佢哋嘅 0 元中獎單批咗會變 approved，唔排除會混入消費池
@@ -177,14 +241,16 @@ async function collectParticipantIds(f: ParticipantFilter): Promise<Set<number>>
   return out;
 }
 
-/** 某日（香港時間 YYYYMMDD，預設今日）中過獎嘅人（任何狀態——取消/唔要都唔准再中，
- *  一日一人一個）。特別重抽用舊紀錄嘅抽獎日計，跨日重抽都唔會違反當日規矩。 */
+/** 某日（香港時間 YYYYMMDD，預設今日）鎖住咗嘅中獎人（一日一人一個）。
+ *  新規矩（老闆實測回饋）：只有 pending（等待接受）同 confirmed（接受咗）先鎖住；
+ *  cancelled／declined＝無接受獎品 → 放返出嚟可以再抽。
+ *  特別重抽用舊紀錄嘅抽獎日計，跨日重抽都唔會違反當日規矩。 */
 async function winnersOfDate(date?: string): Promise<Set<number>> {
   const db = getDb();
   const rows = await db
     .select({ winnerUserId: luckyDraws.winnerUserId })
     .from(luckyDraws)
-    .where(eq(luckyDraws.drawDate, date ?? hktToday()));
+    .where(and(eq(luckyDraws.drawDate, date ?? hktToday()), inArray(luckyDraws.status, ["pending", "confirmed"])));
   return new Set(rows.map((r) => r.winnerUserId));
 }
 
@@ -233,14 +299,15 @@ function normalizeListName(n: string): string {
   return n.trim().toLowerCase();
 }
 
-/** 某日（香港時間 YYYYMMDD，預設今日）自訂名單中過獎嘅名（任何狀態——取消都唔准再中，
- *  一日一個名一次；同 winnersOfDate 嘅會員版規矩一樣）。回 normalized set。 */
+/** 某日（香港時間 YYYYMMDD，預設今日）自訂名單鎖住咗嘅中獎名（一日一個名一次）。
+ *  同 winnersOfDate 一樣：只計 pending／confirmed；cancelled／declined 唔再阻人再中。
+ *  回 normalized set。 */
 async function winnerNamesOfDate(date?: string): Promise<Set<string>> {
   const db = getDb();
   const rows = await db
     .select({ winnerName: luckyDraws.winnerName })
     .from(luckyDraws)
-    .where(eq(luckyDraws.drawDate, date ?? hktToday()));
+    .where(and(eq(luckyDraws.drawDate, date ?? hktToday()), inArray(luckyDraws.status, ["pending", "confirmed"])));
   const out = new Set<string>();
   for (const r of rows) {
     if (r.winnerName != null) out.add(normalizeListName(r.winnerName));
@@ -297,8 +364,8 @@ async function getOrCreatePrizeProduct(
       .values({
         sku: prize.sku,
         name: prize.name,
-        image: prize.imagePath,
-        photos: [prize.imagePath],
+        image: prize.imagePath ?? "", // imagePath 選填：冇圖就空字串（products.image 唔准 null）
+        photos: prize.imagePath ? [prize.imagePath] : [],
         price: prize.price,
         sizeEnabled: false,
         liveDate: drawDate, // 日期＝抽獎日
@@ -318,7 +385,7 @@ function notifyWinner(winner: { id: number; name: string; email: string | null }
   if (winner.email) {
     void sendPrizeWinEmail({
       to: winner.email, name: winner.name, prizeName: prize.name,
-      prizePrice: prize.price, prizeImagePath: prize.imagePath, drawDate,
+      prizePrice: prize.price, prizeImagePath: prize.imagePath ?? "", drawDate,
     });
   }
   void sendPrizeWinPush(winner.id, prize.name);
@@ -364,54 +431,78 @@ export const luckyDrawRouter = createRouter({
     .input(
       z.object({
         id: z.number().int().positive().optional(),
-        name: z.string().trim().min(1, "獎品名唔准空").max(255),
+        // 獎品名選填：留空 → 按 sku 查 products 用 product.name 頂上；冇 product → 用 sku 做名
+        name: z.string().trim().max(255).default(""),
         sku: z.string().trim().min(1, "貨號唔准空").max(64),
         price: z.number().int().min(0, "價錢唔准負數"),
-        imagePath: z.string().trim().min(1, "要上傳獎品圖").max(512),
+        // 獎品圖選填：留空 → 按 sku 用 product.image（冇就 null）
+        imagePath: z.string().trim().max(512).default(""),
+        // 獎品分場次（""＝未分場）
+        session: z.string().trim().max(64).default(""),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
+      // 名／圖兜底：淨係有留空先查 products（按 sku）
+      let name = input.name;
+      let imagePath: string | null = input.imagePath || null;
+      if (!name || !imagePath) {
+        const [product] = await db
+          .select({ name: products.name, image: products.image })
+          .from(products)
+          .where(eq(products.sku, input.sku))
+          .limit(1);
+        if (!name) name = product?.name || input.sku;
+        if (!imagePath) imagePath = product?.image || null;
+      }
       if (input.id) {
         const [row] = await db
           .update(luckyPrizes)
-          .set({ name: input.name, sku: input.sku, price: input.price, imagePath: input.imagePath })
+          .set({ name, sku: input.sku, price: input.price, imagePath, session: input.session })
           .where(eq(luckyPrizes.id, input.id))
           .returning();
         if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "獎品唔存在" });
         void logAudit({
           actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.updatePrize",
           targetType: "luckyPrize", targetId: String(input.id),
-          detail: `改獎品 #${input.id}：${input.name}（${input.sku}）`,
+          detail: `改獎品 #${input.id}：${name}（${input.sku}）`,
         });
         return row;
       }
       const [row] = await db
         .insert(luckyPrizes)
-        .values({ name: input.name, sku: input.sku, price: input.price, imagePath: input.imagePath })
+        .values({ name, sku: input.sku, price: input.price, imagePath, session: input.session })
         .returning();
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.createPrize",
         targetType: "luckyPrize", targetId: String(row.id),
-        detail: `新獎品 #${row.id}：${input.name}（${input.sku}，HK$${input.price}）`,
+        detail: `新獎品 #${row.id}：${name}（${input.sku}，HK$${input.price}）`,
       });
       return row;
     }),
 
-  /** 「減獎品」＝軟刪（中獎紀錄仲要顯示件獎品叫咩，唔可以真刪） */
+  /** 刪獎品＝硬刪（老闆指明要真 del）；active=false 嗰個係「下架」，唔係刪除。
+   *  有抽獎紀錄參照（FK 23503）就刪唔到——提示先刪晒嗰日嘅紀錄先刪得件獎品 */
   adminDeletePrize: supervisorProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
-      const [row] = await db
-        .update(luckyPrizes)
-        .set({ active: false })
-        .where(eq(luckyPrizes.id, input.id))
-        .returning();
+      let row: typeof luckyPrizes.$inferSelect | undefined;
+      try {
+        [row] = await db.delete(luckyPrizes).where(eq(luckyPrizes.id, input.id)).returning();
+      } catch (e) {
+        if (String((e as { code?: string })?.code) === "23503") {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "呢件獎品有抽獎紀錄，刪唔到——可以先把嗰日嘅紀錄刪除，獎品就刪得",
+          });
+        }
+        throw e;
+      }
       if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "獎品唔存在" });
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.deletePrize",
-        targetType: "luckyPrize", targetId: String(input.id), detail: `下架獎品：${row.name}`,
+        targetType: "luckyPrize", targetId: String(input.id), detail: `刪除獎品：${row.name}（${row.sku}）`,
       });
       return { ok: true };
     }),
@@ -614,8 +705,9 @@ export const luckyDrawRouter = createRouter({
     }),
 
   /** 取消中獎（抽完即場取消，或之後紀錄頁取消）：客人唔會再見到中獎彈窗；
-   *  已生成嘅訂單一併取消——但只限訂單仲未批（pending_payment/payment_review）；
-   *  批咗／出咗貨就唔郁得，要喺 WMS 跟正常流程處理（README 寫明） */
+   *  老闆指令：取消中獎後官網訂單都要寫返「已取消」——張單仲係 pending_payment/payment_review
+   *  就一併 set status='cancelled'；已批／出咗貨嘅極端情況唔郁佢 status（貨已出，WMS 人手跟），
+   *  但都照取消中獎紀錄，audit log 一句警告 */
   adminCancelWin: supervisorProcedure
     .input(
       z.object({
@@ -630,24 +722,23 @@ export const luckyDrawRouter = createRouter({
       if (old.status === "cancelled") throw new TRPCError({ code: "CONFLICT", message: "已經取消咗" });
 
       let orderCancelled = false;
+      let orderUntouchedWarn: string | null = null;
       if (old.orderId) {
         const [ord] = await db
           .select({ id: orders.id, status: orders.status, orderNo: orders.orderNo })
           .from(orders)
           .where(eq(orders.id, old.orderId))
           .limit(1);
-        if (ord && !["pending_payment", "payment_review"].includes(ord.status)) {
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: `訂單 ${ord.orderNo} 已經 ${ord.status}，唔可以喺度取消——請喺 WMS 跟正常流程處理`,
-          });
-        }
-        if (ord) {
+        if (ord && ["pending_payment", "payment_review"].includes(ord.status)) {
+          // 未批嘅官網訂單：寫返「已取消」（老闆指定動作）
           await db
             .update(orders)
             .set({ status: "cancelled", updatedAt: new Date() })
             .where(eq(orders.id, ord.id));
           orderCancelled = true;
+        } else if (ord) {
+          // 已批／出咗貨：唔郁張單 status，照取消中獎，log 警告（WMS 嗰邊人手跟）
+          orderUntouchedWarn = `警告：訂單 ${ord.orderNo} 已經 ${ord.status}，官網張單唔郁得，WMS 要人手跟`;
         }
       }
       await db
@@ -657,16 +748,17 @@ export const luckyDrawRouter = createRouter({
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.cancelWin",
         targetType: "luckyDraw", targetId: String(old.id),
-        detail: `取消中獎 #${old.id}${orderCancelled ? "（訂單一併取消）" : ""}${input.note ? `：${input.note}` : ""}`,
+        detail: `取消中獎 #${old.id}${orderCancelled ? "（官網訂單一併寫返已取消）" : ""}${orderUntouchedWarn ? `（${orderUntouchedWarn}）` : ""}${input.note ? `：${input.note}` : ""}`,
       });
       return { ok: true, orderCancelled };
     }),
 
-  /** 刪除抽獎紀錄（老闆指明：管理員先用到，唔係 supervisor）：硬刪除該場抽獎紀錄。
-   *  有生成訂單嘅話，訂單仲未批（pending_payment/payment_review）先一併取消；
-   *  批咗／出咗貨就唔准刪，要喺 WMS 跟正常流程處理。
-   *  redrawOfId 冇 FK、orderId 係 draws→orders 方向，刪 child 安全；
-   *  刪除後該獎品嘅 takenBy 自然消失，獎品返返嚟抽得——預期行為。 */
+  /** 刪除抽獎紀錄（老闆指明：管理員先用到，唔係 supervisor）：硬刪除該場抽獎紀錄，
+   *  有生成訂單嘅話官網張單連仔行（orderItems／paymentProofs／wmsSyncLog）一併 HARD DELETE——
+   *  老闆原話「你要比我刪除，刪除時官網張單都要一併刪除」；WMS 嗰邊佢哋自己刪，
+   *  所以冇「已批/出貨唔准刪」嘅 guard。張單已唔存在（重複刪除）就跳過訂單照刪 draw row。
+   *  redrawOfId 冇 FK，刪除後該獎品嘅 takenBy 自然消失，獎品返返嚟抽得——預期行為。
+   *  audit detail 淨係單號／獎品名／中獎人，永遠唔落 endpoint/keys/secret/URL。 */
   adminDeleteDraw: adminProcedure
     .input(z.object({ drawId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
@@ -684,38 +776,81 @@ export const luckyDrawRouter = createRouter({
         .limit(1);
       if (!old) throw new TRPCError({ code: "NOT_FOUND", message: "紀錄唔存在" });
 
-      let orderCancelled = false;
+      // 先攞單號做 audit（張單可能已經唔存在——重複刪除；咁就跳過訂單刪除，唔報錯）
       let orderNo: string | null = null;
-      if (old.draw.orderId) {
+      if (old.draw.orderId != null) {
         const [ord] = await db
-          .select({ id: orders.id, status: orders.status, orderNo: orders.orderNo })
+          .select({ orderNo: orders.orderNo })
           .from(orders)
           .where(eq(orders.id, old.draw.orderId))
           .limit(1);
-        if (ord && !["pending_payment", "payment_review"].includes(ord.status)) {
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: `訂單 ${ord.orderNo} 已經 ${ord.status}，唔可以刪——請喺 WMS 跟正常流程處理`,
-          });
-        }
-        if (ord) {
-          await db
-            .update(orders)
-            .set({ status: "cancelled", updatedAt: new Date() })
-            .where(eq(orders.id, ord.id));
-          orderCancelled = true;
-          orderNo = ord.orderNo;
-        }
+        orderNo = ord?.orderNo ?? null;
       }
-      await db.delete(luckyDraws).where(eq(luckyDraws.id, old.draw.id));
+
+      let orderDeleted = false;
+      const orderId = old.draw.orderId;
+      await db.transaction(async (tx) => {
+        if (orderId != null && orderNo != null) {
+          // 順序：仔行先（FK 全部指去 orders）→ orders 本行 → luckyDraws 本行
+          await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
+          await tx.delete(paymentProofs).where(eq(paymentProofs.orderId, orderId));
+          await tx.delete(wmsSyncLog).where(eq(wmsSyncLog.orderId, orderId));
+          await tx.delete(orders).where(eq(orders.id, orderId));
+          orderDeleted = true;
+        }
+        await tx.delete(luckyDraws).where(eq(luckyDraws.id, old.draw.id));
+      });
 
       const winnerLabel = old.draw.winnerName ?? old.winnerUserName;
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.deleteDraw",
         targetType: "luckyDraw", targetId: String(old.draw.id),
-        detail: `刪除抽獎紀錄 #${old.draw.id}：抽獎日 ${old.draw.drawDate}，獎品 ${old.prizeName}，中獎人 ${winnerLabel}${orderNo ? `，訂單 ${orderNo}${orderCancelled ? "（一併取消）" : ""}` : ""}`,
+        detail: `刪除抽獎紀錄 #${old.draw.id}：抽獎日 ${old.draw.drawDate}，獎品 ${old.prizeName}，中獎人 ${winnerLabel}${orderNo ? `，官網訂單 ${orderNo}（一併刪除）` : ""}`,
       });
-      return { ok: true, orderCancelled };
+      return { ok: true, orderDeleted };
+    }),
+
+  /** 成日刪（管理員專用）：一次過刪晒某抽獎日嘅全部紀錄，有單嘅連官網張單一併 HARD DELETE
+   *  （仔行 orderItems／paymentProofs／wmsSyncLog → orders → luckyDraws，同一個 transaction）。
+   *  老闆原話「wms佢地自己會刪除，你要比我刪除」——冇「已批/出貨唔准刪」嘅 guard，
+   *  官網呢邊要刪得就一定刪得；WMS 嗰邊嘅單由佢哋自己處理。 */
+  adminDeleteDrawsByDate: adminProcedure
+    .input(z.object({ drawDate: z.string().regex(/^\d{8}$/) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const rows = await db
+        .select({
+          id: luckyDraws.id,
+          linkedOrderId: orders.id,
+        })
+        .from(luckyDraws)
+        .leftJoin(orders, eq(luckyDraws.orderId, orders.id))
+        .where(eq(luckyDraws.drawDate, input.drawDate));
+
+      // 淨係攞真係存在嘅官網訂單 id（orderId 指咗但張單已唔存在 → leftJoin null，自動跳過）
+      const orderIds = [...new Set(rows.map((r) => r.linkedOrderId).filter((id): id is number => id != null))];
+      const result = await db.transaction(async (tx) => {
+        let ordersDeleted = 0;
+        if (orderIds.length > 0) {
+          await tx.delete(orderItems).where(inArray(orderItems.orderId, orderIds));
+          await tx.delete(paymentProofs).where(inArray(paymentProofs.orderId, orderIds));
+          await tx.delete(wmsSyncLog).where(inArray(wmsSyncLog.orderId, orderIds));
+          const delOrders = await tx.delete(orders).where(inArray(orders.id, orderIds)).returning({ id: orders.id });
+          ordersDeleted = delOrders.length;
+        }
+        const delDraws = await tx
+          .delete(luckyDraws)
+          .where(eq(luckyDraws.drawDate, input.drawDate))
+          .returning({ id: luckyDraws.id });
+        return { ordersDeleted, drawsDeleted: delDraws.length };
+      });
+
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.deleteDrawsByDate",
+        targetType: "luckyDraw", targetId: input.drawDate,
+        detail: `成日刪抽獎紀錄：抽獎日 ${input.drawDate}，刪咗 ${result.drawsDeleted} 筆，官網訂單一併刪咗 ${result.ordersDeleted} 張（WMS 嗰邊由佢哋自己處理）`,
+      });
+      return { ok: true as const, deleted: result.drawsDeleted, ordersDeleted: result.ordersDeleted };
     }),
 
   // ───────────────────────── 後台：自訂名單（v2.2.48）─────────────────────────
@@ -754,11 +889,15 @@ export const luckyDrawRouter = createRouter({
    *  memberIds 淨留真正存在嘅官網會員（唔存在/唔係 member 嘅 id 靜靜哋踢走） */
   adminCreateList: supervisorProcedure
     .input(
-      z.object({
-        name: z.string().trim().min(1, "名單名唔准空").max(64),
-        names: z.array(z.string().trim().min(1).max(64)).min(1, "名單起碼一個名").max(500),
-        memberIds: z.array(z.number().int().positive()).max(500).default([]),
-      }),
+      z
+        .object({
+          name: z.string().trim().min(1, "名單名唔准空").max(64),
+          names: z.array(z.string().trim().min(1).max(64)).max(500).default([]),
+          memberIds: z.array(z.number().int().positive()).max(500).default([]),
+        })
+        .refine((v) => v.names.length > 0 || v.memberIds.length > 0, {
+          message: "名單起碼一個名或一位官網會員",
+        }),
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
@@ -772,7 +911,6 @@ export const luckyDrawRouter = createRouter({
         seen.add(key);
         names.push(n);
       }
-      if (names.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "名單起碼一個名" });
       // 會員 id 過濾：淨留真會員（role='member'；唔存在嘅 id 踢走）
       const wantIds = [...new Set(input.memberIds)];
       let memberIds: number[] = [];
@@ -782,6 +920,10 @@ export const luckyDrawRouter = createRouter({
           .from(users)
           .where(and(inArray(users.id, wantIds), eq(users.role, "member")));
         memberIds = memberRows.map((r) => r.id);
+      }
+      // refine 擋咗 input 全空；呢度再擋「手打名 trim 晒變空＋memberIds 全部唔係真會員」
+      if (names.length === 0 && memberIds.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "名單起碼一個名或一位官網會員" });
       }
       const operator = await actorName(ctx.user.userId);
       const [list] = await db
