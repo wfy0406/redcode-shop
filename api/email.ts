@@ -1196,3 +1196,65 @@ export async function sendVipUpgradeEmail(args: {
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
+
+/**
+ * ⑧ 直播抽獎中獎信（v2.2.46，老闆 2026-10-03 指令）：
+ * 輪盤抽中嗰刻即寄——「恭喜寶寶中獎」＋中獎日期＋獎品名＋商品圖＋展示價錢，
+ * 提客人登入官網揀「多謝，請寄送」（順豐站／自提點／智能櫃）先會出 0 元訂單。
+ * never-throw：任何失敗淨係 console.error 兼回 SendResult，唔會阻抽獎流程。
+ */
+export async function sendPrizeWinEmail(args: {
+  to: string;
+  name: string;
+  prizeName: string;
+  /** 展示價錢（整數港元） */
+  prizePrice: number;
+  /** 獎品圖（/uploads/...，會拼 siteUrl 做絕對 URL） */
+  prizeImagePath: string;
+  /** 抽獎日 YYYYMMDD */
+  drawDate: string;
+}): Promise<SendResult> {
+  try {
+    const site = siteUrl();
+    const dateLabel = `${args.drawDate.slice(0, 4)}-${args.drawDate.slice(4, 6)}-${args.drawDate.slice(6, 8)}`;
+    const imgSrc = args.prizeImagePath.startsWith("http")
+      ? args.prizeImagePath
+      : `${site}${args.prizeImagePath}`;
+
+    const content = `
+      <p style="margin:0 0 14px;">${escapeHtml(args.name)}寶寶，恭喜你中獎啦 🎉✨</p>
+      <p style="margin:0 0 14px;">Glo Glo 喺直播抽獎大輪盤親手抽中你——呢份禮物係專屬你嘅，多謝你一直支持 RedCode ♥</p>
+      <img src="${imgSrc}" alt="${escapeHtml(args.prizeName)}" width="504"
+        style="display:block;width:100%;max-width:100%;height:auto;margin:22px 0;border:1px solid ${GOLD_HAIR};" />
+      ${infoBox([
+        ["中獎日期", dateLabel],
+        ["中獎獎品", `<span style="color:${GOLD};">${escapeHtml(args.prizeName)} ✦</span>`],
+        ["禮物價值", `HK$${args.prizePrice.toLocaleString("en-HK")}`],
+        ["領獎方式", "順豐站／自提點／智能櫃自取（包郵，唔使俾一分錢）"],
+      ])}
+      <p style="margin:18px 0 0;font-size:14.5px;line-height:1.75;color:${INK_SOFT};">
+        登入官網之後會見到「中獎賀卡」——撳 <b>「多謝，請寄送」</b> 揀返你方便嘅順豐站點，
+        確認後我哋就會包好好寄出；如果唔想要，揀「唔要」都得，唔會勉強寶寶 💕
+      </p>
+      ${ctaButton("登入領取我嘅禮物", `${site}/#/orders`)}
+      <p style="margin:22px 0 0;">再次恭喜 ♥</p>
+      <img src="${site}/email/gloria-sign.png" alt="Gloria 簽名" width="168"
+        style="display:block;width:168px;height:auto;margin:10px 0 2px;" />
+      <p style="margin:0;">Gloria 上</p>
+    `;
+
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】🎉 恭喜寶寶中獎 — ${args.prizeName}`,
+      html: brandedEmail({
+        preheader: `你中咗 ${args.prizeName}！登入官網揀地址，我哋包郵寄畀你`,
+        kicker: "REDCODE HK直播台 · 抽獎中獎",
+        title: "恭喜寶寶中獎",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌中獎信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}

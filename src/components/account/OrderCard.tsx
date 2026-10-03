@@ -212,10 +212,43 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         </span>
       </div>
 
+      {/* v2.2.46（直播抽獎）：中獎框——金框＋獎品圖＋「中獎商品」標記，
+          訂單日期本身就係抽獎日（server 落單時 createdAt=抽獎時間） */}
+      {order.prize && (
+        <div
+          className="mt-4 flex items-center gap-3 rounded-2xl border p-3.5"
+          style={{
+            borderColor: 'rgba(245,197,24,0.55)',
+            background: 'linear-gradient(120deg, rgba(245,197,24,0.14), rgba(255,143,191,0.08))',
+            boxShadow: '0 0 30px rgba(245,197,24,0.12)',
+          }}
+        >
+          <img
+            src={order.prize.imagePath}
+            alt={order.prize.name}
+            className="h-14 w-14 shrink-0 rounded-xl border object-cover"
+            style={{ borderColor: 'rgba(245,197,24,0.45)' }}
+          />
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-[12px] font-bold tracking-[0.14em] text-gold">
+              ✦ 直播抽獎・中獎商品 ✦
+            </p>
+            <p className="mt-0.5 truncate text-[14px] font-semibold text-txt-1">
+              {order.prize.name}
+            </p>
+            <p className="mt-0.5 font-mono text-[11.5px] text-txt-3">
+              中獎日 {order.prize.drawDate.slice(0, 4)}-{order.prize.drawDate.slice(4, 6)}-{order.prize.drawDate.slice(6, 8)}
+              ・0 元包郵
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* 商品明細 */}
       <ul className="mt-4">
         {order.items.map((item) => (
-          <ItemRow key={item.id} item={item} image={productImages[item.productId]} />
+          // v2.2.46：中獎商品係隱藏商品（products.list 唔包）→ 用中獎框嘅獎品圖兜底
+          <ItemRow key={item.id} item={item} image={productImages[item.productId] ?? order.prize?.imagePath} />
         ))}
       </ul>
 

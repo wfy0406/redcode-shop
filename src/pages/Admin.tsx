@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Crown, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, Radio, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, Radio, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -21,6 +21,7 @@ import StaffManager from '@/components/admin/StaffManager';
 import AnalyticsManager from '@/components/admin/AnalyticsManager';
 import MemberList from '@/components/admin/MemberList';
 import BoundDeviceList from '@/components/admin/BoundDeviceList';
+import LuckyDrawPanel from '@/components/admin/LuckyDrawPanel';
 import VipSettingsPanel from '@/components/admin/VipSettingsPanel';
 import StationManager from '@/components/admin/StationManager';
 import ApprovalCenter from '@/components/admin/ApprovalCenter';
@@ -50,6 +51,8 @@ type ViewKey =
   | 'livepush'
   // v2.2.43（老闆指令）：綁定手機清單（邊位客戶綁咗邊部機、廠牌、瀏覽器一覽）
   | 'devices'
+  // v2.2.46（老闆指令）：直播抽獎大輪盤（主管/管理員先睇到）
+  | 'lucky'
   | 'members'
   // v2.1.0（VIP+免運，2026-09-29）：VIP/免運規則（admin only）
   | 'vip'
@@ -102,6 +105,8 @@ function AdminConsole() {
   const utils = trpc.useUtils();
   const { user: me } = useAuth();
   const isAdmin = me?.role === 'admin';
+  // v2.2.46（直播抽獎）：導覽列淨係主管＋管理員睇到（後端 API 都係 supervisorProcedure 雙重把關）
+  const isSupervisorOrAdmin = isAdmin || me?.role === 'supervisor';
   const { toasts, push: pushToast } = useToasts();
   const [view, setView] = useState<ViewKey>('review');
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -217,6 +222,10 @@ function AdminConsole() {
     { key: 'livepush', label: '直播推送', icon: <Radio size={17} aria-hidden="true" /> },
     // v2.2.43（老闆指令）：綁定手機清單——客戶名／綁定時間／裝置廠牌／瀏覽器
     { key: 'devices', label: '綁定手機', icon: <Smartphone size={17} aria-hidden="true" /> },
+    // v2.2.46（老闆指令）：直播抽獎大輪盤——只有主管同管理員睇到
+    ...(isSupervisorOrAdmin
+      ? [{ key: 'lucky' as ViewKey, label: '直播抽獎', icon: <Gift size={17} aria-hidden="true" /> }]
+      : []),
     // 會員列表（2026-08-06 三級制）：主管同員工都入得——員工改會員資料要主管/管理員審批；
     // 刪會員仍然 admin only（MemberList 入面 canDelete 擋）
     { key: 'members', label: '會員', icon: <Users size={17} aria-hidden="true" /> },
@@ -281,6 +290,12 @@ function AdminConsole() {
     livepush: <LivePushPanel toast={pushToast} />,
     // v2.2.43（老闆指令）：綁定手機清單（唯讀，唔使 toast）
     devices: <BoundDeviceList />,
+    // v2.2.46（老闆指令）：直播抽獎大輪盤（主管/管理員）
+    lucky: isSupervisorOrAdmin ? (
+      <LuckyDrawPanel toast={pushToast} />
+    ) : (
+      <p className="py-14 text-center text-[14px] text-txt-3">需要主管或管理員權限。</p>
+    ),
     members: <MemberList toast={pushToast} />,
     vip: isAdmin ? (
       <VipSettingsPanel toast={pushToast} />

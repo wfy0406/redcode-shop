@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, notLike, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { cartItems, orderItems, orders, paymentProofs, pushCampaigns, pushDeliveries, pushSubscriptions, users, wmsSyncLog } from "@db/schema";
 import { createRouter, adminProcedure, staffProcedure } from "./middleware";
@@ -42,6 +42,14 @@ export function deviceLabelFromUserAgent(ua: string | null): string {
  * Android 機多數帶型號（Android 14; SM-S918B），抽出嚟對廠牌對照表；
  * Apple 機 UA 冇型號，廠牌即 Apple。
  */
+/** v2.2.45（老闆截圖：有型號都話「其他 Android」）：
+ *  Chrome 落 sec-ch-ua-model 係 HTTP quoted-string——DB 入面係 "SM-F9560"（連引號），
+ *  唔剝引號 regex ^SM- 永遠對唔上。呢度統一剝引號＋trim；空字串／"K"（凍結占位符）當冇。 */
+function normalizeDeviceModel(model: string | null | undefined): string | null {
+  const m = (model ?? "").replace(/^"+|"+$/g, "").trim();
+  return m && m !== "K" ? m : null;
+}
+
 /** Android 型號 → 廠牌對照（UA 型號段／sec-ch-ua-model 兩邊共用） */
 function brandFromAndroidModel(model: string): string {
   if (/^SM-|SAMSUNG/i.test(model)) return "Samsung";
@@ -70,8 +78,10 @@ export function deviceInfoFromUserAgent(
   // ── 廠牌 ──
   let brand = "不明";
   // v2.2.44：有 sec-ch-ua-model 優先用（Chrome 凍結 UA 型號得返 "K"，真型號喺度）
-  if (deviceModel && deviceModel !== "K") {
-    brand = brandFromAndroidModel(deviceModel);
+  // v2.2.45：先剝引號（Chrome 落嘅係 quoted-string，連引號會對唔上廠牌表）
+  const cleanModel = normalizeDeviceModel(deviceModel);
+  if (cleanModel) {
+    brand = brandFromAndroidModel(cleanModel);
   } else if (/iPhone/i.test(ua)) brand = "Apple iPhone";
   else if (/iPad/i.test(ua)) brand = "Apple iPad";
   else if (/Macintosh|Mac OS X/i.test(ua)) brand = "Apple Mac";
@@ -187,9 +197,14 @@ export const membersRouter = createRouter({
           term
             ? and(
                 eq(users.role, "member"),
+                // v2.2.48：抽獎影子帳號（phone="DRAW#…"）唔准出現喺會員管理
+                notLike(users.phone, "DRAW#%"),
                 sql`(${users.name} ilike ${term} escape '\\' or ${users.phone} ilike ${term} escape '\\')`,
               )
-            : eq(users.role, "member"),
+            : and(
+                eq(users.role, "member"),
+                notLike(users.phone, "DRAW#%"),
+              ),
         )
         .groupBy(users.id)
         .orderBy(desc(users.createdAt));
@@ -662,7 +677,9 @@ export const membersRouter = createRouter({
       .limit(500);
     return rows.map((r) => {
       // v2.2.44：有 sec-ch-ua-model 優先用佢對廠牌（Chrome 凍結咗 UA 型號）
-      const info = deviceInfoFromUserAgent(r.userAgent, r.deviceModel);
+      // v2.2.45：剝埋引號先好對廠牌＋顯示（舊資料連引號入咗庫，讀出嗰陣修正）
+      const model = normalizeDeviceModel(r.deviceModel);
+      const info = deviceInfoFromUserAgent(r.userAgent, model);
       return {
         id: r.id,
         customerName: r.customerName,
@@ -670,7 +687,7 @@ export const membersRouter = createRouter({
         customerEmail: r.customerEmail,
         brand: info.brand,
         browser: info.browser,
-        model: r.deviceModel && r.deviceModel !== "K" ? r.deviceModel : null,
+        model,
         boundAt: r.createdAt.toISOString(),
         lastSentAt: r.lastSentAt ? r.lastSentAt.toISOString() : null,
       };

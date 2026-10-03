@@ -368,3 +368,70 @@ export async function moveLiveReplay(
   }
   return { ok: true };
 }
+
+/**
+ * v2.2.46（直播抽獎，老闆指令）：中獎即時推送畀中獎人（佢全部 active 裝置）。
+ * 同直播推送共用 VAPID；never-throw——抽獎流程唔會因推送失敗而彈錯。
+ * 保安：日誌淨落 userId／計數／statusCode；endpoint/keys 永遠唔落 log。
+ * 中獎推送唔係直播 campaign，唔寫 pushDeliveries（嗰張表係逐 campaign 對位用）。
+ */
+export async function sendPrizeWinPush(
+  userId: number,
+  prizeName: string,
+): Promise<{ sent: number; failed: number }> {
+  try {
+    const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+    const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+    if (!vapidPublicKey || !vapidPrivateKey) return { sent: 0, failed: 0 };
+    webpush.setVapidDetails(
+      process.env.VAPID_SUBJECT || "mailto:redcode@redcode.red",
+      vapidPublicKey,
+      vapidPrivateKey,
+    );
+    const db = getDb();
+    const subs = await db
+      .select()
+      .from(pushSubscriptions)
+      .where(and(eq(pushSubscriptions.userId, userId), eq(pushSubscriptions.active, true)));
+    const payload = JSON.stringify({
+      title: "🎉 RedCode 恭喜寶寶中獎！",
+      body: `你中咗「${prizeName}」！登入官網揀順豐站點，我哋包郵寄畀你 ♥`,
+      data: { url: `${siteUrl()}/#/orders` },
+    });
+    let sent = 0;
+    let failed = 0;
+    const now = new Date();
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          payload,
+          // TTL 7 日：中獎通知冇時效窗，遲派好過唔派
+          { TTL: 7 * 24 * 60 * 60, urgency: "high" },
+        );
+        sent++;
+        await db
+          .update(pushSubscriptions)
+          .set({ lastSentAt: now })
+          .where(eq(pushSubscriptions.id, sub.id));
+      } catch (e) {
+        failed++;
+        const statusCode =
+          typeof (e as { statusCode?: unknown })?.statusCode === "number"
+            ? (e as { statusCode: number }).statusCode
+            : null;
+        if (statusCode === 404 || statusCode === 410) {
+          await db
+            .update(pushSubscriptions)
+            .set({ active: false })
+            .where(eq(pushSubscriptions.id, sub.id));
+        }
+      }
+    }
+    console.log(`[push] 中獎通知 → user #${userId}：${sent} 成功 / ${failed} 失敗`);
+    return { sent, failed };
+  } catch (e) {
+    console.error(`[push] 中獎通知出錯（user #${userId}）：`, e instanceof Error ? e.message : e);
+    return { sent: 0, failed: 0 };
+  }
+}

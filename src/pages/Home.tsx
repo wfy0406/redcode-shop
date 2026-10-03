@@ -237,6 +237,21 @@ const STATIC_WALL_PHOTOS = [
 /* ---------- 直播開播通知常設入口（v2.2.0）：冇直播都見到 ----------
    未登入 → Link /login；登入未訂閱 → PushPermissionGuide；已訂閱 →「已開啟通知 ✓」
    （邏輯一字唔郁；淨係換皮融入 hero CTA pill cluster，第四粒 ghost 掣） */
+/** 「接收通知教學」細字連結（champagne 金＋底線，唔搶主制）→ /faq#notify-tutorial 教學區錨點 */
+function NotifyTutorialLink() {
+  return (
+    <span className="mt-2 block text-center sm:text-left">
+      <Link
+        to="/faq#notify-tutorial"
+        className="text-[12px] underline underline-offset-4 transition-opacity hover:opacity-75"
+        style={{ color: 'var(--gold-soft)' }}
+      >
+        接收通知教學
+      </Link>
+    </span>
+  );
+}
+
 function LivePushEntry() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -277,6 +292,7 @@ function LivePushEntry() {
             </span>
           </span>
         </Link>
+        <NotifyTutorialLink />
       </div>
     );
   }
@@ -296,6 +312,7 @@ function LivePushEntry() {
             <span className="cta-title">已開啟通知</span>
           </span>
         </span>
+        <NotifyTutorialLink />
       </span>
     );
   }
@@ -339,6 +356,7 @@ function LivePushEntry() {
           }
         }}
       />
+      <NotifyTutorialLink />
     </div>
   );
 }

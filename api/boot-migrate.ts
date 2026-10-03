@@ -412,6 +412,53 @@ CREATE TABLE IF NOT EXISTS "pushDeliveries" (
   "sentAt" timestamp NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS pushdeliveries_subscription_sent ON "pushDeliveries" ("subscriptionId", "sentAt" DESC);
+-- v2.2.46（老闆指令）：直播抽獎大輪盤——獎品池＋中獎紀錄
+CREATE TABLE IF NOT EXISTS "luckyPrizes" (
+  id serial PRIMARY KEY,
+  name varchar(255) NOT NULL,
+  sku varchar(64) NOT NULL,
+  price integer NOT NULL,
+  "imagePath" varchar(512) NOT NULL,
+  active boolean NOT NULL DEFAULT true,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS "luckyDraws" (
+  id serial PRIMARY KEY,
+  "prizeId" integer NOT NULL REFERENCES "luckyPrizes"("id"),
+  "winnerUserId" bigint NOT NULL REFERENCES "users"("id"),
+  status varchar(16) NOT NULL DEFAULT 'pending',
+  "drawDate" varchar(8) NOT NULL,
+  "orderId" bigint REFERENCES "orders"("id"),
+  "redrawOfId" integer,
+  "drawnBy" bigint,
+  "drawnByName" varchar(255),
+  "cancelledBy" bigint,
+  "cancelNote" varchar(255),
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "respondedAt" timestamp
+);
+CREATE INDEX IF NOT EXISTS luckydraws_date_status ON "luckyDraws" ("drawDate", status);
+CREATE INDEX IF NOT EXISTS luckydraws_winner ON "luckyDraws" ("winnerUserId", status);
+CREATE UNIQUE INDEX IF NOT EXISTS luckydraws_one_active_win ON "luckyDraws" ("prizeId") WHERE status IN ('pending','confirmed');
+-- v2.2.48（老闆指令）：直播抽獎「自訂名單」——主管/管理員自輸客人名成名單，抽非官網會員；
+-- 呢種中獎唔彈窗唔通知，admin 撳「確定」即刻起 0 元單飛 WMS 審批
+CREATE TABLE IF NOT EXISTS "luckyDrawLists" (
+  id serial PRIMARY KEY,
+  name varchar(64) NOT NULL,
+  names jsonb NOT NULL,
+  "memberIds" jsonb NOT NULL DEFAULT '[]',
+  "createdBy" bigint,
+  "createdByName" varchar(255),
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+ALTER TABLE "luckyDraws" ADD COLUMN IF NOT EXISTS "winnerName" varchar(255);
+ALTER TABLE "luckyDraws" ADD COLUMN IF NOT EXISTS "listId" integer;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'luckydraws_list_fk') THEN
+    ALTER TABLE "luckyDraws" ADD CONSTRAINT luckydraws_list_fk FOREIGN KEY ("listId") REFERENCES "luckyDrawLists"(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS luckydraws_list ON "luckyDraws" ("listId");
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：

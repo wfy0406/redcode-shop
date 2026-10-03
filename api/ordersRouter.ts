@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { getDb } from "./queries/connection";
-import { cartItems, orders, orderItems, paymentProofs, products, promoCodes, users, wmsSyncLog } from "@db/schema";
+import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, paymentProofs, products, promoCodes, users, wmsSyncLog } from "@db/schema";
 import { createRouter, authedProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
 import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
@@ -379,11 +379,30 @@ export const ordersRouter = createRouter({
 
   myOrders: authedProcedure.query(async ({ ctx }) => {
     const db = getDb();
-    return db.query.orders.findMany({
+    const rows = await db.query.orders.findMany({
       where: eq(orders.userId, ctx.user.userId),
       with: { items: true, proofs: true },
       orderBy: [desc(orders.createdAt)],
     });
+    // v2.2.46（直播抽獎）：中獎訂單掛返獎品資料出嚟，我的訂單會顯示「中獎框」
+    const orderIds = rows.map((o) => o.id);
+    const prizeMap = new Map<number, { name: string; imagePath: string; drawDate: string }>();
+    if (orderIds.length > 0) {
+      const wins = await db
+        .select({
+          orderId: luckyDraws.orderId,
+          name: luckyPrizes.name,
+          imagePath: luckyPrizes.imagePath,
+          drawDate: luckyDraws.drawDate,
+        })
+        .from(luckyDraws)
+        .innerJoin(luckyPrizes, eq(luckyDraws.prizeId, luckyPrizes.id))
+        .where(and(inArray(luckyDraws.orderId, orderIds), eq(luckyDraws.status, "confirmed")));
+      for (const w of wins) {
+        if (w.orderId != null) prizeMap.set(w.orderId, { name: w.name, imagePath: w.imagePath, drawDate: w.drawDate });
+      }
+    }
+    return rows.map((o) => ({ ...o, prize: prizeMap.get(o.id) ?? null }));
   }),
 
   myOrderById: authedProcedure

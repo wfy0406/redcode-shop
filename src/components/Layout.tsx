@@ -7,6 +7,7 @@ import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import MessengerIcon from '@/components/MessengerIcon';
 import MarketingConsentModal from '@/components/MarketingConsentModal';
+import PrizeWinModal from '@/components/PrizeWinModal';
 
 /**
  * 全站 Layout —— Nested-route pattern（react-dev.md Pattern B）：
@@ -92,6 +93,9 @@ export default function Layout() {
 
       {/* 推廣同意一次性彈窗（2026-08-06 Glo 要求）：舊會員未表態先會彈，揀完唔再彈 */}
       <MarketingConsentModal />
+      {/* v2.2.46（直播抽獎）：中獎賀卡全域彈窗——首次登入／已登入一見有 pending 中獎就彈
+          （煙花＋小精靈 Glo Glo 飛入；揀「請寄送」揀順豐站點 → 0 元訂單飛 WMS） */}
+      <PrizeWinModal />
     </div>
   );
 }

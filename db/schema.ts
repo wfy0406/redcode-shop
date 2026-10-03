@@ -459,6 +459,71 @@ export const auditLog = pgTable("auditLog", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
+// ===== v2.2.48（直播抽獎「自訂名單」，老闆指令）=====
+// 主管/管理員自己輸入客人名（逐個＋批量）成名單，可以抽非官網會員；
+// 呢種中獎唔彈窗唔通知，admin 撳「確定」即刻起 0 元單飛 WMS。
+export const luckyDrawLists = pgTable("luckyDrawLists", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 64 }).notNull(),
+  // 名單入面嘅客人名（string[]；server 已 trim／drop 空／去重）
+  names: jsonb("names").$type<string[]>().notNull(),
+  // 名單入面嘅官網會員 id（users.id）；中咗會員照常彈窗＋通知，自己揀地址寄送
+  memberIds: jsonb("memberIds").$type<number[]>().notNull().default([]),
+  createdBy: bigint("createdBy", { mode: "number" }),
+  createdByName: varchar("createdByName", { length: 255 }),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
+// ===== v2.2.46（直播抽獎大輪盤，老闆 2026-10-03 指令）=====
+// 獎品池：主管/管理員喺後台加減；貨號（SKU）＋展示價錢＋上傳圖。
+// 中咗獎之後件獎品會搵 products 同 SKU 行重用（WMS 存貨對到），冇先起隱藏商品行。
+export const luckyPrizes = pgTable("luckyPrizes", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  // 貨號：入 WMS 用；同 products.sku 對應（有就重用該商品行）
+  sku: varchar("sku", { length: 64 }).notNull(),
+  // 展示價錢（整數港元，同 orders.total 一個單位）；中獎訂單落 0 元，呢度淨係畀客睇價值
+  price: integer("price").notNull(),
+  // 上傳圖（/uploads/...，POST /api/upload 攞）；WMS 睇圖同 email 商品圖都用佢
+  imagePath: varchar("imagePath", { length: 512 }).notNull(),
+  // 「減獎品」＝ active=false（軟刪，中獎紀錄要繼續睇到件獎品叫咩）
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
+// 抽獎紀錄：一件獎品抽一次一個中獎人；當日一人最多中一件（server 落 draw 時強制）。
+export const luckyDraws = pgTable("luckyDraws", {
+  id: serial("id").primaryKey(),
+  prizeId: integer("prizeId")
+    .notNull()
+    .references(() => luckyPrizes.id),
+  winnerUserId: bigint("winnerUserId", { mode: "number" })
+    .notNull()
+    .references(() => users.id),
+  // pending＝等客人回應（彈窗）｜confirmed＝客人揀咗地址、訂單已生成｜
+  // declined＝客人揀「唔要」｜cancelled＝後台取消（即時取消或紀錄頁取消；客人唔會再見到）
+  status: varchar("status", { length: 16 }).notNull().default("pending"),
+  // 抽獎日（香港時間 YYYYMMDD）：一人一日起碼一件、訂單日期、紀錄頁按日分組都靠佢
+  drawDate: varchar("drawDate", { length: 8 }).notNull(),
+  // 客人確認寄送後生成嘅 0 元訂單（飛 WMS 等審批，同正常訂單一樣）
+  orderId: bigint("orderId", { mode: "number" }).references(() => orders.id),
+  // 特別重抽鏈：呢次係重抽嘅話指返被取代嘅舊紀錄
+  redrawOfId: integer("redrawOfId"),
+  // v2.2.48（自訂名單抽獎）：中獎名快照——自訂名單中獎＝名單入面嘅原串；
+  // 會員抽獎都順手 snapshot 埋 winner.name（會員改名唔影響紀錄顯示）
+  winnerName: varchar("winnerName", { length: 255 }),
+  // v2.2.48：邊份自訂名單抽出嚟（null＝會員池抽獎）；名單刪咗就 SET NULL，紀錄留底
+  listId: integer("listId").references(() => luckyDrawLists.id, { onDelete: "set null" }),
+  // 邊個抽（主管/管理員 user id）
+  drawnBy: bigint("drawnBy", { mode: "number" }),
+  drawnByName: varchar("drawnByName", { length: 255 }),
+  // 取消資料（即時取消／之後紀錄頁取消）
+  cancelledBy: bigint("cancelledBy", { mode: "number" }),
+  cancelNote: varchar("cancelNote", { length: 255 }),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  respondedAt: timestamp("respondedAt"),
+});
+
 export type User = typeof users.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type Product = typeof products.$inferSelect;

@@ -24,6 +24,7 @@ const Admin = lazy(() => import('@/pages/Admin'));
 const Vip = lazy(() => import('@/pages/Vip')); // v2.1.0：會員制度介紹頁
 const VipVerify = lazy(() => import('@/pages/VipVerify')); // v2.2.0：公開會員證書驗證頁
 const SfStations = lazy(() => import('@/pages/SfStations')); // v2.2.0：公開順豐站點查詢頁
+const Faq = lazy(() => import('@/pages/Faq')); // 常見問題 FAQ（接收通知教學＋Q&A 手風琴）
 
 /**
  * Lazy 頁載入中嘅全屏 fallback：品牌色底 #0A0614＋粉紅 #FE017E「載入中…」，
@@ -81,6 +82,7 @@ export default function App() {
             <Route path="vip" element={<Vip />} />
             <Route path="/vip-verify" element={<VipVerify />} />
             <Route path="/sf-stations" element={<SfStations />} />
+            <Route path="faq" element={<Faq />} />
             <Route path="login" element={<Login />} />
             <Route path="register" element={<Register />} />
             <Route path="cart" element={<Cart />} />
