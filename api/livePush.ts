@@ -19,7 +19,7 @@
 import webpush from "web-push";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { pushCampaigns, pushSubscriptions } from "@db/schema";
+import { pushCampaigns, pushDeliveries, pushSubscriptions } from "@db/schema";
 import { logAudit } from "./audit";
 import { siteUrl } from "./email";
 import { resolveFbCanonical } from "./fbVideo";
@@ -216,6 +216,11 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
           .update(pushSubscriptions)
           .set({ lastSentAt: now })
           .where(eq(pushSubscriptions.id, sub.id));
+        // v2.2.44（老闆指令）：逐機推送紀錄——寫低成功；紀錄寫唔入都唔好阻發送主流程
+        await db
+          .insert(pushDeliveries)
+          .values({ subscriptionId: sub.id, campaignId, ok: true })
+          .catch(() => undefined);
       } catch (e) {
         failCount++;
         // 推送服務回 404/410＝訂閱已失效 → 即 deactivate（留底唔刪行）。
@@ -224,6 +229,21 @@ export async function sendLivePush(campaignId: number): Promise<SendLivePushResu
           typeof (e as { statusCode?: unknown })?.statusCode === "number"
             ? (e as { statusCode: number }).statusCode
             : null;
+        // v2.2.44（老闆指令）：逐機推送紀錄——寫低失敗＋原因類別（淨類別，唔落原文）
+        await db
+          .insert(pushDeliveries)
+          .values({
+            subscriptionId: sub.id,
+            campaignId,
+            ok: false,
+            reason:
+              statusCode === 404 || statusCode === 410
+                ? "gone"
+                : statusCode
+                  ? `http_${statusCode}`
+                  : "unknown",
+          })
+          .catch(() => undefined);
         if (statusCode === 404 || statusCode === 410) {
           await db
             .update(pushSubscriptions)

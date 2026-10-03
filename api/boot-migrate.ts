@@ -401,6 +401,17 @@ ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "thumbUrl" varchar(512);
 ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "skipNotify" boolean NOT NULL DEFAULT false;
 ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "directReplay" boolean NOT NULL DEFAULT false;
 ALTER TABLE "pushCampaigns" ADD COLUMN IF NOT EXISTS "extendedMinutes" integer NOT NULL DEFAULT 0;
+-- v2.2.44（老闆指令）：Android 廠牌（sec-ch-ua-model）＋逐機推送紀錄表
+ALTER TABLE "pushSubscriptions" ADD COLUMN IF NOT EXISTS "deviceModel" varchar(128);
+CREATE TABLE IF NOT EXISTS "pushDeliveries" (
+  id serial PRIMARY KEY,
+  "subscriptionId" integer NOT NULL REFERENCES "pushSubscriptions"("id"),
+  "campaignId" integer NOT NULL REFERENCES "pushCampaigns"("id"),
+  ok boolean NOT NULL,
+  reason varchar(32),
+  "sentAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pushdeliveries_subscription_sent ON "pushDeliveries" ("subscriptionId", "sentAt" DESC);
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：

@@ -331,6 +331,10 @@ export const pushSubscriptions = pgTable("pushSubscriptions", {
   p256dh: text("p256dh").notNull(),
   auth: text("auth").notNull(),
   userAgent: varchar("userAgent", { length: 255 }),
+  // v2.2.44（老闆指令：Android 要讀到廠牌）：UA Client Hints 嘅 sec-ch-ua-model。
+  // Chrome 107+ 凍結咗 UA 入面嘅手機型號（得返 "K"），真型號淨係呢個 header 有；
+  // server 回應加 Accept-CH 之後，同 origin request 自帶。舊綁定冇存 → null（跌返 UA 規則）。
+  deviceModel: varchar("deviceModel", { length: 128 }),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   lastSentAt: timestamp("lastSentAt"),
@@ -371,6 +375,23 @@ export const pushCampaigns = pgTable("pushCampaigns", {
   // v2.2.37（老闆指令）：直播中可自行延長，每掣 +60 分鐘（累計，上限 240）
   extendedMinutes: integer("extendedMinutes").notNull().default(0),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
+// v2.2.44（老闆指令：綁定手機清單撳落去要睇到每部機嘅推送紀錄）：
+// 逐部裝置逐次推送一行——成功／失敗＋原因類別，後台彈窗 50 筆一頁。
+// 安全鐵律照舊：endpoint／keys 唔落呢度，淨係 subscriptionId 參照。
+export const pushDeliveries = pgTable("pushDeliveries", {
+  id: serial("id").primaryKey(),
+  subscriptionId: integer("subscriptionId")
+    .notNull()
+    .references(() => pushSubscriptions.id),
+  campaignId: integer("campaignId")
+    .notNull()
+    .references(() => pushCampaigns.id),
+  ok: boolean("ok").notNull(),
+  // 失敗原因類別：gone（404/410 訂閱失效）／http_<code>／unknown——淨類別，唔落原文
+  reason: varchar("reason", { length: 32 }),
+  sentAt: timestamp("sentAt").notNull().defaultNow(),
 });
 
 export const praiseWall = pgTable("praiseWall", {

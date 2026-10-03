@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { cartItems, orderItems, orders, paymentProofs, pushSubscriptions, users, wmsSyncLog } from "@db/schema";
+import { cartItems, orderItems, orders, paymentProofs, pushCampaigns, pushDeliveries, pushSubscriptions, users, wmsSyncLog } from "@db/schema";
 import { createRouter, adminProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { hashPassword } from "./auth";
@@ -42,31 +42,44 @@ export function deviceLabelFromUserAgent(ua: string | null): string {
  * Android 機多數帶型號（Android 14; SM-S918B），抽出嚟對廠牌對照表；
  * Apple 機 UA 冇型號，廠牌即 Apple。
  */
-export function deviceInfoFromUserAgent(ua: string | null): { brand: string; browser: string } {
+/** Android 型號 → 廠牌對照（UA 型號段／sec-ch-ua-model 兩邊共用） */
+function brandFromAndroidModel(model: string): string {
+  if (/^SM-|SAMSUNG/i.test(model)) return "Samsung";
+  if (/^Pixel/i.test(model)) return "Google Pixel";
+  if (/^(Redmi|POCO|Mi |MIX |M2\d{6}|[12]\d{6}[A-Z]?$)/i.test(model)) return "Xiaomi";
+  if (/HUAWEI|^(VOG|ANA|ELE|LYA|MAR|NOH|TAS|CLT|EML|BLA|PAR)-/i.test(model)) return "Huawei";
+  if (/HONOR|^(HLK|YAL|LLY|ANY|COL|TPY|NTN|RNA|RKY|PGT)-/i.test(model)) return "Honor";
+  if (/^(OPPO|CPH)/i.test(model)) return "OPPO";
+  if (/^RMX\d/i.test(model)) return "realme";
+  if (/^(vivo|IQOO|V2\d{3})/i.test(model)) return "vivo";
+  if (/^OnePlus/i.test(model)) return "OnePlus";
+  if (/^(XQ-|SO-)/i.test(model)) return "Sony";
+  if (/^(LG-|LM-)/i.test(model)) return "LG";
+  if (/^(Moto|motorola)/i.test(model)) return "Motorola";
+  if (/^Nothing/i.test(model)) return "Nothing";
+  if (/^(ASUS_|AI\d{4})/i.test(model)) return "ASUS";
+  return "其他 Android";
+}
+
+export function deviceInfoFromUserAgent(
+  ua: string | null,
+  deviceModel?: string | null,
+): { brand: string; browser: string } {
   if (!ua) return { brand: "不明", browser: "不明" };
 
   // ── 廠牌 ──
   let brand = "不明";
-  if (/iPhone/i.test(ua)) brand = "Apple iPhone";
+  // v2.2.44：有 sec-ch-ua-model 優先用（Chrome 凍結 UA 型號得返 "K"，真型號喺度）
+  if (deviceModel && deviceModel !== "K") {
+    brand = brandFromAndroidModel(deviceModel);
+  } else if (/iPhone/i.test(ua)) brand = "Apple iPhone";
   else if (/iPad/i.test(ua)) brand = "Apple iPad";
   else if (/Macintosh|Mac OS X/i.test(ua)) brand = "Apple Mac";
   else if (/Windows/i.test(ua)) brand = "Windows 電腦";
   else if (/Android/i.test(ua)) {
     // 抽型號段：Android 14; SM-S918B）→ 對照常見廠牌；對唔上叫「其他 Android」
     const model = /Android [\d.]+;\s*([^;)]+)/i.exec(ua)?.[1]?.trim() ?? "";
-    if (/^SM-|SAMSUNG/i.test(model)) brand = "Samsung";
-    else if (/^Pixel/i.test(model)) brand = "Google Pixel";
-    else if (/^(Redmi|POCO|Mi |MIX )/i.test(model)) brand = "Xiaomi";
-    else if (/HUAWEI/i.test(model) || /HUAWEI/i.test(ua)) brand = "Huawei";
-    else if (/HONOR/i.test(model)) brand = "Honor";
-    else if (/^(OPPO|CPH)/i.test(model)) brand = "OPPO";
-    else if (/^(vivo|IQOO|V2\d{3})/i.test(model)) brand = "vivo";
-    else if (/^OnePlus/i.test(model)) brand = "OnePlus";
-    else if (/^(XQ-|SO-)/i.test(model)) brand = "Sony";
-    else if (/^(LG-|LM-)/i.test(model)) brand = "LG";
-    else if (/^(Moto|motorola)/i.test(model)) brand = "Motorola";
-    else if (/^Nothing/i.test(model)) brand = "Nothing";
-    else brand = "其他 Android";
+    brand = brandFromAndroidModel(model);
   } else if (/Linux/i.test(ua)) brand = "Linux 電腦";
 
   // ── 瀏覽器（次序有講究：in-app 先；Edge／Chrome UA 都帶 Safari 字樣要排尾）──
@@ -635,6 +648,7 @@ export const membersRouter = createRouter({
       .select({
         id: pushSubscriptions.id,
         userAgent: pushSubscriptions.userAgent,
+        deviceModel: pushSubscriptions.deviceModel,
         createdAt: pushSubscriptions.createdAt,
         lastSentAt: pushSubscriptions.lastSentAt,
         customerName: users.name,
@@ -647,7 +661,8 @@ export const membersRouter = createRouter({
       .orderBy(desc(pushSubscriptions.createdAt))
       .limit(500);
     return rows.map((r) => {
-      const info = deviceInfoFromUserAgent(r.userAgent);
+      // v2.2.44：有 sec-ch-ua-model 優先用佢對廠牌（Chrome 凍結咗 UA 型號）
+      const info = deviceInfoFromUserAgent(r.userAgent, r.deviceModel);
       return {
         id: r.id,
         customerName: r.customerName,
@@ -655,11 +670,63 @@ export const membersRouter = createRouter({
         customerEmail: r.customerEmail,
         brand: info.brand,
         browser: info.browser,
+        model: r.deviceModel && r.deviceModel !== "K" ? r.deviceModel : null,
         boundAt: r.createdAt.toISOString(),
         lastSentAt: r.lastSentAt ? r.lastSentAt.toISOString() : null,
       };
     });
   }),
+
+  /** v2.2.44（老闆指令）：單部裝置嘅推送紀錄——撳清單行彈窗睇，50 筆一頁。
+   *  淨回 ok／原因類別／時間／場次標題；campaign body、endpoint 等唔回。 */
+  adminListDeviceDeliveries: adminProcedure
+    .input(
+      z.object({
+        deviceId: z.number().int().positive(),
+        page: z.number().int().min(1).default(1),
+      }),
+    )
+    .query(async ({ input }) => {
+      const db = getDb();
+      const PAGE = 50;
+      const [device] = await db
+        .select({ id: pushSubscriptions.id })
+        .from(pushSubscriptions)
+        .where(eq(pushSubscriptions.id, input.deviceId))
+        .limit(1);
+      if (!device) throw new TRPCError({ code: "NOT_FOUND", message: "裝置唔存在" });
+      // 多摷一筆：有第 51 筆即係有下一頁（唔使 count 全表）
+      const rows = await db
+        .select({
+          id: pushDeliveries.id,
+          ok: pushDeliveries.ok,
+          reason: pushDeliveries.reason,
+          sentAt: pushDeliveries.sentAt,
+          campaignTitle: pushCampaigns.title,
+          liveDate: pushCampaigns.liveDate,
+          liveSession: pushCampaigns.liveSession,
+        })
+        .from(pushDeliveries)
+        .innerJoin(pushCampaigns, eq(pushDeliveries.campaignId, pushCampaigns.id))
+        .where(eq(pushDeliveries.subscriptionId, input.deviceId))
+        .orderBy(desc(pushDeliveries.sentAt))
+        .limit(PAGE + 1)
+        .offset((input.page - 1) * PAGE);
+      return {
+        page: input.page,
+        pageSize: PAGE,
+        hasMore: rows.length > PAGE,
+        rows: rows.slice(0, PAGE).map((r) => ({
+          id: r.id,
+          ok: r.ok,
+          reason: r.reason,
+          sentAt: r.sentAt.toISOString(),
+          campaignTitle: r.campaignTitle,
+          liveDate: r.liveDate,
+          liveSession: r.liveSession,
+        })),
+      };
+    }),
 
   /** 幫會員踢走一部已綁定裝置（where id＋userId＋active，唔會郁到別人嘅機） */
   adminRemovePushDevice: adminProcedure

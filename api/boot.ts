@@ -39,6 +39,19 @@ const ALLOWED_IMAGE_TYPES: Record<string, string> = {
 
 app.use(bodyLimit({ maxSize: 50 * 1024 * 1024 }));
 
+// v2.2.44（老闆指令：綁定清單 Android 要讀到廠牌）：UA Client Hints 協商。
+// Chrome 107+ 凍結咗 UA 入面嘅手機型號（得返 "K"），真型號淨係 sec-ch-ua-model
+// header 有；回應帶 Accept-CH 之後，瀏覽器之後嘅同 origin request（包括
+// push.subscribe 個 mutation）就會自帶呢啲 header。Safari/Firefox 唔支援，
+// 但佢哋 UA 本身已分到 Apple/其他，唔使靠 CH。
+app.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set(
+    "Accept-CH",
+    "Sec-CH-UA-Model, Sec-CH-UA-Platform, Sec-CH-UA-Mobile, Sec-CH-UA-Full-Version-List",
+  );
+});
+
 // 每日營運數據導出（xlsx 下載）——註冊喺 tRPC mount 前，確保唔會跌入 SPA fallback
 app.get("/api/export/daily", exportDaily);
 

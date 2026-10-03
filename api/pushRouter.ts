@@ -130,6 +130,11 @@ export const pushRouter = createRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
+      // v2.2.44（老闆指令：Android 要讀到廠牌）：Chrome 凍結咗 UA 型號，
+      // 真型號喺 sec-ch-ua-model header（boot.ts Accept-CH 協商後瀏覽器先會自帶）；
+      // 冇帶（Safari／舊瀏覽器）就 null，parser 跌返 UA 規則。
+      // 保安：header 截 128 字落 DB，唔落 log。
+      const deviceModel = (ctx.req.headers.get("sec-ch-ua-model") ?? "").trim().slice(0, 128) || null;
       // upsert by endpoint：同一部裝置重複訂閱就刷新 keys 兼 reactivate
       const [sub] = await db
         .insert(pushSubscriptions)
@@ -139,6 +144,7 @@ export const pushRouter = createRouter({
           p256dh: input.p256dh,
           auth: input.auth,
           userAgent: input.userAgent ?? null,
+          deviceModel,
           active: true,
         })
         .onConflictDoUpdate({
@@ -148,6 +154,8 @@ export const pushRouter = createRouter({
             p256dh: input.p256dh,
             auth: input.auth,
             userAgent: input.userAgent ?? null,
+            // 今次冇帶 CH 就唔好冚走舊值（例如某次 request 未協商到）
+            ...(deviceModel ? { deviceModel } : {}),
             active: true,
           },
         })
