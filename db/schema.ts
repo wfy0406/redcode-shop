@@ -488,6 +488,8 @@ export const luckyPrizes = pgTable("luckyPrizes", {
   imagePath: varchar("imagePath", { length: 512 }),
   // 獎品分場次（直播第 N 場／自訂標籤；""＝未分場）
   session: varchar("session", { length: 64 }).notNull().default(""),
+  // v2.2.55（老闆指令）：同款獎品有幾多件 — N 件就可以抽 N 次（每次一個中獎人）
+  quantity: integer("quantity").notNull().default(1),
   // 「下架」＝ active=false（唔再抽得）；刪獎品係硬刪（adminDeletePrize），
   // 有抽獎紀錄參照會被 FK 擋（要先刪晒嗰啲紀錄）
   active: boolean("active").notNull().default(true),

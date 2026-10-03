@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, notLike, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { cartItems, orderItems, orders, paymentProofs, pushCampaigns, pushDeliveries, pushSubscriptions, users, wmsSyncLog } from "@db/schema";
+import { cartItems, luckyDraws, orderItems, orders, paymentProofs, pushCampaigns, pushDeliveries, pushSubscriptions, users, wmsSyncLog } from "@db/schema";
 import { createRouter, adminProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { hashPassword } from "./auth";
@@ -598,26 +598,38 @@ export const membersRouter = createRouter({
           message: `「${target.name}」有 ${orderRows.length} 張訂單，刪除會連埋訂單一齊冇晒，請確認先好再撳`,
         });
       }
-      if (orderRows.length > 0) {
-        // 先刪晒啲 child rows（FK 冇 cascade），順序：同步記錄 → 截圖 → 明細 → 訂單
-        const ids = orderRows.map((r) => r.id);
-        await db.delete(wmsSyncLog).where(inArray(wmsSyncLog.orderId, ids));
-        await db.delete(paymentProofs).where(inArray(paymentProofs.orderId, ids));
-        await db.delete(orderItems).where(inArray(orderItems.orderId, ids));
-        await db.delete(orders).where(eq(orders.userId, input.id));
-      }
-      await db.delete(cartItems).where(eq(cartItems.userId, input.id));
-      // v2.2.22（老闆報障）：pushSubscriptions.userId 有 FK 連住 users（無 cascade）——
-      // 會員一訂閱直播通知就會被資料庫擋住刪除。連埋裝置一併刪；
-      // 安全鐵律：endpoint／p256dh／auth 永遠唔回前端、唔落 log，淨係計數。
-      const removedDevices = await db
-        .delete(pushSubscriptions)
-        .where(eq(pushSubscriptions.userId, input.id))
-        .returning({ id: pushSubscriptions.id });
+      // v2.2.55：成段刪除包入同一個 transaction — 邊步 FK 擋住都唔會出現
+      // 「訂單/裝置刪咗但會員留低」嘅半刪狀態（review 捉出嚟嘅窿）
+      let removedDevices: { id: number }[];
       try {
-        await db.delete(users).where(eq(users.id, input.id));
+        removedDevices = await db.transaction(async (tx) => {
+          if (orderRows.length > 0) {
+            // 先刪晒啲 child rows（FK 冇 cascade），順序：中獎紀錄 → 同步記錄 → 截圖 → 明細 → 訂單
+            const ids = orderRows.map((r) => r.id);
+            // v2.2.55（老闆指令）：luckyDraws.orderId FK 指住 orders——中獎訂單唔刪紀錄先會 23503；
+            // 會員連單刪除時中獎紀錄照計一齊刪（同訂單管理刪單同款）
+            await tx.delete(luckyDraws).where(inArray(luckyDraws.orderId, ids));
+            await tx.delete(wmsSyncLog).where(inArray(wmsSyncLog.orderId, ids));
+            await tx.delete(paymentProofs).where(inArray(paymentProofs.orderId, ids));
+            await tx.delete(orderItems).where(inArray(orderItems.orderId, ids));
+            await tx.delete(orders).where(eq(orders.userId, input.id));
+          }
+          // v2.2.55：會員本人嘅全部抽獎紀錄（包括冇起單嘅 pending/declined/cancelled）一併刪 —
+          // luckyDraws.winnerUserId FK 都指住 users，唔刪呢啲下面 delete(users) 會 23503
+          await tx.delete(luckyDraws).where(eq(luckyDraws.winnerUserId, input.id));
+          await tx.delete(cartItems).where(eq(cartItems.userId, input.id));
+          // v2.2.22（老闆報障）：pushSubscriptions.userId 有 FK 連住 users（無 cascade）——
+          // 會員一訂閱直播通知就會被資料庫擋住刪除。連埋裝置一併刪；
+          // 安全鐵律：endpoint／p256dh／auth 永遠唔回前端、唔落 log，淨係計數。
+          const dev = await tx
+            .delete(pushSubscriptions)
+            .where(eq(pushSubscriptions.userId, input.id))
+            .returning({ id: pushSubscriptions.id });
+          await tx.delete(users).where(eq(users.id, input.id));
+          return dev;
+        });
       } catch {
-        // 防禦：日後新表再加 FK 都唔會將 raw SQL 彈出管理後台
+        // 防禦：日後新表再加 FK 都唔會將 raw SQL 彈出管理後台（transaction 已 rollback，唔會半刪）
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "呢個會員仲有其他紀錄連住，暫時刪唔到，請通知技術員處理",

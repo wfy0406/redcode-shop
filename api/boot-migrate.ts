@@ -428,6 +428,11 @@ CREATE TABLE IF NOT EXISTS "luckyPrizes" (
 -- 獎品名／圖改選填（老闆實測回饋）：imagePath 可以放 null；新增 session 分場次欄
 ALTER TABLE "luckyPrizes" ALTER COLUMN "imagePath" DROP NOT NULL;
 ALTER TABLE "luckyPrizes" ADD COLUMN IF NOT EXISTS "session" varchar(64) NOT NULL DEFAULT '';
+-- v2.2.55（老闆指令）：獎品件數——同款 N 件可以抽 N 次；
+-- 舊「一獎一單」partial unique index 已唔啱用（會擋第 2/3/4 件），drop 佢；
+-- 併發防超抽改喺 adminDraw/adminDrawManual 用 pg_advisory_xact_lock 同事務數件
+ALTER TABLE "luckyPrizes" ADD COLUMN IF NOT EXISTS "quantity" integer NOT NULL DEFAULT 1;
+DROP INDEX IF EXISTS luckydraws_one_active_win;
 -- v2.2.53（老闆指令）：場次名持久化——空場次都留住，同事接力加獎品
 CREATE TABLE IF NOT EXISTS "luckyDrawSessions" (
   id serial PRIMARY KEY,
@@ -457,7 +462,8 @@ CREATE TABLE IF NOT EXISTS "luckyDraws" (
 );
 CREATE INDEX IF NOT EXISTS luckydraws_date_status ON "luckyDraws" ("drawDate", status);
 CREATE INDEX IF NOT EXISTS luckydraws_winner ON "luckyDraws" ("winnerUserId", status);
-CREATE UNIQUE INDEX IF NOT EXISTS luckydraws_one_active_win ON "luckyDraws" ("prizeId") WHERE status IN ('pending','confirmed');
+-- v2.2.55：luckydraws_one_active_win（一獎一單 unique）已廢——獎品有件數，同款可以抽多次；
+-- 防超抽喺 router 用 advisory lock 做（見 adminDraw／adminDrawManual）
 -- v2.2.48（老闆指令）：直播抽獎「自訂名單」——主管/管理員自輸客人名成名單，抽非官網會員；
 -- 呢種中獎唔彈窗唔通知，admin 撳「確定」即刻起 0 元單飛 WMS 審批
 CREATE TABLE IF NOT EXISTS "luckyDrawLists" (

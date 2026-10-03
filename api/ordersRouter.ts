@@ -1071,6 +1071,8 @@ export const ordersRouter = createRouter({
       const restoreStock = ["pending_payment", "payment_review", "rejected"].includes(
         order.status,
       );
+      // v2.2.55：中獎訂單連抽獎紀錄一齊刪（見交易入面註解）— 計數畀 audit 用
+      let drawRowsDeleted = 0;
       await db.transaction(async (tx) => {
         if (restoreStock) {
           for (const item of order.items) {
@@ -1080,6 +1082,11 @@ export const ordersRouter = createRouter({
               .where(eq(products.id, item.productId));
           }
         }
+        // v2.2.55（老闆指令「刪除咗中獎紀錄都要刪除」）：中獎訂單嘅抽獎紀錄一併硬刪——
+        // luckyDraws.orderId 有 FK 指住 orders（冇 cascade），唔刪佢先張單會 23503 刪唔到；
+        // 刪咗紀錄件獎品自然返返入池（takenCount 只計 pending/confirmed）
+        const delDraws = await tx.delete(luckyDraws).where(eq(luckyDraws.orderId, order.id)).returning({ id: luckyDraws.id });
+        drawRowsDeleted = delDraws.length;
         await tx.delete(paymentProofs).where(eq(paymentProofs.orderId, order.id));
         await tx.delete(wmsSyncLog).where(eq(wmsSyncLog.orderId, order.id));
         await tx.delete(orderItems).where(eq(orderItems.orderId, order.id));
@@ -1091,9 +1098,9 @@ export const ordersRouter = createRouter({
         action: "order.delete",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `完整刪除訂單 ${order.orderNo}（${order.items.length} 件貨，合計 HK$${order.total}，狀態 ${order.status}）${restoreStock ? "，庫存已加返" : "，庫存不變"}`,
+        detail: `完整刪除訂單 ${order.orderNo}（${order.items.length} 件貨，合計 HK$${order.total}，狀態 ${order.status}）${restoreStock ? "，庫存已加返" : "，庫存不變"}${drawRowsDeleted > 0 ? `，中獎紀錄一併刪咗 ${drawRowsDeleted} 筆` : ""}`,
       });
-      return { ok: true, restoredStock: restoreStock };
+      return { ok: true, restoredStock: restoreStock, drawsDeleted: drawRowsDeleted };
     }),
 
   /** WMS 同步狀態（後台訂單列表 chip 用）：一單一列，冇列 = 未觸發過同步 */

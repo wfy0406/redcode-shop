@@ -7,7 +7,9 @@
  *     本月消費／累積消費／消費滿$X／官網會員／買過指定產品／已綁定推送客人
  *   adminDraw——抽一件獎品：server 隨機揀中獎人（crypto randomInt），
  *     強制「當日一人最多中一件」（pending／confirmed 先鎖住；重抽/取消/客人唔要＝無接受，放返出嚟可以再抽）；
- *     抽中即寄 email（有 email 嘅話）＋即時推送（有綁定嘅話）
+ *     抽中即寄 email（有 email 嘅話）＋即時推送（有綁定嘅話）。
+ *     v2.2.55（老闆指令）：獎品有件數——同款 N 件可以抽 N 次；
+ *     防超抽由舊 unique index 改做 pg_advisory_xact_lock＋同事務數件（adminDrawManual 一樣）
  *   adminRedraw——特別重抽：舊紀錄直接刪除（老闆指令「岩岩既抽獎紀錄唔算數」，
  *     中獎紀錄唔會留底），同一件獎品再抽，舊中獎人照舊踢出呢件獎品嘅重抽池
  *   adminCancelWin——即時取消／之後喺紀錄頁取消：客人唔會再見到中獎彈窗；
@@ -418,11 +420,14 @@ export const luckyDrawRouter = createRouter({
     }
     return prizeRows.map((p) => {
       const ds = byPrize.get(p.id) ?? [];
-      //  pending/confirmed＝已抽出（唔准再抽）；declined/cancelled＝返返入池
-      const taken = ds.find((d) => d.status === "pending" || d.status === "confirmed") ?? null;
+      //  pending/confirmed＝已抽出（食住一件）；declined/cancelled＝件貨返返入池
+      // v2.2.55（老闆指令）：獎品有件數 — takenCount 夠 quantity 先算抽晒
+      const takenRows = ds.filter((d) => d.status === "pending" || d.status === "confirmed");
+      const taken = takenRows[0] ?? null; // rows 已按 id desc，第一個係最近嗰單
       return {
         ...p,
         drawCount: ds.length,
+        takenCount: takenRows.length,
         takenBy: taken ? { name: taken.winnerName, status: taken.status, drawDate: taken.drawDate } : null,
       };
     });
@@ -471,6 +476,8 @@ export const luckyDrawRouter = createRouter({
         imagePath: z.string().trim().max(512).default(""),
         // 獎品分場次（""＝未分場）
         session: z.string().trim().max(64).default(""),
+        // v2.2.55（老闆指令）：同款獎品件數 — N 件可以抽 N 次（預設 1 件，同舊行為一致）
+        quantity: z.number().int().min(1, "件數最少 1").max(999).default(1),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -495,7 +502,7 @@ export const luckyDrawRouter = createRouter({
       if (input.id) {
         const [row] = await db
           .update(luckyPrizes)
-          .set({ name, sku: input.sku, price: input.price, imagePath, session: input.session })
+          .set({ name, sku: input.sku, price: input.price, imagePath, session: input.session, quantity: input.quantity })
           .where(eq(luckyPrizes.id, input.id))
           .returning();
         if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "獎品唔存在" });
@@ -508,7 +515,7 @@ export const luckyDrawRouter = createRouter({
       }
       const [row] = await db
         .insert(luckyPrizes)
-        .values({ name, sku: input.sku, price: input.price, imagePath, session: input.session })
+        .values({ name, sku: input.sku, price: input.price, imagePath, session: input.session, quantity: input.quantity })
         .returning();
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.createPrize",
@@ -571,7 +578,7 @@ export const luckyDrawRouter = createRouter({
 
   /** 抽一件獎品：server 按剔選條件即場攞全池隨機（唔經 client 名單——
    *  預覽顯示 cap 500，但抽獎一定係全池，直播公平性靠呢度把關）＋強制一日一人一件；
-   *  DB partial unique index 兜底（同一件獎品唔會有兩個有效中獎人，雙人同撳都唔會穿） */
+   *  v2.2.55：件數制 — pg_advisory_xact_lock 鎖件獎品同事務數已抽件數，雙人同撳都唔會超抽 */
   adminDraw: supervisorProcedure
     .input(
       z.object({
@@ -597,9 +604,21 @@ export const luckyDrawRouter = createRouter({
       if (!winner) throw new TRPCError({ code: "BAD_REQUEST", message: "中獎帳號唔存在" });
 
       const drawDate = hktToday();
-      let draw: typeof luckyDraws.$inferSelect;
-      try {
-        [draw] = await db
+      const operator = await actorName(ctx.user.userId);
+      // v2.2.55（老闆指令）：獎品有件數 — 同款 N 件可以抽 N 次。
+      // 舊「一獎一單」partial unique index 已 drop（boot-migrate）；防超抽改喺度做：
+      // pg_advisory_xact_lock(prizeId) 鎖住件獎品，同事務數 pending+confirmed 夠未 —
+      // 兩個人同時撳抽最後一件都唔會穿（第二個會見到 count 已滿）。
+      const draw = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${prize.id})`);
+        const [{ n }] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(luckyDraws)
+          .where(and(eq(luckyDraws.prizeId, prize.id), inArray(luckyDraws.status, ["pending", "confirmed"])));
+        if (n >= (prize.quantity ?? 1)) {
+          throw new TRPCError({ code: "CONFLICT", message: `《${prize.name}》共 ${prize.quantity ?? 1} 件已經抽晒` });
+        }
+        const [d] = await tx
           .insert(luckyDraws)
           .values({
             prizeId: prize.id,
@@ -608,16 +627,11 @@ export const luckyDrawRouter = createRouter({
             status: "pending",
             drawDate,
             drawnBy: ctx.user.userId,
-            drawnByName: await actorName(ctx.user.userId),
+            drawnByName: operator,
           })
           .returning();
-      } catch (e) {
-        // partial unique index（luckydraws_one_active_win）擋到：另一個抽獎同時進行中
-        if (String((e as { code?: string })?.code) === "23505") {
-          throw new TRPCError({ code: "CONFLICT", message: "呢件獎品已經抽出咗" });
-        }
-        throw e;
-      }
+        return d;
+      });
 
       notifyWinner(winner, prize, drawDate);
 
@@ -1029,9 +1043,18 @@ export const luckyDrawRouter = createRouter({
       const winnerUserId = entry.kind === "member" ? entry.id : (await getOrCreateShadowUser(entry.name)).id;
 
       const drawDate = hktToday();
-      let draw: typeof luckyDraws.$inferSelect;
-      try {
-        [draw] = await db
+      const operator = await actorName(ctx.user.userId);
+      // v2.2.55（老闆指令）：獎品有件數 — 防超抽邏輯同 adminDraw 一樣（advisory lock 鎖件獎品再數）
+      const draw = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${prize.id})`);
+        const [{ n }] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(luckyDraws)
+          .where(and(eq(luckyDraws.prizeId, prize.id), inArray(luckyDraws.status, ["pending", "confirmed"])));
+        if (n >= (prize.quantity ?? 1)) {
+          throw new TRPCError({ code: "CONFLICT", message: `《${prize.name}》共 ${prize.quantity ?? 1} 件已經抽晒` });
+        }
+        const [d] = await tx
           .insert(luckyDraws)
           .values({
             prizeId: prize.id,
@@ -1041,16 +1064,11 @@ export const luckyDrawRouter = createRouter({
             status: "pending",
             drawDate,
             drawnBy: ctx.user.userId,
-            drawnByName: await actorName(ctx.user.userId),
+            drawnByName: operator,
           })
           .returning();
-      } catch (e) {
-        // partial unique index（luckydraws_one_active_win）擋到：另一個抽獎同時進行中
-        if (String((e as { code?: string })?.code) === "23505") {
-          throw new TRPCError({ code: "CONFLICT", message: "呢件獎品已經抽出咗" });
-        }
-        throw e;
-      }
+        return d;
+      });
 
       // 抽中官網會員：照常通知（彈窗靠 myPendingWin 自動生效）；手打名：唔通知
       if (entry.kind === "member") notifyWinner(entry, prize, drawDate);

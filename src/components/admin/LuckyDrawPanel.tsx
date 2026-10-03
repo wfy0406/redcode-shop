@@ -26,7 +26,7 @@ import { LoadingBlock } from './WishingStar';
  *
  * 設計鐵律：動畫淨用 transform/opacity（輪盤係 canvas 繪圖，唔係 CSS layout 動畫）；
  * 層次用 DOM 順序唔用 z-index；prefers-reduced-motion → 跳過長旋轉，即刻開獎。
- * 規則：一件獎品一個有效中獎人（抽完就無得抽）；當日一人最多中一件（server 強制）。
+ * 規則：同款獎品有幾多件就抽得幾多次（v2.2.55 件數制；抽晒就無得抽）；當日一人最多中一件（server 強制）。
  */
 
 // ───────────────────────────── 型別 ─────────────────────────────
@@ -40,9 +40,16 @@ type Prize = {
   imagePath: string | null;
   session: string; // 場次（空字串＝未分場）
   active: boolean;
+  // v2.2.55（老闆指令）：同款獎品件數＋已抽出件數（pending/confirmed 計）— 夠數先算抽晒
+  quantity: number;
+  takenCount: number;
   drawCount: number;
   takenBy: { name: string; status: string; drawDate: string } | null;
 };
+
+/** v2.2.55：仲可以抽幾多件（舊 server 冇 quantity/takenCount 時 fallback 返 1 件制邏輯） */
+const remainingOf = (p: Prize): number =>
+  (p.quantity ?? 1) - (p.takenCount ?? (p.takenBy ? 1 : 0));
 
 type Participant = { id: number; name: string; phone: string };
 
@@ -313,12 +320,25 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     set.add(activeSession); // 啱啱開嘅新場次（server 回覆前）都要即刻喺下拉見到
     return [...set];
   }, [sessionsQuery.data, prizes, activeSession]);
+  // v2.2.55（老闆指令）：場次分「未抽」／「歷史（已抽晒）」— 歷史＝場內 active 獎品全部抽晒；
+  // 全新空場次（未有獎品）當未抽；全部下架嘅場當未抽（可以再加獎品翻生）
+  const historySessions = useMemo(() => {
+    const done = new Set<string>();
+    for (const s of sessions) {
+      const actives = prizes.filter((p) => (p.session ?? '') === s && p.active);
+      if (actives.length > 0 && actives.every((p) => remainingOf(p) <= 0)) done.add(s);
+    }
+    return done;
+  }, [sessions, prizes]);
   const handleCreateSession = (name: string) => {
     if (!sessions.includes(name)) createSessionMut.mutate({ name });
   };
   const sessionPrizes = prizes.filter((p) => (p.session ?? '') === activeSession);
-  const availablePrizes = sessionPrizes.filter((p) => p.active && !p.takenBy);
-  const activeTotal = sessionPrizes.filter((p) => p.active).length;
+  // v2.2.55：件數制 — active 兼仲有剩（takenCount 未夠 quantity）先抽得
+  const availablePrizes = sessionPrizes.filter((p) => p.active && remainingOf(p) > 0);
+  // 剩餘件數＝同款未抽晒嘅加埋（例如 A 款 4 件抽咗 1 件 → 剩 3）
+  const remainingUnits = availablePrizes.reduce((s, p) => s + remainingOf(p), 0);
+  const activeUnits = sessionPrizes.filter((p) => p.active).reduce((s, p) => s + (p.quantity ?? 1), 0);
   const [prizeId, setPrizeId] = useState<number | null>(null);
   const prize = availablePrizes.find((p) => p.id === prizeId) ?? availablePrizes[0] ?? null;
 
@@ -611,12 +631,12 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             {/* 場次選擇（成個頁共用：轉場次＝轉獎品池，「下拉列轉場次產品繼續抽」） */}
             <p className="mb-2 flex w-full items-center justify-center gap-2 text-[12.5px] text-txt-2">
               場次
-              <SessionSelect sessions={sessions} value={activeSession} onChange={setActiveSession} onCreate={handleCreateSession} />
+              <SessionSelect sessions={sessions} value={activeSession} onChange={setActiveSession} onCreate={handleCreateSession} history={historySessions} />
             </p>
 
             {/* 剩餘獎品計數（按場次計；確定咗就會又減一件） */}
             <p className="mb-2 w-full text-center font-serif-tc text-[15px] font-bold text-gold">
-              呢場剩餘 {availablePrizes.length} 件（總共 {activeTotal} 件）
+              呢場剩餘 {remainingUnits} 件（總共 {activeUnits} 件）
             </p>
 
             {/* 揀獎品（未抽出嘅先抽得） */}
@@ -779,7 +799,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                   </p>
                 )}
                 <p className="mt-1.5 text-[14px] text-txt-2">
-                  呢件抽完，仲剩 {availablePrizes.length} 件獎品
+                  呢件抽完，仲剩 {remainingUnits} 件獎品
                 </p>
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                   {lastDrawKind === 'manual' ? (
@@ -1064,6 +1084,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
         busy={upsertMut.isPending || deleteMut.isPending}
         activeSession={activeSession}
         sessions={sessions}
+        historySessions={historySessions}
         onSessionChange={setActiveSession}
         onCreateSession={handleCreateSession}
         onSave={async (input) => {
@@ -1432,26 +1453,34 @@ function NameListPicker({
 
 // ───────────────────────────── 場次選擇（主抽獎區＋獎品管理共用 state） ─────────────────────────────
 
-/** 文字制下拉：現有 distinct 場次（空字串顯示「未分場」）＋「＋ 新場次」（揀咗彈 input 輸入場次名） */
+/** 文字制下拉：現有 distinct 場次（空字串顯示「未分場」）＋「＋ 新場次」（揀咗彈 input 輸入場次名）。
+ *  v2.2.55（老闆指令）：場次一多會亂 — 分兩組：未抽場次喺上、歷史場次（獎品已抽晒）墊底標住。 */
 function SessionSelect({
   sessions,
   value,
   onChange,
   onCreate,
+  history,
 }: {
   sessions: string[];
   value: string;
   onChange: (session: string) => void;
   /** v2.2.53（老闆指令）：新場次即時持久化（未上傳獎品都留住，同事接力加嘢） */
   onCreate?: (name: string) => void;
+  /** v2.2.55：已抽晒嘅場次名（歷史場次）— 冇傳就全部當未抽 */
+  history?: ReadonlySet<string>;
 }) {
   const [making, setMaking] = useState(false);
   const [newName, setNewName] = useState('');
-  const options = useMemo(() => {
+  const { activeOptions, historyOptions } = useMemo(() => {
     const set = new Set<string>(['', ...sessions]);
     set.add(value); // 新場次仲未有獎品都要顯示得到
-    return [...set];
-  }, [sessions, value]);
+    const all = [...set];
+    return {
+      activeOptions: all.filter((s) => !history?.has(s)),
+      historyOptions: all.filter((s) => history?.has(s)),
+    };
+  }, [sessions, value, history]);
 
   const commit = () => {
     const v = newName.trim();
@@ -1481,11 +1510,20 @@ function SessionSelect({
         className="rounded-lg border bg-transparent px-2 py-1 text-[12.5px] text-txt-1 outline-none focus:border-lavender"
         style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.04)' }}
       >
-        {options.map((s) => (
+        {activeOptions.map((s) => (
           <option key={s === '' ? '__none__' : s} value={s}>
             {s === '' ? '未分場' : s}
           </option>
         ))}
+        {historyOptions.length > 0 && (
+          <optgroup label="歷史場次（已抽晒）">
+            {historyOptions.map((s) => (
+              <option key={s === '' ? '__none_history__' : s} value={s}>
+                {s === '' ? '未分場' : s}（已抽晒）
+              </option>
+            ))}
+          </optgroup>
+        )}
         <option value="__new__">＋ 新場次</option>
       </select>
       {making && (
@@ -1518,6 +1556,7 @@ function PrizeManagerSection({
   busy,
   activeSession,
   sessions,
+  historySessions,
   onSessionChange,
   onCreateSession,
   onSave,
@@ -1528,6 +1567,8 @@ function PrizeManagerSection({
   busy: boolean;
   activeSession: string;
   sessions: string[];
+  /** v2.2.55：已抽晒場次（下拉分組用） */
+  historySessions: ReadonlySet<string>;
   onSessionChange: (session: string) => void;
   onCreateSession: (name: string) => void;
   onSave: (input: {
@@ -1537,12 +1578,15 @@ function PrizeManagerSection({
     price: number;
     imagePath?: string;
     session: string;
+    /** v2.2.55：同款獎品件數（N 件抽 N 次） */
+    quantity: number;
   }) => Promise<boolean>;
   onDelete: (id: number) => Promise<void>;
 }) {
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
   const [price, setPrice] = useState('');
+  const [quantity, setQuantity] = useState('1');
   const [imagePath, setImagePath] = useState('');
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -1570,9 +1614,15 @@ function PrizeManagerSection({
 
   const submit = async () => {
     const p = Math.floor(Number(price));
+    const q = Math.floor(Number(quantity));
     // 名/圖選填（server 會用貨號商品名/官網圖頂上）；淨係貨號同價錢必填
     if (!sku.trim() || !Number.isFinite(p) || p < 0) {
       setErr('貨號同價錢（0 或以上）必填');
+      return;
+    }
+    // v2.2.55：件數最少 1（同款 N 件可以抽 N 次）
+    if (!Number.isFinite(q) || q < 1) {
+      setErr('件數最少 1 件');
       return;
     }
     const ok = await onSave({
@@ -1581,11 +1631,13 @@ function PrizeManagerSection({
       price: p,
       imagePath,
       session: activeSession, // 自動帶入而家揀咗嘅場次（新場次就用新名）
+      quantity: q,
     });
     if (ok) {
       setName('');
       setSku('');
       setPrice('');
+      setQuantity('1');
       setImagePath('');
       setErr(null);
     }
@@ -1602,18 +1654,18 @@ function PrizeManagerSection({
         <span className="font-mono text-[12px] font-normal text-txt-3">（可加可減；抽中咗嘅會標示）</span>
         <span className="ml-auto flex items-center gap-2 text-[12.5px] font-normal text-txt-2">
           場次
-          <SessionSelect sessions={sessions} value={activeSession} onChange={onSessionChange} onCreate={onCreateSession} />
+          <SessionSelect sessions={sessions} value={activeSession} onChange={onSessionChange} onCreate={onCreateSession} history={historySessions} />
         </span>
       </h3>
-      {/* 剩餘獎品計數按場次計 */}
+      {/* 剩餘獎品計數按場次計（v2.2.55 件數制：剩餘件數／總件數） */}
       <p className="mt-1.5 font-mono text-[12px] text-txt-3">
-        呢場剩餘 {prizes.filter((p) => p.active && !p.takenBy).length} 件（總共{' '}
-        {prizes.filter((p) => p.active).length} 件）
+        呢場剩餘 {prizes.filter((p) => p.active).reduce((s, p) => s + Math.max(0, remainingOf(p)), 0)} 件（總共{' '}
+        {prizes.filter((p) => p.active).reduce((s, p) => s + (p.quantity ?? 1), 0)} 件）
       </p>
 
-      {/* 新增獎品 */}
+      {/* 新增獎品（v2.2.55：加件數欄 — 同款 N 件可以抽 N 次） */}
       <div
-        className="mt-4 grid gap-3 rounded-xl border p-4 md:grid-cols-[140px_1fr_160px_120px_auto]"
+        className="mt-4 grid gap-3 rounded-xl border p-4 md:grid-cols-[140px_1fr_150px_110px_80px_auto]"
         style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.02)' }}
       >
         <div className="flex flex-col gap-1">
@@ -1666,6 +1718,16 @@ function PrizeManagerSection({
           className="rounded-xl border bg-transparent px-3 py-2 font-mono text-[13px] text-txt-1 outline-none focus:border-lavender"
           style={{ borderColor: 'var(--space-line)' }}
         />
+        <input
+          value={quantity}
+          onChange={(e) => setQuantity(e.target.value)}
+          type="number"
+          min={1}
+          placeholder="件數"
+          title="同款有幾多件（N 件可以抽 N 次）"
+          className="rounded-xl border bg-transparent px-3 py-2 font-mono text-[13px] text-txt-1 outline-none focus:border-lavender"
+          style={{ borderColor: 'var(--space-line)' }}
+        />
         <button
           type="button"
           onClick={() => void submit()}
@@ -1676,7 +1738,7 @@ function PrizeManagerSection({
           <Plus size={14} aria-hidden="true" />
           加獎品
         </button>
-        {err && <p className="text-[12.5px] text-pink-soft md:col-span-5">{err}</p>}
+        {err && <p className="text-[12.5px] text-pink-soft md:col-span-6">{err}</p>}
       </div>
 
       {/* 獎品列表 */}
@@ -1691,7 +1753,7 @@ function PrizeManagerSection({
               key={p.id}
               className="rounded-xl border p-3"
               style={{
-                borderColor: p.takenBy ? 'rgba(245,197,24,0.4)' : 'var(--space-line)',
+                borderColor: p.takenBy || (p.takenCount ?? 0) > 0 ? 'rgba(245,197,24,0.4)' : 'var(--space-line)',
                 background: 'rgba(255,255,255,0.02)',
                 opacity: p.active ? 1 : 0.45,
               }}
@@ -1715,17 +1777,22 @@ function PrizeManagerSection({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13.5px] font-semibold text-txt-1">{p.name || p.sku}</p>
                   <p className="font-mono text-[11.5px] text-txt-3">
-                    {p.sku}・HK${p.price}
+                    {p.sku}・HK${p.price}・共{p.quantity ?? 1}件
                   </p>
                   <p className="mt-0.5 text-[11.5px]">
                     {!p.active ? (
                       <span className="text-txt-3">已移走</span>
-                    ) : p.takenBy ? (
+                    ) : remainingOf(p) <= 0 ? (
                       <span className="text-gold">
-                        已抽出 → {p.takenBy.name}（{p.takenBy.status === 'pending' ? '待客人回應' : '已確認寄送'}）
+                        已抽晒 {Math.min(p.takenCount ?? (p.takenBy ? 1 : 0), Math.max(1, p.quantity ?? 1))}/{Math.max(1, p.quantity ?? 1)} 件
+                        {p.takenBy ? ` → 最近中獎 ${p.takenBy.name}（${p.takenBy.status === 'pending' ? '待客人回應' : '已確認寄送'}）` : ''}
+                      </span>
+                    ) : (p.takenCount ?? 0) > 0 ? (
+                      <span className="text-gold">
+                        已抽 {Math.min(p.takenCount ?? 0, Math.max(1, p.quantity ?? 1))}/{Math.max(1, p.quantity ?? 1)} 件，仲剩 {remainingOf(p)} 件
                       </span>
                     ) : (
-                      <span className="text-txt-3">未抽出</span>
+                      <span className="text-txt-3">未抽出・共 {p.quantity ?? 1} 件</span>
                     )}
                   </p>
                 </div>
