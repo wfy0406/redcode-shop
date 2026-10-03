@@ -8,8 +8,8 @@
  *   adminDraw——抽一件獎品：server 隨機揀中獎人（crypto randomInt），
  *     強制「當日一人最多中一件」（pending／confirmed 先鎖住；重抽/取消/客人唔要＝無接受，放返出嚟可以再抽）；
  *     抽中即寄 email（有 email 嘅話）＋即時推送（有綁定嘅話）
- *   adminRedraw——特別重抽：舊紀錄轉 cancelled（鏈 redrawOfId），同一件獎品再抽，
- *     舊中獎人永遠踢出呢件獎品嘅重抽池
+ *   adminRedraw——特別重抽：舊紀錄直接刪除（老闆指令「岩岩既抽獎紀錄唔算數」，
+ *     中獎紀錄唔會留底），同一件獎品再抽，舊中獎人照舊踢出呢件獎品嘅重抽池
  *   adminCancelWin——即時取消／之後喺紀錄頁取消：客人唔會再見到中獎彈窗；
  *     已生成訂單會一併取消（WMS 嗰邊要人手拒絕，README 有寫）
  *   adminHistory——中獎紀錄按抽獎日分組（新→舊）
@@ -629,8 +629,9 @@ export const luckyDrawRouter = createRouter({
       return { draw, winner, prize };
     }),
 
-  /** 特別重抽：先驗證新池有人抽得先郁手（唔會 cancel 咗舊嘅先發現冇人抽）；
-   *  取消＋新抽放同一個 transaction；一日一件用舊紀錄嘅抽獎日計（跨日重抽都唔會穿）；
+  /** 特別重抽：先驗證新池有人抽得先郁手（唔會刪咗舊嘅先發現冇人抽）；
+   *  刪舊＋新抽放同一個 transaction；一日一件用舊紀錄嘅抽獎日計（跨日重抽都唔會穿）；
+   *  舊紀錄直接刪除唔留底（v2.2.54 老闆指令「岩岩既抽獎紀錄唔算數」）；
    *  舊中獎人（唔啱嗰個）永遠踢出呢件獎品嘅重抽池 */
   adminRedraw: supervisorProcedure
     .input(
@@ -670,9 +671,10 @@ export const luckyDrawRouter = createRouter({
         const operator = await actorName(ctx.user.userId);
 
         const draw = await db.transaction(async (tx) => {
+          // v2.2.54（老闆指令「岩岩既抽獎紀錄唔算數」）：舊 pending 紀錄直接刪除，
+          // 唔留 cancelled 底——中獎紀錄淨係見到新抽嗰筆；審計線索喺 audit log（#舊 → #新）
           await tx
-            .update(luckyDraws)
-            .set({ status: "cancelled", cancelledBy: ctx.user.userId, cancelNote: input.note ?? "特別重抽" })
+            .delete(luckyDraws)
             .where(and(eq(luckyDraws.id, old.id), eq(luckyDraws.status, "pending")));
           const [d] = await tx
             .insert(luckyDraws)

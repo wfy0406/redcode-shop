@@ -9,6 +9,9 @@ import PushPermissionGuide from '@/components/push/PushPermissionGuide';
 import FbPlayerOverlay from '@/components/push/FbPlayerOverlay';
 import BackupThumb, { pickLiveBackup } from '@/components/push/BackupThumb';
 
+/** v2.2.54（老闆指令）：場次數字顯示「第N場」；舊文字場次（朝早場等）原樣放出 */
+const fmtSession = (s: string): string => (/^\d+$/.test(s.trim()) ? `第${s.trim()}場` : s);
+
 /**
  * 直播進行中展示區（v2.2.2 高度美化版，2026-09-30 老闆指令：要生動、要動感）
  *
@@ -148,7 +151,7 @@ export default function LiveNowSection() {
               Glo Glo 開咗台啦！
             </h2>
             <p className="mt-3 font-serif-tc text-lg leading-[1.5] text-gold-soft md:text-xl">
-              {live.liveDate}・{live.liveSession}
+              {live.liveDate}・{fmtSession(live.liveSession)}
             </p>
             <p className="mt-4 max-w-md text-[14px] leading-[1.8] text-txt-2">
               即場著身、即場開賣、留言落單。快閃價手快有手慢冇，快啲入嚟一齊睇！

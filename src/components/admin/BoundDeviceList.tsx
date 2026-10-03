@@ -25,6 +25,9 @@ function fmtPhone(p: string | null): string {
   return p;
 }
 
+/** v2.2.54（老闆指令）：場次數字顯示「第N場」；舊文字場次（朝早場等）原樣放出，唔會變「第朝早場場」 */
+const fmtSession = (s: string): string => (/^\d+$/.test(s.trim()) ? `第${s.trim()}場` : s);
+
 type BoundDeviceRow = {
   id: number;
   customerName: string;
@@ -131,7 +134,7 @@ function DeviceDeliveriesModal({
                 <li key={r.id} className="flex items-center justify-between gap-3 py-2.5">
                   <div className="min-w-0">
                     <p className="truncate text-[13px] font-medium text-txt-1">
-                      {r.campaignTitle === null ? '🎉 中獎通知' : `${r.liveDate} 第${r.liveSession}場`}
+                      {r.campaignTitle === null ? '🎉 中獎通知' : `${r.liveDate} ${fmtSession(r.liveSession ?? '')}`}
                     </p>
                     <p className="mt-0.5 font-mono text-[12px] text-txt-3">
                       {fmtDateTime(r.sentAt)}

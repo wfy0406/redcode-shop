@@ -29,8 +29,9 @@ export const PUSH_TITLE = "🔴 RedCode 直播開始啦！";
 
 /**
  * 通知 body（合約 §8 寫死模板）：
- * 「快啲入嚟睇啦！\n📅 {liveDate} {liveSession}\n🕒 發送時間 {HKT HH:mm}」；
+ * 「快啲入嚟睇啦！\n📅 {liveDate} {fmtSession(liveSession)}\n🕒 發送時間 {HKT HH:mm}」；
  * message 有填就取代第一句「快啲入嚟睇啦！」。
+ * v2.2.54（老闆指令）：場次數字要顯示「第N場」——推播內文唔可以齋寫「1」。
  */
 export function buildLivePushBody(
   liveDate: string,
@@ -38,7 +39,13 @@ export function buildLivePushBody(
   message?: string | null,
 ): string {
   const firstLine = message?.trim() || "快啲入嚟睇啦！";
-  return `${firstLine}\n📅 ${liveDate} ${liveSession}\n🕒 發送時間 ${hktHHmm()}`;
+  return `${firstLine}\n📅 ${liveDate} ${fmtLiveSession(liveSession)}\n🕒 發送時間 ${hktHHmm()}`;
+}
+
+/** v2.2.54：場次顯示統一——純數字（"1"…"5"）顯示「第N場」；舊文字場次（朝早場等）原樣放出 */
+export function fmtLiveSession(s: string): string {
+  const t = (s || "").trim();
+  return /^\d+$/.test(t) ? `第${t}場` : t;
 }
 
 /** 香港時間 HH:mm（hourCycle h23 保證午夜係 00 唔係 24） */

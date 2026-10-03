@@ -1,5 +1,8 @@
 import { trpc } from '@/providers/trpc';
 
+/** v2.2.54（老闆指令）：場次數字顯示「第N場」；舊文字場次（朝早場等）原樣放出 */
+const fmtSession = (s: string): string => (/^\d+$/.test(s.trim()) ? `第${s.trim()}場` : s);
+
 /**
  * 首頁頂部直播 Banner（v2.2.2，2026-09-30 老闆指令）
  *
@@ -60,7 +63,7 @@ export default function LiveTopBanner() {
             直播開始咗啦！Glo Glo 開咗台
           </span>
           <span className="hidden font-serif-tc text-[13px] text-gold-soft sm:inline">
-            {live.liveDate}・{live.liveSession}
+            {live.liveDate}・{fmtSession(live.liveSession)}
           </span>
         </span>
         <span className="flex items-center gap-1.5 font-serif-tc text-[13px] font-semibold text-gold">
