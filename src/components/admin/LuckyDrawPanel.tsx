@@ -301,11 +301,21 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   const prizes = (prizesQuery.data ?? []) as Prize[];
   // 場次（成個頁共用：揀邊場，獎品池＋獎品管理＋計數都係邊場；空字串＝未分場）
   const [activeSession, setActiveSession] = useState('');
+  // v2.2.53（老闆指令）：場次名持久化——server 場次表做主體（空場次都留住），
+  // 再 ∪ 獎品實際用緊嘅（舊資料雙保險）；開場次即時入表，同事一齊見到
+  const sessionsQuery = trpc.luckyDraw.adminListSessions.useQuery(undefined, { refetchOnWindowFocus: false });
+  const createSessionMut = trpc.luckyDraw.adminCreateSession.useMutation({
+    onSuccess: () => { void utils.luckyDraw.adminListSessions.invalidate(); },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
   const sessions = useMemo(() => {
-    const set = new Set<string>(prizes.map((p) => p.session ?? ''));
-    set.add(activeSession); // 新場次仲未有獎品都要喺下拉見到
+    const set = new Set<string>([...(sessionsQuery.data ?? []), ...prizes.map((p) => p.session ?? '')]);
+    set.add(activeSession); // 啱啱開嘅新場次（server 回覆前）都要即刻喺下拉見到
     return [...set];
-  }, [prizes, activeSession]);
+  }, [sessionsQuery.data, prizes, activeSession]);
+  const handleCreateSession = (name: string) => {
+    if (!sessions.includes(name)) createSessionMut.mutate({ name });
+  };
   const sessionPrizes = prizes.filter((p) => (p.session ?? '') === activeSession);
   const availablePrizes = sessionPrizes.filter((p) => p.active && !p.takenBy);
   const activeTotal = sessionPrizes.filter((p) => p.active).length;
@@ -371,7 +381,14 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
 
   /** 開抽：mutation 攞中獎人 → 輪盤轉去中獎格 → 煙花＋名弹出 */
   const startDraw = async (redrawOf?: DrawResult) => {
-    if (!prize || phase === 'spinning') return;
+    if (phase === 'spinning') return;
+    // v2.2.53（老闆實測「重抽無反應」）：重抽唔使可抽池有獎——server 按 drawId 用返舊 draw
+    // 嗰件獎（舊碼 guard 咗 !prize 靜靜雞 return，抽晒最後一件之後重抽就冇反應）。
+    // 新抽先要有可抽獎品，冇就講明點解。
+    if (!prize && redrawOf == null) {
+      toast('呢場冇可抽嘅獎品——去下面「獎品管理」加返先', 'error');
+      return;
+    }
     const manualRedraw = redrawOf != null && lastDrawKind === 'manual';
     if (redrawOf == null) {
       // 人數前置檢查（重抽用 server 舊池，唔使檢查）
@@ -594,7 +611,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             {/* 場次選擇（成個頁共用：轉場次＝轉獎品池，「下拉列轉場次產品繼續抽」） */}
             <p className="mb-2 flex w-full items-center justify-center gap-2 text-[12.5px] text-txt-2">
               場次
-              <SessionSelect sessions={sessions} value={activeSession} onChange={setActiveSession} />
+              <SessionSelect sessions={sessions} value={activeSession} onChange={setActiveSession} onCreate={handleCreateSession} />
             </p>
 
             {/* 剩餘獎品計數（按場次計；確定咗就會又減一件） */}
@@ -1048,6 +1065,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
         activeSession={activeSession}
         sessions={sessions}
         onSessionChange={setActiveSession}
+        onCreateSession={handleCreateSession}
         onSave={async (input) => {
           try {
             await upsertMut.mutateAsync(input);
@@ -1419,10 +1437,13 @@ function SessionSelect({
   sessions,
   value,
   onChange,
+  onCreate,
 }: {
   sessions: string[];
   value: string;
   onChange: (session: string) => void;
+  /** v2.2.53（老闆指令）：新場次即時持久化（未上傳獎品都留住，同事接力加嘢） */
+  onCreate?: (name: string) => void;
 }) {
   const [making, setMaking] = useState(false);
   const [newName, setNewName] = useState('');
@@ -1434,7 +1455,10 @@ function SessionSelect({
 
   const commit = () => {
     const v = newName.trim();
-    if (v) onChange(v);
+    if (v) {
+      onCreate?.(v); // 先落庫（同名 server 唔會炸）
+      onChange(v);
+    }
     setMaking(false);
     setNewName('');
   };
@@ -1495,6 +1519,7 @@ function PrizeManagerSection({
   activeSession,
   sessions,
   onSessionChange,
+  onCreateSession,
   onSave,
   onDelete,
 }: {
@@ -1504,6 +1529,7 @@ function PrizeManagerSection({
   activeSession: string;
   sessions: string[];
   onSessionChange: (session: string) => void;
+  onCreateSession: (name: string) => void;
   onSave: (input: {
     id?: number;
     name?: string;
@@ -1576,7 +1602,7 @@ function PrizeManagerSection({
         <span className="font-mono text-[12px] font-normal text-txt-3">（可加可減；抽中咗嘅會標示）</span>
         <span className="ml-auto flex items-center gap-2 text-[12.5px] font-normal text-txt-2">
           場次
-          <SessionSelect sessions={sessions} value={activeSession} onChange={onSessionChange} />
+          <SessionSelect sessions={sessions} value={activeSession} onChange={onSessionChange} onCreate={onCreateSession} />
         </span>
       </h3>
       {/* 剩餘獎品計數按場次計 */}

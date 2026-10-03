@@ -39,6 +39,9 @@ interface HistoryItem {
   thumbUrl?: string | null;
 }
 
+/** v2.2.52（老闆指令）：場次統一「第N場」——純數字自動包；舊字（晚上場等）原樣 */
+const fmtSession = (s: string): string => (/^\d+$/.test(s.trim()) ? `第${s.trim()}場` : s);
+
 /* ---------- 單場直度回顧卡 ---------- */
 function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: number; backupIdx: number }) {
   const [playing, setPlaying] = useState(false);
@@ -63,13 +66,13 @@ function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: numb
             else openFacebookLive(item.url);
           }}
           className="absolute inset-0 block h-full w-full cursor-pointer text-left"
-          aria-label={`播放 ${fmtDate(item.liveDate)} ${item.liveSession} 回顧`}
+          aria-label={`播放 ${fmtDate(item.liveDate)} ${fmtSession(item.liveSession)} 回顧`}
         >
           {showThumb ? (
             <>
               <img
                 src={item.thumbUrl ?? ''}
-                alt={`${fmtDate(item.liveDate)} ${item.liveSession} 直播縮圖`}
+                alt={`${fmtDate(item.liveDate)} ${fmtSession(item.liveSession)} 直播縮圖`}
                 loading="lazy"
                 onError={() => setThumbOk(false)}
                 className="absolute inset-0 h-full w-full object-cover"
@@ -150,7 +153,7 @@ function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: numb
           {/* 場次名壓卡底（大字 serif） */}
           <span className="absolute inset-x-4 bottom-3.5">
             <span className="block truncate font-serif-tc text-lg font-semibold leading-snug text-starlight">
-              {item.liveSession}
+              {fmtSession(item.liveSession)}
             </span>
           </span>
         </button>
@@ -163,13 +166,13 @@ function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: numb
             {fmtDate(item.liveDate)}
           </span>
           <span className="mx-1.5 text-txt-disabled">·</span>
-          <span className="text-txt-2">{item.liveSession}</span>
+          <span className="text-txt-2">{fmtSession(item.liveSession)}</span>
         </p>
         <button
           type="button"
           onClick={() => openFacebookLive(item.url)}
           className="inline-flex shrink-0 items-center gap-1 text-[12px] font-medium text-pink-soft transition-opacity hover:opacity-75"
-          aria-label={`去 Facebook 睇 ${fmtDate(item.liveDate)} ${item.liveSession}`}
+          aria-label={`去 Facebook 睇 ${fmtDate(item.liveDate)} ${fmtSession(item.liveSession)}`}
         >
           去 Facebook 睇
           <ExternalLink size={12} aria-hidden="true" />
@@ -181,7 +184,7 @@ function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: numb
         <FbPlayerOverlay
           src={embedUrl}
           fbUrl={item.url}
-          title={`${item.liveDate} ${item.liveSession} 直播回顧`}
+          title={`${item.liveDate} ${fmtSession(item.liveSession)} 直播回顧`}
           onClose={() => setPlaying(false)}
         />
       )}

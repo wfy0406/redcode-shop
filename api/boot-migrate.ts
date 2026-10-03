@@ -428,6 +428,18 @@ CREATE TABLE IF NOT EXISTS "luckyPrizes" (
 -- 獎品名／圖改選填（老闆實測回饋）：imagePath 可以放 null；新增 session 分場次欄
 ALTER TABLE "luckyPrizes" ALTER COLUMN "imagePath" DROP NOT NULL;
 ALTER TABLE "luckyPrizes" ADD COLUMN IF NOT EXISTS "session" varchar(64) NOT NULL DEFAULT '';
+-- v2.2.53（老闆指令）：場次名持久化——空場次都留住，同事接力加獎品
+CREATE TABLE IF NOT EXISTS "luckyDrawSessions" (
+  id serial PRIMARY KEY,
+  name varchar(64) NOT NULL UNIQUE,
+  "createdBy" integer,
+  "createdByName" varchar(128),
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+-- 舊獎品已用緊嘅場次名 backfill 入表（重複跑 ON CONFLICT 唔炸）
+INSERT INTO "luckyDrawSessions" (name)
+SELECT DISTINCT session FROM "luckyPrizes" WHERE session <> ''
+ON CONFLICT (name) DO NOTHING;
 CREATE TABLE IF NOT EXISTS "luckyDraws" (
   id serial PRIMARY KEY,
   "prizeId" integer NOT NULL REFERENCES "luckyPrizes"("id"),

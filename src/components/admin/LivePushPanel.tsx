@@ -22,6 +22,10 @@ const inputCls =
   'h-11 w-full rounded-xl border border-space-line bg-space-2 px-4 text-[14px] text-txt-1 placeholder:text-txt-disabled focus:border-pink focus:outline-none';
 const labelCls = 'mb-1.5 block text-[13px] text-txt-2';
 
+/** v2.2.52（老闆指令）：場次統一「第N場」——純數字自動包「第N場」；
+ *  舊紀錄（晚上場 嗰啲字）原樣顯示，唔會變「第晚上場場」 */
+const fmtSession = (s: string): string => (/^\d+$/.test(s.trim()) ? `第${s.trim()}場` : s);
+
 type Campaign = {
   id: number;
   liveDate: string;
@@ -165,7 +169,7 @@ function ThumbCell({
       {custom && c.thumbUrl ? (
         <img
           src={c.thumbUrl}
-          alt={`${c.liveDate} ${c.liveSession} 回顧縮圖`}
+          alt={`${c.liveDate} ${fmtSession(c.liveSession)} 回顧縮圖`}
           className="h-[54px] w-24 rounded-md object-cover"
           style={{ border: '1px solid var(--glass-border)' }}
         />
@@ -217,7 +221,7 @@ export default function LivePushPanel({
   const canSendDirect = me?.role === 'supervisor' || me?.role === 'admin';
 
   const [liveDate, setLiveDate] = useState('');
-  const [liveSession, setLiveSession] = useState('晚上場');
+  const [liveSession, setLiveSession] = useState('1');
   const [url, setUrl] = useState('');
   const [message, setMessage] = useState('');
   // v2.2.37（老闆指令）：兩個互斥剔選——剔咗其中一個另一個即刻唔俾剔；
@@ -331,7 +335,7 @@ export default function LivePushPanel({
   const endLiveMutation = trpc.push.endLiveNow.useMutation({
     onSuccess: async (r) => {
       if (r.ok) {
-        toast(`已落畫：${r.liveDate} ${r.liveSession} 唔會再喺首頁／直播頁顯示`, 'success');
+        toast(`已落畫：${r.liveDate} ${fmtSession(r.liveSession)} 唔會再喺首頁／直播頁顯示`, 'success');
       } else {
         toast(r.message ?? '而家冇顯示緊嘅直播', 'info');
       }
@@ -418,7 +422,7 @@ export default function LivePushPanel({
   };
   const removeCampaign = (c: (typeof campaigns)[number]) => {
     if (deleteMutation.isPending) return;
-    if (!window.confirm(`確定刪除「${c.liveDate} ${c.liveSession}」呢筆回顧？刪咗直播頁會即刻唔再顯示，冇得還原。`)) return;
+    if (!window.confirm(`確定刪除「${c.liveDate} ${fmtSession(c.liveSession)}」呢筆回顧？刪咗直播頁會即刻唔再顯示，冇得還原。`)) return;
     setDeleteBusyId(c.id);
     deleteMutation.mutate(
       { id: c.id },
@@ -439,7 +443,7 @@ export default function LivePushPanel({
               <span className="push-live-dot inline-block h-2.5 w-2.5 rounded-full" style={{ background: 'var(--pink)' }} aria-hidden="true" />
               <div>
                 <p className="font-serif-tc text-[15px] font-bold text-txt-1">
-                  官網而家顯示緊：{nowLive.liveDate}・{nowLive.liveSession}
+                  官網而家顯示緊：{nowLive.liveDate}・{fmtSession(nowLive.liveSession)}
                 </p>
                 <p className="mt-0.5 text-[12px] text-txt-3">
                   {/* v2.2.37：顯示窗口講明 90 分鐘＋已延長幾多；到點可以自己延 */}
@@ -527,9 +531,9 @@ export default function LivePushPanel({
               <label htmlFor="lp-session" className={labelCls}>
                 場次
               </label>
-              {/* v2.2.5（老闆指令）：場次快揀掣——朝早場／下午場／晚上場／深夜場／快閃場，撳完照樣可以手改 */}
+              {/* v2.2.52（老闆指令）：場次快揀掣改做第1場～第5場（存 '1'..'5'），撳完照樣可以手改 */}
               <div className="mb-2 flex flex-wrap gap-2">
-                {(['朝早場', '下午場', '晚上場', '深夜場', '快閃場'] as const).map((s) => {
+                {(['1', '2', '3', '4', '5'] as const).map((s) => {
                   const active = liveSession === s;
                   return (
                     <button
@@ -544,7 +548,7 @@ export default function LivePushPanel({
                           : { borderColor: 'var(--space-line)', background: 'var(--space-2)', color: 'var(--txt-3)' }
                       }
                     >
-                      {s}
+                      {`第${s}場`}
                     </button>
                   );
                 })}
@@ -554,7 +558,7 @@ export default function LivePushPanel({
                 type="text"
                 value={liveSession}
                 onChange={(e) => setLiveSession(e.target.value)}
-                placeholder="晚上場"
+                placeholder="1"
                 className={inputCls}
               />
             </div>
@@ -716,7 +720,7 @@ export default function LivePushPanel({
                     <span className="shrink-0 font-mono text-[11px] text-txt-3">而家</span>
                   </div>
                   <p className="mt-1 whitespace-pre-line text-[13px] leading-[1.6] text-txt-2">
-                    {`${message.trim() || '快啲入嚟睇啦！'}\n📅 ${liveDate || '（未揀日期）'} ${liveSession || '晚上場'}\n🕒 發送時間 ${hktNow()}`}
+                    {`${message.trim() || '快啲入嚟睇啦！'}\n📅 ${liveDate || '（未揀日期）'} ${fmtSession(liveSession || '1')}\n🕒 發送時間 ${hktNow()}`}
                   </p>
                   <p className="mt-2 truncate font-mono text-[11px] text-txt-3">
                     {url.trim() || '（撳通知會直接開 Facebook app；冇裝 app 就開網頁版）'}
@@ -763,7 +767,7 @@ export default function LivePushPanel({
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                   <StatusBadge status={c.status} />
                   <p className="font-serif-tc text-[15px] font-semibold text-txt-1">
-                    {c.liveDate}・{c.liveSession}
+                    {c.liveDate}・{fmtSession(c.liveSession)}
                   </p>
                   <p className="text-[12px] text-txt-3">
                     申請人：{c.requestedByName ?? '—'}
@@ -884,7 +888,7 @@ export default function LivePushPanel({
                     <td className="py-2.5 pr-3 text-txt-1">
                       {c.liveDate}
                       <br />
-                      <span className="text-txt-3">{c.liveSession}</span>
+                      <span className="text-txt-3">{fmtSession(c.liveSession)}</span>
                     </td>
                     <td className="max-w-[180px] py-2.5 pr-3">
                       <a
@@ -919,7 +923,7 @@ export default function LivePushPanel({
                               onClick={() => moveReplay(c.id, 'up')}
                               disabled={moveBusyId === c.id}
                               title="回顧移前一級"
-                              aria-label={`${c.liveDate} ${c.liveSession} 回顧移前`}
+                              aria-label={`${c.liveDate} ${fmtSession(c.liveSession)} 回顧移前`}
                               className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
                               style={{ borderColor: 'var(--space-line)', color: 'var(--gold-soft)' }}
                             >
@@ -930,7 +934,7 @@ export default function LivePushPanel({
                               onClick={() => moveReplay(c.id, 'down')}
                               disabled={moveBusyId === c.id}
                               title="回顧移後一級"
-                              aria-label={`${c.liveDate} ${c.liveSession} 回顧移後`}
+                              aria-label={`${c.liveDate} ${fmtSession(c.liveSession)} 回顧移後`}
                               className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
                               style={{ borderColor: 'var(--space-line)', color: 'var(--gold-soft)' }}
                             >
@@ -948,7 +952,7 @@ export default function LivePushPanel({
                               ? '刪除呢筆直播回顧'
                               : '顯示緊或者審批中嘅批次唔可以刪'
                           }
-                          aria-label={`刪除 ${c.liveDate} ${c.liveSession} 回顧`}
+                          aria-label={`刪除 ${c.liveDate} ${fmtSession(c.liveSession)} 回顧`}
                           className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25"
                           style={{ borderColor: 'var(--space-line)', color: 'var(--pink-soft)' }}
                         >

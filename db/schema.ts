@@ -494,6 +494,16 @@ export const luckyPrizes = pgTable("luckyPrizes", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
+// v2.2.53（老闆指令）：場次名持久化——開咗場次未上傳獎品都要留住，
+// 第二個同事入到嚟見到同一場次可以接力加獎品；獎品刪晒場次都唔會消失
+export const luckyDrawSessions = pgTable("luckyDrawSessions", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 64 }).notNull().unique(),
+  createdBy: integer("createdBy"),
+  createdByName: varchar("createdByName", { length: 128 }),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 // 抽獎紀錄：一件獎品抽一次一個中獎人；當日一人最多中一件（server 落 draw 時強制）。
 export const luckyDraws = pgTable("luckyDraws", {
   id: serial("id").primaryKey(),

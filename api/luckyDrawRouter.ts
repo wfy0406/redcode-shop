@@ -32,6 +32,7 @@ import { getDb } from "./queries/connection";
 import {
   luckyDrawLists,
   luckyDraws,
+  luckyDrawSessions,
   luckyPrizes,
   orderItems,
   orders,
@@ -427,6 +428,37 @@ export const luckyDrawRouter = createRouter({
     });
   }),
 
+  /** v2.2.53（老闆指令）：場次名一覽——持久化表 ∪ 獎品實際用緊（舊資料雙保險）；
+   *  唔包 ""（未分場由前端自己加）。開咗場次未上傳獎品都會喺度。 */
+  adminListSessions: supervisorProcedure.query(async () => {
+    const db = getDb();
+    const rows = await db
+      .select({ name: luckyDrawSessions.name })
+      .from(luckyDrawSessions)
+      .orderBy(luckyDrawSessions.id);
+    const prizeRows = await db
+      .select({ session: luckyPrizes.session })
+      .from(luckyPrizes)
+      .groupBy(luckyPrizes.session);
+    const set = new Set<string>(rows.map((r) => r.name));
+    for (const r of prizeRows) if (r.session) set.add(r.session);
+    return [...set];
+  }),
+
+  /** v2.2.53（老闆指令）：開場次（持久化）——未上傳獎品都留住，第二個同事接力加嘢；
+   *  同名唔會炸（onConflictDoNothing），兩個同事前後開同名都安全 */
+  adminCreateSession: supervisorProcedure
+    .input(z.object({ name: z.string().trim().min(1, "場次名唔准空").max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const operator = await actorName(ctx.user.userId);
+      await db
+        .insert(luckyDrawSessions)
+        .values({ name: input.name, createdBy: ctx.user.userId, createdByName: operator })
+        .onConflictDoNothing();
+      return { ok: true as const };
+    }),
+
   adminUpsertPrize: supervisorProcedure
     .input(
       z.object({
@@ -454,6 +486,11 @@ export const luckyDrawRouter = createRouter({
           .limit(1);
         if (!name) name = product?.name || input.sku;
         if (!imagePath) imagePath = product?.image || null;
+      }
+      // v2.2.53（老闆指令）：場次名持久化——獎品有填場次就確保入表；
+      // 之後就算刪晒嗰場獎品，場次都留得住
+      if (input.session) {
+        await db.insert(luckyDrawSessions).values({ name: input.session }).onConflictDoNothing();
       }
       if (input.id) {
         const [row] = await db
