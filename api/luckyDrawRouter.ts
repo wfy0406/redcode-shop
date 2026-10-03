@@ -491,7 +491,11 @@ export const luckyDrawRouter = createRouter({
       try {
         [row] = await db.delete(luckyPrizes).where(eq(luckyPrizes.id, input.id)).returning();
       } catch (e) {
-        if (String((e as { code?: string })?.code) === "23503") {
+        // drizzle DrizzleQueryError 將 PG error 收喺 cause（「Failed query: …」嗰隻）——兩處都睇，穩陣捉 23503
+        const pgCode =
+          (e as { code?: string })?.code ??
+          (e as { cause?: { code?: string } })?.cause?.code;
+        if (String(pgCode) === "23503") {
           throw new TRPCError({
             code: "CONFLICT",
             message: "呢件獎品有抽獎紀錄，刪唔到——可以先把嗰日嘅紀錄刪除，獎品就刪得",
@@ -790,15 +794,16 @@ export const luckyDrawRouter = createRouter({
       let orderDeleted = false;
       const orderId = old.draw.orderId;
       await db.transaction(async (tx) => {
+        // 順序（FK 全部指去 orders——luckyDraws.orderId 都係，所以 luckyDraws 一定要喺 orders 之前刪）：
+        // luckyDraws 本行 → 訂單仔行（orderItems／paymentProofs／wmsSyncLog）→ orders 本行
+        await tx.delete(luckyDraws).where(eq(luckyDraws.id, old.draw.id));
         if (orderId != null && orderNo != null) {
-          // 順序：仔行先（FK 全部指去 orders）→ orders 本行 → luckyDraws 本行
           await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
           await tx.delete(paymentProofs).where(eq(paymentProofs.orderId, orderId));
           await tx.delete(wmsSyncLog).where(eq(wmsSyncLog.orderId, orderId));
           await tx.delete(orders).where(eq(orders.id, orderId));
           orderDeleted = true;
         }
-        await tx.delete(luckyDraws).where(eq(luckyDraws.id, old.draw.id));
       });
 
       const winnerLabel = old.draw.winnerName ?? old.winnerUserName;
@@ -811,7 +816,8 @@ export const luckyDrawRouter = createRouter({
     }),
 
   /** 成日刪（管理員專用）：一次過刪晒某抽獎日嘅全部紀錄，有單嘅連官網張單一併 HARD DELETE
-   *  （仔行 orderItems／paymentProofs／wmsSyncLog → orders → luckyDraws，同一個 transaction）。
+   *  （luckyDraws → 仔行 orderItems／paymentProofs／wmsSyncLog → orders，同一個 transaction；
+   *   luckyDraws.orderId 有 FK 指住 orders，所以 luckyDraws 一定要先刪）。
    *  老闆原話「wms佢地自己會刪除，你要比我刪除」——冇「已批/出貨唔准刪」嘅 guard，
    *  官網呢邊要刪得就一定刪得；WMS 嗰邊嘅單由佢哋自己處理。 */
   adminDeleteDrawsByDate: adminProcedure
@@ -830,6 +836,11 @@ export const luckyDrawRouter = createRouter({
       // 淨係攞真係存在嘅官網訂單 id（orderId 指咗但張單已唔存在 → leftJoin null，自動跳過）
       const orderIds = [...new Set(rows.map((r) => r.linkedOrderId).filter((id): id is number => id != null))];
       const result = await db.transaction(async (tx) => {
+        // luckyDraws 先（orderId FK 指住 orders，唔調轉會 23503）→ 訂單仔行 → orders 本行
+        const delDraws = await tx
+          .delete(luckyDraws)
+          .where(eq(luckyDraws.drawDate, input.drawDate))
+          .returning({ id: luckyDraws.id });
         let ordersDeleted = 0;
         if (orderIds.length > 0) {
           await tx.delete(orderItems).where(inArray(orderItems.orderId, orderIds));
@@ -838,10 +849,6 @@ export const luckyDrawRouter = createRouter({
           const delOrders = await tx.delete(orders).where(inArray(orders.id, orderIds)).returning({ id: orders.id });
           ordersDeleted = delOrders.length;
         }
-        const delDraws = await tx
-          .delete(luckyDraws)
-          .where(eq(luckyDraws.drawDate, input.drawDate))
-          .returning({ id: luckyDraws.id });
         return { ordersDeleted, drawsDeleted: delDraws.length };
       });
 

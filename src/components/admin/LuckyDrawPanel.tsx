@@ -88,6 +88,10 @@ type HistoryRow = {
 /** 錯誤 toast 美化：zod 陣列錯誤係 raw JSON（[{"origin":...}]），拆返第一條 message 出嚟 */
 function fmtErr(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
+  // drizzle 生錯誤（Failed query: ...）唔好原句出——唔洩結構，俾句人話
+  if (msg.startsWith('Failed query:')) {
+    return '資料庫拒絕咗呢個操作——多數係資料互相引用住；請刷新再試，唔得就截圖俾我哋跟進';
+  }
   if (msg.startsWith('[{')) {
     try {
       const arr = JSON.parse(msg);
