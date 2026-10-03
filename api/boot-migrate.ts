@@ -448,6 +448,19 @@ ON CONFLICT (name) DO NOTHING;
 -- v2.2.56（老闆指令）：場次手動歸檔——管理員可以將未抽晒嘅場次放入「歷史場次」
 ALTER TABLE "luckyDrawSessions" ADD COLUMN IF NOT EXISTS "archivedAt" timestamp;
 ALTER TABLE "luckyDrawSessions" ADD COLUMN IF NOT EXISTS "archivedByName" varchar(128);
+-- v2.2.57（老闆指令）：抽中唔即時通知客人——撳「好，繼續」先發 email＋推播；null＝未通知。
+-- DO block 包住：淨係「第一次加欄」嗰刻先將舊紀錄 backfill 做已通知（舊系統抽中即發）——
+-- 重開再跑 column 已存在 → 唔會郁到新抽未通知嘅 pending 單
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'luckyDraws' AND column_name = 'notifiedAt'
+  ) THEN
+    ALTER TABLE "luckyDraws" ADD COLUMN "notifiedAt" timestamp;
+    UPDATE "luckyDraws" SET "notifiedAt" = "createdAt";
+  END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS "luckyDraws" (
   id serial PRIMARY KEY,
   "prizeId" integer NOT NULL REFERENCES "luckyPrizes"("id"),

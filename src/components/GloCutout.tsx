@@ -6,8 +6,11 @@ import { videoHasRealAlpha } from '@/lib/alphaVideo';
  * 上版用「假透底」（將畫面焗落頁底色），但人一跳、transform 一郁，
  * 焗死咗嘅背景就走位——成塊背景出晒嚟（老闆電話實測發現）。
  * 而家改用 RVM 逐幀 matting 出真 alpha：VP9 alpha WebM 行先，
- * 瀏覽器解唔到 alpha（Safari）→ canvas probe 一驗即知，轉真 alpha 動畫 WebP；
+ * 瀏覽器解唔到 alpha → canvas probe 一驗即知，轉真 alpha 動畫 WebP；
  * 再兜底係透明 webp poster。三層都係真透底，任何底色都唔會甩。
+ * v2.2.57（老闆實測 iPhone 黑盒）：WebKit 系（iOS 全部瀏覽器／macOS Safari）
+ * 永遠解唔到 VP9 alpha——唔再試，開局直出動畫 WebP；其餘瀏覽器 probe 加雙保險
+ * （空白幀唔算數＋500ms 再探一次），黑盒無可能留低。
  *
  * 設計守鐵律（唔好整慢客人電話）：
  * - 入 viewport（提前 240px）先 mount <video>，慳數據慳電
@@ -43,10 +46,24 @@ export default function GloCutout({
   const [reduced] = useState(
     () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
   );
+  // v2.2.57（老闆實測：iPhone Instagram in-app 公仔黑盒）：
+  // WebKit 系（iPhone/iPad 上所有瀏覽器＝WKWebView、macOS Safari）永遠解唔到 VP9 alpha——
+  // 解到 VP9 嘅新機會直接出黑盒（當不透明渲染），probe 第一格仲有時機誤判風險。
+  // 唔再試運氣：呢類瀏覽器唔 mount WebM，直出真 alpha 動畫 WebP（乜 WebKit 都透）。
+  const [webkit] = useState(() => {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const iOS = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints ?? 0) > 1);
+    const safari = /^((?!chrome|chromium|crios|fxios|edgios|android).)*safari/i.test(ua);
+    return iOS || safari;
+  });
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [near, setNear] = useState(eager);
-  // poster=靜態兜底；video=真 alpha WebM 播緊；anim=動畫 WebP（Safari 或 WebM 掛咗）
-  const [mode, setMode] = useState<'poster' | 'video' | 'anim'>('poster');
+  // poster=靜態兜底；video=真 alpha WebM 播緊；anim=動畫 WebP（WebKit 或 WebM 掛咗）
+  const [mode, setMode] = useState<'poster' | 'video' | 'anim'>(webkit ? 'anim' : 'poster');
+  // v2.2.57 補漏：WebKit 開局就係 anim，但要等動畫 WebP 真係 load 完先收 poster——
+  // 唔係嘅話 reduced-motion（anim img 唔 mount）同慢網（WebP 下載緊）會成隻公仔唔見咗
+  const [animReady, setAnimReady] = useState(false);
 
   useEffect(() => {
     if (near || reduced) return;
@@ -79,10 +96,11 @@ export default function GloCutout({
         loading={eager ? 'eager' : 'lazy'}
         decoding="async"
         className={`h-auto w-full transition-opacity duration-300 ${animClass ?? ''} ${
-          mode === 'poster' ? 'opacity-100' : 'opacity-0'
+          mode === 'poster' || (mode === 'anim' && !animReady) ? 'opacity-100' : 'opacity-0'
         }`}
       />
-      {near && !reduced && mode !== 'anim' && (
+      {/* WebKit 唔再試 WebM（解唔到 alpha 會黑盒）；其餘瀏覽器照播＋probe 驗 alpha */}
+      {near && !reduced && !webkit && mode !== 'anim' && (
         <video
           src={videoSrc}
           className={`absolute inset-0 h-full w-full object-contain ${animClass ?? ''}`}
@@ -92,12 +110,25 @@ export default function GloCutout({
           playsInline
           preload="metadata"
           aria-hidden="true"
-          onPlaying={(e) => setMode(videoHasRealAlpha(e.currentTarget) ? 'video' : 'anim')}
+          onPlaying={(e) => {
+            const v = e.currentTarget;
+            if (!videoHasRealAlpha(v)) {
+              setMode('anim');
+              return;
+            }
+            setMode('video');
+            // v2.2.57：第一格 probe 過咗都留一手——500ms 後再探一次，
+            // 半路 decode 企唔穩（半透半實誤判）即刻轉動畫 WebP，唔會黑盒跟全場
+            window.setTimeout(() => {
+              if (v.isConnected && !videoHasRealAlpha(v)) setMode('anim');
+            }, 500);
+          }}
           onError={() => setMode('anim')}
         />
       )}
-      {/* Safari／解唔到 WebM alpha：真 alpha 動畫 WebP，<img> 直出，乜瀏覽器都透 */}
-      {mode === 'anim' && !reduced && (
+      {/* WebKit／解唔到 WebM alpha：真 alpha 動畫 WebP，<img> 直出，乜瀏覽器都透。
+          near 閘埋——WebKit 開局就係 anim 模式，冇閘會未入 viewport 就 download（慳數據鐵律） */}
+      {near && mode === 'anim' && !reduced && (
         <img
           src={animSrc}
           alt=""
@@ -105,6 +136,7 @@ export default function GloCutout({
           width={posterW}
           height={posterH}
           className={`absolute inset-0 h-full w-full object-contain ${animClass ?? ''}`}
+          onLoad={() => setAnimReady(true)}
           onError={() => setMode('poster')}
         />
       )}

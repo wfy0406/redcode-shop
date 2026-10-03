@@ -540,6 +540,9 @@ export const luckyDraws = pgTable("luckyDraws", {
   cancelNote: varchar("cancelNote", { length: 255 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   respondedAt: timestamp("respondedAt"),
+  // v2.2.57（老闆指令）：抽中唔即時通知——管理員/主管撳「好，繼續」先發 email＋推播。
+  // null＝仲未通知；有值＝已通知（原子認領寫入，雙擊/兩人同撳都唔會重複發）
+  notifiedAt: timestamp("notifiedAt"),
 });
 
 export type User = typeof users.$inferSelect;

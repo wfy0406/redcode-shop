@@ -10,10 +10,11 @@ import { LoadingBlock } from './WishingStar';
  * v2.2.46 直播抽獎大輪盤（老闆 2026-10-03 指令：「整到好華麗，會直播比客睇」）
  *
  * 佈局：
- * ① 輪盤舞台（左大）：揀獎品（頂部有剩餘件數計數）→ 大金掣抽獎 → 輪盤轉 6 秒（中間滾動客名）→
- *    煙花爆開＋中間彈出中獎客人名 → 會員抽：✓ 冇問題下一件 ／ ✦ 特別重抽 ／ ✕ 取消中獎；
+ * ① 輪盤舞台（左大）：揀模式（順序抽／指定抽 N 號）→ 大金掣抽獎 → 輪盤轉 6 秒（中間滾動客名）→
+ *    煙花爆開＋中間彈出中獎客人名 → 會員抽：✓ 冇問題，抽下一件（v2.2.57：撳呢下先正式發
+ *    email＋推送，抽中嗰刻唔發）／ ✦ 特別重抽 ／ ✕ 取消中獎；
  *    自訂名單抽：手打名中獎 → ✓ 確定中獎（出 0 元單去 WMS）／ ✦ 重抽 ／ ✕ 取消；
- *    官網會員中獎 → server 已彈通知，佢自己揀地址，得 ✦ 重抽 ／ ✕ 取消 ／ ✓ 好，繼續
+ *    官網會員中獎 → ✓ 好，繼續（先發通知）／ ✦ 重抽 ／ ✕ 取消；紀錄頁有「未通知」badge＋補發掣
  * ② 參加名單（右欄，分兩個模式 tab）：
  *    「會員條件名單」——本月消費／累積消費／消費滿$X／官網會員／買過指定產品／
  *    已綁定推送客人（可複選）→ 即睇人數＋名單；
@@ -85,6 +86,8 @@ type HistoryRow = {
   winnerPhone: string;
   winnerNameSnap: string | null;
   listId: number | null;
+  /** v2.2.57（老闆指令）：通知狀態——null＝抽咗但未發 email/推送（等撳「好，繼續」） */
+  notifiedAt: string | Date | null;
   orderStatus: string | null;
   orderNo: string | null;
   prizeId: number;
@@ -518,7 +521,22 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   const remainingUnits = availablePrizes.reduce((s, p) => s + remainingOf(p), 0);
   const activeUnits = sessionPrizes.filter((p) => p.active).reduce((s, p) => s + (p.quantity ?? 1), 0);
   const [prizeId, setPrizeId] = useState<number | null>(null);
-  const prize = availablePrizes.find((p) => p.id === prizeId) ?? availablePrizes[0] ?? null;
+  // v2.2.57（老闆指令）：抽獎模式——'auto' 順序抽（自動下一件，依家咁）；
+  // 'pick' 指定抽（直播客人嗌「抽 3 號先」→ 管理員/主管撥號碼即抽嗰件，多件可以連抽）
+  const [drawMode, setDrawMode] = useState<'auto' | 'pick'>('auto');
+  const drawModeRef = useRef<'auto' | 'pick'>(drawMode);
+  useEffect(() => {
+    drawModeRef.current = drawMode;
+  }, [drawMode]);
+  // 場內獎品編號（顯示順序計）：獎品管理卡同抽獎 chip 用同一個號，直播嗌「N 號」兩邊對到
+  const prizeNos = useMemo(() => {
+    const m = new Map<number, number>();
+    sessionPrizes.forEach((p, i) => m.set(p.id, i + 1));
+    return m;
+  }, [sessionPrizes]);
+  // 指定抽：指定嗰件抽晒就唔准靜靜雞跳去第一件（直播上抽錯獎品係事故）——停低等揀返
+  const picked = availablePrizes.find((p) => p.id === prizeId) ?? null;
+  const prize = drawMode === 'pick' ? picked : picked ?? availablePrizes[0] ?? null;
 
   // 抽獎狀態機
   const [phase, setPhase] = useState<'idle' | 'spinning' | 'revealed'>('idle');
@@ -539,6 +557,8 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   const redrawMut = trpc.luckyDraw.adminRedraw.useMutation();
   const cancelMut = trpc.luckyDraw.adminCancelWin.useMutation();
   const deleteDrawMut = trpc.luckyDraw.adminDeleteDraw.useMutation();
+  // v2.2.57（老闆指令）：抽中唔即時通知——撳「好，繼續」先正式發 email＋推送
+  const notifyWinMut = trpc.luckyDraw.adminNotifyWin.useMutation();
   const upsertMut = trpc.luckyDraw.adminUpsertPrize.useMutation();
   const deleteMut = trpc.luckyDraw.adminDeletePrize.useMutation();
 
@@ -747,8 +767,24 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     spinCleanupRef.current = null;
     setResult(null);
     setPhase('idle');
-    setPrizeId(null); // 跳返第一件未抽出嘅獎品
+    // v2.2.57（老闆指令「指定抽」）：指定模式抽完唔跳走——停喺指定嗰件（多件可以連抽）；
+    // 順序抽先跳返第一件未抽出嘅獎品
+    if (drawModeRef.current === 'auto') setPrizeId(null);
     void utils.luckyDraw.adminPreviewParticipants.invalidate();
+  };
+
+  /** v2.2.57（老闆指令）：「好，繼續」＝正式發送中獎通知（email＋推送）先收卡；
+   *  發送失敗唔收卡，等 admin 睇到錯誤再撳（唔會靜靜雞走咗通知唔到客人） */
+  const notifyAndNext = async (drawId: number) => {
+    try {
+      const r = await notifyWinMut.mutateAsync({ drawId });
+      toast(r.already ? '通知之前已經發咗，唔會重複發' : '已通知客人 ✓（中獎 email＋推送已發出）', 'success');
+    } catch (e) {
+      toast(fmtErr(e), 'error');
+      return;
+    }
+    void utils.luckyDraw.adminHistory.invalidate();
+    finishAndNext();
   };
 
   const cancelWin = async (drawId: number, label: string) => {
@@ -856,7 +892,39 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
               呢場剩餘 {remainingUnits} 件（總共 {activeUnits} 件）
             </p>
 
-            {/* 揀獎品（未抽出嘅先抽得） */}
+            {/* v2.2.57（老闆指令）：抽獎模式切換——順序抽（依家咁，自動下一件）／
+                指定抽（直播客人嗌「抽 3 號先」→ 撥號碼即抽嗰件，多件可以連抽） */}
+            <div
+              className="mb-2 inline-flex items-center gap-1 self-center rounded-full border p-1"
+              style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.03)' }}
+              role="group"
+              aria-label="抽獎模式"
+            >
+              {([
+                ['auto', '順序抽（自動下一件）'],
+                ['pick', '指定抽（撥號碼）'],
+              ] as const).map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setDrawMode(m)}
+                  disabled={phase !== 'idle'}
+                  className={`rounded-full px-3.5 py-1 text-[12px] transition-colors disabled:opacity-50 ${
+                    drawMode === m ? 'font-bold' : 'text-txt-3 hover:text-txt-1'
+                  }`}
+                  style={
+                    drawMode === m
+                      ? { background: 'rgba(245,197,24,0.16)', color: 'var(--gold-soft)', border: `1px solid ${GOLD}` }
+                      : { border: '1px solid transparent' }
+                  }
+                  aria-pressed={drawMode === m}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* 揀獎品（未抽出嘅先抽得；號碼同下面獎品管理卡一致，直播嗌「N 號」對到） */}
             <div className="flex w-full flex-wrap items-center justify-center gap-2">
               {availablePrizes.length === 0 ? (
                 <p className="py-2 text-[13px] text-txt-3">
@@ -877,6 +945,15 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                       background: prize?.id === p.id ? 'rgba(245,197,24,0.12)' : 'transparent',
                     }}
                   >
+                    <span
+                      className="flex h-5 w-5 items-center justify-center rounded-full font-mono text-[11px] font-bold"
+                      style={{
+                        background: prize?.id === p.id ? GOLD : 'rgba(245,197,24,0.15)',
+                        color: prize?.id === p.id ? '#241505' : 'var(--gold-soft)',
+                      }}
+                    >
+                      {prizeNos.get(p.id)}
+                    </span>
                     {p.imagePath ? (
                       <img src={p.imagePath} alt="" className="h-6 w-6 rounded-full object-cover" />
                     ) : (
@@ -893,6 +970,17 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                 ))
               )}
             </div>
+            {/* 指定抽安全網：指定嗰件抽晒唔會靜靜雞跳去第一件，明講等揀返 */}
+            {drawMode === 'pick' && prizeId != null && !prize && (
+              <p className="mt-1.5 w-full text-center text-[12.5px] text-gold-soft">
+                你指定嗰件已抽晒——喺上面撥返另一個號碼先抽得
+              </p>
+            )}
+            {drawMode === 'pick' && prizeId == null && availablePrizes.length > 0 && (
+              <p className="mt-1.5 w-full text-center text-[12px] text-txt-3">
+                指定抽模式：撥上面嘅號碼揀邊件先，揀咗先抽得
+              </p>
+            )}
 
             {/* 輪盤本體（煙花層喺 DOM 後出，自然壓頂，唔用 z-index） */}
             <div className="relative mt-4 w-full max-w-[560px]">
@@ -1051,7 +1139,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                 {lastDrawKind === 'manual' ? (
                   lastWinnerKind === 'member' ? (
                     <p className="mt-3 text-[14px] text-txt-2">
-                      佢係官網會員——已彈中獎通知同寄 email，等佢自己登入揀地址寄送。
+                      佢係官網會員——仲未通知佢；撳「✓ 好，繼續」先會正式彈中獎通知＋寄 email，等佢自己登入揀地址寄送。
                     </p>
                   ) : (
                     <p className="mt-3 text-[12px] text-txt-3">
@@ -1060,7 +1148,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                   )
                 ) : (
                   <p className="mt-3 text-[12px] text-txt-3">
-                    已即時寄中獎 email＋推送畀客人；客人登入會見到中獎賀卡揀地址。
+                    仲未通知客人——撳「✓ 冇問題，抽下一件」先會正式寄中獎 email＋推送；客人登入會見到中獎賀卡揀地址。
                   </p>
                 )}
                 <p className="mt-1.5 text-[14px] text-txt-2">
@@ -1082,11 +1170,13 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                       ) : (
                         <button
                           type="button"
-                          onClick={finishAndNext}
-                          className="rounded-full px-5 py-2 text-[13.5px] font-bold"
+                          onClick={() => void notifyAndNext(result.draw.id)}
+                          disabled={notifyWinMut.isPending}
+                          className="rounded-full px-5 py-2 text-[13.5px] font-bold disabled:opacity-40"
                           style={{ background: GOLD, color: '#241505' }}
+                          title="撳咗先會正式寄中獎 email＋推送畀客人"
                         >
-                          ✓ 好，繼續
+                          {notifyWinMut.isPending ? '發送緊…' : '✓ 好，繼續'}
                         </button>
                       )}
                       <button
@@ -1112,11 +1202,13 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                     <>
                       <button
                         type="button"
-                        onClick={finishAndNext}
-                        className="rounded-full px-5 py-2 text-[13.5px] font-bold"
+                        onClick={() => void notifyAndNext(result.draw.id)}
+                        disabled={notifyWinMut.isPending}
+                        className="rounded-full px-5 py-2 text-[13.5px] font-bold disabled:opacity-40"
                         style={{ background: GOLD, color: '#241505' }}
+                        title="撳咗先會正式寄中獎 email＋推送畀客人"
                       >
-                        ✓ 冇問題，抽下一件
+                        {notifyWinMut.isPending ? '發送緊…' : '✓ 冇問題，抽下一件'}
                       </button>
                       <button
                         type="button"
@@ -2052,7 +2144,7 @@ function PrizeManagerSection({
         <p className="py-6 text-center text-[13.5px] text-txt-3">呢場仲未有獎品，上面加第一件 ✦</p>
       ) : (
         <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {prizes.map((p) => (
+          {prizes.map((p, i) => (
             <li
               key={p.id}
               className="rounded-xl border p-3"
@@ -2079,7 +2171,16 @@ function PrizeManagerSection({
                   </span>
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13.5px] font-semibold text-txt-1">{p.name || p.sku}</p>
+                  <p className="truncate text-[13.5px] font-semibold text-txt-1">
+                    {/* v2.2.57（老闆指令）：場內編號——同上面抽獎 chip 一致，直播嗌「N 號」兩邊對到 */}
+                    <span
+                      className="mr-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 align-middle font-mono text-[11px] font-bold"
+                      style={{ background: 'rgba(245,197,24,0.15)', color: 'var(--gold-soft)' }}
+                    >
+                      {i + 1}
+                    </span>
+                    {p.name || p.sku}
+                  </p>
                   <p className="font-mono text-[11.5px] text-txt-3">
                     {p.sku}・HK${p.price}・共{p.quantity ?? 1}件
                   </p>
@@ -2181,6 +2282,17 @@ function DrawHistorySection({
   const historyQuery = trpc.luckyDraw.adminHistory.useQuery(undefined, { refetchOnWindowFocus: false });
   const days = (historyQuery.data ?? []) as { date: string; rows: HistoryRow[] }[];
   const deleteDayMut = trpc.luckyDraw.adminDeleteDrawsByDate.useMutation();
+  // v2.2.57（老闆指令）：未通知嘅 pending 中獎可以喺度補發（抽完閂咗頁嘅安全網）
+  const notifyWinMut = trpc.luckyDraw.adminNotifyWin.useMutation();
+  const resendNotify = async (drawId: number) => {
+    try {
+      const r = await notifyWinMut.mutateAsync({ drawId });
+      toast(r.already ? '通知之前已經發咗，唔會重複發' : '已補發中獎通知 ✓（email＋推送）', 'success');
+      void utils.luckyDraw.adminHistory.invalidate();
+    } catch (e) {
+      toast(fmtErr(e), 'error');
+    }
+  };
 
   /** 成日刪除（admin only）：未審批 0 元訂單一併取消；有已批訂單 server 會 CONFLICT 彈原句 */
   const deleteDay = async (date: string, count: number) => {
@@ -2320,6 +2432,15 @@ function DrawHistorySection({
                               {r.cancelNote ? `・${r.cancelNote}` : ''}
                             </p>
                           </div>
+                          {/* v2.2.57：真會員 pending 中獎顯示通知狀態；未通知有補發掣 */}
+                          {r.status === 'pending' && !shadowAccount && !r.notifiedAt && (
+                            <span
+                              className="shrink-0 rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold text-gold"
+                              style={{ borderColor: 'rgba(245,197,24,0.5)' }}
+                            >
+                              未通知
+                            </span>
+                          )}
                           <span
                             className="shrink-0 rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold"
                             style={{
@@ -2330,6 +2451,18 @@ function DrawHistorySection({
                           >
                             {meta.label}
                           </span>
+                          {r.status === 'pending' && !shadowAccount && !r.notifiedAt && (
+                            <button
+                              type="button"
+                              disabled={notifyWinMut.isPending}
+                              onClick={() => void resendNotify(r.id)}
+                              className="shrink-0 rounded-full border px-3 py-1 text-[12px] text-gold-soft transition-colors hover:bg-white/5 disabled:opacity-40"
+                              style={{ borderColor: 'rgba(245,197,24,0.45)' }}
+                              title="正式發送中獎 email＋推送畀客人"
+                            >
+                              📣 發通知
+                            </button>
+                          )}
                           {(r.status === 'pending' || r.status === 'confirmed') && (
                             <button
                               type="button"

@@ -7,14 +7,17 @@
  *     本月消費／累積消費／消費滿$X／官網會員／買過指定產品／已綁定推送客人
  *   adminDraw——抽一件獎品：server 隨機揀中獎人（crypto randomInt），
  *     強制「當日一人最多中一件」（pending／confirmed 先鎖住；重抽/取消/客人唔要＝無接受，放返出嚟可以再抽）；
- *     抽中即寄 email（有 email 嘅話）＋即時推送（有綁定嘅話）。
+ *     v2.2.57（老闆指令）：抽中唔再即時通知——紀錄先落 pending（霸住件獎品），
+ *     管理員/主管喺結果卡撳「✓ 好，繼續」經 adminNotifyWin 先正式寄 email＋推送；重抽/取消唔會發。
  *     v2.2.55（老闆指令）：獎品有件數——同款 N 件可以抽 N 次；
  *     防超抽由舊 unique index 改做 pg_advisory_xact_lock＋同事務數件（adminDrawManual 一樣）
  *   adminRedraw——特別重抽：舊紀錄直接刪除（老闆指令「岩岩既抽獎紀錄唔算數」，
  *     中獎紀錄唔會留底），同一件獎品再抽，舊中獎人照舊踢出呢件獎品嘅重抽池
  *   adminCancelWin——即時取消／之後喺紀錄頁取消：客人唔會再見到中獎彈窗；
  *     已生成訂單會一併取消（WMS 嗰邊要人手拒絕，README 有寫）
- *   adminHistory——中獎紀錄按抽獎日分組（新→舊）
+ *   adminNotifyWin（v2.2.57）——正式發送中獎通知（email＋推送）：結果卡「好，繼續」／
+ *     紀錄頁「補發通知」用呢個；notifiedAt 原子認領，重複撳唔會重複發
+ *   adminHistory——中獎紀錄按抽獎日分組（新→舊；v2.2.57 帶埋 notifiedAt 顯示未通知）
  *
  * 客人（authedProcedure）：
  *   myPendingWin——全域彈窗用：最新一筆 pending 中獎（＋獎品資料）
@@ -28,7 +31,7 @@
 import { randomInt } from "node:crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, inArray, like, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, like, lt, sql } from "drizzle-orm";
 import { createRouter, authedProcedure, supervisorProcedure, adminProcedure } from "./middleware";
 import { getDb } from "./queries/connection";
 import {
@@ -383,7 +386,8 @@ async function getOrCreatePrizeProduct(
   return product;
 }
 
-/** 中獎即通知：email（有 email 先寄）＋推送（有綁定先送）；never-throw */
+/** 中獎通知：email（有 email 先寄）＋推送（有綁定先送）；never-throw。
+ *  v2.2.57（老闆指令）：抽中嗰刻唔准call——淨係 adminNotifyWin（撳「好，繼續」）先用得 */
 function notifyWinner(winner: { id: number; name: string; email: string | null }, prize: typeof luckyPrizes.$inferSelect, drawDate: string) {
   if (winner.email) {
     void sendPrizeWinEmail({
@@ -664,12 +668,12 @@ export const luckyDrawRouter = createRouter({
         return d;
       });
 
-      notifyWinner(winner, prize, drawDate);
+      // v2.2.57（老闆指令）：抽中唔即時通知——留 pending 等結果卡撳「好，繼續」先發（adminNotifyWin）
 
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.draw",
         targetType: "luckyDraw", targetId: String(draw.id),
-        detail: `抽獎日 ${drawDate}：${prize.name} → ${winner.name}（池 ${pool.length} 人）`,
+        detail: `抽獎日 ${drawDate}：${prize.name} → ${winner.name}（池 ${pool.length} 人；未通知，待確認先發）`,
       });
       return { draw, winner, prize };
     }),
@@ -732,8 +736,8 @@ export const luckyDrawRouter = createRouter({
           return d;
         });
 
-        // 抽中官網會員：照常通知（彈窗＋email＋推送）；手打名：唔通知，admin 之後撳「確定」起單
-        if (entry.kind === "member") notifyWinner(entry, prize, old.drawDate);
+        // v2.2.57（老闆指令）：重抽出新結果都唔即時通知——等新結果卡撳「好，繼續」先發
+        // （手打名本來就唔通知，admin 之後撳「確定」起單）
 
         void logAudit({
           actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.redrawManual",
@@ -782,7 +786,7 @@ export const luckyDrawRouter = createRouter({
         return d;
       });
 
-      notifyWinner(winner, prize, old.drawDate);
+      // v2.2.57（老闆指令）：唔即時通知——等新結果卡撳「好，繼續」先發（adminNotifyWin）
 
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.redraw",
@@ -839,6 +843,56 @@ export const luckyDrawRouter = createRouter({
         detail: `取消中獎 #${old.id}${orderCancelled ? "（官網訂單一併寫返已取消）" : ""}${orderUntouchedWarn ? `（${orderUntouchedWarn}）` : ""}${input.note ? `：${input.note}` : ""}`,
       });
       return { ok: true, orderCancelled };
+    }),
+
+  /** v2.2.57（老闆指令）：正式發送中獎通知——抽中嗰刻唔發，管理員/主管喺結果卡撳
+   *  「✓ 好，繼續」（或紀錄頁「補發通知」）先經呢度寄 email＋推送，等客人入官網確認。
+   *  防重複發：UPDATE ... WHERE notifiedAt IS NULL 原子認領——雙擊／兩人同撳都係得嗰個發，
+   *  其餘回 already:true 唔再發。重抽／取消咗嘅紀錄會被 guard 擋（唔發得）。 */
+  adminNotifyWin: supervisorProcedure
+    .input(z.object({ drawId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [draw] = await db.select().from(luckyDraws).where(eq(luckyDraws.id, input.drawId)).limit(1);
+      if (!draw) throw new TRPCError({ code: "NOT_FOUND", message: "中獎紀錄唔存在" });
+      // 狀態分流講清楚：客人可能喺未收到通知前已經入官網撳咗確認——嗰種唔使再發
+      if (draw.status === "confirmed") {
+        throw new TRPCError({ code: "CONFLICT", message: "客人已經喺官網確認咗寄送，唔使再發通知" });
+      }
+      if (draw.status !== "pending") {
+        throw new TRPCError({ code: "CONFLICT", message: "呢個中獎已取消/客人唔要，唔會發通知" });
+      }
+      const [winner] = await db
+        .select({ id: users.id, name: users.name, email: users.email, phone: users.phone })
+        .from(users)
+        .where(eq(users.id, draw.winnerUserId))
+        .limit(1);
+      if (!winner) throw new TRPCError({ code: "NOT_FOUND", message: "中獎帳號唔存在" });
+      // 手打名影子帳號（phone 係 "DRAW#" 開頭）冇得通知——佢哋行「確定中獎」起單路線
+      if (winner.phone.startsWith("DRAW#")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "手打名中獎冇 email/推送可發——用「確定中獎」起單" });
+      }
+      const [prize] = await db.select().from(luckyPrizes).where(eq(luckyPrizes.id, draw.prizeId)).limit(1);
+      if (!prize) throw new TRPCError({ code: "NOT_FOUND", message: "獎品唔存在" });
+
+      // 原子認領：只有第一個 request 攞到（notifiedAt null → 有值）；重複撳直接回 already
+      const claim = await db
+        .update(luckyDraws)
+        .set({ notifiedAt: new Date() })
+        .where(and(eq(luckyDraws.id, draw.id), isNull(luckyDraws.notifiedAt)))
+        .returning({ id: luckyDraws.id });
+      if (claim.length === 0) {
+        return { ok: true as const, already: true as const };
+      }
+
+      notifyWinner(winner, prize, draw.drawDate);
+
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.notifyWin",
+        targetType: "luckyDraw", targetId: String(draw.id),
+        detail: `發送中獎通知 #${draw.id}：${prize.name} → ${winner.name}（email${winner.email ? "＋推送" : "冇email淨推送"}）`,
+      });
+      return { ok: true as const, already: false as const };
     }),
 
   /** 刪除抽獎紀錄（老闆指明：管理員先用到，唔係 supervisor）：硬刪除該場抽獎紀錄，
@@ -1101,8 +1155,8 @@ export const luckyDrawRouter = createRouter({
         return d;
       });
 
-      // 抽中官網會員：照常通知（彈窗靠 myPendingWin 自動生效）；手打名：唔通知
-      if (entry.kind === "member") notifyWinner(entry, prize, drawDate);
+      // v2.2.57（老闆指令）：抽中官網會員都唔即時通知——等結果卡撳「好，繼續」先發；
+      // 手打名：唔通知（彈窗靠 myPendingWin 自動生效，唔受通知與否影響）
 
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.drawManual",
@@ -1231,6 +1285,8 @@ export const luckyDrawRouter = createRouter({
         cancelNote: luckyDraws.cancelNote,
         drawnByName: luckyDraws.drawnByName,
         orderId: luckyDraws.orderId,
+        // v2.2.57（老闆指令）：通知狀態——null＝抽咗但未發 email/推送（等撳「好，繼續」）
+        notifiedAt: luckyDraws.notifiedAt,
         // v2.2.48：中獎名快照（自訂名單中獎＝名單原串；前端 prefer snapshot）＋邊份名單
         winnerNameSnap: luckyDraws.winnerName,
         listId: luckyDraws.listId,
