@@ -434,21 +434,52 @@ export const luckyDrawRouter = createRouter({
   }),
 
   /** v2.2.53（老闆指令）：場次名一覽——持久化表 ∪ 獎品實際用緊（舊資料雙保險）；
-   *  唔包 ""（未分場由前端自己加）。開咗場次未上傳獎品都會喺度。 */
+   *  唔包 ""（未分場由前端自己加）。開咗場次未上傳獎品都會喺度。
+   *  v2.2.56（老闆指令）：帶埋 archived 旗——管理員手動放入「歷史場次」嘅場次（未抽晒都得） */
   adminListSessions: supervisorProcedure.query(async () => {
     const db = getDb();
     const rows = await db
-      .select({ name: luckyDrawSessions.name })
+      .select({ name: luckyDrawSessions.name, archivedAt: luckyDrawSessions.archivedAt })
       .from(luckyDrawSessions)
       .orderBy(luckyDrawSessions.id);
+    const archived = new Set(rows.filter((r) => r.archivedAt != null).map((r) => r.name));
+    const set = new Set<string>(rows.map((r) => r.name));
     const prizeRows = await db
       .select({ session: luckyPrizes.session })
       .from(luckyPrizes)
       .groupBy(luckyPrizes.session);
-    const set = new Set<string>(rows.map((r) => r.name));
     for (const r of prizeRows) if (r.session) set.add(r.session);
-    return [...set];
+    // 淨係掛喺獎品度嘅舊場次（未入持久表）一定係未歸檔
+    return [...set].map((name) => ({ name, archived: archived.has(name) }));
   }),
+
+  /** v2.2.56（老闆指令「未抽晒管理員都要可以手動變歷史場次」）：管理員歸檔／取消歸檔場次。
+   *  歸檔淨係改分組顯示（獎品照舊抽得、照舊加得）；場次未入持久表（舊資料淨掛獎品度）會先補行 */
+  adminSetSessionArchived: adminProcedure
+    .input(z.object({
+      name: z.string().trim().min(1, "場次名唔准空").max(64),
+      archived: z.boolean(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const operator = await actorName(ctx.user.userId);
+      await db
+        .insert(luckyDrawSessions)
+        .values({ name: input.name, createdBy: ctx.user.userId, createdByName: operator })
+        .onConflictDoNothing();
+      await db
+        .update(luckyDrawSessions)
+        .set(input.archived
+          ? { archivedAt: new Date(), archivedByName: operator }
+          : { archivedAt: null, archivedByName: null })
+        .where(eq(luckyDrawSessions.name, input.name));
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: input.archived ? "luckyDraw.archiveSession" : "luckyDraw.unarchiveSession",
+        targetType: "luckyDrawSession", targetId: input.name,
+        detail: input.archived ? `場次《${input.name}》手動放入歷史場次` : `場次《${input.name}》放返未抽場次`,
+      });
+      return { ok: true as const };
+    }),
 
   /** v2.2.53（老闆指令）：開場次（持久化）——未上傳獎品都留住，第二個同事接力加嘢；
    *  同名唔會炸（onConflictDoNothing），兩個同事前後開同名都安全 */

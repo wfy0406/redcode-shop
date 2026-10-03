@@ -445,6 +445,9 @@ CREATE TABLE IF NOT EXISTS "luckyDrawSessions" (
 INSERT INTO "luckyDrawSessions" (name)
 SELECT DISTINCT session FROM "luckyPrizes" WHERE session <> ''
 ON CONFLICT (name) DO NOTHING;
+-- v2.2.56（老闆指令）：場次手動歸檔——管理員可以將未抽晒嘅場次放入「歷史場次」
+ALTER TABLE "luckyDrawSessions" ADD COLUMN IF NOT EXISTS "archivedAt" timestamp;
+ALTER TABLE "luckyDrawSessions" ADD COLUMN IF NOT EXISTS "archivedByName" varchar(128);
 CREATE TABLE IF NOT EXISTS "luckyDraws" (
   id serial PRIMARY KEY,
   "prizeId" integer NOT NULL REFERENCES "luckyPrizes"("id"),

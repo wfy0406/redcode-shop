@@ -25,7 +25,9 @@ import { LoadingBlock } from './WishingStar';
  *    confirmed 行按 WMS orderStatus 顯示結案綠燈／審批中琥珀燈
  *
  * 設計鐵律：動畫淨用 transform/opacity（輪盤係 canvas 繪圖，唔係 CSS layout 動畫）；
- * 層次用 DOM 順序唔用 z-index；prefers-reduced-motion → 跳過長旋轉，即刻開獎。
+ * 層次用 DOM 順序唔用 z-index；prefers-reduced-motion → 跳過長旋轉＋環境燈＋光環，即刻開獎。
+ * v2.2.56 深度美化：高清芒 DPR 補償、扇面漸變、厚金環跑馬燈膽（閒置慢閃／高速爆亮＋殘影）、
+ * 中轂旋轉光環＋呼吸光暈、寶石指針轉緊打水、煙花拖尾＋衝擊波、開獎卡金光掃過。
  * 規則：同款獎品有幾多件就抽得幾多次（v2.2.55 件數制；抽晒就無得抽）；當日一人最多中一件（server 強制）。
  */
 
@@ -112,121 +114,261 @@ function fmtErr(e: unknown): string {
 
 // ───────────────────────────── 輪盤（canvas）─────────────────────────────
 
-const WHEEL_SIZE = 600; // canvas 像素（CSS 縮放）
-const SEG_COLORS = ['#22103C', '#170B28']; // 深紫金交替（夜空底）
+const WHEEL_SIZE = 600; // canvas 邏輯像素（CSS 縮放；backing store 按 DPR 放大，高清芒都銳利）
+// v2.2.56 深度美化：深紫扇面漸變＋厚金環＋跑馬燈膽＋高速殘影（全部 canvas 繪圖，唔係 CSS layout 動畫）
+const SEG_GRAD_A: [string, string] = ['#2B1350', '#180C30']; // [外緣, 圓心]
+const SEG_GRAD_B: [string, string] = ['#200E3E', '#120824'];
 const GOLD = '#F5C518';
 const GOLD_SOFT = '#F7D774';
 const PINK = '#FF8FBF';
 
-/** 畫輪盤：names 平均分佈；angle＝當前旋轉弧度 */
-function drawWheel(ctx: CanvasRenderingContext2D, names: string[], angle: number) {
+/** v2.2.56：高清芒補償 — backing store 按 devicePixelRatio 放大（cap 2 保性能），
+ *  每次畫之前 setTransform 返邏輯座標；canvas CSS 尺寸唔變 */
+function prepWheelCtx(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const target = Math.round(WHEEL_SIZE * dpr);
+  if (canvas.width !== target || canvas.height !== target) {
+    canvas.width = target;
+    canvas.height = target;
+  }
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+/** 畫輪盤：names 平均分佈；angle＝當前旋轉弧度；
+ *  fx.lightPhase＝跑馬燈相位（0..1）、fx.speed＝轉速 0..1（燈更亮＋殘影） */
+function drawWheel(
+  ctx: CanvasRenderingContext2D,
+  names: string[],
+  angle: number,
+  fx?: { lightPhase?: number; speed?: number },
+) {
   const n = Math.max(names.length, 1);
   const cx = WHEEL_SIZE / 2;
   const cy = WHEEL_SIZE / 2;
-  const R = WHEEL_SIZE / 2 - 8;
+  const R_RIM = WHEEL_SIZE / 2 - 13; // 外金環中心半徑（留邊俾燈膽光暈，唔會被 canvas 邊裁）
+  const R_FACE = R_RIM - 12;         // 扇形面外緣
   const seg = (Math.PI * 2) / n;
+  const lightPhase = fx?.lightPhase ?? 0;
+  const speed = Math.min(1, Math.max(0, fx?.speed ?? 0));
+  const twoPi = Math.PI * 2;
 
   ctx.clearRect(0, 0, WHEEL_SIZE, WHEEL_SIZE);
+
+  // 扇形面（獨立 closure：高速時用低透明度畫多一次殘影，平價 motion blur）
+  const paintFace = (angleOffset: number, alpha: number, withLabels: boolean) => {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle + angleOffset);
+    ctx.globalAlpha = alpha;
+    for (let i = 0; i < n; i++) {
+      const a0 = i * seg;
+      const a1 = a0 + seg;
+      const [edge, core] = i % 2 === 0 ? SEG_GRAD_A : SEG_GRAD_B;
+      const g = ctx.createRadialGradient(0, 0, R_FACE * 0.2, 0, 0, R_FACE);
+      g.addColorStop(0, core);
+      g.addColorStop(1, edge);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, R_FACE, a0, a1);
+      ctx.closePath();
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(245,197,24,0.7)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+
+      // 客人名（沿半径寫，最多 6 字）— 殘影唔畫字（會化）
+      if (withLabels) {
+        const label = (names[i] ?? '').slice(0, 6);
+        if (label) {
+          ctx.save();
+          ctx.rotate(a0 + seg / 2);
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'middle';
+          ctx.font = `600 ${n > 14 ? 17 : 21}px 'Noto Sans TC', sans-serif`;
+          ctx.fillStyle = '#F6EFFF';
+          ctx.shadowColor = 'rgba(0,0,0,0.65)';
+          ctx.shadowBlur = 5;
+          ctx.fillText(label, R_FACE - 14, 0);
+          ctx.restore();
+        }
+      }
+    }
+    // 扇面外緣暗邊（內陰影 feel）
+    ctx.beginPath();
+    ctx.arc(0, 0, R_FACE - 1, 0, twoPi);
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  if (speed > 0.3) paintFace(-0.055 * speed, 0.22 * speed, false); // 拖尾殘影（向後）
+  paintFace(0, 1, true);
+
+  // ── 固定外框（唔跟輪轉）──
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.rotate(angle);
 
-  // 扇形
-  for (let i = 0; i < n; i++) {
-    const a0 = i * seg;
-    const a1 = a0 + seg;
+  // 厚金環（上下漸變出金屬感）
+  const ringG = ctx.createLinearGradient(0, -R_RIM, 0, R_RIM);
+  ringG.addColorStop(0, '#F9E27D');
+  ringG.addColorStop(0.45, GOLD);
+  ringG.addColorStop(0.8, '#C99B0F');
+  ringG.addColorStop(1, '#8A6408');
+  ctx.beginPath();
+  ctx.arc(0, 0, R_RIM, 0, twoPi);
+  ctx.strokeStyle = ringG;
+  ctx.lineWidth = 15;
+  ctx.stroke();
+  // 環兩側暗溝（立體感）
+  for (const rr of [R_RIM - 8, R_RIM + 8]) {
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.arc(0, 0, R, a0, a1);
-    ctx.closePath();
-    ctx.fillStyle = SEG_COLORS[i % 2];
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(245,197,24,0.55)';
-    ctx.lineWidth = 2;
+    ctx.arc(0, 0, rr, 0, twoPi);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 1.4;
     ctx.stroke();
+  }
 
-    // 客人名（沿半径寫，最多 6 字）
-    const label = (names[i] ?? '').slice(0, 6);
-    if (label) {
-      ctx.save();
-      ctx.rotate(a0 + seg / 2);
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.font = `600 ${n > 14 ? 17 : 21}px 'Noto Sans TC', sans-serif`;
-      ctx.fillStyle = '#F3ECFF';
-      ctx.shadowColor = 'rgba(0,0,0,0.6)';
-      ctx.shadowBlur = 4;
-      ctx.fillText(label, R - 18, 0);
-      ctx.restore();
+  // 跑馬燈膽：28 粒追住 lightPhase 行；轉得快燈更亮更多
+  const BULBS = 28;
+  const window_ = 0.14 + speed * 0.1;
+  for (let i = 0; i < BULBS; i++) {
+    const a = (i / BULBS) * twoPi;
+    const ph = (i / BULBS + lightPhase) % 1;
+    const lit = ph < window_;
+    const bx = Math.cos(a) * R_RIM;
+    const by = Math.sin(a) * R_RIM;
+    if (lit) {
+      const glowR = 9 + speed * 6;
+      const gg = ctx.createRadialGradient(bx, by, 0, bx, by, glowR);
+      gg.addColorStop(0, 'rgba(255,242,196,0.95)');
+      gg.addColorStop(0.45, 'rgba(247,215,116,0.5)');
+      gg.addColorStop(1, 'rgba(247,215,116,0)');
+      ctx.beginPath();
+      ctx.arc(bx, by, glowR, 0, twoPi);
+      ctx.fillStyle = gg;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(bx, by, 3.4, 0, twoPi);
+      ctx.fillStyle = '#FFF6D8';
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(bx, by, 2.8, 0, twoPi);
+      ctx.fillStyle = '#6E5514';
+      ctx.fill();
     }
   }
 
-  // 外圈金環＋鉚釘
+  // 內圈雙金線＋12 粒金鑽石（華麗感）
+  const R_DECO = R_FACE * 0.37;
   ctx.beginPath();
-  ctx.arc(0, 0, R, 0, Math.PI * 2);
-  ctx.strokeStyle = GOLD;
-  ctx.lineWidth = 6;
+  ctx.arc(0, 0, R_DECO, 0, twoPi);
+  ctx.strokeStyle = 'rgba(245,197,24,0.55)';
+  ctx.lineWidth = 1.6;
   ctx.stroke();
-  const rivets = 24;
-  for (let i = 0; i < rivets; i++) {
-    const a = (i / rivets) * Math.PI * 2;
-    ctx.beginPath();
-    ctx.arc(Math.cos(a) * R, Math.sin(a) * R, 3.2, 0, Math.PI * 2);
+  ctx.beginPath();
+  ctx.arc(0, 0, R_DECO - 4.5, 0, twoPi);
+  ctx.strokeStyle = 'rgba(245,197,24,0.28)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * twoPi + Math.PI / 12;
+    const dx = Math.cos(a) * R_DECO;
+    const dy = Math.sin(a) * R_DECO;
+    ctx.save();
+    ctx.translate(dx, dy);
+    ctx.rotate(Math.PI / 4);
     ctx.fillStyle = GOLD_SOFT;
-    ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.fillRect(-2.2, -2.2, 4.4, 4.4);
+    ctx.restore();
   }
-  // 內圈金線
-  ctx.beginPath();
-  ctx.arc(0, 0, R * 0.34, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(245,197,24,0.4)';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
   ctx.restore();
 }
 
-/** 煙花粒子（開獎嗰刻爆 3 串；金／粉紅／白） */
+/** 煙花粒子（v2.2.56 加強版：拖尾火星＋金色衝擊波環＋三波錯峰爆；reduced 完全唔爆，同客人 modal 一致） */
 function launchFireworks(canvas: HTMLCanvasElement, reduced: boolean) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return () => undefined;
   const W = (canvas.width = canvas.offsetWidth * 2);
   const H = (canvas.height = canvas.offsetHeight * 2);
-  type P = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number };
+  if (reduced) {
+    // prefers-reduced-motion：唔爆煙花（靜態開獎），只清乾淨塊 canvas
+    ctx.clearRect(0, 0, W, H);
+    return () => undefined;
+  }
+  type P = { x: number; y: number; px: number; py: number; vx: number; vy: number; life: number; max: number; color: string; size: number };
+  type Ring = { x: number; y: number; r: number; vr: number; alpha: number };
   const parts: P[] = [];
-  const colors = [GOLD, GOLD_SOFT, PINK, '#FFFFFF', '#C4B5FD'];
+  const rings: Ring[] = [];
+  const colors = [GOLD, GOLD, GOLD_SOFT, PINK, '#FFFFFF', '#C4B5FD']; // 金重啲，貴氣
   const burst = (bx: number, by: number) => {
-    for (let i = 0; i < 90; i++) {
+    rings.push({ x: bx, y: by, r: 10, vr: 7, alpha: 0.8 });
+    for (let i = 0; i < 110; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = (2 + Math.random() * 6) * (reduced ? 0.6 : 1);
+      const sp = 2 + Math.random() * 6.5;
       parts.push({
-        x: bx, y: by,
+        x: bx, y: by, px: bx, py: by,
         vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5,
-        life: 0, max: 60 + Math.random() * 40,
+        life: 0, max: 65 + Math.random() * 45,
         color: colors[Math.floor(Math.random() * colors.length)],
-        size: 2 + Math.random() * 3.5,
+        size: 1.8 + Math.random() * 3.4,
       });
     }
   };
-  burst(W * 0.3, H * 0.32);
-  burst(W * 0.7, H * 0.28);
-  burst(W * 0.5, H * 0.18);
+  burst(W * 0.28, H * 0.32);
+  // 錯峰第二、三波
+  const timers: number[] = [
+    window.setTimeout(() => burst(W * 0.72, H * 0.28), 240),
+    window.setTimeout(() => burst(W * 0.5, H * 0.15), 500),
+  ];
   let raf = 0;
   let alive = true;
   const tick = () => {
     if (!alive) return;
     ctx.clearRect(0, 0, W, H);
     let active = false;
+    // 衝擊波環（擴散＋淡出）
+    for (const rg of rings) {
+      if (rg.alpha <= 0.02) continue;
+      active = true;
+      rg.r += rg.vr;
+      rg.vr *= 0.965;
+      rg.alpha *= 0.94;
+      ctx.globalAlpha = rg.alpha;
+      ctx.beginPath();
+      ctx.arc(rg.x, rg.y, rg.r, 0, Math.PI * 2);
+      ctx.strokeStyle = GOLD_SOFT;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+    // 拖尾火星
     for (const p of parts) {
       if (p.life >= p.max) continue;
       active = true;
       p.life++;
+      p.px = p.x;
+      p.py = p.y;
       p.x += p.vx;
       p.y += p.vy;
       p.vy += 0.09; // 重力
       p.vx *= 0.985;
       const fade = 1 - p.life / p.max;
+      ctx.globalAlpha = fade * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(p.px, p.py);
+      ctx.lineTo(p.x, p.y);
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = Math.max(0.8, p.size * 0.55);
+      ctx.stroke();
       ctx.globalAlpha = fade;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * (0.5 + fade * 0.5), 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, p.size * (0.4 + fade * 0.6), 0, Math.PI * 2);
       ctx.fillStyle = p.color;
       ctx.fill();
     }
@@ -237,7 +379,9 @@ function launchFireworks(canvas: HTMLCanvasElement, reduced: boolean) {
   raf = requestAnimationFrame(tick);
   return () => {
     alive = false;
+    for (const t of timers) window.clearTimeout(t);
     cancelAnimationFrame(raf);
+    ctx.clearRect(0, 0, W, H); // 早切（抽下一件/重抽）都唔會留「冰封火星」
   };
 }
 
@@ -316,20 +460,54 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     onError: (e) => toast(fmtErr(e), 'error'),
   });
   const sessions = useMemo(() => {
-    const set = new Set<string>([...(sessionsQuery.data ?? []), ...prizes.map((p) => p.session ?? '')]);
+    // v2.2.56：adminListSessions 回 { name, archived }[]（舊 server 回 string[] 都頂得順）
+    const names = (sessionsQuery.data ?? []).map((s) => (typeof s === 'string' ? s : s.name));
+    const set = new Set<string>([...names, ...prizes.map((p) => p.session ?? '')]);
     set.add(activeSession); // 啱啱開嘅新場次（server 回覆前）都要即刻喺下拉見到
     return [...set];
   }, [sessionsQuery.data, prizes, activeSession]);
+  // v2.2.56（老闆指令）：管理員手動歸檔嘅場次（未抽晒都可以放入歷史）
+  const archivedSessions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of sessionsQuery.data ?? []) {
+      if (typeof s !== 'string' && s.archived) set.add(s.name);
+    }
+    return set;
+  }, [sessionsQuery.data]);
   // v2.2.55（老闆指令）：場次分「未抽」／「歷史（已抽晒）」— 歷史＝場內 active 獎品全部抽晒；
-  // 全新空場次（未有獎品）當未抽；全部下架嘅場當未抽（可以再加獎品翻生）
+  // 全新空場次（未有獎品）當未抽；全部下架嘅場當未抽（可以再加獎品翻生）；
+  // v2.2.56：手動歸檔場次一律當歷史
   const historySessions = useMemo(() => {
-    const done = new Set<string>();
+    const done = new Set<string>(archivedSessions);
     for (const s of sessions) {
       const actives = prizes.filter((p) => (p.session ?? '') === s && p.active);
       if (actives.length > 0 && actives.every((p) => remainingOf(p) <= 0)) done.add(s);
     }
     return done;
-  }, [sessions, prizes]);
+  }, [sessions, prizes, archivedSessions]);
+  // v2.2.56：管理員歸檔掣（自動已抽晒嘅場次唔使掣；'' 未分場唔畀歸檔）
+  const { user: me } = useAuth();
+  const isAdmin = me?.role === 'admin';
+  const autoHistory = (() => {
+    const actives = prizes.filter((p) => (p.session ?? '') === activeSession && p.active);
+    return actives.length > 0 && actives.every((p) => remainingOf(p) <= 0);
+  })();
+  const activeArchived = archivedSessions.has(activeSession);
+  const archiveSessionMut = trpc.luckyDraw.adminSetSessionArchived.useMutation();
+  const toggleArchiveSession = async () => {
+    if (!activeSession) return;
+    const target = !activeArchived;
+    if (!window.confirm(target
+      ? `將場次《${activeSession}》放入歷史場次？（獎品照舊抽得，只係分組落歷史）`
+      : `將場次《${activeSession}》放返未抽場次？`)) return;
+    try {
+      await archiveSessionMut.mutateAsync({ name: activeSession, archived: target });
+      toast(target ? '已放入歷史場次' : '已放返未抽場次', 'success');
+      void utils.luckyDraw.adminListSessions.invalidate();
+    } catch (e) {
+      toast(fmtErr(e), 'error');
+    }
+  };
   const handleCreateSession = (name: string) => {
     if (!sessions.includes(name)) createSessionMut.mutate({ name });
   };
@@ -388,14 +566,48 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   const angleRef = useRef(0);
 
   const repaint = useCallback(() => {
-    const ctx = wheelRef.current?.getContext('2d');
+    const canvas = wheelRef.current;
+    if (!canvas) return;
+    const ctx = prepWheelCtx(canvas);
     if (!ctx) return;
-    drawWheel(ctx, wheelNamesRef.current, angleRef.current);
+    // 靜態畫面（reduced-motion）都留一組固定相位嘅燈膽，唔會死黑
+    drawWheel(ctx, wheelNamesRef.current, angleRef.current, { lightPhase: 0.05, speed: 0 });
   }, []);
 
   useEffect(() => {
     if (phase === 'idle') repaint();
   }, [repaint, wheelNames, phase]);
+
+  // v2.2.56 深度美化：閒置環境動畫 — 跑馬燈膽慢慢追位（輪盤唔郁，淨係燈行）；
+  // ~30fps 慳電；reduced-motion／轉緊就唔開 loop（轉緊由 spin tick 自己畫）
+  useEffect(() => {
+    if (reducedMotion || phase === 'spinning') return;
+    const canvas = wheelRef.current;
+    if (!canvas) return;
+    let raf = 0;
+    let live = true;
+    let last = 0;
+    const t0 = performance.now();
+    const loop = (now: number) => {
+      if (!live) return;
+      if (now - last > 33) {
+        last = now;
+        const ctx = prepWheelCtx(canvas);
+        if (ctx) {
+          drawWheel(ctx, wheelNamesRef.current, angleRef.current, {
+            lightPhase: ((now - t0) / 2600) % 1,
+            speed: 0,
+          });
+        }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => {
+      live = false;
+      cancelAnimationFrame(raf);
+    };
+  }, [phase, reducedMotion, wheelNames]);
 
   useEffect(() => () => spinCleanupRef.current?.(), []);
 
@@ -470,7 +682,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     })();
 
     const canvas = wheelRef.current;
-    const ctx = canvas?.getContext('2d');
+    const ctx = canvas ? prepWheelCtx(canvas) : null;
     if (!canvas || !ctx) {
       setPhase('revealed');
       return;
@@ -500,7 +712,12 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     const tick = (now: number) => {
       const p = Math.min(1, (now - t0) / duration);
       angleRef.current = startAngle + (target - startAngle) * easeOut(p);
-      drawWheel(ctx, names, angleRef.current);
+      // v2.2.56：轉速（0..1，開頭快尾段慢）→ 跑馬燈加速＋高速殘影
+      const speedN = Math.pow(1 - p, 4);
+      drawWheel(ctx, names, angleRef.current, {
+        lightPhase: ((now - t0) / 240) % 1,
+        speed: speedN,
+      });
       if (p < 1) {
         raf = requestAnimationFrame(tick);
       } else {
@@ -631,7 +848,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             {/* 場次選擇（成個頁共用：轉場次＝轉獎品池，「下拉列轉場次產品繼續抽」） */}
             <p className="mb-2 flex w-full items-center justify-center gap-2 text-[12.5px] text-txt-2">
               場次
-              <SessionSelect sessions={sessions} value={activeSession} onChange={setActiveSession} onCreate={handleCreateSession} history={historySessions} />
+              <SessionSelect sessions={sessions} value={activeSession} onChange={setActiveSession} onCreate={handleCreateSession} history={historySessions} archived={archivedSessions} />
             </p>
 
             {/* 剩餘獎品計數（按場次計；確定咗就會又減一件） */}
@@ -680,23 +897,60 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             {/* 輪盤本體（煙花層喺 DOM 後出，自然壓頂，唔用 z-index） */}
             <div className="relative mt-4 w-full max-w-[560px]">
               <div className="relative mx-auto aspect-square w-full max-w-[560px]">
-                {/* 頂部金指針 */}
+                {/* 頂部金指針（v2.2.56：寶石款 SVG；轉緊會左右打水，transform only） */}
                 <div
                   aria-hidden="true"
-                  className="absolute left-1/2 top-0 h-0 w-0 -translate-x-1/2 -translate-y-1 border-x-[14px] border-t-[22px] border-x-transparent"
-                  style={{ borderTopColor: GOLD, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))' }}
-                />
+                  className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1"
+                  style={{
+                    filter: 'drop-shadow(0 3px 6px rgba(0,0,0,0.55))',
+                    transformOrigin: '50% 0',
+                    animation: !reducedMotion && phase === 'spinning' ? 'pointerWobble 180ms ease-in-out infinite' : undefined,
+                  }}
+                >
+                  <svg width="34" height="42" viewBox="0 0 34 42" role="presentation">
+                    <defs>
+                      <linearGradient id="pointerGold" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0" stopColor="#F9E27D" />
+                        <stop offset="1" stopColor="#C99B0F" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M17 41 L3 12 Q17 1 31 12 Z" fill="url(#pointerGold)" stroke="#8A6408" strokeWidth="1.5" />
+                    <circle cx="17" cy="13" r="4.6" fill="#FFF6D8" stroke="#8A6408" strokeWidth="1.4" />
+                  </svg>
+                </div>
                 <canvas ref={wheelRef} width={WHEEL_SIZE} height={WHEEL_SIZE} className="h-full w-full" />
-                {/* 中間名顯示 */}
+                {/* 中間名顯示（v2.2.56：旋轉光環＋呼吸光暈，transform/opacity only） */}
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div
-                    className="flex h-[34%] w-[34%] items-center justify-center rounded-full border-2 text-center"
+                    className="relative flex h-[34%] w-[34%] items-center justify-center rounded-full border-2 text-center"
                     style={{
                       borderColor: GOLD,
                       background: 'radial-gradient(circle at 50% 35%, #2B1548 0%, #120C24 70%)',
                       boxShadow: '0 0 40px rgba(245,197,24,0.25), inset 0 0 24px rgba(0,0,0,0.6)',
                     }}
                   >
+                    {!reducedMotion && (
+                      <div
+                        aria-hidden="true"
+                        className="absolute -inset-[7px] rounded-full"
+                        style={{
+                          background: 'conic-gradient(from 0deg, transparent 0deg, rgba(247,215,116,0.75) 35deg, transparent 85deg)',
+                          WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px))',
+                          mask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px))',
+                          animation: 'hubSheen 5s linear infinite',
+                        }}
+                      />
+                    )}
+                    {!reducedMotion && (
+                      <div
+                        aria-hidden="true"
+                        className="absolute -inset-[12px] rounded-full"
+                        style={{
+                          boxShadow: '0 0 48px 10px rgba(245,197,24,0.32)',
+                          animation: 'glowPulse 2.8s ease-in-out infinite',
+                        }}
+                      />
+                    )}
                     <span
                       ref={centerNameRef}
                       className={`px-2 font-serif-tc font-bold leading-tight text-gold ${
@@ -745,7 +999,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             {/* 開獎結果卡 */}
             {phase === 'revealed' && result && (
               <div
-                className="mt-5 w-full max-w-[520px] rounded-2xl border p-5 text-center"
+                className="relative mt-5 w-full max-w-[520px] overflow-hidden rounded-2xl border p-5 text-center"
                 style={{
                   borderColor: 'rgba(245,197,24,0.55)',
                   background: 'linear-gradient(180deg, rgba(245,197,24,0.10), rgba(245,197,24,0.03))',
@@ -753,6 +1007,17 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                   animation: reducedMotion ? undefined : 'luckyPop 420ms cubic-bezier(0.2,1.4,0.4,1)',
                 }}
               >
+                {/* v2.2.56：金光掃過（transform only，一次過） */}
+                {!reducedMotion && (
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-y-0 left-0 w-1/4"
+                    style={{
+                      background: 'linear-gradient(90deg, transparent, rgba(255,246,216,0.25), transparent)',
+                      animation: 'shimmerSweep 1.3s ease-out 180ms 1 both',
+                    }}
+                  />
+                )}
                 <p className="script text-2xl text-gold">Congratulations ✦</p>
                 <p className="mt-1 font-serif-tc text-[26px] font-bold text-txt-1">
                   {result.winner.name}
@@ -1074,8 +1339,14 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
         </div>
       </section>
 
-      {/* 開獎彈出動畫 keyframes（transform/opacity only，跟設計鐵律） */}
-      <style>{`@keyframes luckyPop { 0% { transform: scale(0.7); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }`}</style>
+      {/* 開獎＋中轂＋指針動畫 keyframes（全部 transform/opacity only，跟設計鐵律） */}
+      <style>{`
+@keyframes luckyPop { 0% { transform: scale(0.7); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes hubSheen { to { transform: rotate(1turn); } }
+@keyframes glowPulse { 0%,100% { opacity: 0.45; } 50% { opacity: 0.95; } }
+@keyframes pointerWobble { 0%,100% { transform: translate(-50%, -4px) rotate(-6deg); } 50% { transform: translate(-50%, -4px) rotate(6deg); } }
+@keyframes shimmerSweep { from { transform: translateX(-140%) skewX(-18deg); opacity: 1; } 85% { opacity: 1; } to { transform: translateX(440%) skewX(-18deg); opacity: 0; } }
+      `}</style>
 
       {/* ════════ ③ 獎品管理 ════════ */}
       <PrizeManagerSection
@@ -1085,6 +1356,11 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
         activeSession={activeSession}
         sessions={sessions}
         historySessions={historySessions}
+        archivedSessions={archivedSessions}
+        canArchiveSession={isAdmin && activeSession !== '' && (!autoHistory || activeArchived)}
+        activeSessionArchived={activeArchived}
+        archiveBusy={archiveSessionMut.isPending}
+        onToggleArchive={() => void toggleArchiveSession()}
         onSessionChange={setActiveSession}
         onCreateSession={handleCreateSession}
         onSave={async (input) => {
@@ -1454,21 +1730,25 @@ function NameListPicker({
 // ───────────────────────────── 場次選擇（主抽獎區＋獎品管理共用 state） ─────────────────────────────
 
 /** 文字制下拉：現有 distinct 場次（空字串顯示「未分場」）＋「＋ 新場次」（揀咗彈 input 輸入場次名）。
- *  v2.2.55（老闆指令）：場次一多會亂 — 分兩組：未抽場次喺上、歷史場次（獎品已抽晒）墊底標住。 */
+ *  v2.2.55（老闆指令）：場次一多會亂 — 分兩組：未抽場次喺上、歷史場次（已抽晒／已歸檔）墊底標住。
+ *  v2.2.56：手動歸檔嘅場次後綴寫「已歸檔」（唔好呃人話已抽晒）。 */
 function SessionSelect({
   sessions,
   value,
   onChange,
   onCreate,
   history,
+  archived,
 }: {
   sessions: string[];
   value: string;
   onChange: (session: string) => void;
   /** v2.2.53（老闆指令）：新場次即時持久化（未上傳獎品都留住，同事接力加嘢） */
   onCreate?: (name: string) => void;
-  /** v2.2.55：已抽晒嘅場次名（歷史場次）— 冇傳就全部當未抽 */
+  /** v2.2.55：歷史場次名（已抽晒 ∪ 已歸檔）— 冇傳就全部當未抽 */
   history?: ReadonlySet<string>;
+  /** v2.2.56：其中邊啲係手動歸檔（後綴「已歸檔」；其餘歷史場次後綴「已抽晒」） */
+  archived?: ReadonlySet<string>;
 }) {
   const [making, setMaking] = useState(false);
   const [newName, setNewName] = useState('');
@@ -1516,10 +1796,10 @@ function SessionSelect({
           </option>
         ))}
         {historyOptions.length > 0 && (
-          <optgroup label="歷史場次（已抽晒）">
+          <optgroup label="歷史場次">
             {historyOptions.map((s) => (
               <option key={s === '' ? '__none_history__' : s} value={s}>
-                {s === '' ? '未分場' : s}（已抽晒）
+                {s === '' ? '未分場' : s}（{archived?.has(s) ? '已歸檔' : '已抽晒'}）
               </option>
             ))}
           </optgroup>
@@ -1557,6 +1837,11 @@ function PrizeManagerSection({
   activeSession,
   sessions,
   historySessions,
+  archivedSessions,
+  canArchiveSession,
+  activeSessionArchived,
+  archiveBusy,
+  onToggleArchive,
   onSessionChange,
   onCreateSession,
   onSave,
@@ -1569,6 +1854,13 @@ function PrizeManagerSection({
   sessions: string[];
   /** v2.2.55：已抽晒場次（下拉分組用） */
   historySessions: ReadonlySet<string>;
+  /** v2.2.56：手動歸檔場次（下拉後綴顯示「已歸檔」用） */
+  archivedSessions: ReadonlySet<string>;
+  /** v2.2.56（老闆指令）：管理員手動歸檔場次掣（自動已抽晒／未分場唔顯示） */
+  canArchiveSession: boolean;
+  activeSessionArchived: boolean;
+  archiveBusy: boolean;
+  onToggleArchive: () => void;
   onSessionChange: (session: string) => void;
   onCreateSession: (name: string) => void;
   onSave: (input: {
@@ -1654,7 +1946,19 @@ function PrizeManagerSection({
         <span className="font-mono text-[12px] font-normal text-txt-3">（可加可減；抽中咗嘅會標示）</span>
         <span className="ml-auto flex items-center gap-2 text-[12.5px] font-normal text-txt-2">
           場次
-          <SessionSelect sessions={sessions} value={activeSession} onChange={onSessionChange} onCreate={onCreateSession} history={historySessions} />
+          <SessionSelect sessions={sessions} value={activeSession} onChange={onSessionChange} onCreate={onCreateSession} history={historySessions} archived={archivedSessions} />
+          {canArchiveSession && (
+            <button
+              type="button"
+              onClick={onToggleArchive}
+              disabled={archiveBusy}
+              className="rounded-lg border px-2 py-1 text-[12px] text-txt-3 transition-colors hover:text-gold disabled:opacity-40"
+              style={{ borderColor: 'var(--space-line)' }}
+              title={activeSessionArchived ? '放返未抽場次' : '未抽晒都可以手動放入歷史場次'}
+            >
+              {archiveBusy ? '…' : activeSessionArchived ? '放返未抽' : '放入歷史'}
+            </button>
+          )}
         </span>
       </h3>
       {/* 剩餘獎品計數按場次計（v2.2.55 件數制：剩餘件數／總件數） */}

@@ -504,6 +504,9 @@ export const luckyDrawSessions = pgTable("luckyDrawSessions", {
   createdBy: integer("createdBy"),
   createdByName: varchar("createdByName", { length: 128 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
+  // v2.2.56（老闆指令）：管理員手動歸檔場次（未抽晒都可以放入「歷史場次」；null＝未歸檔）
+  archivedAt: timestamp("archivedAt"),
+  archivedByName: varchar("archivedByName", { length: 128 }),
 });
 
 // 抽獎紀錄：一件獎品抽一次一個中獎人；當日一人最多中一件（server 落 draw 時強制）。
