@@ -36,6 +36,56 @@ export function deviceLabelFromUserAgent(ua: string | null): string {
 }
 
 /**
+ * v2.2.43（老闆指令：後台新增「綁定手機清單」，要「裝置廠牌」同「瀏覽器」分開兩欄）：
+ * UA → { brand, browser }。純字串比對，永遠唔 throw；唔識分就回「其他」款。
+ * 同上面 deviceLabelFromUserAgent 分開——舊嗰個會員詳情／WMS 仲用緊，一字唔郁。
+ * Android 機多數帶型號（Android 14; SM-S918B），抽出嚟對廠牌對照表；
+ * Apple 機 UA 冇型號，廠牌即 Apple。
+ */
+export function deviceInfoFromUserAgent(ua: string | null): { brand: string; browser: string } {
+  if (!ua) return { brand: "不明", browser: "不明" };
+
+  // ── 廠牌 ──
+  let brand = "不明";
+  if (/iPhone/i.test(ua)) brand = "Apple iPhone";
+  else if (/iPad/i.test(ua)) brand = "Apple iPad";
+  else if (/Macintosh|Mac OS X/i.test(ua)) brand = "Apple Mac";
+  else if (/Windows/i.test(ua)) brand = "Windows 電腦";
+  else if (/Android/i.test(ua)) {
+    // 抽型號段：Android 14; SM-S918B）→ 對照常見廠牌；對唔上叫「其他 Android」
+    const model = /Android [\d.]+;\s*([^;)]+)/i.exec(ua)?.[1]?.trim() ?? "";
+    if (/^SM-|SAMSUNG/i.test(model)) brand = "Samsung";
+    else if (/^Pixel/i.test(model)) brand = "Google Pixel";
+    else if (/^(Redmi|POCO|Mi |MIX )/i.test(model)) brand = "Xiaomi";
+    else if (/HUAWEI/i.test(model) || /HUAWEI/i.test(ua)) brand = "Huawei";
+    else if (/HONOR/i.test(model)) brand = "Honor";
+    else if (/^(OPPO|CPH)/i.test(model)) brand = "OPPO";
+    else if (/^(vivo|IQOO|V2\d{3})/i.test(model)) brand = "vivo";
+    else if (/^OnePlus/i.test(model)) brand = "OnePlus";
+    else if (/^(XQ-|SO-)/i.test(model)) brand = "Sony";
+    else if (/^(LG-|LM-)/i.test(model)) brand = "LG";
+    else if (/^(Moto|motorola)/i.test(model)) brand = "Motorola";
+    else if (/^Nothing/i.test(model)) brand = "Nothing";
+    else brand = "其他 Android";
+  } else if (/Linux/i.test(ua)) brand = "Linux 電腦";
+
+  // ── 瀏覽器（次序有講究：in-app 先；Edge／Chrome UA 都帶 Safari 字樣要排尾）──
+  let browser = "其他瀏覽器";
+  if (/FBAN|FBAV|FB_IAB/i.test(ua)) browser = "Facebook 內置";
+  else if (/Instagram/i.test(ua)) browser = "Instagram 內置";
+  else if (/MicroMessenger/i.test(ua)) browser = "微信內置";
+  else if (/Line\//i.test(ua)) browser = "LINE 內置";
+  else if (/SamsungBrowser/i.test(ua)) browser = "Samsung Internet";
+  else if (/Edg(e|A|iOS)?\//i.test(ua)) browser = "Edge";
+  else if (/OPR\/|Opera/i.test(ua)) browser = "Opera";
+  else if (/CriOS|Chrome\//i.test(ua)) browser = "Chrome";
+  else if (/FxiOS|Firefox\//i.test(ua)) browser = "Firefox";
+  else if (/Safari\//i.test(ua)) browser = "Safari";
+
+  return { brand, browser };
+}
+
+/**
  * v2.2.0（合約 §9）：會員直播推送狀態（membersRouter.adminGetPushStatus 同
  * api/wmsMemberAdmin.ts get action 共用，兩邊睇到嘅嘢一致）。
  * 淨回 id／deviceLabel／綁定時間／最近推送；endpoint／p256dh／auth 永遠唔回前端、唔落 log。
@@ -575,6 +625,41 @@ export const membersRouter = createRouter({
       }
       return getMemberPushStatus(input.userId);
     }),
+
+  /** v2.2.43（老闆指令）：全店「綁定手機清單」——客戶名／幾時綁定／裝置廠牌／用咩瀏覽器
+   *  一覽，唔使逐個會員入詳情先睇到。淨回非敏感欄位；
+   *  endpoint／p256dh／auth 永遠唔回前端、唔落 log（安全鐵律）。 */
+  adminListPushDevices: adminProcedure.query(async () => {
+    const db = getDb();
+    const rows = await db
+      .select({
+        id: pushSubscriptions.id,
+        userAgent: pushSubscriptions.userAgent,
+        createdAt: pushSubscriptions.createdAt,
+        lastSentAt: pushSubscriptions.lastSentAt,
+        customerName: users.name,
+        customerPhone: users.phone,
+        customerEmail: users.email,
+      })
+      .from(pushSubscriptions)
+      .innerJoin(users, eq(pushSubscriptions.userId, users.id))
+      .where(eq(pushSubscriptions.active, true))
+      .orderBy(desc(pushSubscriptions.createdAt))
+      .limit(500);
+    return rows.map((r) => {
+      const info = deviceInfoFromUserAgent(r.userAgent);
+      return {
+        id: r.id,
+        customerName: r.customerName,
+        customerPhone: r.customerPhone,
+        customerEmail: r.customerEmail,
+        brand: info.brand,
+        browser: info.browser,
+        boundAt: r.createdAt.toISOString(),
+        lastSentAt: r.lastSentAt ? r.lastSentAt.toISOString() : null,
+      };
+    });
+  }),
 
   /** 幫會員踢走一部已綁定裝置（where id＋userId＋active，唔會郁到別人嘅機） */
   adminRemovePushDevice: adminProcedure
