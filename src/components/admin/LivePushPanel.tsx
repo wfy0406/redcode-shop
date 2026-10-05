@@ -512,9 +512,13 @@ export default function LivePushPanel({
           </div>
         </div>
 
+        {/* v2.2.58（老闆報料：手機欄位彈晒出卡片）：右欄預覽卡條 truncate URL 係 block 元素，
+            min-w-0 經 flex 層傳唔到落去，nowrap 全文嘅 min-content（FB 長網址 ~400px）會吹爆
+            grid 單欄軌道 → 全表單跟住溢出卡片右邊、頁面仲出埋橫 scrollbar。兩個欄 div 補 min-w-0
+            （grid item 自動最小尺寸歸零 → 軌道永遠唔會超過卡片）；無頭 Chrome 352→1400px 全寬度驗證過 */}
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
           {/* 左：表單 */}
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             <div>
               <label htmlFor="lp-date" className={labelCls}>
                 直播日期
@@ -695,7 +699,8 @@ export default function LivePushPanel({
           </div>
 
           {/* 右：即時通知預覽（v2.2.2：撳預覽＝試真通知跳轉，一樣經 live-go 跳板開 FB app） */}
-          <div>
+          {/* v2.2.58：min-w-0 擋住下面 truncate URL 嘅 min-content 吹爆 grid 軌道（詳見上方註解） */}
+          <div className="min-w-0">
             <p className={labelCls}>通知預覽（撳一下＝試真通知跳轉）</p>
             <button
               type="button"
