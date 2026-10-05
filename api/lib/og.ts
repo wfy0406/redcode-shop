@@ -151,6 +151,22 @@ export async function injectProductOg(html: string, id: number, origin: string):
           availability:
             p.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
           itemCondition: "https://schema.org/NewCondition",
+          // SEO（2026-10-06）：Search Console 商家資訊警告——offers 補退貨政策＋運費。
+          // 退貨政策照 /returns 頁：收貨 7 天內、郵寄退貨、退貨運費買家付（破損個案內部酌情）。
+          // 運費 HK$30 係順豐基準價（滿 $350 免運）；正式展示以 Merchant Center 運送設定為準。
+          hasMerchantReturnPolicy: {
+            "@type": "MerchantReturnPolicy",
+            applicableCountry: "HK",
+            returnPolicyCategory: "https://schema.org/MerchantReturnFiniteReturnWindow",
+            merchantReturnDays: 7,
+            returnMethod: "https://schema.org/ReturnByMail",
+            returnFees: "https://schema.org/ReturnShippingFees",
+          },
+          shippingDetails: {
+            "@type": "OfferShippingDetails",
+            shippingDestination: { "@type": "DefinedRegion", addressCountry: "HK" },
+            shippingRate: { "@type": "MonetaryAmount", value: "30.00", currency: "HKD" },
+          },
         },
       };
       // SEO（v2.2.21 E2）：BreadcrumbList JSON-LD（首頁 > 全部貨品 > 產品名），

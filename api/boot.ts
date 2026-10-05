@@ -293,7 +293,8 @@ app.get("/sitemap.xml", async (c) => {
     msg.replace(/https?:\/\/[^\s)】]+/gi, "〈網址已遮罩〉").slice(0, 300);
   const homeUrl = `<url><loc>https://redcode.red/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`;
   // v2.2.21（項目 F1）：公開靜態頁——weekly 0.6；首頁＋產品頁現有邏輯唔郁
-  const staticUrls = ["/products", "/live", "/about", "/vip", "/sf-stations", "/privacy", "/terms"].map(
+  // 2026-10-06：加 /returns（退換貨政策頁，Google Merchant Center 審批會睇）
+  const staticUrls = ["/products", "/live", "/about", "/vip", "/sf-stations", "/privacy", "/terms", "/returns"].map(
     (path) =>
       `<url><loc>https://redcode.red${path}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>`,
   );
