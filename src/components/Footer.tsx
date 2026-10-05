@@ -129,6 +129,10 @@ export default function Footer() {
             <Link to="/terms" className="transition-colors hover:text-pink-soft">
               服務條款（Terms of Service）
             </Link>
+            {/* 2026-10-06：退換貨政策（Google Merchant Center 要求全站可見） */}
+            <Link to="/returns" className="transition-colors hover:text-pink-soft">
+              退換貨政策（Returns Policy）
+            </Link>
           </div>
         </div>
       </div>

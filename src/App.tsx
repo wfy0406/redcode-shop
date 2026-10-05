@@ -25,6 +25,7 @@ const Vip = lazy(() => import('@/pages/Vip')); // v2.1.0：會員制度介紹頁
 const VipVerify = lazy(() => import('@/pages/VipVerify')); // v2.2.0：公開會員證書驗證頁
 const SfStations = lazy(() => import('@/pages/SfStations')); // v2.2.0：公開順豐站點查詢頁
 const Faq = lazy(() => import('@/pages/Faq')); // 常見問題 FAQ（接收通知教學＋Q&A 手風琴）
+const Returns = lazy(() => import('@/pages/Returns')); // 2026-10-06：退換貨政策頁（配合 Google Merchant Center 免費刊登要求）
 
 /**
  * Lazy 頁載入中嘅全屏 fallback：品牌色底 #0A0614＋粉紅 #FE017E「載入中…」，
@@ -93,6 +94,7 @@ export default function App() {
             <Route path="receipt/:orderId" element={<Receipt />} />
             <Route path="privacy" element={<Privacy />} />
             <Route path="terms" element={<Terms />} />
+            <Route path="returns" element={<Returns />} />
             <Route path="admin" element={<Admin />} />
           </Route>
         </Routes>

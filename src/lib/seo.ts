@@ -76,6 +76,12 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     title: '服務條款｜RedCode Fashion Design',
     description: 'RedCode Fashion Design 服務條款——購物、退換貨同會員制度嘅使用細則。',
   },
+  // 2026-10-06：退換貨政策頁（Google Merchant Center 免費刊登要求網站公開退貨政策）
+  '/returns': {
+    title: '退換貨政策｜RedCode Fashion Design',
+    description:
+      'RedCode 退換貨政策——收貨 7 天內：貨品破損包換包退（寄出前拍照紀錄），尺寸不合原則上可換貨。',
+  },
   '/admin': {
     title: '管理後台｜RedCode Fashion Design',
     description: 'RedCode 店舖管理後台（內部使用）。',
