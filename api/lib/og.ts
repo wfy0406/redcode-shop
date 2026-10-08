@@ -159,13 +159,24 @@ export async function injectProductOg(html: string, id: number, origin: string):
             applicableCountry: "HK",
             returnPolicyCategory: "https://schema.org/MerchantReturnFiniteReturnWindow",
             merchantReturnDays: 7,
+            merchantReturnLink: "https://redcode.red/returns",
             returnMethod: "https://schema.org/ReturnByMail",
             returnFees: "https://schema.org/ReturnShippingFees",
+            // SEO（2026-10-08）：Search Console 建議欄位——退貨運費金額。
+            // 買家付順豐到付，基準價 HK$30（同樓上運費一致）。
+            returnShippingFeesAmount: { "@type": "MonetaryAmount", value: "30.00", currency: "HKD" },
           },
           shippingDetails: {
             "@type": "OfferShippingDetails",
             shippingDestination: { "@type": "DefinedRegion", addressCountry: "HK" },
             shippingRate: { "@type": "MonetaryAmount", value: "30.00", currency: "HKD" },
+            // SEO（2026-10-08）：Search Console 建議欄位——送貨時間。
+            // 跟老闆 Merchant Center 填嘅數：處理 3–12 天（一至五）＋ 運送 2–4 天（一至日）＝ 總共 5–16 工作天。
+            deliveryTime: {
+              "@type": "ShippingDeliveryTime",
+              handlingTime: { "@type": "QuantitativeValue", minValue: 3, maxValue: 12, unitCode: "DAY" },
+              transitTime: { "@type": "QuantitativeValue", minValue: 2, maxValue: 4, unitCode: "DAY" },
+            },
           },
         },
       };
