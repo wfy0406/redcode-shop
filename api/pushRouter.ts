@@ -25,7 +25,7 @@ import { getDb } from "./queries/connection";
 // v2.2.21：resolveFbThumb 唔再喺度用——縮圖搬咗去按需 endpoint /api/live-thumb/:id
 // （boot.ts），摷圖／cache 喺嗰邊做；呢度淨係出相對路徑畀前端。
 import { canonicalForId, embedForId, probeFbThumb, resolveFbVideoId } from "./fbVideo";
-import { pushCampaigns, pushSubscriptions, users } from "@db/schema";
+import { pushCampaigns, pushDeliveries, pushSubscriptions, users } from "@db/schema";
 import {
   authedProcedure,
   createRouter,
@@ -719,6 +719,11 @@ export const pushRouter = createRouter({
       if (stillLive) {
         return { ok: false as const, message: "呢場直播仲顯示緊，請先按「落播」再刪" };
       }
+      // 2026-10-08 修正（老闆報告：刪除直播回顧 HTTP 500）：pushDeliveries.campaignId
+      // 外鍵冇 onDelete cascade——批次只要發過通知，就有逐部裝置發送紀錄指住佢，
+      // 直接刪批次 DB 會拒絕兼炒 500。所以先刪晒呢個批次嘅發送紀錄，再刪批次本身。
+      // 同 Facebook 嗰邊刪唔刪條片完全無關（官網淨係儲咗條 URL 做文字）。
+      await db.delete(pushDeliveries).where(eq(pushDeliveries.campaignId, input.id));
       await db.delete(pushCampaigns).where(eq(pushCampaigns.id, input.id));
       void logAudit({
         actorId: ctx.user.userId,

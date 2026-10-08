@@ -26,7 +26,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { pushCampaigns } from "@db/schema";
+import { pushCampaigns, pushDeliveries } from "@db/schema";
 import { logAudit } from "./audit";
 import {
   MAX_EXTEND_MINUTES,
@@ -394,6 +394,10 @@ export async function wmsLivePushDelete(c: Context) {
   if (stillLive) {
     return c.json({ ok: false, error: "呢場直播仲顯示緊，請先落播再刪" }, 409);
   }
+  // 2026-10-08 修正（老闆報告：WMS 官網中心刪回顧 HTTP 500）：pushDeliveries.campaignId
+  // 外鍵冇 onDelete cascade——批次發過通知就有逐部裝置發送紀錄指住佢，直接刪批次
+  // DB 會拒絕兼炒 500。先刪晒發送紀錄再刪批次；同 Facebook 刪唔刪片無關。
+  await db.delete(pushDeliveries).where(eq(pushDeliveries.campaignId, id));
   await db.delete(pushCampaigns).where(eq(pushCampaigns.id, id));
   void logAudit({
     actorId: null,
