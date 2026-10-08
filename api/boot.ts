@@ -12,7 +12,7 @@ import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
-import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
+import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushDeliveries, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
 import { evictFbThumb, probeFbThumb, resolveFbThumb } from "./fbVideo";
@@ -74,6 +74,8 @@ app.post("/api/wms/live-push/list", wmsLivePushList);
 app.post("/api/wms/live-push/end", wmsLivePushEnd);
 app.post("/api/wms/live-push/extend", wmsLivePushExtend);
 app.post("/api/wms/live-push/delete", wmsLivePushDelete);
+// 2026-10-08（老闆指令）：逐部裝置發送明細——WMS 撳「失敗 N」睇邊個／點解失敗
+app.post("/api/wms/live-push/deliveries", wmsLivePushDeliveries);
 app.post("/api/wms/live-push/move", wmsLivePushMove);
 app.post("/api/wms/live-push/preview", wmsLivePushPreview);
 

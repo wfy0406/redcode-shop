@@ -16,6 +16,9 @@
  * ─ POST /api/wms/live-push/delete {secret, id, byName} → 刪除直播回顧
  *     （v2.2.5 老闆指令：WMS 官網中心同官網後台一樣可以落播＋刪回顧；
  *       顯示緊嘅直播要先落播先刪到；pending/sending 唔准刪）
+ * ─ POST /api/wms/live-push/deliveries {secret, id} → 逐部裝置發送明細
+ *     （2026-10-08 老闆指令：WMS 官網中心要撳入去睇「邊個失敗／咩事失敗」；
+ *       淨回會員名＋裝置型號＋成敗＋原因類別＋時間——endpoint/keys 永遠唔回唔落 log）
  * ─ POST /api/wms/live-push/preview {secret, url} → 連結檢查
  *     （v2.2.8：WMS 推送頁都可以即場知條 FB link 官網播唔播到；
  *       淨係 resolve，唔寫 DB、唔落 audit——條 URL 未確認推送唔好留痕）
@@ -26,7 +29,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { pushCampaigns, pushDeliveries } from "@db/schema";
+import { pushCampaigns, pushDeliveries, pushSubscriptions, users } from "@db/schema";
 import { logAudit } from "./audit";
 import {
   MAX_EXTEND_MINUTES,
@@ -410,6 +413,58 @@ export async function wmsLivePushDelete(c: Context) {
   });
   console.log(`[wms] live-push delete #${id}`);
   return c.json({ ok: true, id });
+}
+
+/** POST /api/wms/live-push/deliveries：逐部裝置發送明細（2026-10-08 老闆指令）
+ *  WMS 官網中心撳「成功 X／失敗 Y」彈窗用呢個——邊個失敗＋點解失敗一覽。
+ *  安全鐵律：endpoint／keys 永遠唔回唔落 log；淨係經 subscriptionId 對位回裝置資料。 */
+export async function wmsLivePushDeliveries(c: Context) {
+  const r = await readJsonWithSecret(c);
+  if ("res" in r) return r.res;
+  const b = r.b;
+  const id = typeof b.id === "number" && Number.isInteger(b.id) && b.id > 0 ? b.id : null;
+  if (!id) return c.json({ ok: false, error: "id 必填（正整數）" }, 400);
+
+  const db = getDb();
+  const campaign = await db.query.pushCampaigns.findFirst({
+    where: eq(pushCampaigns.id, id),
+    columns: { id: true },
+  });
+  if (!campaign) {
+    return c.json({ ok: false, error: `推送批次 #${id} 唔存在` }, 404);
+  }
+  // 每部裝置一行：會員名（訂閱可能冇 user → null）＋裝置型號/UA＋成敗＋原因類別
+  const rows = await db
+    .select({
+      id: pushDeliveries.id,
+      ok: pushDeliveries.ok,
+      reason: pushDeliveries.reason,
+      sentAt: pushDeliveries.sentAt,
+      subActive: pushSubscriptions.active,
+      deviceModel: pushSubscriptions.deviceModel,
+      userAgent: pushSubscriptions.userAgent,
+      userName: users.name,
+    })
+    .from(pushDeliveries)
+    .innerJoin(pushSubscriptions, eq(pushDeliveries.subscriptionId, pushSubscriptions.id))
+    .leftJoin(users, eq(pushSubscriptions.userId, users.id))
+    .where(eq(pushDeliveries.campaignId, id))
+    .orderBy(desc(pushDeliveries.sentAt));
+  console.log(`[wms] live-push deliveries #${id}（${rows.length} 行）`);
+  return c.json({
+    ok: true,
+    id,
+    rows: rows.map((r) => ({
+      id: r.id,
+      userName: r.userName ?? null,
+      deviceModel: r.deviceModel ?? null,
+      userAgent: r.userAgent ?? null,
+      subActive: r.subActive,
+      ok: r.ok,
+      reason: r.reason ?? null,
+      sentAt: r.sentAt.toISOString(),
+    })),
+  });
 }
 
 /** POST /api/wms/live-push/move：直播回顧上移／下移一級（v2.2.16 老闆指令） */
