@@ -14,7 +14,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DEAD_STATUSES = ["pending_payment", "cancelled", "rejected"] as const;
 // 已審批＝approved（連 legacy shipped/completed 一齊計；2026-07-30 Glo 要求嘅「已審批訂單數」用）
-const APPROVED_STATUSES = ["approved", "shipped", "completed"];
+// as const 先保到字面 union——pgEnum 欄嘅 inArray 唔食 string[]
+const APPROVED_STATUSES = ["approved", "shipped", "completed"] as const;
 
 /** HKT 今日 00:00 對應嘅 UTC Date */
 function hktTodayStartUtc(): Date {
@@ -178,7 +179,7 @@ export const analyticsRouter = createRouter({
         .where(
           and(
             gte(orders.createdAt, rangeStart),
-            ...(rangeEnd ? [lt(orders.createdAt, rangeEnd)] : []),
+            rangeEnd ? lt(orders.createdAt, rangeEnd) : undefined,
             inArray(orders.status, APPROVED_STATUSES),
           ),
         );

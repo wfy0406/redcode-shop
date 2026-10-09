@@ -139,16 +139,6 @@ export async function getMemberPushStatus(userId: number): Promise<{
   };
 }
 
-/** 由 userId 攞顯示名（audit detail 要落管理員名；搵唔到就「#id」兜底） */
-async function userNameOf(userId: number): Promise<string> {
-  const db = getDb();
-  const [u] = await db
-    .select({ name: users.name })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  return u?.name ?? `#${userId}`;
-}
 
 /**
  * 會員列表 —— staff（員工）＋ admin 可用（2026-07-29 起：員工都可以睇同改會員資料）

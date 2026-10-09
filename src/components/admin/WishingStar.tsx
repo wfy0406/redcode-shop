@@ -2,7 +2,7 @@
  * §3.7 許願星 loading —— 金色四角星旋轉閃爍（唔用 spinner）
  * star-spin keyframes 喺 index.css 全局定義。
  */
-export default function WishingStar({ size = 16 }: { size?: number }) {
+export default function WishingStar({ size = 16, spinning = true }: { size?: number; spinning?: boolean }) {
   return (
     <span
       className="inline-flex animate-pulse items-center justify-center"
@@ -14,7 +14,7 @@ export default function WishingStar({ size = 16 }: { size?: number }) {
         height={size}
         viewBox="0 0 24 24"
         fill="none"
-        style={{ animation: 'star-spin 1.2s linear infinite' }}
+        style={spinning ? { animation: 'star-spin 1.2s linear infinite' } : undefined}
       >
         <path
           d="M12 1.5 L14.2 9.8 L22.5 12 L14.2 14.2 L12 22.5 L9.8 14.2 L1.5 12 L9.8 9.8 Z"

@@ -1,21 +1,33 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { getDb } from "./queries/connection";
-import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, paymentProofs, products, promoCodes, users, wmsSyncLog } from "@db/schema";
-import { createRouter, authedProcedure, staffProcedure } from "./middleware";
+import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, paymentProofs, products, promoCodes, sfStations, users, wmsSyncLog } from "@db/schema";
+import { createRouter, authedProcedure, publicProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
 import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
 import { sendOrderReviewAlertEmail } from "./email";
 import { logAudit } from "./audit";
-import { sendOrderApprovedEmail, sendOrderPendingEmail, orderVipEmailInfo } from "./email";
+import { sendOrderApprovedEmail, sendOrderPendingEmail, orderVipEmailInfo, sendGuestOrderEmail, siteUrl } from "./email";
 import {
   computeCheckoutQuote,
+  getShippingRules,
   normalizeDeliveryMethod,
   normalizeRegion,
   recomputeVipTierInBackground,
 } from "./vip";
+import { getAirwallexConfig } from "./airwallex";
+import {
+  GUEST_LOOKUP_FAIL_MESSAGE,
+  GUEST_ORDER_TTL_MS,
+  RateLimiter,
+  clientIpFromRequest,
+  decideGuestShipping,
+  guestTokenEquals,
+  memberPhoneMatches,
+  normalizeGuestPhone,
+} from "./guestUtils";
 
 const orderStatusEnum = z.enum([
   "pending_payment",
@@ -37,6 +49,52 @@ const deliveryMethodEnum = z.enum([
   "SF_STATION",
   "SF_LOCKER",
 ]);
+
+// ===== 訪客購買（Guest Checkout，2026-10-09）rate limit buckets =====
+// simple in-memory sliding window（server 重啟清零可接受，契約 v1.0 §1）：
+// 落單同一 IP 10 分鐘最多 5 張；查單／token 查同一 IP 每分鐘 10 次。
+const guestCreateLimiter = new RateLimiter(5, 10 * 60 * 1000);
+const guestLookupLimiter = new RateLimiter(10, 60 * 1000);
+
+/** 查單／付款頁共用嘅訪客單輸出（契約 v1.1 §2/§4）：secondsLeft／canPay 即時重算 */
+async function guestOrderPayload(
+  order: typeof orders.$inferSelect & {
+    items: (typeof orderItems.$inferSelect)[];
+  },
+  opts: { includeToken: boolean },
+) {
+  const nowMs = Date.now();
+  const expiresMs = order.expiresAt?.getTime() ?? null;
+  const secondsLeft =
+    order.status === "pending_payment" && expiresMs !== null
+      ? Math.max(0, Math.floor((expiresMs - nowMs) / 1000))
+      : 0;
+  // canPay 要即時問 Airwallex 配置（設定被閂咗就唔畀付，前端顯示「即時付款維護中」）
+  const cfg = await getAirwallexConfig();
+  return {
+    orderNo: order.orderNo,
+    status: order.status,
+    total: order.total,
+    items: order.items.map((it) => ({
+      // productId 畀前端「重新落單」重灌購物車用（已逾時態；order-lookup.md §4.2）
+      productId: it.productId,
+      productName: it.productName,
+      size: it.size,
+      price: it.price,
+      quantity: it.quantity,
+    })),
+    deliveryMethod: order.deliveryMethod,
+    address: order.address,
+    stationName: order.stationName,
+    createdAt: order.createdAt.toISOString(),
+    expiresAt: order.expiresAt?.toISOString() ?? null,
+    paidAt: order.paidAt?.toISOString() ?? null,
+    secondsLeft,
+    canPay: order.status === "pending_payment" && secondsLeft > 0 && cfg !== null,
+    // guestToken 只喺電話核實通過後（guestLookup）先返；guestByToken 唔返（契約 §4）
+    ...(opts.includeToken ? { guestToken: order.guestToken } : {}),
+  };
+}
 
 function generateOrderNo(): string {
   const now = new Date();
@@ -109,14 +167,20 @@ async function attachProofCore(
       with: { items: true },
     });
     if (!order) return;
-    const user = await db.query.users.findFirst({ where: eq(users.id, order.userId) });
-    if (!user) return;
+    // 2026-10-09（訪客購買）：訪客單 userId=NULL——唔好再查 users，用落單快照頂上
+    const user = order.userId != null
+      ? await db.query.users.findFirst({ where: eq(users.id, order.userId) })
+      : null;
+    const customerName = user?.name ?? order.guestName;
+    const customerPhone = user?.phone ?? order.guestPhone;
+    const customerEmail = user?.email ?? order.guestEmail;
+    if (!customerName || !customerPhone) return;
     const r = await sendOrderReviewAlertEmail({
       orderNo: order.orderNo,
       createdAt: order.createdAt,
-      customerName: user.name,
-      customerPhone: user.phone,
-      customerEmail: user.email,
+      customerName,
+      customerPhone,
+      customerEmail,
       delivery: {
         method: order.deliveryMethod,
         pickupPoint: order.pickupPoint,
@@ -377,6 +441,349 @@ export const ordersRouter = createRouter({
       return created;
     }),
 
+  /**
+   * 訪客落單（2026-10-09 訪客購買 Guest Checkout，契約 v1.0 §1）：
+   * 唔使登入；**只限 Airwallex 即時付款**（未配置＝唔開得單，唔准手動上傳單據）。
+   * server 重算金額（唔准信前端）：冇 VIP、冇優惠碼、region 固定 HK；
+   * 免運只有「滿額＋自取點」一條路（decideGuestShipping，同 vip.ts 檔頭規則嘅訪客子集）。
+   * 落單即扣庫存（transaction＋conditional update 防超賣），30 分鐘未付 orderSweeper 自動取消＋回庫存。
+   */
+  createGuest: publicProcedure
+    .input(
+      z.object({
+        items: z
+          .array(
+            z.object({
+              productId: z.number().int().positive(),
+              size: z.string().max(64).optional(),
+              quantity: z.number().int().positive().max(99),
+            }),
+          )
+          .min(1, "至少要揀一件貨")
+          .max(20, "一張單最多 20 項貨品"),
+        name: z.string().trim().min(1, "請填客戶名").max(64),
+        phone: z.string().min(1, "請填電話").max(32),
+        email: z.email("Email 格式唔啱").max(255),
+        deliveryMethod: z.enum(["address", "sf_station", "sf_locker"]),
+        address: z.string().max(500).optional(),
+        stationId: z.string().trim().max(64).optional(),
+        note: z.string().max(500).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      // ① 落單 rate limit：同一 IP 10 分鐘最多 5 張訪客單
+      if (!guestCreateLimiter.allow(clientIpFromRequest(ctx.req))) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "落單太頻密，請幾分鐘後再試",
+        });
+      }
+      // ② 訪客單只收即時付款：Airwallex 未配置就唔開得單（唔准落手動單）
+      const cfg = await getAirwallexConfig();
+      if (!cfg) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "即時付款暫時未能使用，請稍後再試",
+        });
+      }
+      // ③ 電話 normalize（純 8 位）；格式唔啱即擋
+      const phone = normalizeGuestPhone(input.phone);
+      if (!phone) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "電話號碼格式唔啱（請輸入香港 8 位數字電話）",
+        });
+      }
+      const email = input.email.trim().toLowerCase();
+      const db = getDb();
+
+      // ④ 取貨方式校驗：上門要地址；自取要有效站點（存在＋active＋HK 區）
+      const deliveryMethod = input.deliveryMethod;
+      let address: string | null = null;
+      let stationId: string | null = null;
+      let stationName: string | null = null;
+      if (deliveryMethod === "address") {
+        address = input.address?.trim() || null;
+        if (!address) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "送貨上門要填收貨地址" });
+        }
+      } else {
+        if (!input.stationId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "請揀自取站點" });
+        }
+        const station = await db.query.sfStations.findFirst({
+          where: eq(sfStations.id, input.stationId),
+        });
+        if (!station || !station.active) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "站點唔存在或已停用" });
+        }
+        if (station.region !== "HK") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "站點同收件地區唔啱，請重新揀過" });
+        }
+        stationId = station.id;
+        stationName = station.name;
+      }
+
+      // ⑤ 商品校驗＋server 重算小計（整數港元，同會員單口徑）
+      const productIds = [...new Set(input.items.map((i) => i.productId))];
+      const productRows = await db.select().from(products).where(inArray(products.id, productIds));
+      const productMap = new Map(productRows.map((p) => [p.id, p]));
+      for (const item of input.items) {
+        const p = productMap.get(item.productId);
+        if (!p) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `搵唔到商品 #${item.productId}` });
+        }
+        if (isDelisted(p)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `《${p.name}》已經下架，請移除後再結帳`,
+          });
+        }
+      }
+      const subtotal = input.items.reduce(
+        (sum, item) =>
+          sum + (productMap.get(item.productId)!.discountPrice ?? productMap.get(item.productId)!.price) * item.quantity,
+        0,
+      );
+
+      // ⑥ 免運判定（訪客：冇 VIP；只有滿額＋自取點先免運，上門永遠到付）
+      const rules = await getShippingRules();
+      const shipping = decideGuestShipping(rules, deliveryMethod, subtotal * 100);
+
+      // ⑦ 單號（RC+日期+4 位隨機，撞號重生）＋ 30 分鐘付款死線 ＋ 查單 token
+      let orderNo = generateOrderNo();
+      for (let i = 0; i < 10; i++) {
+        const dup = await db.query.orders.findFirst({ where: eq(orders.orderNo, orderNo) });
+        if (!dup) break;
+        orderNo = generateOrderNo();
+      }
+      const guestToken = randomUUID();
+      const expiresAt = new Date(Date.now() + GUEST_ORDER_TTL_MS);
+
+      // ⑧ transaction：逐項 conditional 扣庫存（防超賣）＋insert order＋items
+      const orderId = await db.transaction(async (tx) => {
+        for (const item of input.items) {
+          const deducted = await tx
+            .update(products)
+            .set({ stock: sql`${products.stock} - ${item.quantity}` })
+            .where(and(eq(products.id, item.productId), gte(products.stock, item.quantity)))
+            .returning({ id: products.id });
+          if (deducted.length === 0) {
+            const p = productMap.get(item.productId)!;
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `《${p.name}》庫存不足（淨返 ${p.stock} 件）`,
+            });
+          }
+        }
+        const [{ id }] = await tx
+          .insert(orders)
+          .values({
+            orderNo,
+            // 訪客單：userId=NULL，客戶資料落快照欄；paymentChannel 鎖死 airwallex
+            userId: null,
+            status: "pending_payment",
+            total: subtotal,
+            address,
+            note: input.note?.trim() || null,
+            promoCode: null,
+            discountAmount: 0,
+            deliveryMethod,
+            pickupPoint: stationName,
+            region: "HK",
+            stationId,
+            stationName,
+            shippingFree: shipping.shippingFree,
+            vipTierAtPurchase: null,
+            vipDiscountCents: 0,
+            remark: shipping.remarks.length > 0 ? shipping.remarks.join("；") : null,
+            paymentChannel: "airwallex",
+            guestName: input.name,
+            guestPhone: phone,
+            guestEmail: email,
+            guestToken,
+            expiresAt,
+          })
+          .returning({ id: orders.id });
+        await tx.insert(orderItems).values(
+          input.items.map((item) => {
+            const p = productMap.get(item.productId)!;
+            return {
+              orderId: id,
+              productId: item.productId,
+              productName: p.name,
+              sku: p.sku,
+              size: item.size ?? null,
+              price: p.discountPrice ?? p.price,
+              quantity: item.quantity,
+            };
+          }),
+        );
+        return id;
+      });
+
+      // ⑨ 訪客確認信（never-throw）：呢封信係訪客嘅命根——魔法連結直達付款頁；
+      // 寄失敗唔阻落單，結果寫入 audit detail 方便後台排查
+      const createdAt = new Date();
+      const magicUrl = `${siteUrl()}/#/guest-payment?orderNo=${orderNo}&token=${guestToken}`;
+      const emailResult = await sendGuestOrderEmail({
+        to: email,
+        name: input.name,
+        orderNo,
+        total: subtotal,
+        createdAt,
+        expiresAt,
+        items: input.items.map((item) => {
+          const p = productMap.get(item.productId)!;
+          return {
+            productName: p.name,
+            size: item.size ?? null,
+            price: p.discountPrice ?? p.price,
+            quantity: item.quantity,
+          };
+        }),
+        magicUrl,
+      });
+      const emailNote = emailResult.ok
+        ? `，確認信已寄出至 ${email}`
+        : `，確認信寄出失敗（${emailResult.error ?? "未知原因"}）`;
+
+      // ⑩ 審計留底（**唔准寫 guestToken**——token 只經回應＋email 魔法連結送出）
+      void logAudit({
+        actorId: null,
+        actorRole: "guest",
+        actorNameFallback: `訪客 ${input.name}`,
+        action: "order.createGuest",
+        targetType: "order",
+        targetId: orderNo,
+        detail: `訪客落單 ${orderNo}，${input.items.length} 項貨，合計 HK$${subtotal}，${deliveryLabel(deliveryMethod, stationName)}${shipping.shippingFree ? "，免運" : ""}，30 分鐘付款保留（${expiresAt.toISOString()} 前）${emailNote}`,
+      });
+
+      return {
+        orderId,
+        orderNo,
+        guestToken,
+        total: subtotal,
+        expiresAt: expiresAt.toISOString(),
+      };
+    }),
+
+  /**
+   * 查單（契約 v1.0 §2，2026-10-09 擴展到會員單）：雙因子＝訂單編號＋落單電話
+   * （orderNo 只有 4 位隨機，唔可以齋單號查）。訪客單同會員單都搵到：
+   *  - 訪客單（userId 空）：對 guestPhone，核實後返完整 payload ＋ guestToken（畀前端即刻去開付款）
+   *  - 會員單：對會員帳號電話（8 位／852 變體都接受），核實後只返基本資料
+   *    （kind: 'member'，冇 items 冇 token）——詳情要登入會員先睇到，順勢引導登入
+   * 唔中 → 統一 NOT_FOUND 訊息（唔好分開話邊樣錯、唔好話係咪會員單，防單號枚舉偷睇）。
+   */
+  guestLookup: publicProcedure
+    .input(z.object({ orderNo: z.string().trim().min(1).max(32), phone: z.string().min(1).max(32) }))
+    .query(async ({ ctx, input }) => {
+      if (!guestLookupLimiter.allow(clientIpFromRequest(ctx.req))) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "查詢太頻密，請一分鐘後再試",
+        });
+      }
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.orderNo, input.orderNo),
+        with: { items: true, user: { columns: { phone: true } } },
+      });
+      if (!order) {
+        throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
+      }
+      // 會員單：核實帳號電話，只返基本資料（引導登入睇詳情）
+      if (order.userId != null) {
+        if (!memberPhoneMatches(order.user?.phone, input.phone)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
+        }
+        return {
+          kind: "member" as const,
+          orderNo: order.orderNo,
+          status: order.status,
+          createdAt: order.createdAt.toISOString(),
+        };
+      }
+      // 訪客單：核實落單電話，返完整 payload
+      const phone = normalizeGuestPhone(input.phone);
+      if (!phone || order.guestPhone !== phone) {
+        throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
+      }
+      return { kind: "guest" as const, ...guestOrderPayload(order, { includeToken: true }) };
+    }),
+
+  /**
+   * 訪客付款／狀態頁查單（契約 v1.1 §4）：憑 email 魔法連結／落單回應嘅 guestToken 查。
+   * token 用 constant-time 比對（防時序旁路）；唔中 → 同一 NOT_FOUND 訊息。
+   */
+  guestByToken: publicProcedure
+    .input(z.object({ orderNo: z.string().trim().min(1).max(32), token: z.string().trim().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      if (!guestLookupLimiter.allow(clientIpFromRequest(ctx.req))) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "查詢太頻密，請一分鐘後再試",
+        });
+      }
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: and(eq(orders.orderNo, input.orderNo), isNull(orders.userId)),
+        with: { items: true },
+      });
+      if (!order || !guestTokenEquals(order.guestToken ?? "", input.token)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
+      }
+      return guestOrderPayload(order, { includeToken: false });
+    }),
+
+  /**
+   * 訪客單移入會員旗下（2026-10-09 查單擴展）：
+   * 會員登入後憑 orderNo＋guestToken（查單／魔法連結已核實過嘅能力憑證）認領訪客單。
+   * 只改 userId——寄送方式、地址、站點、金額全部照舊（用戶明確要求：按原有方式寄送）。
+   * 已綁其他帳號 → CONFLICT；已綁自己 → already:true（idempotent）；token 唔中 → 統一 NOT_FOUND。
+   * guestToken 永遠唔落 audit detail（安全規則）。
+   */
+  claimGuestOrder: authedProcedure
+    .input(z.object({ orderNo: z.string().trim().min(1).max(32), guestToken: z.string().trim().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.orderNo, input.orderNo),
+      });
+      if (!order || !guestTokenEquals(order.guestToken ?? "", input.guestToken)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
+      }
+      if (order.userId === ctx.user.userId) {
+        return { ok: true as const, already: true };
+      }
+      if (order.userId != null) {
+        throw new TRPCError({ code: "CONFLICT", message: "呢張單已經綁定咗另一個帳號" });
+      }
+      // 條件式 update 防 race：兩個帳號同時認領，只得一個成功
+      const claimed = await db
+        .update(orders)
+        .set({ userId: ctx.user.userId })
+        .where(and(eq(orders.id, order.id), isNull(orders.userId)))
+        .returning({ id: orders.id });
+      if (claimed.length === 0) {
+        throw new TRPCError({ code: "CONFLICT", message: "呢張單已經綁定咗另一個帳號" });
+      }
+      const member = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+        columns: { name: true },
+      });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.claim_guest",
+        targetType: "order",
+        targetId: order.orderNo,
+        detail: `會員「${member?.name ?? ctx.user.userId}」將訪客訂單 ${order.orderNo} 移入旗下（寄送方式同地址照舊）`,
+      });
+      return { ok: true as const, already: false };
+    }),
+
   myOrders: authedProcedure.query(async ({ ctx }) => {
     const db = getDb();
     const rows = await db.query.orders.findMany({
@@ -386,7 +793,7 @@ export const ordersRouter = createRouter({
     });
     // v2.2.46（直播抽獎）：中獎訂單掛返獎品資料出嚟，我的訂單會顯示「中獎框」
     const orderIds = rows.map((o) => o.id);
-    const prizeMap = new Map<number, { name: string; imagePath: string; drawDate: string }>();
+    const prizeMap = new Map<number, { name: string | null; imagePath: string | null; drawDate: string | null }>();
     if (orderIds.length > 0) {
       const wins = await db
         .select({
@@ -574,22 +981,29 @@ export const ordersRouter = createRouter({
         with: { items: true },
       });
       // v2.1.0（VIP+免運）：訂單一確認收款，背景重算會員 VIP 級別（本年度已付款消費達標即升級）
-      if (input.approve && reviewedOrder) {
+      // 2026-10-09（訪客購買）：訪客單 userId=NULL，冇 VIP 體系，唔使重算
+      if (input.approve && reviewedOrder && reviewedOrder.userId != null) {
         recomputeVipTierInBackground(reviewedOrder.userId, reviewedOrder.orderNo);
       }
       // 已確認通知 email（2026-08-04 第二版）：批准嗰刻寄出，附訂單單據 HTML 附件；
       // 結果寫埋入日誌 detail（已寄出／寄出失敗／冇綁 Email），等客人話收唔到嗰陣後台即刻查到原因
       let emailNote = "";
       if (input.approve && reviewedOrder) {
-        const member = await db.query.users.findFirst({
-          where: eq(users.id, reviewedOrder.userId),
-          columns: { name: true, email: true, phone: true },
-        });
-        if (member?.email) {
+        // 2026-10-09（訪客購買）：訪客單用落單快照（name/phone/email）；員工代傳截圖嘅訪客單都行到呢度
+        const member = reviewedOrder.userId != null
+          ? await db.query.users.findFirst({
+              where: eq(users.id, reviewedOrder.userId),
+              columns: { name: true, email: true, phone: true },
+            })
+          : null;
+        const recipient = member?.email ?? reviewedOrder.guestEmail;
+        const recipientName = member?.name ?? reviewedOrder.guestName;
+        const recipientPhone = member?.phone ?? reviewedOrder.guestPhone;
+        if (recipient && recipientName) {
           const result = await sendOrderApprovedEmail({
-            to: member.email,
-            name: member.name,
-            phone: member.phone,
+            to: recipient,
+            name: recipientName,
+            phone: recipientPhone ?? "",
             orderNo: reviewedOrder.orderNo,
             createdAt: reviewedOrder.createdAt,
             items: reviewedOrder.items.map((it) => ({
@@ -608,10 +1022,10 @@ export const ordersRouter = createRouter({
             },
           });
           emailNote = result.ok
-            ? `；確認信＋單據已寄出至 ${member.email}`
+            ? `；確認信＋單據已寄出至 ${recipient}`
             : `；確認信寄出失敗（${result.error ?? "未知原因"}）`;
         } else {
-          emailNote = "；會員冇綁 Email，冇寄確認信";
+          emailNote = "；客戶冇 Email，冇寄確認信";
         }
       }
       void logAudit({
@@ -653,18 +1067,27 @@ export const ordersRouter = createRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "訂單已經處理咗" });
       }
       // v2.1.0（VIP+免運）：確認收款後背景重算 VIP 級別
-      recomputeVipTierInBackground(order.userId, order.orderNo);
+      // 2026-10-09（訪客購買）：訪客網上付款單都行呢條路——userId=NULL 冇 VIP，唔使重算
+      if (order.userId != null) {
+        recomputeVipTierInBackground(order.userId, order.orderNo);
+      }
       // 已確認通知 email：同截圖批准一致，批准嗰刻寄出，附訂單單據 HTML 附件
+      // 2026-10-09（訪客購買）：訪客單用落單快照做收件人
       let emailNote = "";
-      const member = await db.query.users.findFirst({
-        where: eq(users.id, order.userId),
-        columns: { name: true, email: true, phone: true },
-      });
-      if (member?.email) {
+      const member = order.userId != null
+        ? await db.query.users.findFirst({
+            where: eq(users.id, order.userId),
+            columns: { name: true, email: true, phone: true },
+          })
+        : null;
+      const recipient = member?.email ?? order.guestEmail;
+      const recipientName = member?.name ?? order.guestName;
+      const recipientPhone = member?.phone ?? order.guestPhone;
+      if (recipient && recipientName) {
         const result = await sendOrderApprovedEmail({
-          to: member.email,
-          name: member.name,
-          phone: member.phone,
+          to: recipient,
+          name: recipientName,
+          phone: recipientPhone ?? "",
           orderNo: order.orderNo,
           createdAt: order.createdAt,
           items: order.items.map((it) => ({
@@ -683,10 +1106,10 @@ export const ordersRouter = createRouter({
           },
         });
         emailNote = result.ok
-          ? `；確認信＋單據已寄出至 ${member.email}`
+          ? `；確認信＋單據已寄出至 ${recipient}`
           : `；確認信寄出失敗（${result.error ?? "未知原因"}）`;
       } else {
-        emailNote = "；會員冇綁 Email，冇寄確認信";
+        emailNote = "；客戶冇 Email，冇寄確認信";
       }
       void logAudit({
         actorId: ctx.user.userId,
@@ -912,16 +1335,19 @@ export const ordersRouter = createRouter({
             nextPromoCode = null;
           } else {
             // 每人限用檢查：數呢個帳號嘅其他訂單用過呢個碼幾多次（呢張單唔計）
-            const [{ n: myUses }] = await tx
-              .select({ n: sql<number>`count(*)::int` })
-              .from(orders)
-              .where(
-                and(
-                  eq(orders.promoCode, promoInput.toUpperCase()),
-                  eq(orders.userId, order.userId),
-                  ne(orders.id, order.id),
-                ),
-              );
+            // 2026-10-09（訪客購買）：訪客單 userId=NULL——優惠碼係會員體系，直接當 0 次
+            const [{ n: myUses }] = order.userId != null
+              ? await tx
+                  .select({ n: sql<number>`count(*)::int` })
+                  .from(orders)
+                  .where(
+                    and(
+                      eq(orders.promoCode, promoInput.toUpperCase()),
+                      eq(orders.userId, order.userId),
+                      ne(orders.id, order.id),
+                    ),
+                  )
+              : [{ n: 0 }];
             const resolved = await resolvePromoDiscount(tx, promoInput, subtotal, myUses);
             const bumped = await tx
               .update(promoCodes)

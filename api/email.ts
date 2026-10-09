@@ -944,6 +944,96 @@ export async function sendOrderCancelledEmail(args: {
 }
 
 /**
+ * ⑥b 訪客落單確認信（2026-10-09 訪客購買 Guest Checkout）：
+ * 訪客冇帳號，呢封信係佢嘅命根——入面嘅魔法連結（orderNo＋guestToken）可以
+ * 直達訪客付款／狀態頁補付款；30 分鐘付款保留死線白紙黑字寫明。
+ * never-throw：寄失敗唔阻落單（caller 將結果寫入 audit detail）。
+ */
+export async function sendGuestOrderEmail(args: {
+  to: string;
+  name: string;
+  orderNo: string;
+  total: number;
+  createdAt: Date | string;
+  /** 付款保留死線（落單＋30 分鐘） */
+  expiresAt: Date | string;
+  items: OrderEmailItem[];
+  /** 魔法連結：/#/guest-payment?orderNo=…&token=…（token 唔會喺信內其他地方顯示） */
+  magicUrl: string;
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">多謝你喺 RedCode 落單！你嘅訂單已經建立，貨品已為你預留，請喺付款保留期內完成網上付款：</p>
+      ${infoBox([
+        ["訂單編號", mono(orderNo)],
+        ["落單時間", fmtDateHK(args.createdAt)],
+        ["付款死線", `<span style="color:${ERROR};font-weight:700;">${fmtDateHK(args.expiresAt)} 前（30 分鐘內）</span>`],
+      ])}
+      ${itemsTable(args.items)}
+      ${totalsBlock(args.total, 0)}
+      ${ctaButton("💳 立即網上付款", args.magicUrl)}
+      <p style="margin:4px 0 0;text-align:center;font-size:12.5px;line-height:1.9;color:${INK_SOFT};">支援信用卡／AlipayHK／FPS／PayMe，由 Airwallex 安全處理，本站唔會儲存你嘅卡資料。</p>
+      ${warnBox("溫馨提示：訪客訂單保留 <b>30 分鐘</b>——逾時未付款訂單會自動取消，貨品會放返出嚟發售。")}
+      ${note(`之後想查呢張單：到 ${escapeHtml(siteUrl())} 「我的訂單」頁下面嘅「訪客訂單查詢」，輸入訂單編號＋落單電話就睇到；或者直接撳上面嘅付款連結。`)}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】訂單 ${args.orderNo} 待付款 — 請於 30 分鐘內完成付款`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo} 待付款，30 分鐘內未完成付款會自動取消`,
+        kicker: "REDCODE HK直播台 · 訪客訂單待付款",
+        title: "訂單待付款",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌訪客確認信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/**
+ * ⑥c 訪客訂單取消信（2026-10-09）：30 分鐘付款保留期過咗，orderSweeper 自動取消嗰刻寄出。
+ * 簡短版（契約 §Sweeper）：單號＋「庫存已釋出，歡迎重新落單」。never-throw。
+ */
+export async function sendGuestOrderCancelledEmail(args: {
+  to: string;
+  name: string;
+  orderNo: string;
+  total: number;
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">你嘅訂單因為落單後 <b>30 分鐘</b>內未完成網上付款，系統已經自動取消，預留咗嘅貨品已放返出嚟發售：</p>
+      ${infoBox([
+        ["訂單編號", mono(orderNo)],
+        ["取消原因", `<span style="color:${ERROR};">超過 30 分鐘未完成付款</span>`],
+        ["訂單總額", fmtMoney(args.total)],
+      ])}
+      <p style="margin:22px 0 0;">呢張訂單唔使再付款。想買返嘅話，歡迎隨時再落單——貨品以最新庫存為準。</p>
+      ${ctaButton("再去逛逛", `${siteUrl()}/#/products`)}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】訂單 ${args.orderNo} 已取消 — 超過 30 分鐘未完成付款`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo} 已取消（超過 30 分鐘未完成付款），庫存已釋出`,
+        kicker: "REDCODE HK直播台 · 訂單取消",
+        title: "訂單已取消",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌訪客取消信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/**
  * ⑦ 網上付款成功確認（2026-09 Airwallex 網上付款新增）：
  * webhook 確認收款成功、訂單轉 payment_review 嗰刻即寄畀客人。
  * 同截圖流程匯合——同事照舊人手確認，確認後會再收到 sendOrderApprovedEmail。

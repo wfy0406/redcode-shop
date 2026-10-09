@@ -1,4 +1,4 @@
-import type { Product, ProductCategory } from '@contracts/types';
+import type { ProductCategory } from '@contracts/types';
 
 /**
  * shop-utils —— 統一「卡片形產品」嘅資料形狀同 demo 數據
@@ -89,7 +89,12 @@ export function toCardProduct(p: ShopProduct): CardProduct {
 export function demoShopProducts(): ShopProduct[] {
   const DAY = 24 * 60 * 60 * 1000;
   const now = Date.now();
-  const demo: Array<Omit<Product, 'listedDate'> & { listedDaysAgo: number }> = [
+  // 示範數據行：sizes 用陣列（輸出嗰陣 join 做 DB 字串格式）；listedDaysAgo 係「幾多日前列出」
+  type DemoProductRow = {
+    id: number; sku: string; name: string; image: string; price: number;
+    discountPrice?: number; sizes?: string[]; category?: ProductCategory; stock: number; listedDaysAgo: number;
+  };
+  const demo: DemoProductRow[] = [
     { id: 1, sku: 'RC-KNIT-001', name: '粉色針織開衫外套', image: '/product-1.jpg', price: 268, discountPrice: 228, sizes: ['S', 'M', 'L'], category: 'top', stock: 30, listedDaysAgo: 0 },
     { id: 2, sku: 'RC-TOP-002', name: '白色雪紡荷葉邊恤衫', image: '/product-2.jpg', price: 198, sizes: ['S', 'M', 'L'], category: 'top', stock: 25, listedDaysAgo: 1 },
     { id: 3, sku: 'RC-DRESS-003', name: '黑色顯瘦連身裙', image: '/product-3.jpg', price: 328, discountPrice: 288, sizes: ['S', 'M', 'L', 'XL'], category: 'dress', stock: 18, listedDaysAgo: 2 },

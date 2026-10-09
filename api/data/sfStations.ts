@@ -28,7 +28,7 @@ export interface SharedStationRow {
 export function mapSharedStations(
   region: "HK" | "MO",
   rows: SharedStationRow[],
-): Omit<SfStation, "active">[] {
+): (Omit<SfStation, "active" | "officialCode" | "lat" | "lng" | "phone" | "serviceTime"> & Partial<Pick<SfStation, "officialCode" | "lat" | "lng" | "phone" | "serviceTime">>)[] {
   return rows.map((r, i) => ({
     id: `${region}-${String(i + 1).padStart(4, "0")}`,
     region,
@@ -44,7 +44,7 @@ export function mapSharedStations(
  * 樣例清單（開機 seed 用；正式清單倒入後呢啲會被同 ID 覆蓋／或由後台管理）。
  * id 規則：{region}-{區碼}-{序號}（自訂，唔係順豐官方編號）。
  */
-export const SF_STATIONS: Omit<SfStation, "active" | "sortOrder">[] = [
+export const SF_STATIONS: (Omit<SfStation, "active" | "sortOrder" | "officialCode" | "lat" | "lng" | "phone" | "serviceTime"> & Partial<Pick<SfStation, "officialCode" | "lat" | "lng" | "phone" | "serviceTime">>)[] = [
   // ── 香港・順豐站 ──
   { id: "HK-CW-001", region: "HK", type: "SF_STATION", name: "順豐站－中西區（上環）", district: "中西區", address: "上環干諾道中 168-200 號信德中心地下" },
   { id: "HK-WC-001", region: "HK", type: "SF_STATION", name: "順豐站－灣仔（駱克道）", district: "灣仔區", address: "灣仔駱克道 188 號地下" },

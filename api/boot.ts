@@ -89,42 +89,68 @@ app.post("/api/wms/member-admin", wmsMemberAdmin);
 //    2026-09-29 三 bug hotfix：回跳同時背景向 Airwallex 主動查證 intent 狀態——
 //    webhook 正常幾秒內到，但萬一遲到／漏咗（未開 webhook、設定錯、網絡抖下），
 //    客人跳返嚟呢刻已經即時補狀態＋轉 WMS；唔阻跳轉，失敗淨係 log，webhook 照舊兜底。
-app.get("/api/airwallex/return", (c) => {
+app.get("/api/airwallex/return", async (c) => {
   const orderId = c.req.query("orderId") ?? "";
   // 只收純數字 orderId，防 open redirect／query 注入
   if (!/^\d+$/.test(orderId)) {
     return c.redirect("/#/", 302);
   }
-  void (async () => {
+  // 2026-10-09 訪客購買：訪客單（userId IS NULL）跳去專用 #/guest-payment（會員嘅 #/payment 有登入閘）。
+  // guestToken 經 gt query 帶入（createGuestPayment 嘅 returnUrl 已綁）；快速查一次攞 orderNo，
+  // 失敗/會員單就照舊落 #/payment。gt 唔係純 token 格式就當冇。
+  const gt = c.req.query("gt") ?? "";
+  if (/^[0-9a-f-]{36}$/i.test(gt)) {
     try {
-      const cfg = await getAirwallexConfig();
-      if (!cfg) return;
-      const db = getDb();
-      const order = await db.query.orders.findFirst({
+      const db0 = getDb();
+      const o = await db0.query.orders.findFirst({
         where: eq(orders.id, Number(orderId)),
+        columns: { orderNo: true, userId: true, guestToken: true },
       });
-      // webhook 先到（已轉態）／唔係待付款 → 唔使查
-      if (!order || order.status !== "pending_payment") return;
-      if (!order.airwallexIntentId) {
-        console.log(`[airwallex] return 查證：訂單 ${order.orderNo} 未記 intent id，等 webhook 處理`);
-        return;
-      }
-      const intent = await retrievePaymentIntent(cfg, order.airwallexIntentId);
-      console.log(
-        `[airwallex] return 查證：訂單 ${order.orderNo}，intent ${order.airwallexIntentId} 狀態 ${intent.status}`,
-      );
-      if (intent.status === "SUCCEEDED") {
-        const handled = await handlePaidOnline(order.orderNo, intent.id, "return-verify");
-        if (handled) {
-          console.log(`[airwallex] return 查證確認收款：訂單 ${order.orderNo}（webhook 未到，主動補咗）`);
-        }
+      if (o && o.userId === null && o.guestToken === gt) {
+        // 背景查證照跑（下面個 void async 一樣會行），跳轉去訪客付款頁
+        void verifyReturnPayment(Number(orderId));
+        return c.redirect(
+          `/#/guest-payment?orderNo=${encodeURIComponent(o.orderNo)}&token=${gt}&ap=done`,
+          302,
+        );
       }
     } catch (e) {
-      console.error("[airwallex] return 主動查證出錯:", e);
+      console.error("[airwallex] return 訪客跳轉查單出錯:", e);
     }
-  })().catch(() => {});
+  }
+  void verifyReturnPayment(Number(orderId));
   return c.redirect(`/#/payment?orderId=${orderId}&ap=done`, 302);
 });
+
+/** 回跳嗰刻嘅背景主動查證（抽出嚟畀訪客/會員兩條跳轉路共用；唔阻 302，失敗淨係 log） */
+async function verifyReturnPayment(orderId: number): Promise<void> {
+  try {
+    const cfg = await getAirwallexConfig();
+    if (!cfg) return;
+    const db = getDb();
+    const order = await db.query.orders.findFirst({
+      where: eq(orders.id, orderId),
+    });
+    // webhook 先到（已轉態）／唔係待付款 → 唔使查
+    if (!order || order.status !== "pending_payment") return;
+    if (!order.airwallexIntentId) {
+      console.log(`[airwallex] return 查證：訂單 ${order.orderNo} 未記 intent id，等 webhook 處理`);
+      return;
+    }
+    const intent = await retrievePaymentIntent(cfg, order.airwallexIntentId);
+    console.log(
+      `[airwallex] return 查證：訂單 ${order.orderNo}，intent ${order.airwallexIntentId} 狀態 ${intent.status}`,
+    );
+    if (intent.status === "SUCCEEDED") {
+      const handled = await handlePaidOnline(order.orderNo, intent.id, "return-verify");
+      if (handled) {
+        console.log(`[airwallex] return 查證確認收款：訂單 ${order.orderNo}（webhook 未到，主動補咗）`);
+      }
+    }
+  } catch (e) {
+    console.error("[airwallex] return 主動查證出錯:", e);
+  }
+}
 
 /**
  * 網上收款確認嘅統一入口（2026-09-29 三 bug hotfix）——webhook 同 return 主動查證都用：
@@ -179,10 +205,19 @@ async function handlePaidOnline(
         with: { items: true },
       });
       if (!order) return;
-      const user = await db.query.users.findFirst({
-        where: eq(users.id, order.userId),
-      });
-      if (!user) return;
+      // 2026-10-09 訪客購買：訪客單 userId=NULL——客人資料改由 guest* 快照攞，
+      // 唔查 users 表（查唔到仲會 throw）。會員單行為一字不變。
+      let memberUser: { name: string; email: string | null; phone: string } | null = null;
+      if (order.userId !== null && order.userId !== undefined) {
+        memberUser = (await db.query.users.findFirst({
+          where: eq(users.id, order.userId),
+          columns: { name: true, email: true, phone: true },
+        })) ?? null;
+        if (!memberUser) return; // 會員單搵唔到會員＝異常，照舊收檔（唔好亂寄）
+      }
+      const custName = memberUser?.name ?? order.guestName ?? "客人";
+      const custEmail = memberUser?.email ?? order.guestEmail ?? null;
+      const custPhone = memberUser?.phone ?? order.guestPhone ?? "";
       const items = order.items.map((it) => ({
         productName: it.productName,
         size: it.size,
@@ -194,10 +229,10 @@ async function handlePaidOnline(
         pickupPoint: order.pickupPoint,
         address: order.address,
       };
-      // 客人通知（有綁 email 先寄）
-      if (user.email) {
+      // 客人通知（有 email 先寄——訪客單 guestEmail 必填，所以訪客一定收得到）
+      if (custEmail) {
         const r = await sendOrderPaidOnlineEmail({
-          to: user.email,
+          to: custEmail,
           orderNo: order.orderNo,
           items,
           total: order.total,
@@ -214,9 +249,9 @@ async function handlePaidOnline(
       const r2 = await sendOrderReviewAlertEmail({
         orderNo: order.orderNo,
         createdAt: order.createdAt,
-        customerName: user.name,
-        customerPhone: user.phone,
-        customerEmail: user.email,
+        customerName: order.userId ? custName : `【訪客】${custName}`,
+        customerPhone: custPhone,
+        customerEmail: custEmail,
         delivery,
         note: order.note,
         promoCode: order.promoCode,
@@ -505,7 +540,7 @@ app.get("/api/live-thumb/:id", async (c) => {
     // LRU：中咗就 delete+set 搬去尾（最近用），等逐出時淨係趕最耐冇用嗰啲
     liveThumbCache.delete(id);
     liveThumbCache.set(id, hit);
-    return c.body(hit.bytes, 200, {
+    return c.body(new Uint8Array(hit.bytes), 200, {
       "Content-Type": hit.contentType,
       "Cache-Control": "public, max-age=86400",
     });
@@ -514,7 +549,7 @@ app.get("/api/live-thumb/:id", async (c) => {
   const diskHit = await readLiveThumbDisk(id);
   if (diskHit) {
     cacheLiveThumbMem(id, diskHit.bytes, diskHit.contentType);
-    return c.body(diskHit.bytes, 200, {
+    return c.body(new Uint8Array(diskHit.bytes), 200, {
       "Content-Type": diskHit.contentType,
       "Cache-Control": "public, max-age=86400",
     });
@@ -570,7 +605,7 @@ app.get("/api/live-thumb/:id", async (c) => {
     if (got) {
       cacheLiveThumbMem(id, got.bytes, got.contentType);
       writeLiveThumbDisk(id, got.bytes, got.contentType);
-      return c.body(got.bytes, 200, {
+      return c.body(new Uint8Array(got.bytes), 200, {
         "Content-Type": got.contentType,
         "Cache-Control": "public, max-age=86400",
       });

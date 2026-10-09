@@ -274,13 +274,24 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     remark: order.remark ?? null,
     shippingFree: order.shippingFree ?? false,
     vipTierAtPurchase: order.vipTierAtPurchase ?? null,
-    customer: {
-      name: order.user.name,
-      phone: order.user.phone,
-      email: order.user.email ?? null,
-      age: order.user.age ?? null,
-      registeredAt: hktDate(order.user.createdAt),
-    },
+    customer: order.user
+      ? {
+          name: order.user.name,
+          phone: order.user.phone,
+          email: order.user.email ?? null,
+          age: order.user.age ?? null,
+          registeredAt: hktDate(order.user.createdAt),
+        }
+      : // 2026-10-09 訪客單：冇會員物件，客戶資料由 guest* 快照出（WMS 唔使改）
+        {
+          name: order.guestName ?? "訪客",
+          phone: order.guestPhone ?? "",
+          email: order.guestEmail ?? null,
+          age: null,
+          registeredAt: null,
+          // 訪客旗標：WMS 批准落訂單管理時備註要寫明【官網訂單】【訪客單】（老闆指示）
+          isGuest: true,
+        },
     items: order.items.map((i) => {
       const p = productImageMap.get(i.productId);
       const paths = p ? (p.photos && p.photos.length ? p.photos : [p.image]) : [];
@@ -307,6 +318,11 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     const item = order.items[i];
     const remark = [
       `官網訂單 ${order.orderNo}${lineCount > 1 ? `（共 ${lineCount} 件，第 ${i + 1} 件）` : ""}`,
+      // 2026-10-09 訪客單（老闆指示）：訪客單備註要寫明【訪客單】＋訪客電話，
+      // WMS 批准入訂單管理時會變「【官網訂單】官網訂單 RC…｜【訪客單】…｜訪客電話：…」——官網＋訪客＋電話齊晒
+      order.userId == null
+        ? `【訪客單】訪客購買（無會員帳號，即時網上付款）｜訪客電話：${order.guestPhone ?? "未填"}`
+        : null,
       // 2026-09-29 三 bug hotfix：Airwallex 網上收款嘅單冇付款截圖——寫明收款已確認＋intent 單號，
       // 同事審批時唔使等截圖，直接去 Airwallex 後台對 merchant_order_id（＝官網單號）
       order.paymentChannel === "airwallex"
@@ -327,8 +343,8 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
       .filter(Boolean)
       .join("｜");
     const r = await callReceiveWebhook({
-      customerName: order.user.name,
-      customerPhone: order.user.phone,
+      customerName: order.user ? order.user.name : `【訪客】${order.guestName ?? "客人"}`,
+      customerPhone: order.user ? order.user.phone : (order.guestPhone ?? ""),
       // 2026-07-28 WMS《貨號欄位修正請求》：productCode 改送貨號 sku，
       // 有尺寸就「貨號-尺寸」（例如 B133-S）；舊單萬一冇 sku 就跟返產品名稱
       productCode: item.size
@@ -475,7 +491,10 @@ export async function wmsReviewCallback(c: Context) {
   // 之前呢段漏咗，WMS 自動批嘅單全部冇寄到確認信（客人收唔到嘅根因）
   let emailNote = "";
   if (decision === "approved") {
-    const member = order.user;
+    // 2026-10-09 訪客單：冇會員物件就用 guest* 快照（訪客單 guestEmail 必填）
+    const member = order.user ?? (order.guestEmail
+      ? { email: order.guestEmail, name: order.guestName ?? "客人", phone: order.guestPhone ?? "" }
+      : null);
     if (member?.email) {
       const result = await sendOrderApprovedEmail({
         to: member.email,
@@ -508,7 +527,7 @@ export async function wmsReviewCallback(c: Context) {
   // 審計日誌：WMS 回傳嘅審批結果（批准／要求重傳／取消）落後台「日誌」頁翻查
   // v2.1.0（VIP+免運）：WMS 批准＝訂單確認收款，背景重算會員 VIP 級別（同後台人手批准一致）
   if (decision === "approved") {
-    recomputeVipTierInBackground(order.userId, order.orderNo);
+    if (order.userId != null) recomputeVipTierInBackground(order.userId, order.orderNo); // 訪客單冇 VIP 可計
   }
   void logAudit({
     actorId: null,

@@ -1,8 +1,12 @@
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, products, users } from "@db/schema";
 import { logAudit } from "./audit";
-import { sendOrderCancelledEmail, orderVipEmailInfo } from "./email";
+import {
+  sendOrderCancelledEmail,
+  sendGuestOrderCancelledEmail,
+  orderVipEmailInfo,
+} from "./email";
 
 /**
  * 待付款訂單自動取消（2026-07-30 Glo 規則；2026-08-04 起收緊做 2 天）
@@ -15,14 +19,79 @@ import { sendOrderCancelledEmail, orderVipEmailInfo } from "./email";
  */
 
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
-const SWEEP_INTERVAL_MS = 30 * 60 * 1000;
+// 2026-10-09 訪客購買：訪客單付款保留 30 分鐘（expiresAt），掃描間隔加密到 5 分鐘——
+// 舊 30 分鐘間隔對 30 分鐘 TTL 太粗（最差 60 分鐘先釋放庫存）。會員 48h 規則不變。
+const GUEST_TTL_GRACE_MS = 0; // expiresAt 一到即合資格取消（唔加 grace，契約講死 30 分鐘）
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/** 訪客單（userId IS NULL）過期取消：同會員同一套 transaction＋回庫存，信行 guest 版 */
+async function sweepExpiredGuestOrders(now = new Date()): Promise<number> {
+  const db = getDb();
+  const expired = await db.query.orders.findMany({
+    where: and(
+      isNull(orders.userId),
+      eq(orders.status, "pending_payment"),
+      lt(orders.expiresAt, new Date(now.getTime() - GUEST_TTL_GRACE_MS)),
+    ),
+    with: { items: true },
+  });
+
+  let cancelled = 0;
+  for (const order of expired) {
+    try {
+      await db.transaction(async (tx) => {
+        // 雙重檢查：同一秒客人啱啱俾咗錢（webhook 轉咗態）就唔好郁
+        const [updated] = await tx
+          .update(orders)
+          .set({ status: "cancelled", updatedAt: new Date() })
+          .where(and(eq(orders.id, order.id), eq(orders.status, "pending_payment")))
+          .returning({ id: orders.id });
+        if (!updated) return;
+        for (const item of order.items) {
+          await tx
+            .update(products)
+            .set({ stock: sql`${products.stock} + ${item.quantity}` })
+            .where(eq(products.id, item.productId));
+        }
+      });
+      cancelled += 1;
+      // 訪客取消信（簡短版）：guestEmail 必填所以一定有得寄；失敗唔靜默，寫入 audit detail
+      let emailNote = "";
+      if (order.guestEmail) {
+        const result = await sendGuestOrderCancelledEmail({
+          to: order.guestEmail,
+          name: order.guestName ?? "客人",
+          orderNo: order.orderNo,
+          total: order.total,
+        });
+        emailNote = result.ok
+          ? `，取消信已寄出至 ${order.guestEmail}`
+          : `，取消信寄出失敗（${result.error ?? "未知原因"}）`;
+      } else {
+        emailNote = "，訪客單冇 Email，冇寄取消信";
+      }
+      void logAudit({
+        actorId: null,
+        actorRole: "system",
+        action: "order.autoCancelGuest",
+        targetType: "order",
+        targetId: order.orderNo,
+        detail: `訪客訂單 ${order.orderNo} 30 分鐘付款保留期已過（expiresAt ${order.expiresAt?.toISOString()}），系統自動取消（庫存已加返）${emailNote}`,
+      });
+    } catch (e) {
+      console.error(`[sweeper] 取消訪客訂單 ${order.orderNo} 失敗:`, e);
+    }
+  }
+  return cancelled;
+}
 
 /** 掃描＋取消逾期待付款訂單，回傳取消咗幾多張 */
 export async function sweepExpiredPendingOrders(now = new Date()): Promise<number> {
   const db = getDb();
   const cutoff = new Date(now.getTime() - TWO_DAYS_MS);
   const expired = await db.query.orders.findMany({
-    where: and(eq(orders.status, "pending_payment"), lt(orders.createdAt, cutoff)),
+    // 訪客單（userId IS NULL）由 30 分鐘掃描（sweepExpiredGuestOrders）處理，呢度淨係掃會員單
+    where: and(eq(orders.status, "pending_payment"), lt(orders.createdAt, cutoff), isNotNull(orders.userId)),
     with: { items: true },
   });
 
@@ -48,10 +117,13 @@ export async function sweepExpiredPendingOrders(now = new Date()): Promise<numbe
       cancelled += 1;
       // 訂單取消信（2026-08-06 Glo 要求）：會員有綁 email 先寄；寄信結果寫入日誌 detail，方便後台排查
       let emailNote = "";
-      const member = await db.query.users.findFirst({
-        where: eq(users.id, order.userId),
-        columns: { name: true, email: true },
-      });
+      // where 已隔咗訪客單，但類型上 userId 仲係 nullable——呢度窄化返（防線）
+      const member = order.userId == null
+        ? null
+        : await db.query.users.findFirst({
+            where: eq(users.id, order.userId),
+            columns: { name: true, email: true },
+          });
       if (member?.email) {
         const result = await sendOrderCancelledEmail({
           to: member.email,
@@ -90,12 +162,13 @@ export async function sweepExpiredPendingOrders(now = new Date()): Promise<numbe
   return cancelled;
 }
 
-/** 開機啟動：即刻掃一次，之後每 30 分鐘掃一次 */
+/** 開機啟動：即刻掃一次，之後每 5 分鐘掃一次（會員 48h＋訪客 30min 兩條件同一輪掃） */
 export function startOrderSweeper(): void {
   const run = (label: string) =>
-    sweepExpiredPendingOrders()
-      .then((n) => {
+    Promise.all([sweepExpiredPendingOrders(), sweepExpiredGuestOrders()])
+      .then(([n, g]) => {
         if (n > 0) console.log(`[sweeper] ${label}：自動取消咗 ${n} 張逾期待付款訂單`);
+        if (g > 0) console.log(`[sweeper] ${label}：自動取消咗 ${g} 張訪客逾時訂單（30 分鐘未付款）`);
       })
       .catch((e) => console.error(`[sweeper] ${label}失敗:`, e));
 

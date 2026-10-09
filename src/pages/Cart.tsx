@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { Trash2 } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
-import LoginPrompt from '@/components/cart/LoginPrompt';
+import GuestCartView from '@/components/cart/GuestCartView';
 import QuantityStepper from '@/components/cart/QuantityStepper';
 import { WishStarSpinner } from '@/components/cart/WishingStar';
 import { formatHKD } from '@/components/cart/format';
@@ -185,7 +185,8 @@ export default function Cart() {
       {authLoading ? (
         <CartSkeleton />
       ) : !user ? (
-        <LoginPrompt message="登入會員之後，先可以睇到自己嘅購物車。" />
+        /* 2026-10-09（訪客購買）：未登入唔再齋彈登入——localStorage 訪客車直出＋快速結帳入口 */
+        <GuestCartView />
       ) : cartQuery.isLoading ? (
         <CartSkeleton />
       ) : cartQuery.isError ? (
@@ -267,6 +268,11 @@ export default function Cart() {
                 </Link>
                 <p className="mt-4 text-center text-[13px] text-txt-3">
                   付款方式同截圖上傳喺下一步搞掂
+                </p>
+                <p className="mt-2 text-center text-[13px]">
+                  <Link to="/guest-checkout" className="text-txt-3 underline underline-offset-4 transition-colors hover:text-txt-1">
+                    唔想開帳號？訪客快速結帳 →
+                  </Link>
                 </p>
               </div>
             </aside>

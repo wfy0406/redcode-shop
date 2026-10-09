@@ -672,10 +672,10 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
         )) as unknown as DrawResult;
       } else if (mode === 'list' && selectedListId != null) {
         setLastDrawKind('manual');
-        res = (await drawManualMut.mutateAsync({ prizeId: prize.id, listId: selectedListId })) as unknown as DrawResult;
+        res = (await drawManualMut.mutateAsync({ prizeId: prize!.id, listId: selectedListId })) as unknown as DrawResult;
       } else {
         setLastDrawKind('member');
-        res = (await drawMut.mutateAsync({ prizeId: prize.id, filter: previewInput })) as unknown as DrawResult;
+        res = (await drawMut.mutateAsync({ prizeId: prize!.id, filter: previewInput })) as unknown as DrawResult;
       }
     } catch (e) {
       inFlightRef.current = false;

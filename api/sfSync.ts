@@ -265,7 +265,7 @@ export async function runSfSync(): Promise<SfSyncStats> {
     const lockerCat: SfCategory = { region: "HK", type: "SF_LOCKER", serviceType: "6" };
     let lockerFailed = false;
     for (const district of hkLockerDistricts) {
-      const list = await fetchSfNetwork({ serviceType: "6", district }, `HK SF_LOCKER ${district}`);
+      const list = await fetchSfNetwork({ serviceType: lockerCat.serviceType, district }, `HK SF_LOCKER ${district}`);
       await sleep(REQUEST_GAP_MS);
       if (list === null) {
         lockerFailed = true; // 任何一個街坊失敗 → 成個櫃類唔准做停用

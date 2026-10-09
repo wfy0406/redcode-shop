@@ -17,6 +17,7 @@ import {
 } from '@/components/shop/shop-utils';
 import { useReveal } from '@/hooks/useReveal';
 import { useRevealDep } from '@/components/shop/useRevealDep';
+import { addToGuestCart } from '@/lib/guestCart';
 
 /**
  * §P3 商品詳情 /product/:id —— trpc.products.byId
@@ -62,9 +63,11 @@ export default function ProductDetail() {
   // 相簿：有 photos 用 photos；冇（舊貨／示範款）就由 image 做唯一一張
   const [activePhoto, setActivePhoto] = useState(0);
   const gallery = useMemo(() => {
-    const list = product?.photos?.length ? product.photos : [product?.image];
+    // DB 貨有 photos 相簿；demo ShopProduct 冇呢欄——用 in 窄化，冇就淨係用封面 image
+    const ph = product && 'photos' in product ? product.photos : null;
+    const list = ph?.length ? ph : [product?.image];
     return list.filter((s): s is string => Boolean(s));
-  }, [product?.photos, product?.image]);
+  }, [product]);
   const shownPhoto = gallery[activePhoto] ?? gallery[0];
 
   // 多相左右滑動（手機）：記低起手位，放手計位移，超過 40px 就換相
@@ -135,8 +138,13 @@ export default function ProductDetail() {
       return;
     }
     if (!user) {
-      setToast('請先登入會員先可以加入購物車');
-      window.setTimeout(() => setToast(null), 2500);
+      // 2026-10-09（訪客購買）：未登入唔再彈登入——寫 localStorage 訪客車，
+      // 去 /guest-checkout 填名/電話/email 就落得單
+      addToGuestCart(product.id, size ?? null, qty);
+      setAdded(true);
+      window.setTimeout(() => setAdded(false), 2200);
+      setToast('已加入購物車 ✓（訪客都可以直接結帳）');
+      window.setTimeout(() => setToast(null), 2600);
       return;
     }
     addCart.mutate({ productId: product.id, size: size ?? undefined, quantity: qty });

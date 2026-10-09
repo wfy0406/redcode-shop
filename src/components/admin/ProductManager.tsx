@@ -451,7 +451,7 @@ export default function ProductManager({
         break;
       case 'category': {
         // 跟 PRODUCT_CATEGORIES 表嘅次序排；同類入面新上載先
-        const order = new Map(PRODUCT_CATEGORIES.map((c, i) => [c.value, i]));
+        const order = new Map<string, number>(PRODUCT_CATEGORIES.map((c, i) => [c.value, i]));
         filtered.sort(
           (a, b) =>
             (order.get(a.category) ?? 99) - (order.get(b.category) ?? 99) ||

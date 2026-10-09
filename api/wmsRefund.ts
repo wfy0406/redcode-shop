@@ -192,12 +192,14 @@ export async function wmsRefundCallback(c: Context) {
     });
 
     // 退款通知 email 畀客人（never-throw；失敗淨係寫落日誌 detail，唔阻回應）
+    // 訪客單（userId null）用落單時留低嘅 guest 快照；會員單用 user relation
     let emailNote = "";
-    const member = order.user;
-    if (member?.email) {
+    const custEmail = order.user?.email ?? order.guestEmail ?? null;
+    const custName = order.user?.name ?? order.guestName ?? "客人";
+    if (custEmail) {
       const result = await sendOrderRefundedEmail({
-        to: member.email,
-        name: member.name,
+        to: custEmail,
+        name: custName,
         orderNo: order.orderNo,
         items: order.items.map((it) => ({
           productName: it.productName,
@@ -213,10 +215,12 @@ export async function wmsRefundCallback(c: Context) {
         vip: orderVipEmailInfo(order),
       });
       emailNote = result.ok
-        ? `；退款通知信已寄出至 ${member.email}`
+        ? `；退款通知信已寄出至 ${custEmail}`
         : `；退款通知信寄出失敗（${result.error ?? "未知原因"}）`;
     } else {
-      emailNote = "；會員冇綁 Email，冇寄退款通知信";
+      emailNote = order.userId == null
+        ? "；訪客單冇留 Email，冇寄退款通知信"
+        : "；會員冇綁 Email，冇寄退款通知信";
     }
     void logAudit({
       actorId: null,

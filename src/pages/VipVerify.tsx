@@ -35,7 +35,7 @@ type VerifyOk = {
   ok: true;
   name: string;
   memberNo: string;
-  tier: 'SILVER' | 'GOLD';
+  tier: string;
   effectiveAt: string;
   expiresAt: string;
   valid: boolean;

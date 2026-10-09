@@ -26,6 +26,8 @@ const VipVerify = lazy(() => import('@/pages/VipVerify')); // v2.2.0：公開會
 const SfStations = lazy(() => import('@/pages/SfStations')); // v2.2.0：公開順豐站點查詢頁
 const Faq = lazy(() => import('@/pages/Faq')); // 常見問題 FAQ（接收通知教學＋Q&A 手風琴）
 const Returns = lazy(() => import('@/pages/Returns')); // 2026-10-06：退換貨政策頁（配合 Google Merchant Center 免費刊登要求）
+const GuestCheckout = lazy(() => import('@/pages/GuestCheckout')); // 2026-10-09：訪客快速結帳（唔使開帳號）
+const GuestPayment = lazy(() => import('@/pages/GuestPayment')); // 2026-10-09：訪客付款／狀態頁（倒數＋Airwallex 回跳）
 
 /**
  * Lazy 頁載入中嘅全屏 fallback：品牌色底 #0A0614＋粉紅 #FE017E「載入中…」，
@@ -88,6 +90,8 @@ export default function App() {
             <Route path="register" element={<Register />} />
             <Route path="cart" element={<Cart />} />
             <Route path="checkout" element={<Checkout />} />
+            <Route path="guest-checkout" element={<GuestCheckout />} />
+            <Route path="guest-payment" element={<GuestPayment />} />
             <Route path="account" element={<Account />} />
             <Route path="orders" element={<MyOrders />} />
             <Route path="payment" element={<Payment />} />

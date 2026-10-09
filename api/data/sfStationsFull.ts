@@ -7,7 +7,9 @@
  */
 import type { SfStation } from "@db/schema";
 
-type StationSeed = Omit<SfStation, "active">;
+// 站點官方編號／電話／座標／營業時間喺 DB 係 nullable，清單大部分行冇呢啲資料——設做可選
+type StationSeed = Omit<SfStation, "active" | "officialCode" | "lat" | "lng" | "phone" | "serviceTime"> &
+  Partial<Pick<SfStation, "officialCode" | "lat" | "lng" | "phone" | "serviceTime">>;
 
 /** 全量清單：id 規則 {region}-{4位序號}（自訂穩定 ID，唔係順豐官方編號）；sortOrder 跟入面順序 */
 export const SF_STATIONS_FULL: StationSeed[] = [

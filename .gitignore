@@ -23,3 +23,6 @@ coverage/
 
 # Uploads
 uploads/
+
+# drizzle 快照（SQL 已 ignore，meta 都唔入 repo——DDL 行 boot-migrate）
+db/migrations/meta/

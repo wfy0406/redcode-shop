@@ -170,7 +170,7 @@ export default function ReviewWorkbench({
                       {order.paymentChannel === 'airwallex' && <AirwallexPaidBadge />}
                     </p>
                     <p className="mt-0.5 truncate text-[13px] text-txt-3">
-                      {order.user.name} · {order.user.phone}
+                      {order.user?.name ?? (order.guestName ? `【訪客】${order.guestName}` : '—')} · {order.user?.phone ?? order.guestPhone ?? ''}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
@@ -240,7 +240,7 @@ export default function ReviewWorkbench({
             >
               {[
                 { label: '應收金額', value: fmtHKD(selected.total), pink: true },
-                { label: '會員電話', value: selected.user.phone, pink: false },
+                { label: '會員電話', value: selected.user?.phone ?? selected.guestPhone ?? '—', pink: false },
                 {
                   label: '件數',
                   value: String(selected.items.reduce((s, i) => s + i.quantity, 0)),

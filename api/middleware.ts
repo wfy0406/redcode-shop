@@ -9,6 +9,8 @@ const t = initTRPC.context<TrpcContext>().create({
 
 export const createRouter = t.router;
 export const publicQuery = t.procedure;
+// 2026-10-09（訪客購買）：語意化别名——訪客 tRPC 全部用呢個（唔使登入，權限喺 procedure 內用 orderNo+token 雙因子強制）
+export const publicProcedure = t.procedure;
 
 const requireUser = t.middleware(async ({ ctx, next }) => {
   const user = await userFromAuthHeader(ctx.req.headers.get("authorization"));

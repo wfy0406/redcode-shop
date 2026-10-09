@@ -27,8 +27,9 @@ export default function Layout() {
   const { pathname } = useLocation();
   // 管理員工作台係數據密集頁：唔要星空/流星/星雲動效（用戶要求全站有、唯獨 admin 冇）
   const isAdmin = pathname.startsWith('/admin');
-  // /cart /checkout 手機版有底部 sticky 結帳欄：WA 浮鈕抬高唔好騎住佢
-  const hasBottomBar = pathname === '/cart' || pathname === '/checkout';
+  // /cart /checkout /guest-checkout /guest-payment 手機版有底部 sticky 結帳欄：WA 浮鈕抬高唔好騎住佢
+  const hasBottomBar =
+    pathname === '/cart' || pathname === '/checkout' || pathname === '/guest-checkout' || pathname === '/guest-payment';
 
   // SPA 路由轉換時捲返去頁頂——React Router 預設保留 scroll 位置，
   // 客人喺列表撳商品會留喺中段，要人手掃返上去先見到內容

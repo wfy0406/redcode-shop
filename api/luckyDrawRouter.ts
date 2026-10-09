@@ -124,7 +124,8 @@ async function collectParticipantIds(f: ParticipantFilter): Promise<Set<number>>
           .from(orders)
           .where(and(inArray(orders.status, [...PAID_STATUSES]), gte(orders.createdAt, hktMonthStart())))
           .groupBy(orders.userId);
-        for (const r of rows) out.add(r.userId);
+        // 訪客單 userId 係 null——抽獎淨係計會員，null 直接跳過
+        for (const r of rows) { if (r.userId != null) out.add(r.userId); }
       })(),
     );
   }
@@ -139,7 +140,9 @@ async function collectParticipantIds(f: ParticipantFilter): Promise<Set<number>>
         for (const r of rows) {
           // union 語義：剔「累積消費」→ 買過就入；剔「消費滿$X」→ 累積滿額先入；
           // 兩個都剔 → 累積已包晒滿額（⊂），照入
-          if (f.cumulative) {
+          if (r.userId == null) {
+            // 訪客單唔計入抽獎
+          } else if (f.cumulative) {
             out.add(r.userId);
           } else if ((f.minSpend ?? 0) > 0 && Number(r.total) >= (f.minSpend ?? 0)) {
             out.add(r.userId);
@@ -169,7 +172,7 @@ async function collectParticipantIds(f: ParticipantFilter): Promise<Set<number>>
           .innerJoin(orders, eq(orderItems.orderId, orders.id))
           .where(and(eq(orderItems.productId, pid), inArray(orders.status, [...PAID_STATUSES])))
           .groupBy(orders.userId);
-        for (const r of rows) out.add(r.userId);
+        for (const r of rows) { if (r.userId != null) out.add(r.userId); } // 訪客單跳過
       })(),
     );
   }
@@ -196,7 +199,7 @@ async function collectParticipantIds(f: ParticipantFilter): Promise<Set<number>>
           .where(and(inArray(orders.status, [...PAID_STATUSES]), gte(orders.createdAt, hktMonthStart())))
           .groupBy(orders.userId);
         for (const r of rows) {
-          if (Number(r.total) >= minSpend) out.add(r.userId);
+          if (r.userId != null && Number(r.total) >= minSpend) out.add(r.userId); // 訪客單跳過
         }
       })(),
     );

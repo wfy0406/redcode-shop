@@ -17,6 +17,18 @@ type FaqItem = { q: string; a: React.ReactNode };
 
 const FAQ_ITEMS: FaqItem[] = [
   {
+    q: '唔開帳號買唔買到？',
+    a: (
+      <>
+        買到！用<span className="faq-key">訪客快速結帳</span>
+        ，填稱呼、電話同 email 就落得單，網上即時付款，記住喺
+        <span className="faq-mark">30 分鐘內</span>
+        完成付款，逾時訂單會自動取消。之後喺「我的訂單」頁用訂單編號＋電話就查到進度。
+        不過開個帳號更著數——有積分同 VIP 折扣。
+      </>
+    ),
+  },
+  {
     q: '付款方便嗎？',
     a: (
       <>
@@ -39,7 +51,7 @@ const FAQ_ITEMS: FaqItem[] = [
     q: '出貨時間？',
     a: (
       <>
-        訂單確認之後，大約 <span className="faq-key">7–12 個工作天</span>
+        訂單確認之後，大約 <span className="faq-key">7–10 個工作天</span>
         出貨。出咗貨會有通知話你知，記得留意。
       </>
     ),
@@ -85,7 +97,9 @@ const FAQ_ITEMS: FaqItem[] = [
     q: '幾多錢包郵？',
     a: (
       <>
-        買滿 <span className="faq-key">$350</span> 就包郵，湊夠數就唔使畀運費。
+        揀<span className="faq-key">順豐站／自提點／智能櫃自取</span>，買滿{' '}
+        <span className="faq-key">$350</span> 就免運費，湊夠數就唔使畀。
+        送貨上門就一律順豐到付，運費收貨時直接畀順豐。
       </>
     ),
   },

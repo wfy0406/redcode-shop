@@ -172,11 +172,13 @@ export async function buildDailyXlsx(date: string): Promise<Buffer> {
       discountPrice: products.discountPrice,
       listedDate: products.listedDate,
       customerName: users.name,
+      guestName: orders.guestName,
     })
     .from(orderItems)
     .innerJoin(orders, eq(orderItems.orderId, orders.id))
     .innerJoin(products, eq(orderItems.productId, products.id))
-    .innerJoin(users, eq(orders.userId, users.id))
+    // 訪客單 userId 係 null，innerJoin 會直接漏單 → 用 leftJoin 加落單快照 fallback
+    .leftJoin(users, eq(orders.userId, users.id))
     .where(
       and(
         gte(orders.createdAt, start),
@@ -190,7 +192,7 @@ export async function buildDailyXlsx(date: string): Promise<Buffer> {
     dateSerial: Math.round((r.listedDate.getTime() - EXCEL_EPOCH_MS) / DAY_MS),
     sku: r.sku,
     amount: r.quantity * (r.discountPrice ?? r.price),
-    name: r.customerName,
+    name: r.customerName ?? (r.guestName ? `【訪客】${r.guestName}` : "客人"),
   }));
 
   const template = await readTemplate();

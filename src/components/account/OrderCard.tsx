@@ -224,8 +224,8 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
           }}
         >
           <img
-            src={order.prize.imagePath}
-            alt={order.prize.name}
+            src={order.prize.imagePath ?? undefined}
+            alt={order.prize.name ?? ''}
             className="h-14 w-14 shrink-0 rounded-xl border object-cover"
             style={{ borderColor: 'rgba(245,197,24,0.45)' }}
           />
@@ -237,7 +237,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
               {order.prize.name}
             </p>
             <p className="mt-0.5 font-mono text-[11.5px] text-txt-3">
-              中獎日 {order.prize.drawDate.slice(0, 4)}-{order.prize.drawDate.slice(4, 6)}-{order.prize.drawDate.slice(6, 8)}
+              中獎日 {order.prize.drawDate ? `${order.prize.drawDate.slice(0, 4)}-${order.prize.drawDate.slice(4, 6)}-${order.prize.drawDate.slice(6, 8)}` : '—'}
               ・0 元包郵
             </p>
           </div>

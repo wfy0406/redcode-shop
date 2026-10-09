@@ -202,9 +202,20 @@ export const cartItems = pgTable(
 export const orders = pgTable("orders", {
   id: serial("id").primaryKey(),
   orderNo: varchar("orderNo", { length: 32 }).notNull().unique(),
-  userId: bigint("userId", { mode: "number" })
-    .notNull()
-    .references(() => users.id),
+  // 2026-10-09（訪客購買 Guest Checkout）：userId 改 nullable——會員單照舊有值；
+  // 訪客單＝NULL，客戶資料落下面 guest* 快照欄。FK 保留（有值時一定要對到 users.id）。
+  userId: bigint("userId", { mode: "number" }).references(() => users.id),
+  // ===== 訪客單欄位（2026-10-09；會員單全部 NULL）=====
+  // 落單嗰刻嘅客戶快照：名／電話（server normalize 做純 8 位數字）／Email（必填，寄確認信用）
+  guestName: varchar("guestName", { length: 64 }),
+  guestPhone: varchar("guestPhone", { length: 32 }),
+  guestEmail: varchar("guestEmail", { length: 255 }),
+  // 訪客查單／付款核實 token（uuid）：只經落單回應＋email 魔法連結送出；
+  // 唔落 log（audit detail 唔准寫），唔中即 NOT_FOUND（統一訊息防枚舉）
+  guestToken: varchar("guestToken", { length: 64 }),
+  // 訪客單付款保留死線＝createdAt + 30 分鐘（orderSweeper 過期即取消＋回庫存）；
+  // 會員單 NULL（照舊行 48 小時規則）
+  expiresAt: timestamp("expiresAt"),
   status: orderStatusEnum("status").notNull().default("pending_payment"),
   total: integer("total").notNull(),
   address: text("address"),

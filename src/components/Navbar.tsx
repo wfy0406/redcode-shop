@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import type { CartLine } from '@/components/cart/types';
+import { guestCartCount, subscribeGuestCart } from '@/lib/guestCart';
 import MessengerIcon from '@/components/MessengerIcon';
 import AnimatedLogo from '@/components/AnimatedLogo';
 import { normalizeVipTier } from '@/components/VipBadge';
@@ -161,10 +162,18 @@ export default function Navbar() {
     enabled: !!user,
     refetchOnWindowFocus: false,
   });
-  const cartCount = ((cartQuery.data ?? []) as CartLine[]).reduce(
+  const memberCartCount = ((cartQuery.data ?? []) as CartLine[]).reduce(
     (sum, line) => sum + line.quantity,
     0,
   );
+  // 2026-10-09（訪客購買）：未登入客 badge 改用 localStorage 訪客車數量（聽 custom event 即時更新）
+  const [guestCount, setGuestCount] = useState(0);
+  useEffect(() => {
+    if (user) return; // 會員睇 server 車
+    setGuestCount(guestCartCount());
+    return subscribeGuestCart(() => setGuestCount(guestCartCount()));
+  }, [user]);
+  const cartCount = user ? memberCartCount : guestCount;
   // 直播場次（2026-09-29 F8）：商品選單底加「📺 直播場次」區——
   // 日期可展開見場次；冇場次數據就唔顯示呢區。60s stale，導航唔使次次打。
   const liveSessionsQuery = trpc.products.liveSessions.useQuery(undefined, {

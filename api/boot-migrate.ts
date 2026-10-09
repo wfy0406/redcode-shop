@@ -64,7 +64,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS cart_user_product_size
 CREATE TABLE IF NOT EXISTS orders (
   id serial PRIMARY KEY,
   "orderNo" varchar(32) NOT NULL UNIQUE,
-  "userId" bigint NOT NULL REFERENCES users(id),
+  -- 2026-10-09（訪客購買）：userId nullable——訪客單＝NULL（FK 保留，有值必對到 users.id）
+  "userId" bigint REFERENCES users(id),
   status order_status NOT NULL DEFAULT 'pending_payment',
   total integer NOT NULL,
   address text,
@@ -499,6 +500,21 @@ DO $$ BEGIN
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS luckydraws_list ON "luckyDraws" ("listId");
+
+-- ===== 訪客購買 Guest Checkout（2026-10-09）=====
+-- orders.userId 放寬做 nullable：會員單照舊有值；訪客單＝NULL，客戶資料落 guest* 快照欄。
+-- 全新部署上面 CREATE TABLE 已經 nullable；呢句 ALTER 專放寬現有 DB 嘅舊 NOT NULL。
+ALTER TABLE orders ALTER COLUMN "userId" DROP NOT NULL;
+-- 訪客快照欄（會員單全部 NULL）：落單嗰刻嘅名／電話（server normalize 純 8 位）／
+-- Email（必填，寄確認信用）＋查單／付款核實 token（uuid，唔落 log）＋30 分鐘付款死線
+-- （訪客單＝createdAt+30min；會員單 NULL 照行 48 小時規則）
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "guestName" varchar(64);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "guestPhone" varchar(32);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "guestEmail" varchar(255);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "guestToken" varchar(64);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "expiresAt" timestamp;
+-- orderSweeper 每 5 分鐘掃過期訪客單用（partial index：淨係訪客單先入）
+CREATE INDEX IF NOT EXISTS orders_guest_expiry ON orders ("expiresAt") WHERE "userId" IS NULL;
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：

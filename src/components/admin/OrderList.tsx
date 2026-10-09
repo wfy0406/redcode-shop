@@ -215,8 +215,8 @@ export default function OrderList({
       if (
         kw &&
         !o.orderNo.toLowerCase().includes(kw) &&
-        !o.user.name.toLowerCase().includes(kw) &&
-        !o.user.phone.toLowerCase().includes(kw)
+        !(o.user?.name ?? o.guestName ?? '').toLowerCase().includes(kw) &&
+        !(o.user?.phone ?? o.guestPhone ?? '').toLowerCase().includes(kw)
       )
         return false;
       if (orderDate && !sameLocalDay(o.createdAt, orderDate)) return false;
@@ -334,8 +334,8 @@ export default function OrderList({
                     </span>
                   )}
                   <span className="min-w-0 truncate text-[14px] text-txt-2">
-                    {order.user.name}
-                    <span className="ml-2 font-mono text-[13px] text-txt-3">{order.user.phone}</span>
+                    {order.user?.name ?? (order.guestName ? `【訪客】${order.guestName}` : '—')}
+                    <span className="ml-2 font-mono text-[13px] text-txt-3">{order.user?.phone ?? order.guestPhone ?? ''}</span>
                   </span>
                   <span className="ml-auto font-mono text-[15px] text-pink md:ml-auto">
                     {fmtHKD(order.total)}
@@ -452,7 +452,7 @@ export default function OrderList({
                           </div>
                           <div className="flex gap-2 text-[14px]">
                             <dt className="w-16 shrink-0 text-txt-3">收件地址</dt>
-                            <dd className="text-txt-2">{order.address || order.user.address || '—'}</dd>
+                            <dd className="text-txt-2">{order.address || order.user?.address || '—'}</dd>
                           </div>
                           {/* v2.1.0：運費（免運 ✓ 金／到付連地區註記；舊單冇 region 唔顯示） */}
                           {(order.shippingFree || order.region) && (

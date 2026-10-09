@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '@/hooks/useAuth';
 import FormField from '@/components/account/FormField';
 import WishingStar from '@/components/account/WishingStar';
 import GoogleLoginButton from '@/components/account/GoogleLoginButton';
 import RegionStationPicker from '@/components/shop/RegionStationPicker';
 import PushPermissionGuide from '@/components/push/PushPermissionGuide';
-import { isPushSupported } from '@/lib/pushClient';
 
 /**
  * RedCode 設計系統 §P5 —— 會員註冊 /register
@@ -55,7 +54,12 @@ export default function Register() {
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  // 2026-10-09 查單擴展：訪客查單後推薦註冊，?phone= 帶起落單電話（唔使再打一次）
+  const [params] = useSearchParams();
+  const [phone, setPhone] = useState(() => {
+    const p = params.get('phone') ?? '';
+    return /^\d{8}$/.test(p) ? p : '';
+  });
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [email, setEmail] = useState('');

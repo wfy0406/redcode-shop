@@ -511,8 +511,8 @@ export default function Receipt() {
                 <MetaRow label="訂單編號 Order No." value={order.orderNo} />
                 <MetaRow label="落單日期 Date" value={date?.zhTime ?? ''} />
                 <MetaRow label="訂單狀態 Status" value={statusText} />
-                <MetaRow label="會員姓名 Member" value={order.user.name} />
-                <MetaRow label="聯絡電話 Phone" value={maskPhone(order.user.phone)} />
+                <MetaRow label="會員姓名 Member" value={order.user?.name ?? (order.guestName ? `【訪客】${order.guestName}` : "—")} />
+                <MetaRow label="聯絡電話 Phone" value={maskPhone(order.user?.phone ?? order.guestPhone ?? "")} />
                 <MetaRow label="取貨方式 Delivery" value={deliveryText} />
                 {/* v2.1.0：會員級別（銀/金先上單）＋ 運費（免運 ✓／到付連地區註記） */}
                 {vipTierText && <MetaRow label="會員級別 Tier" value={vipTierText} />}
