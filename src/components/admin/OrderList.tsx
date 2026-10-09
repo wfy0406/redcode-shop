@@ -11,6 +11,12 @@ import ProofUpload from './ProofUpload';
 import WishingStar from './WishingStar';
 import ExportCard from './ExportCard';
 import OrderEditPanel from './OrderEditPanel';
+import { ItemShipChips, batchMethodMap, type ShipmentBatchView } from '@/components/orders/ShipmentInfo';
+
+/** v2.4.0（Wave 2）：訂單批次 → 物流方式對照（逐件 chip 分「儲貨中」用） */
+function adminShipMethodMap(order: { shipments?: ShipmentBatchView[] }) {
+  return batchMethodMap(order.shipments ?? []);
+}
 
 /**
  * 全部訂單列表 —— status 篩選 tabs + 單號搜尋 + 點入行展開詳情
@@ -376,28 +382,49 @@ export default function OrderList({
                               訂單明細
                             </h4>
                             <ul className="mt-3 flex flex-col gap-2">
-                              {order.items.map((item) => (
-                                <li
-                                  key={item.id}
-                                  className="flex items-baseline justify-between gap-3 text-[14px]"
-                                >
-                                  <span className="min-w-0 truncate text-txt-1">
-                                    {item.productName}
-                                    {item.size && (
-                                      <span className="ml-2 font-mono text-[12px] text-txt-3">
-                                        {item.size}
+                              {order.items.map((item) => {
+                                // v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改（後台都一致顯示）
+                                const cancelled = item.shipStatus === 'cancelled';
+                                return (
+                                  <li key={item.id} className="text-[14px]">
+                                    <div className="flex items-baseline justify-between gap-3">
+                                      <span className={`min-w-0 truncate ${cancelled ? 'text-txt-3 line-through' : 'text-txt-1'}`}>
+                                        {item.productName}
+                                        {item.size && (
+                                          <span className="ml-2 font-mono text-[12px] text-txt-3">
+                                            {item.size}
+                                          </span>
+                                        )}
+                                        <span className="ml-2 font-mono text-[12px] text-txt-3">
+                                          ×{item.quantity}
+                                        </span>
                                       </span>
-                                    )}
-                                    <span className="ml-2 font-mono text-[12px] text-txt-3">
-                                      ×{item.quantity}
-                                    </span>
-                                  </span>
-                                  <span className="shrink-0 font-mono text-[13px] text-txt-2">
-                                    {fmtHKD(item.price * item.quantity)}
-                                  </span>
-                                </li>
-                              ))}
+                                      <span className={`shrink-0 font-mono text-[13px] ${cancelled ? 'text-txt-3 line-through' : 'text-txt-2'}`}>
+                                        {fmtHKD(item.price * item.quantity)}
+                                      </span>
+                                    </div>
+                                    <ItemShipChips item={item} showPending methodMap={adminShipMethodMap(order)} />
+                                  </li>
+                                );
+                              })}
                             </ul>
+                            {/* v2.4.0（Wave 2）：出貨批次（順豐單號＋寄出時間＋經手同事） */}
+                            {(order.shipments ?? []).filter((s) => s.reversedAt == null).length > 0 && (
+                              <div className="mt-3 rounded-xl border border-space-line bg-space-2/50 px-3.5 py-2.5">
+                                {(order.shipments ?? [])
+                                  .filter((s) => s.reversedAt == null)
+                                  .map((s) => (
+                                    <p key={s.id} className="py-0.5 font-mono text-[12px] leading-relaxed text-txt-2">
+                                      <span className="text-gold">
+                                        {s.shipMethod === 'sf' ? '順豐' : s.shipMethod === 'face' ? '面交' : s.shipMethod === 'pickup' ? '自取' : '儲貨'}
+                                      </span>
+                                      {s.sfNo ? ` ${s.sfNo}` : ''}
+                                      {' · '}{new Date(s.shippedAt).toLocaleString('zh-HK', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                                      {s.actorName ? ` · ${s.actorName}` : ''}
+                                    </p>
+                                  ))}
+                              </div>
+                            )}
                             {/* VIP 折扣行（v2.1.0；先 VIP 後 coupon，排優惠碼上面；仙 → 港元） */}
                             {(order.vipDiscountCents ?? 0) > 0 && (
                               <div className="mt-2 flex items-baseline justify-between gap-3 text-[13px]">

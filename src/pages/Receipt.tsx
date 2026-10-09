@@ -77,7 +77,7 @@ const STATUS_TEXT: Record<string, string> = {
   payment_review: '對數中',
   approved: '已確認',
   rejected: '待重傳',
-  shipped: '已發貨',
+  shipped: '已寄出', // v2.4.0（Wave 2）：出貨同步終態統一口徑
   completed: '已完成',
   cancelled: '已取消',
 };
@@ -568,7 +568,9 @@ export default function Receipt() {
                     }}
                   >
                     <span style={{ fontFamily: SERIF, fontWeight: 700, fontSize: 15, color: INK, lineHeight: 1.5 }}>
-                      {item.productName}
+                      <span style={item.shipStatus === 'cancelled' ? { textDecoration: 'line-through', color: INK_SOFT } : undefined}>
+                        {item.productName}
+                      </span>
                       <span
                         style={{
                           display: 'block',
@@ -583,6 +585,22 @@ export default function Receipt() {
                         {item.sku}
                         {item.size ? `　・　${item.size}` : ''}
                       </span>
+                      {/* v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改（單據都顯示，白紙黑字） */}
+                      {item.shipStatus === 'shipped' && (
+                        <span style={{ display: 'block', fontFamily: MONO, fontSize: 10.5, color: GOLD_LINE, marginTop: 3, letterSpacing: '0.06em' }}>
+                          ✓ 已寄出
+                        </span>
+                      )}
+                      {item.shipStatus === 'cancelled' && (
+                        <span style={{ display: 'block', fontFamily: MONO, fontSize: 10.5, color: '#8c3b2e', marginTop: 3, letterSpacing: '0.04em' }}>
+                          ✕ 已取消{item.cancelReason ? `——${item.cancelReason}` : ''}
+                        </span>
+                      )}
+                      {item.staffChangedAt && (
+                        <span style={{ display: 'block', fontFamily: MONO, fontSize: 10.5, color: GOLD_LINE, marginTop: 3, letterSpacing: '0.04em' }}>
+                          ✎ 員工更改{item.staffChangeNote ? `——${item.staffChangeNote}` : ''}
+                        </span>
+                      )}
                     </span>
                     <span
                       style={{
@@ -603,6 +621,65 @@ export default function Receipt() {
                 ))}
               </ul>
             </div>
+
+            {/* ---- v2.4.0（Wave 2）：出貨紀錄（順豐單號＋追蹤連結＋寄出時間） ---- */}
+            {(order.shipments ?? []).filter((s) => s.reversedAt == null).length > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    paddingBottom: 6,
+                    borderBottom: `1px solid ${GOLD_LINE}`,
+                    fontFamily: MONO,
+                    fontSize: 9.5,
+                    letterSpacing: '0.24em',
+                    color: INK_SOFT,
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  <span>出貨紀錄 Shipments</span>
+                </div>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                  {(order.shipments ?? [])
+                    .filter((s) => s.reversedAt == null)
+                    .map((s) => {
+                      const methodLabel =
+                        s.shipMethod === 'sf'
+                          ? '順豐速運'
+                          : s.shipMethod === 'face'
+                            ? '面交交收'
+                            : s.shipMethod === 'pickup'
+                              ? '上門自取'
+                              : '已入倉儲存';
+                      const dt = new Date(s.shippedAt);
+                      return (
+                        <li
+                          key={s.id}
+                          style={{
+                            padding: '9px 0',
+                            borderBottom: `1px dotted ${GOLD_FAINT}`,
+                            fontFamily: MONO,
+                            fontSize: 11.5,
+                            color: INK,
+                            lineHeight: 1.7,
+                          }}
+                        >
+                          {methodLabel}
+                          {s.shipMethod === 'sf' && s.sfNo ? `　單號 ${s.sfNo}` : ''}
+                          　・　{dt.toLocaleString('zh-HK', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                          {s.shipMethod === 'sf' && s.sfNo && (
+                            <span style={{ display: 'block', color: INK_SOFT, fontSize: 10.5 }}>
+                              追蹤：https://www.sf-express.com/we/ow/chn/sc/waybill/waybill-detail/{s.sfNo}
+                              　（順豐系統一般需要 2–10 小時先更新追蹤狀態）
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                </ul>
+              </div>
+            )}
 
             {/* ---- 小計 → 折扣 → 總計（會計式雙 hairline） ---- */}
             <div style={{ marginTop: 22 }}>

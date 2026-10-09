@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { randomInt, randomUUID } from "node:crypto";
 import { getDb } from "./queries/connection";
-import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, paymentProofs, products, promoCodes, sfStations, users, walletLedger, wmsSyncLog } from "@db/schema";
+import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, orderShipments, paymentProofs, products, promoCodes, sfStations, users, walletLedger, wmsSyncLog } from "@db/schema";
 import { createRouter, authedProcedure, publicProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
 import { computeWalletSplit, returnWalletForOrder } from "./wallet";
@@ -61,6 +61,8 @@ const guestLookupLimiter = new RateLimiter(10, 60 * 1000);
 async function guestOrderPayload(
   order: typeof orders.$inferSelect & {
     items: (typeof orderItems.$inferSelect)[];
+    // v2.4.0（Wave 2）：出貨批次（call site 已 with: { shipments: true }）
+    shipments?: (typeof orderShipments.$inferSelect)[];
   },
   opts: { includeToken: boolean },
 ) {
@@ -77,13 +79,30 @@ async function guestOrderPayload(
     status: order.status,
     total: order.total,
     items: order.items.map((it) => ({
+      // v2.4.0（Wave 2）：orderItem id——出貨批次 itemIds 對返邊件貨用
+      id: it.id,
       // productId 畀前端「重新落單」重灌購物車用（已逾時態；order-lookup.md §4.2）
       productId: it.productId,
       productName: it.productName,
       size: it.size,
       price: it.price,
       quantity: it.quantity,
+      // v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改標示
+      shipStatus: it.shipStatus,
+      cancelReason: it.cancelReason,
+      staffChangedAt: it.staffChangedAt?.toISOString() ?? null,
+      staffChangeNote: it.staffChangeNote,
     })),
+    // v2.4.0（Wave 2）：出貨批次（順豐單號／寄出時間／物流方式；已作廢批次唔出）
+    shipments: (order.shipments ?? [])
+      .filter((s) => s.reversedAt == null)
+      .map((s) => ({
+        id: s.id,
+        shipMethod: s.shipMethod,
+        sfNo: s.sfNo,
+        itemIds: JSON.parse(s.itemIds) as number[],
+        shippedAt: s.shippedAt.toISOString(),
+      })),
     deliveryMethod: order.deliveryMethod,
     address: order.address,
     stationName: order.stationName,
@@ -812,7 +831,8 @@ export const ordersRouter = createRouter({
       const db = getDb();
       const order = await db.query.orders.findFirst({
         where: eq(orders.orderNo, input.orderNo),
-        with: { items: true, user: { columns: { phone: true } } },
+        // v2.4.0（Wave 2）：訪客查單都睇到出貨批次／逐件狀態
+        with: { items: true, user: { columns: { phone: true } }, shipments: true },
       });
       if (!order) {
         throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
@@ -853,7 +873,7 @@ export const ordersRouter = createRouter({
       const db = getDb();
       const order = await db.query.orders.findFirst({
         where: and(eq(orders.orderNo, input.orderNo), isNull(orders.userId)),
-        with: { items: true },
+        with: { items: true, shipments: true },
       });
       if (!order || !guestTokenEquals(order.guestToken ?? "", input.token)) {
         throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
@@ -912,7 +932,8 @@ export const ordersRouter = createRouter({
     const db = getDb();
     const rows = await db.query.orders.findMany({
       where: eq(orders.userId, ctx.user.userId),
-      with: { items: true, proofs: true },
+      // v2.4.0（Wave 2）：連出貨批次一齊返（訂單卡顯示順豐單號／追蹤連結／寄出時間）
+      with: { items: true, proofs: true, shipments: true },
       orderBy: [desc(orders.createdAt)],
     });
     // v2.2.46（直播抽獎）：中獎訂單掛返獎品資料出嚟，我的訂單會顯示「中獎框」
@@ -942,7 +963,8 @@ export const ordersRouter = createRouter({
       const db = getDb();
       const order = await db.query.orders.findFirst({
         where: and(eq(orders.id, input.id), eq(orders.userId, ctx.user.userId)),
-        with: { items: true, proofs: true },
+        // v2.4.0（Wave 2）：連出貨批次一齊返
+        with: { items: true, proofs: true, shipments: true },
       });
       if (!order) {
         throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
@@ -960,7 +982,8 @@ export const ordersRouter = createRouter({
       const db = getDb();
       const order = await db.query.orders.findFirst({
         where: eq(orders.id, input.orderId),
-        with: { items: true, user: { columns: { name: true, phone: true } } },
+        // v2.4.0（Wave 2）：單據都顯示出貨批次（順豐單號／寄出時間）
+        with: { items: true, user: { columns: { name: true, phone: true } }, shipments: true },
       });
       if (!order) {
         throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
@@ -1063,6 +1086,8 @@ export const ordersRouter = createRouter({
           },
           items: true,
           proofs: true,
+          // v2.4.0（Wave 2）：後台訂單管理顯示出貨批次同逐件狀態
+          shipments: true,
         },
         orderBy: [desc(orders.createdAt)],
       });

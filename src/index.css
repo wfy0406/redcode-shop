@@ -237,6 +237,14 @@
     transition: color var(--dur-micro) var(--ease-expo);
   }
 
+  /* v2.5.1：加咗「會員購物金充值」之後頂欄更迫——lg–xl 之間字收細一級，
+     等 VIP 徽章同登出唔會再跑位（老闆截圖投訴） */
+  @media (min-width: 1024px) and (max-width: 1279px) {
+    .nav-link {
+      font-size: 14px;
+    }
+  }
+
   .nav-link::after {
     content: '';
     position: absolute;

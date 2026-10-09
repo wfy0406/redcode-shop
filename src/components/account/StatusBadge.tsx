@@ -27,9 +27,9 @@ const STATUS_META: Record<OrderStatus, StatusMeta> = {
   pending_payment: { label: '待付款', color: 'var(--gold)', icon: Clock, pulse: true },
   payment_review: { label: '審核中', color: 'var(--lavender)', icon: Hourglass },
   approved: { label: '已確認', color: 'var(--pink)', icon: BadgeCheck },
-  // F-D：shipped／completed（legacy）都映射「進行出貨」完成終態（success 色）
-  shipped: { label: '進行出貨', color: 'var(--success)', icon: Truck, strong: true },
-  completed: { label: '進行出貨', color: 'var(--success)', icon: CheckCircle2 },
+  // v2.4.0（Wave 2）：「已寄出」係訂單正常終態（WMS 出貨回傳觸發）；completed 係 legacy
+  shipped: { label: '已寄出', color: 'var(--success)', icon: Truck, strong: true },
+  completed: { label: '已完成', color: 'var(--success)', icon: CheckCircle2 },
   cancelled: { label: '已取消', color: 'var(--text-3)', icon: XCircle },
   rejected: { label: '已拒絕', color: REJECT_RED, icon: AlertCircle },
 };

@@ -14,6 +14,7 @@ import { CopyButton, MeteorProgressBar } from '@/components/shop/form-bits';
 import GuestCountdown, { useGuestCountdown } from '@/components/shop/GuestCountdown';
 import ClaimGuestOrderModal from '@/components/shop/ClaimGuestOrderModal';
 import { formatHKD } from '@/components/cart/format';
+import ShipmentSection, { ItemShipChips, batchMethodMap } from '@/components/orders/ShipmentInfo';
 
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 
@@ -22,7 +23,28 @@ export interface GuestOrderPayload {
   orderNo: string;
   status: string;
   total: number;
-  items: { productId: number; productName: string; size: string | null; price: number; quantity: number }[];
+  items: {
+    /** v2.4.0（Wave 2）：orderItem id（出貨批次對照用） */
+    id?: number;
+    productId: number;
+    productName: string;
+    size: string | null;
+    price: number;
+    quantity: number;
+    /** v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改 */
+    shipStatus?: string;
+    cancelReason?: string | null;
+    staffChangedAt?: string | null;
+    staffChangeNote?: string | null;
+  }[];
+  /** v2.4.0（Wave 2）：出貨批次（順豐單號／寄出時間；已作廢批次 server 已滤走） */
+  shipments?: {
+    id: number;
+    shipMethod: string;
+    sfNo: string | null;
+    itemIds: number[];
+    shippedAt: string;
+  }[];
   deliveryMethod: string | null;
   address: string | null;
   stationName: string | null;
@@ -55,7 +77,7 @@ function StatusBadge({ status, secondsLeft }: { status: string; secondsLeft: num
     border = 'rgba(94,224,160,0.35)';
     bg = 'rgba(94,224,160,0.08)';
   } else if (status === 'shipped') {
-    label = '已出貨';
+    label = '已寄出';
     color = 'var(--success)';
     border = 'rgba(94,224,160,0.35)';
     bg = 'rgba(94,224,160,0.08)';
@@ -134,6 +156,8 @@ export default function GuestOrderCard({
   const secondsLeft = useGuestCountdown(order.secondsLeft, onExpire);
   const isPending = order.status === 'pending_payment';
   const expired = isPending && secondsLeft <= 0;
+  // v2.4.0（Wave 2）：批次 → 物流方式對照（逐件 chip 分辨「儲貨中」用）
+  const shipMethodMap = batchMethodMap(order.shipments ?? []);
 
   const pay = async () => {
     if (!guestToken || paying) return;
@@ -202,20 +226,39 @@ export default function GuestOrderCard({
 
       <div className="my-4 h-px" style={{ background: 'var(--space-line)' }} aria-hidden="true" />
 
-      {/* 商品清單（唯讀） */}
+      {/* 商品清單（唯讀；v2.4.0 Wave 2：逐件出貨狀態／取消原因／員工更改 chip） */}
       <ul className="flex flex-col gap-2.5">
-        {order.items.map((it, i) => (
-          <li key={`${it.productId}-${it.size ?? ''}-${i}`} className="flex items-baseline gap-2 text-[14px]">
-            <span className="min-w-0 flex-1 truncate text-txt-1">{it.productName}</span>
-            {it.size && <span className="shrink-0 font-mono text-[12px] text-txt-3">{it.size}</span>}
-            <span className="shrink-0 text-txt-3">×{it.quantity}</span>
-            <span className="shrink-0 font-mono tabular-nums text-txt-2">{formatHKD(it.price * it.quantity)}</span>
-          </li>
-        ))}
+        {order.items.map((it, i) => {
+          const cancelled = it.shipStatus === 'cancelled';
+          return (
+            <li key={`${it.productId}-${it.size ?? ''}-${i}`} className="text-[14px]">
+              <div className="flex items-baseline gap-2">
+                <span className={`min-w-0 flex-1 truncate ${cancelled ? 'text-txt-3 line-through' : 'text-txt-1'}`}>
+                  {it.productName}
+                </span>
+                {it.size && <span className="shrink-0 font-mono text-[12px] text-txt-3">{it.size}</span>}
+                <span className="shrink-0 text-txt-3">×{it.quantity}</span>
+                <span className={`shrink-0 font-mono tabular-nums ${cancelled ? 'text-txt-3 line-through' : 'text-txt-2'}`}>
+                  {formatHKD(it.price * it.quantity)}
+                </span>
+              </div>
+              <ItemShipChips
+                item={it}
+                showPending={order.status === 'approved' || order.status === 'shipped'}
+                methodMap={shipMethodMap}
+              />
+            </li>
+          );
+        })}
       </ul>
 
       {/* 取貨方式 */}
       <p className="mt-3 text-[13px] text-txt-3">{deliveryText(order)}</p>
+
+      {/* v2.4.0（Wave 2）：出貨批次（順豐單號＋追蹤連結＋2–10h 提示；面交/自取/儲貨文案） */}
+      {order.shipments && order.shipments.length > 0 && (
+        <ShipmentSection shipments={order.shipments} items={order.items} />
+      )}
 
       {/* 總計 */}
       <div className="mt-4 flex items-baseline justify-between">

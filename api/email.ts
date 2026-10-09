@@ -1389,11 +1389,11 @@ export async function sendPrizeWinEmail(args: {
 /** 購物金條款提示行（重用，唔好封封信改兩次） */
 function walletTermsNote(): string {
   return note(
-    "購物金條款：購物金不設退款；購物金使用只限購買官網所銷售之商品，直播商品並不適用。",
+    "購物金條款：購物金不設退款；購物金使用只限購物官網所銷售之商品，直播商品（官網所有直播上架之商品，均不受影響）並不適用。",
   );
 }
 
-/** ⑦a 充值單建立（待付款）：48 小時內要付款，否則自動取消 */
+/** ⑦a 充值單建立（待付款）：30 分鐘內要付款，否則自動取消 */
 export async function sendWalletTopupPendingEmail(args: {
   to: string;
   name: string;
@@ -1407,7 +1407,7 @@ export async function sendWalletTopupPendingEmail(args: {
     const topupNo = escapeHtml(args.topupNo);
     const content = `
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
-      <p style="margin:0;">你嘅購物金充值單已經建立，請喺 <b>48 小時內</b>完成付款——可以去充值頁撳「立即付款」網上俾，或者過數後上傳付款截圖：</p>
+      <p style="margin:0;">你嘅購物金充值單已經建立，請喺 <b>30 分鐘內</b>完成付款——可以去充值頁撳「立即付款」網上俾，或者過數後上傳付款截圖：</p>
       ${infoBox([
         ["充值單號", mono(topupNo)],
         ["套票", escapeHtml(args.label)],
@@ -1421,9 +1421,9 @@ export async function sendWalletTopupPendingEmail(args: {
     `;
     return await sendEmail({
       to: args.to,
-      subject: `【RedCode】購物金充值單 ${args.topupNo} 待付款 — 請於 48 小時內完成`,
+      subject: `【RedCode】購物金充值單 ${args.topupNo} 待付款 — 請於 30 分鐘內完成`,
       html: brandedEmail({
-        preheader: `充值單 ${topupNo} 待付款，48 小時內未完成會自動取消`,
+        preheader: `充值單 ${topupNo} 待付款，30 分鐘內未完成會自動取消`,
         kicker: "REDCODE HK直播台 · 購物金充值",
         title: "充值單待付款",
         contentHtml: content,
@@ -1486,12 +1486,14 @@ export async function sendWalletTopupApprovedEmail(args: {
   creditAmount: number;
   balanceAfter: number;
   channel: string;
+  /** true＝Airwallex 即時付款自動入帳（唔使批核）——開場白唔提「批核」 */
+  instant?: boolean;
 }): Promise<SendResult> {
   try {
     const topupNo = escapeHtml(args.topupNo);
     const content = `
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
-      <p style="margin:0;">好消息——你嘅購物金充值已經批核通過，購物金即時可以用嚟買嘢啦 ✨</p>
+      <p style="margin:0;">好消息——${args.instant ? "你嘅網上付款已經收到，購物金即時入咗你嘅戶口" : "你嘅購物金充值已經批核通過，購物金即時可以用嚟買嘢啦"} ✨</p>
       ${infoBox([
         ["充值單號", mono(topupNo)],
         ["套票", escapeHtml(args.label)],
@@ -1507,7 +1509,9 @@ export async function sendWalletTopupApprovedEmail(args: {
       to: args.to,
       subject: `【RedCode】購物金已入帳 ✦ ＋HK$${args.creditAmount}（${args.topupNo}）`,
       html: brandedEmail({
-        preheader: `充值單 ${topupNo} 已批核，＋HK$${args.creditAmount} 已入帳`,
+        preheader: args.instant
+          ? `充值單 ${topupNo} 已收款，＋HK$${args.creditAmount} 即時入帳`
+          : `充值單 ${topupNo} 已批核，＋HK$${args.creditAmount} 已入帳`,
         kicker: "REDCODE HK直播台 · 購物金入帳",
         title: "購物金已入帳",
         contentHtml: content,
@@ -1558,7 +1562,7 @@ export async function sendWalletTopupRejectedEmail(args: {
   }
 }
 
-/** ⑦e 充值單逾時取消（48 小時未付款，sweeper 自動取消） */
+/** ⑦e 充值單逾時取消（30 分鐘未付款，sweeper 自動取消） */
 export async function sendWalletTopupCancelledEmail(args: {
   to: string;
   name: string;
@@ -1570,7 +1574,7 @@ export async function sendWalletTopupCancelledEmail(args: {
     const topupNo = escapeHtml(args.topupNo);
     const content = `
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
-      <p style="margin:0;">你嘅購物金充值單因為超過 <b>48 小時</b>未完成付款，系統已經自動取消：</p>
+      <p style="margin:0;">你嘅購物金充值單因為超過 <b>30 分鐘</b>未完成付款，系統已經自動取消：</p>
       ${infoBox([
         ["充值單號", mono(topupNo)],
         ["套票", escapeHtml(args.label)],
@@ -1637,6 +1641,269 @@ export async function sendWalletTopupReviewAlertEmail(args: {
     });
   } catch (e) {
     console.error(`[email] 砌充值待批核通知出錯 → ${to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/* ══════════════════════ v2.4.0 Wave 2 出貨同步通知（2026-10-09） ══════════════════════
+ * 四封都係 never-throw（同全站 email 規矩）：失敗淨係 console.error＋SendResult，
+ * 唔會阻到 shipment-callback 主流程。收信人由 caller 用「會員 email 優先，冇先訪客 email」揀好。
+ */
+
+/** 出貨物流方式 label（email／前台共用口徑） */
+export const SHIP_METHOD_LABEL: Record<string, string> = {
+  sf: "順豐速運",
+  face: "面交交收",
+  pickup: "上門自取",
+  storage: "已入倉儲存",
+};
+
+/** 順豐官方追蹤連結（契約指定格式；2–10 小時更新提示寫喺信入面） */
+export function sfTrackingUrl(sfNo: string): string {
+  return `https://www.sf-express.com/we/ow/chn/sc/waybill/waybill-detail/${encodeURIComponent(sfNo)}`;
+}
+
+/** 出貨信嘅批次結構：一張單可以分幾次寄，debounce 後一次過列出 */
+export type ShipmentEmailBatch = {
+  shipMethod: string; // 'sf'｜'face'｜'pickup'（storage 唔會寄信）
+  sfNo: string | null;
+  shippedAt: Date;
+  items: OrderEmailItem[];
+};
+
+/**
+ * ⑨ 出貨通知（debounce 10 分鐘批次寄出）：訂單號＋逐批物流方式＋貨品表。
+ * 順豐批次有「即撳追蹤」掣＋「順豐系統一般需要 2–10 小時先更新追蹤狀態」提示（老闆指定原句）；
+ * 面交／自取用對應字句；部分出貨標明「已寄 X／共 Y 件」。storage 批次唔會落到呢封信。
+ */
+export async function sendOrderShippedEmail(args: {
+  to: string;
+  name: string;
+  orderNo: string;
+  batches: ShipmentEmailBatch[];
+  /** 全單未取消貨品件數＋已寄件數（partial＝未寄齊） */
+  totalItems: number;
+  shippedItems: number;
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const partial = args.shippedItems < args.totalItems;
+    const batchHtml = args.batches
+      .map((b) => {
+        const methodLabel = SHIP_METHOD_LABEL[b.shipMethod] ?? b.shipMethod;
+        const head =
+          b.shipMethod === "sf" && b.sfNo
+            ? infoBox([
+                ["物流方式", `<b>${methodLabel}</b>`],
+                ["順豐單號", mono(escapeHtml(b.sfNo))],
+                ["寄出時間", fmtDateHK(b.shippedAt)],
+              ]) +
+              ctaButton("即撳追蹤貨件 →", sfTrackingUrl(b.sfNo)) +
+              note("順豐系統一般需要 2–10 小時先更新追蹤狀態，暫時撳入去未見到資料係正常嘅，請稍候再睇。")
+            : infoBox([
+                ["交收方式", `<b>${methodLabel}</b>`],
+                ["時間", fmtDateHK(b.shippedAt)],
+              ]) +
+              note(
+                b.shipMethod === "face"
+                  ? "貨品已按你揀嘅方式面交交收，如有問題 WhatsApp 我哋。"
+                  : "貨品已可以上門自取，如有問題 WhatsApp 我哋。",
+              );
+        return `
+          <div style="margin:0 0 18px;">
+            ${head}
+            ${itemsTable(b.items)}
+          </div>`;
+      })
+      .join("");
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">你嘅訂單 <b>${orderNo}</b> ${
+        partial
+          ? `已經<b>部分寄出</b>（已寄 <b>${args.shippedItems}</b>／共 ${args.totalItems} 件），其餘貨品同事會盡快安排，寄出後你會再收到通知：`
+          : `<b>全部貨品都寄出晒</b>（共 ${args.totalItems} 件），多謝你耐心等待 ✦`
+      }</p>
+      ${infoBox([
+        ["訂單編號", mono(orderNo)],
+        ["寄出進度", partial ? `<span style="color:${GOLD};">部分寄出（${args.shippedItems}/${args.totalItems} 件）</span>` : `<span style="color:${GOLD};">全部寄出 ✓</span>`],
+      ])}
+      ${batchHtml}
+      ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
+      ${note("收到貨後如有任何問題，隨時 WhatsApp 我哋跟進。多謝支持 RedCode ♥")}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: partial
+        ? `【RedCode】訂單 ${args.orderNo} 部分寄出（${args.shippedItems}/${args.totalItems} 件）📦`
+        : `【RedCode】訂單 ${args.orderNo} 已寄出 📦`,
+      html: brandedEmail({
+        preheader: partial
+          ? `訂單 ${orderNo} 部分寄出（${args.shippedItems}/${args.totalItems} 件）`
+          : `訂單 ${orderNo} 已寄出，撳入去追蹤貨件`,
+        kicker: "REDCODE HK直播台 · 出貨通知",
+        title: partial ? "部分貨品已寄出" : "你嘅貨品已寄出",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌出貨信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/**
+ * ⑩ 取消出貨致歉信（WMS unshipped 且出貨信**已寄出**先觸發；未寄出就靜默反轉）：
+ * 文案要暖心唔准生硬（老闆原話）——「之前封出貨通知係錯誤發出，我哋會盡快安排寄出」。
+ */
+export async function sendShipmentRevertedEmail(args: {
+  to: string;
+  name: string;
+  orderNo: string;
+  items: OrderEmailItem[];
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0 0 14px;">真係唔好意思 🙇‍♀️ 你之前收到嘅出貨通知係我哋誤發——以下貨品其實<b>暫未寄出</b>，仲喺倉度等緊安排：</p>
+      ${itemsTable(args.items)}
+      ${infoBox([
+        ["訂單編號", mono(orderNo)],
+        ["最新狀態", `<span style="color:${GOLD};">已確認，安排寄出中</span>`],
+      ])}
+      <p style="margin:0;">我哋會盡快幫你寄出，真正寄出嗰陣你會再收到出貨通知（有齊追蹤資料）。今次嘅混亂令你受驚，多多體諒 ♥</p>
+      ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
+      ${note("如有疑問隨時 WhatsApp 我哋，同事會即刻幫你查。")}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】訂單 ${args.orderNo} 出貨通知更正 — 貨品安排寄出中`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo} 出貨通知更正：貨品暫未寄出，我哋盡快安排`,
+        kicker: "REDCODE HK直播台 · 出貨通知更正",
+        title: "唔好意思，出貨通知更正",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌取消出貨致歉信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/**
+ * ⑪ 貨品取消通知（WMS 刪貨品，原因必填且客人睇到）：
+ * 逐件列取消原因；一句「退款會經原付款方式處理」；全單取消同部分取消標題唔同。
+ */
+export async function sendOrderItemCancelledEmail(args: {
+  to: string;
+  name: string;
+  orderNo: string;
+  items: (OrderEmailItem & { cancelReason: string })[];
+  /** true＝全單貨品都取消晒（訂單轉已取消） */
+  allCancelled: boolean;
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const rows = args.items
+      .map(
+        (it) => `
+        <tr>
+          <td style="padding:8px 10px;border-bottom:1px solid ${GOLD_FAINT};">${escapeHtml(it.productName)}${it.size ? `（${escapeHtml(it.size)}）` : ""} × ${it.quantity}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid ${GOLD_FAINT};color:${ERROR};">${escapeHtml(it.cancelReason)}</td>
+        </tr>`,
+      )
+      .join("");
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0 0 14px;">你嘅訂單 <b>${orderNo}</b> ${
+        args.allCancelled ? "嘅貨品<b>全部取消咗</b>，訂單已經取消" : "有貨品需要取消"
+      }，原因寫喺下面（我哋唔會隱瞞，白紙黑字話你知）：</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${GOLD_HAIR};border-bottom:1px solid ${GOLD_HAIR};margin:0 0 14px;font-size:14px;">
+        <tr>
+          <th align="left" style="padding:8px 10px;color:${INK_FAINT};font-weight:400;border-bottom:1px solid ${GOLD_HAIR};">取消貨品</th>
+          <th align="left" style="padding:8px 10px;color:${INK_FAINT};font-weight:400;border-bottom:1px solid ${GOLD_HAIR};">取消原因</th>
+        </tr>
+        ${rows}
+      </table>
+      ${note("已付款嘅貨品，退款會經原付款方式處理，同事會盡快跟進；如有疑問 WhatsApp 我哋。")}
+      ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: args.allCancelled
+        ? `【RedCode】訂單 ${args.orderNo} 已取消（貨品取消通知）`
+        : `【RedCode】訂單 ${args.orderNo} 部分貨品已取消`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo} ${args.allCancelled ? "已取消" : "部分貨品取消"}，原因請睇內文`,
+        kicker: "REDCODE HK直播台 · 貨品取消通知",
+        title: args.allCancelled ? "訂單已取消" : "部分貨品已取消",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌貨品取消信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/**
+ * ⑫ 員工更改貨品通知（WMS 改貨號／品名／尺寸）：客人所有訂單出口會出「員工更改」chip，
+ * 呢封信講明邊件改咗、改咗咩、點解改（changeNote 客人睇到）。
+ */
+export async function sendOrderItemChangedEmail(args: {
+  to: string;
+  name: string;
+  orderNo: string;
+  items: {
+    before: { productName: string; sku: string; size: string | null };
+    after: { productName: string; sku: string; size: string | null };
+    quantity: number;
+    changeNote: string;
+  }[];
+  changedBy: string;
+}): Promise<SendResult> {
+  try {
+    const orderNo = escapeHtml(args.orderNo);
+    const esc = escapeHtml;
+    const rows = args.items
+      .map((it) => {
+        const field = (label: string, b: string, a: string) =>
+          b === a
+            ? ""
+            : `<div style="margin:2px 0;">${label}：<span style="text-decoration:line-through;color:${INK_FAINT};">${esc(b)}</span> → <b>${esc(a)}</b></div>`;
+        return `
+        <div style="padding:10px 0;border-bottom:1px solid ${GOLD_FAINT};">
+          ${field("貨品名稱", it.before.productName, it.after.productName)}
+          ${field("貨號", it.before.sku, it.after.sku)}
+          ${field("尺寸", it.before.size ?? "—", it.after.size ?? "—")}
+          <div style="margin:4px 0 0;color:${INK_SOFT};">更改說明：${esc(it.changeNote)}</div>
+        </div>`;
+      })
+      .join("");
+    const content = `
+      <p style="margin:0 0 14px;">你好，${esc(args.name)}：</p>
+      <p style="margin:0 0 14px;">你嘅訂單 <b>${orderNo}</b> 有貨品資料由同事更改咗（訂單頁會有「員工更改」標示），前後對照如下：</p>
+      <div style="border-top:1px solid ${GOLD_HAIR};margin:0 0 14px;font-size:14px;">${rows}</div>
+      ${infoBox([
+        ["訂單編號", mono(orderNo)],
+        ["經手同事", esc(args.changedBy)],
+      ])}
+      ${note("價錢同數量冇變動；如對更改有疑問，WhatsApp 我哋即刻同你核對。")}
+      ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】訂單 ${args.orderNo} 貨品資料已更新（員工更改）`,
+      html: brandedEmail({
+        preheader: `訂單 ${orderNo} 有貨品資料更新，內附前後對照`,
+        kicker: "REDCODE HK直播台 · 訂單資料更新",
+        title: "貨品資料已更新",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌員工更改信出錯 → ${args.to}`, e);
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }

@@ -17,6 +17,7 @@ import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
 import { trpc } from '@/providers/trpc';
 import GloCutout from '@/components/GloCutout';
 import WishingStar from '@/components/account/WishingStar';
+import WalletLedgerList from '@/components/account/WalletLedgerList';
 import PaymentDropzone from '@/components/cart/PaymentDropzone';
 import { formatHKD } from '@/components/cart/format';
 import {
@@ -34,7 +35,7 @@ import {
  *   金色 shimmer 套票卡＋reveal 入場
  * ─ 條款硬規定（老闆原話，一字唔准改）：
  *   「購物金不設退款」＋「本頁購物金使用只限購物官網所銷售之商品，直播商品並不適用。」
- * ─ 流程：揀套票 → wallet.createTopup（48 小時付款期）→
+ * ─ 流程：揀套票 → wallet.createTopup（30 分鐘付款期）→
  *   ① 網上即時付款（airwallex.createTopupPayment → HPP 跳轉；回跳 /#/wallet-topup?paid=1）
  *   ② 手動過數（收款資料同 /payment 同一來源 siteSettings）＋上傳截圖
  *   → 兩條路都係「待批核」：官網後台／WMS 批准先入帳（approveTopupCore 冪等）
@@ -66,12 +67,7 @@ const TOPUP_STATUS_META: Record<string, { label: string; className: string }> = 
   },
 };
 
-/** 流水賬類型 label（同 api/wallet.ts LEDGER_TYPE_LABEL 同步） */
-const LEDGER_TYPE_LABEL: Record<string, string> = {
-  topup: '充值入帳',
-  spend: '購物扣減',
-  refund: '取消返還',
-};
+
 
 function fmtDateTimeHK(iso: string): string {
   const d = new Date(iso);
@@ -198,7 +194,6 @@ export default function WalletTopup() {
 
   const wallet = myWalletQuery.data ?? null;
   const topups = useMemo(() => wallet?.topups ?? [], [wallet]);
-  const ledger = useMemo(() => wallet?.ledger ?? [], [wallet]);
   const packages = packagesQuery.data ?? [];
   const activeTopup = topups.find((t) => t.id === activeTopupId) ?? null;
 
@@ -423,21 +418,23 @@ export default function WalletTopup() {
           <Sparkles size={15} aria-hidden="true" className="mt-1 shrink-0 text-gold" />
           <span>
             <b className="text-txt-1">購物金不設退款</b>；本頁購物金使用只限購物官網所銷售之商品，
-            <b className="text-txt-1">直播商品並不適用</b>。每張充值單有效期 48 小時，
-            逾時未付款會自動取消；充值經批核後即時入帳，入帳後會收到確認電郵。
+            直播商品（官網所有直播上架之商品，均不受影響）<b className="text-txt-1">並不適用</b>。
+            每張充值單付款有效期為 <b className="text-txt-1">30 分鐘</b>，逾時未付款會自動取消；
+            充值後即時入帳，如手動上傳付款截圖則需待後台同事確認後入帳，成功入帳後會收到確認電郵。
           </span>
         </p>
       </div>
 
-      {/* Airwallex 回跳橫額（?paid=1）：webhook 到咗就轉待批核，未到就 poll 緊 */}
+      {/* Airwallex 回跳橫額（?paid=1）：免審即時入帳——webhook 到咗即刻轉「已入帳」，未到就 poll 緊 */}
       {paidBack && (
         <div
           role="status"
           className="mt-6 rounded-2xl border px-6 py-4 text-[14px] leading-relaxed"
-          style={{ borderColor: 'var(--lavender)', background: 'var(--glass-bg)', color: 'var(--txt-1)' }}
+          style={{ borderColor: 'var(--gold)', background: 'var(--glass-bg)', color: 'var(--txt-1)' }}
         >
-          已收到你嘅付款指示 ✦ 系統確認緊（呢頁會自動更新）；確認後充值單會轉「待批核」，
-          同事批核後購物金即時入帳。
+          {wallet?.topups.some((t) => t.status === 'pending_payment')
+            ? '已收到你嘅網上付款 ✦ 購物金即時入帳中（呢頁會自動更新）…'
+            : '你嘅購物金已經即時入帳 ✦ 可以去「購物金紀錄」睇返，確認電郵亦會寄去你嘅信箱。'}
         </div>
       )}
 
@@ -528,7 +525,7 @@ export default function WalletTopup() {
             disabled={selectedPackage === null || creating}
             className="btn btn-primary px-10 py-3.5 text-[15px]"
           >
-            {creating ? '開緊單，許願中…' : '開充值單（48 小時內付款）'}
+            {creating ? '開緊單，許願中…' : '開充值單（30 分鐘內付款）'}
           </button>
         </div>
       </div>
@@ -757,49 +754,16 @@ export default function WalletTopup() {
           <span aria-hidden="true" className="h-px flex-1 opacity-30" style={{ background: 'var(--gold)' }} />
         </div>
         <div ref={ledgerRef} className="reveal mt-6">
-          {ledger.length === 0 ? (
-            <p className="rounded-2xl border border-space-line bg-space-2 px-6 py-10 text-center text-[14px] text-txt-3">
-              仲未有購物金出入紀錄。
-            </p>
-          ) : (
-            <div
-              className="overflow-hidden rounded-2xl border"
-              style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
-            >
-              {ledger.map((l, i) => (
-                <div
-                  key={l.id}
-                  className={`flex flex-wrap items-center justify-between gap-x-5 gap-y-1.5 px-5 py-4 md:px-6 ${
-                    i > 0 ? 'border-t' : ''
-                  }`}
-                  style={{ borderColor: 'var(--space-line)' }}
-                >
-                  <div className="min-w-0">
-                    <p className="text-[13.5px] font-bold text-txt-1">
-                      {LEDGER_TYPE_LABEL[l.type] ?? l.type}
-                      {l.note && (
-                        <span className="ml-2 font-normal text-txt-3">{l.note}</span>
-                      )}
-                    </p>
-                    <p className="mt-0.5 font-mono text-[12px] text-txt-3">
-                      {fmtDateTimeHK(l.createdAt)} · 餘額 {formatHKD(l.balanceAfter)}
-                    </p>
-                  </div>
-                  <span
-                    className={`font-mono text-[16px] font-bold ${
-                      l.amount >= 0 ? 'text-gold' : 'text-txt-2'
-                    }`}
-                  >
-                    {l.amount >= 0 ? '+' : '−'}
-                    {formatHKD(Math.abs(l.amount))}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* v2.5.1：共享分頁流水列表（每頁 15 筆；存入有付款方式、使用/返還有訂單連結） */}
+          <div
+            className="rounded-2xl border p-5 md:p-6"
+            style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
+          >
+            <WalletLedgerList emptyText="仲未有購物金出入紀錄。" />
+          </div>
         </div>
         <p className="mt-6 text-center text-[12.5px] leading-relaxed text-txt-3">
-          購物金不設退款；只限購物官網所銷售之商品，直播商品並不適用。
+          購物金不設退款；只限購物官網所銷售之商品，直播商品（官網所有直播上架之商品，均不受影響）並不適用。
           如有疑問歡迎聯絡我哋客服 ♡
         </p>
       </div>

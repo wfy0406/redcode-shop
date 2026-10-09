@@ -1,12 +1,14 @@
-import { and, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { orders, products, users, walletTopups } from "@db/schema";
+import { orders, orderShipments, products, users, walletTopups } from "@db/schema";
 import { logAudit } from "./audit";
 import {
   sendOrderCancelledEmail,
   sendGuestOrderCancelledEmail,
+  sendOrderShippedEmail,
   sendWalletTopupCancelledEmail,
   orderVipEmailInfo,
+  type ShipmentEmailBatch,
 } from "./email";
 import { returnWalletForOrder } from "./wallet";
 
@@ -170,7 +172,7 @@ export async function sweepExpiredPendingOrders(now = new Date()): Promise<numbe
 }
 
 /**
- * v2.5.0（購物金）：充值單 48 小時未付款自動取消（同會員購物單一個規則）。
+ * v2.5.1（購物金，老闆 2026-10-09 指令）：充值單 30 分鐘未付款自動取消（即時付款同上傳截圖都係）。
  * 淨郁 pending_payment（未俾錢嘅）；payment_review（已付款待批核）唔郁——
  * 錢收咗就唔會自動取消，等同事批。取消信寄畀會員（有 email 先寄）。
  */
@@ -218,7 +220,7 @@ async function sweepExpiredWalletTopups(now = new Date()): Promise<number> {
         action: "wallet.topupAutoCancel",
         targetType: "walletTopup",
         targetId: topup.topupNo,
-        detail: `充值單 ${topup.topupNo} 滿 48 小時未付款，系統自動取消${emailNote}`,
+        detail: `充值單 ${topup.topupNo} 滿 30 分鐘未付款，系統自動取消${emailNote}`,
       });
     } catch (e) {
       console.error(`[sweeper] 取消充值單 ${topup.topupNo} 失敗:`, e);
@@ -227,14 +229,136 @@ async function sweepExpiredWalletTopups(now = new Date()): Promise<number> {
   return cancelled;
 }
 
-/** 開機啟動：即刻掃一次，之後每 5 分鐘掃一次（會員 48h＋訪客 30min＋充值單 48h 三條件同一輪掃） */
+/**
+ * v2.4.0（Wave 2 出貨同步）：出貨信 debounce 10 分鐘。
+ * 每張有未寄批次（orderShipments.emailedAt IS NULL、未 reversed）嘅單：
+ *   - 該單**非儲貨**批次最新一次未夠 10 分鐘 → skip 等下輪（debounce 重新計時）
+ *   - 夠 10 分鐘 → 一次過寄**一封**合併信（順豐單號＋追蹤連結＋2–10h 提示／面交／自取字句），
+ *     寄成功先寫 emailedAt（失敗留返下輪 retry，唔會靜默）
+ *   - 淨係儲貨（storage）批次 → 唔寄信，直接標 emailedAt（貨未離倉，唔好嚇客人）
+ *   - 訂單已取消 → 唔寄，照標 emailedAt 留底
+ * 收信人：會員單用會員 email；訪客單用 guestEmail；冇 email → 標 emailedAt＋audit 記低。
+ */
+async function sendDueShipmentEmails(now = new Date()): Promise<number> {
+  const db = getDb();
+  const pending = await db.query.orderShipments.findMany({
+    where: and(isNull(orderShipments.emailedAt), isNull(orderShipments.reversedAt)),
+  });
+  if (pending.length === 0) return 0;
+  const byOrder = new Map<number, typeof pending>();
+  for (const row of pending) {
+    const list = byOrder.get(row.orderId) ?? [];
+    list.push(row);
+    byOrder.set(row.orderId, list);
+  }
+  const DEBOUNCE_MS = 10 * 60 * 1000;
+  let sent = 0;
+  for (const [orderId, batches] of byOrder) {
+    try {
+      const nonStorage = batches.filter((b) => b.shipMethod !== "storage");
+      const markAll = async () => {
+        await db
+          .update(orderShipments)
+          .set({ emailedAt: now })
+          .where(inArray(orderShipments.id, batches.map((b) => b.id)));
+      };
+      // 儲貨批次唔觸發信：冇非儲貨批次 → 靜默標埋佢
+      if (nonStorage.length === 0) {
+        await markAll();
+        continue;
+      }
+      // debounce：最新一次非儲貨出貨未夠 10 分鐘 → 等下輪
+      const latest = Math.max(...nonStorage.map((b) => b.createdAt.getTime()));
+      if (now.getTime() - latest < DEBOUNCE_MS) continue;
+
+      const order = await db.query.orders.findFirst({
+        where: eq(orders.id, orderId),
+        with: {
+          items: true,
+          user: { columns: { name: true, email: true } },
+        },
+      });
+      // 訂單唔存在／已取消 → 唔寄，照標留底
+      if (!order || order.status === "cancelled") {
+        await markAll();
+        continue;
+      }
+      const to = order.user?.email ?? order.guestEmail ?? null;
+      const name = order.user?.name ?? order.guestName ?? "顧客";
+      if (!to) {
+        await markAll();
+        void logAudit({
+          actorId: null,
+          actorRole: "system",
+          action: "order.shippedEmailSkipped",
+          targetType: "order",
+          targetId: order.orderNo,
+          detail: `訂單 ${order.orderNo} 出貨信未寄：冇收信 email（會員未綁／訪客缺）`,
+        });
+        continue;
+      }
+      // 逐批砌貨品表：以「而家仲掛住呢個批次」嘅 item 為準（unship 後再出貨會轉批次）
+      const emailBatches: ShipmentEmailBatch[] = [];
+      for (const b of nonStorage.sort((a, b2) => a.shippedAt.getTime() - b2.shippedAt.getTime())) {
+        const ids = order.items.filter((it) => it.shipmentId === b.id);
+        if (ids.length === 0) continue;
+        emailBatches.push({
+          shipMethod: b.shipMethod,
+          sfNo: b.sfNo,
+          shippedAt: b.shippedAt,
+          items: ids.map((it) => ({
+            productName: it.productName,
+            size: it.size,
+            price: it.price,
+            quantity: it.quantity,
+          })),
+        });
+      }
+      if (emailBatches.length === 0) {
+        await markAll();
+        continue;
+      }
+      const live = order.items.filter((it) => it.shipStatus !== "cancelled");
+      const shippedItems = live.filter((it) => it.shipStatus === "shipped").length;
+      const r = await sendOrderShippedEmail({
+        to,
+        name,
+        orderNo: order.orderNo,
+        batches: emailBatches,
+        totalItems: live.length,
+        shippedItems,
+      });
+      if (r.ok) {
+        await markAll();
+        sent += 1;
+        void logAudit({
+          actorId: null,
+          actorRole: "system",
+          action: "order.shippedEmail",
+          targetType: "order",
+          targetId: order.orderNo,
+          detail: `出貨信已寄出至 ${to}（訂單 ${order.orderNo}，${emailBatches.length} 個批次，已寄 ${shippedItems}/${live.length} 件）`,
+        });
+      } else {
+        // 失敗唔標 emailedAt——下輪自動 retry；log 大聲出嚟唔靜默
+        console.error(`[sweeper] 出貨信寄失敗（訂單 ${order.orderNo} → ${to}）:`, r.error);
+      }
+    } catch (e) {
+      console.error(`[sweeper] 出貨信處理訂單 #${orderId} 失敗:`, e);
+    }
+  }
+  return sent;
+}
+
+/** 開機啟動：即刻掃一次，之後每 5 分鐘掃一次（會員 48h＋訪客 30min＋充值單 48h＋出貨信 debounce 同一輪掃） */
 export function startOrderSweeper(): void {
   const run = (label: string) =>
-    Promise.all([sweepExpiredPendingOrders(), sweepExpiredGuestOrders(), sweepExpiredWalletTopups()])
-      .then(([n, g, w]) => {
+    Promise.all([sweepExpiredPendingOrders(), sweepExpiredGuestOrders(), sweepExpiredWalletTopups(), sendDueShipmentEmails()])
+      .then(([n, g, w, s]) => {
         if (n > 0) console.log(`[sweeper] ${label}：自動取消咗 ${n} 張逾期待付款訂單`);
         if (g > 0) console.log(`[sweeper] ${label}：自動取消咗 ${g} 張訪客逾時訂單（30 分鐘未付款）`);
-        if (w > 0) console.log(`[sweeper] ${label}：自動取消咗 ${w} 張購物金充值單（48 小時未付款）`);
+        if (w > 0) console.log(`[sweeper] ${label}：自動取消咗 ${w} 張購物金充值單（30 分鐘未付款）`);
+        if (s > 0) console.log(`[sweeper] ${label}：寄出咗 ${s} 封出貨通知（10 分鐘 debounce 合併）`);
       })
       .catch((e) => console.error(`[sweeper] ${label}失敗:`, e));
 

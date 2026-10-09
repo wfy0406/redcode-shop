@@ -12,6 +12,7 @@ import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
 import { wmsWalletTopupReview } from "./wmsWallet";
+import { wmsShipmentCallback } from "./wmsShipment";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushDeliveries, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
@@ -23,7 +24,8 @@ import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, productImageArchive, products, users, walletTopups } from "@db/schema";
 import { getAirwallexConfig, retrievePaymentIntent, verifyWebhookSignature } from "./airwallex";
-import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail, orderVipEmailInfo, sendWalletTopupPaidEmail, sendWalletTopupReviewAlertEmail } from "./email";
+import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail, orderVipEmailInfo, sendWalletTopupApprovedEmail } from "./email";
+import { approveTopupCore } from "./walletRouter";
 import { isTopupNo } from "./wallet";
 import { logAudit } from "./audit";
 
@@ -65,6 +67,10 @@ app.post("/api/wms/refund-callback", wmsRefundCallback);
 
 // WMS → 官網購物金充值批核回調（v2.5.0 購物金；同樣 shared secret 驗證）
 app.post("/api/wms/wallet-topup-review", wmsWalletTopupReview);
+
+// WMS → 官網出貨回調（v2.4.0 Wave 2 出貨雙向同步；同樣 shared secret 驗證）：
+// shipped／unshipped／item_cancelled／item_updated 四個 action
+app.post("/api/wms/shipment-callback", wmsShipmentCallback);
 
 // WMS → 官網批量上架（2026-09-29 F8 直播場次制；同樣 shared secret 驗證）：
 // 手動上傳貨圖（multipart）＋ 批量推送（批准 execute／拒絕 reject）
@@ -167,6 +173,12 @@ async function verifyReturnTopup(topupId: number): Promise<void> {
  * 冪等：conditional update 淨郁 pending_payment 嘅充值單；郁到（第一次）先寄信。
  * **唔會即時入帳**——收款後狀態＝payment_review（待批核），官網後台／WMS 批核先加餘額。
  */
+/**
+ * 充值單 Airwallex 收款確認（webhook／return 主動查證兩條路都落到呢度）。
+ * 老闆 2026-10-09 新指令：**網上即時付款唔使審查**——支付平台已確認收錢，
+ * 冇核數需要，即刻入帳＋寄「充值成功」信畀客人；淨係手動上傳截圖先要批核。
+ * 入帳行 approveTopupCore（payment_review→approved 冪等，重複 webhook 唔會入兩次）。
+ */
 async function handleTopupPaidOnline(
   topupNo: string,
   intentId: string | null,
@@ -186,46 +198,39 @@ async function handleTopupPaidOnline(
     .where(and(eq(walletTopups.topupNo, topupNo), eq(walletTopups.status, "pending_payment")))
     .returning();
   if (!paid) return false;
+  // 即刻入帳（冪等：唔知點解狀態唔啱／已入咗 → result null，唔會入兩次）
+  const result = await approveTopupCore(paid.id, "系統自動（Airwallex 已收款）", null);
   void logAudit({
     actorRole: "system",
     action: "wallet.topupPaidOnline",
     targetType: "walletTopup",
     targetId: paid.topupNo,
-    detail: `充值單 ${paid.topupNo} Airwallex 收款成功（HK$${paid.price}${intentId ? `，intent ${intentId}` : ""}，來源：${source === "webhook" ? "webhook" : "return 主動查證"}），轉待批核（批核後先入帳）`,
+    detail: result
+      ? `充值單 ${paid.topupNo} Airwallex 收款成功（HK$${paid.price}${intentId ? `，intent ${intentId}` : ""}，來源：${source === "webhook" ? "webhook" : "return 主動查證"}）→ 免審即時入帳＋HK$${paid.creditAmount}，餘額 HK$${result.balanceAfter}`
+      : `充值單 ${paid.topupNo} Airwallex 收款成功（來源：${source}），入帳步驟跳過（已入過或狀態已變）`,
   });
-  // 寄信（背景，失敗唔阻）：會員「已收款待批核」＋內部「待批核通知」
+  // 充值成功信（背景，失敗唔阻；instant=true 唔提「批核」字眼）
   void (async () => {
     try {
+      if (!result) return;
       const member = await db.query.users.findFirst({
         where: eq(users.id, paid.userId),
         columns: { name: true, phone: true, email: true },
       });
-      if (!member) return;
-      if (member.email) {
-        const r = await sendWalletTopupPaidEmail({
-          to: member.email,
-          name: member.name,
-          topupNo: paid.topupNo,
-          label: paid.label,
-          creditAmount: paid.creditAmount,
-          price: paid.price,
-          paidAt,
-        });
-        if (!r.ok) console.error(`[email] 充值收款信寄唔出（${paid.topupNo}）：`, r.error);
-      }
-      const r2 = await sendWalletTopupReviewAlertEmail({
+      if (!member?.email) return;
+      const r = await sendWalletTopupApprovedEmail({
+        to: member.email,
+        name: member.name,
         topupNo: paid.topupNo,
-        memberName: member.name,
-        memberPhone: member.phone,
-        memberEmail: member.email,
         label: paid.label,
         creditAmount: paid.creditAmount,
-        price: paid.price,
+        balanceAfter: result.balanceAfter,
         channel: "網上即時付款（Airwallex）",
+        instant: true,
       });
-      if (!r2.ok) console.error(`[email] 充值待批核通知寄唔出（${paid.topupNo}）：`, r2.error);
+      if (!r.ok) console.error(`[email] 充值成功信寄唔出（${paid.topupNo}）：`, r.error);
     } catch (e) {
-      console.error("[airwallex] 充值收款後寄信出錯:", e);
+      console.error("[airwallex] 充值入帳後寄信出錯:", e);
     }
   })();
   return true;

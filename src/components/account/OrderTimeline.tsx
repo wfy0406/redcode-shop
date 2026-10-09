@@ -1,13 +1,13 @@
-import { Clock, Hourglass, BadgeCheck, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
+import { Clock, Hourglass, BadgeCheck, CheckCircle2, AlertCircle, XCircle, Truck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { REJECT_RED } from './StatusBadge';
 import type { OrderStatus } from './types';
 
 /**
- * 訂單狀態時間線（三步橫向 stepper，lucide icon + 細字）
- * pending_payment → payment_review → approved（已確認＝完成終態；唔再要出貨步驟）
- * - 第三步係完成態：approved 到達時用 success 色 tick；legacy shipped／completed 同樣當完成顯示
+ * 訂單狀態時間線（v2.4.0 Wave 2 改四步 stepper，lucide icon + 細字）
+ * pending_payment → payment_review → approved → shipped（已寄出＝訂單正常終態）
+ * - 第四步係完成態：shipped 到達時用 success 色 tick；legacy completed 同樣當完成顯示
  * - 已完成步：主色 --pink
  * - 當前步：--pink + 光效（pink-glow 外圈）
  * - 未到步：--text-3 + --space-line
@@ -19,6 +19,8 @@ const STEPS: { label: string; icon: LucideIcon }[] = [
   { label: '待付款', icon: Clock },
   { label: '審核中', icon: Hourglass },
   { label: '已確認', icon: BadgeCheck },
+  // v2.4.0（Wave 2）：已寄出先係訂單正常終態（WMS 出貨回傳觸發）
+  { label: '已寄出', icon: Truck },
 ];
 
 type StepStatus = Exclude<OrderStatus, 'rejected' | 'cancelled'>;
@@ -27,18 +29,19 @@ const STATUS_INDEX: Record<StepStatus, number> = {
   pending_payment: 0,
   payment_review: 1,
   approved: 2,
-  shipped: 2, // legacy 終態：映射去「已確認」步
-  completed: 2, // legacy 終態，同上
+  shipped: 3, // v2.4.0（Wave 2）：「已寄出」係第四步（正常終態）
+  completed: 3, // legacy 終態，同上
 };
 
 type StepState = 'done' | 'current' | 'upcoming';
 
 function stepState(status: StepStatus, index: number): StepState {
-  // 已確認＝完成終態：三步全部 done（第三步用 success 色 tick）；legacy shipped/completed 一樣
-  if (status === 'approved' || status === 'shipped' || status === 'completed') return 'done';
+  // shipped／completed＝正常終態：四步全部 done（第四步用 success 色 tick）
+  if (status === 'shipped' || status === 'completed') return 'done';
   const current = STATUS_INDEX[status];
   if (index < current) return 'done';
-  if (index === current) return 'current';
+  // approved：「已確認」步 done，「已寄出」步未開始（等 WMS 出貨回傳）
+  if (index === current) return status === 'approved' ? 'done' : 'current';
   return 'upcoming';
 }
 

@@ -3,7 +3,7 @@
  *
  * 規則（老闆原話落實）：
  * - 後台上架套票（面額 ≠ 售價，例如面額 $1000 賣 $970）；
- * - 充值同平時消費一樣：Airwallex 即時付款／上傳截圖，48 小時內要付款，
+ * - 充值：Airwallex 即時付款（免審即入帳）／上傳截圖（要批核），30 分鐘內要付款，
  *   但要官網後台／WMS 批核先入帳（未批唔會加餘額）；
  * - 購物落單可用購物金抵銷；唔夠俾晒 → 尾數即時付款／上傳截圖；
  * - 訂單 48 小時未付被取消 → 購物金自動返還（walletReturnedAt 做冪等鎖）；
@@ -18,8 +18,8 @@ import { orders, users, walletLedger } from "@db/schema";
 /** 充值單號前綴：Airwallex webhook／return 靠佢分流（唔會撞 RC 訂單號） */
 export const TOPUP_NO_PREFIX = "WT";
 
-/** 充值單付款保留期（同會員購物單 48 小時規則） */
-export const TOPUP_TTL_MS = 2 * 24 * 60 * 60 * 1000;
+/** 充值單付款保留期（老闆 2026-10-09 指令：30 分鐘——即時付款同上傳截圖都係，逾時自動取消） */
+export const TOPUP_TTL_MS = 30 * 60 * 1000;
 
 export function isTopupNo(merchantOrderId: string): boolean {
   return merchantOrderId.startsWith(TOPUP_NO_PREFIX);

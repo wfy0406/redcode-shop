@@ -230,12 +230,12 @@ export default function Navbar() {
         borderColor: 'var(--glass-border)',
       }}
     >
-      <div className="mx-auto flex h-full max-w-[1280px] items-center justify-between px-5 md:px-8 xl:px-12">
+      <div className="mx-auto flex h-full max-w-[1280px] items-center justify-between px-5 md:px-8">
         {/* 左：動態 Logo（v2.2.33 老闆指令：logo 喺左上角，小 Gloria 推 logo→推唔郁→雙手揮手，循環播） */}
         <AnimatedLogo />
 
         {/* 中：連結（desktop）——v2.2.13 老闆指令：主連結瘦身成四條＋「更多」dropdown，唔再摺行 */}
-        <nav className="hidden items-center gap-5 md:flex lg:gap-8" aria-label="主導航">
+        <nav className="hidden items-center gap-4 lg:flex xl:gap-6" aria-label="主導航">
           {MAIN_LINKS.map((link) =>
             link.to === '/products' ? (
               // 2026-08-07 Glo 要求：「商品」hover／鍵盤 focus 展開分類 dropdown
@@ -412,7 +412,7 @@ export default function Navbar() {
         </nav>
 
         {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員 */}
-        <div className="flex items-center gap-2 md:gap-4">
+        <div className="flex items-center gap-2 xl:gap-3">
           {/* Messenger 鈕（2026-08-06 Glo 要求）：icon-only，一撳直開專頁對話 */}
           <a
             href={MESSENGER_URL}
@@ -429,17 +429,17 @@ export default function Navbar() {
             href={WHATSAPP_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-whatsapp !px-4 !py-2 text-sm md:!px-5"
+            className="btn btn-whatsapp !px-3 !py-2 text-sm xl:!px-4"
             aria-label="WhatsApp 聯絡我們"
           >
             <MessageCircle size={16} aria-hidden="true" />
-            <span className="hidden sm:inline">WhatsApp</span>
+            <span className="hidden xl:inline">WhatsApp</span>
           </a>
 
           {/* 願望清單心心 */}
           <Link
             to="/account"
-            className="hidden min-h-11 min-w-11 items-center justify-center rounded-full text-txt-2 transition-colors hover:text-pink-soft md:flex"
+            className="hidden min-h-11 min-w-11 items-center justify-center rounded-full text-txt-2 transition-colors hover:text-pink-soft lg:flex"
             aria-label="願望清單"
           >
             <Heart size={20} aria-hidden="true" />
@@ -463,7 +463,7 @@ export default function Navbar() {
 
           {/* AUTH-SLOT: 已接 useAuth（自訂電話+密碼登入） */}
           {user ? (
-            <span className="hidden items-center gap-3 md:flex">
+            <span className="hidden items-center gap-2.5 lg:flex">
               {isStaff && (
                 <Link to="/admin" className="nav-link" style={{ color: 'var(--gold)' }}>
                   後台管理
@@ -472,10 +472,11 @@ export default function Navbar() {
               <Link to="/account" className="nav-link">
                 {user.name}
               </Link>
-              {/* VIP 級別 chip（v2.2.0 統一 vipTheme chipClass；NONE 低調唔出）：撳落去 /vip 會員制度介紹頁 */}
+              {/* VIP 級別 chip（v2.2.0 統一 vipTheme chipClass；NONE 低調唔出）：撳落去 /vip 會員制度介紹頁。
+                  v2.5.1：whitespace-nowrap——導航位迫時 badge 摺行會頂歪隔籬「登出」（老闆截圖投訴跑位） */}
               {vipTier && vipTheme.isVip && (
-                <Link to="/vip" aria-label={`會員級別：${vipTheme.label}，了解會員制度`}>
-                  <span className={vipTheme.chipClass}>
+                <Link to="/vip" aria-label={`會員級別：${vipTheme.label}，了解會員制度`} className="shrink-0">
+                  <span className={cn(vipTheme.chipClass, 'whitespace-nowrap')}>
                     {vipTheme.seal} {vipTheme.shortLabel}
                   </span>
                 </Link>
@@ -489,7 +490,7 @@ export default function Navbar() {
               </button>
             </span>
           ) : (
-            <Link to="/login" className="nav-link hidden md:inline">
+            <Link to="/login" className="nav-link hidden lg:inline">
               會員登入
             </Link>
           )}
@@ -497,7 +498,7 @@ export default function Navbar() {
           {/* 手機 hamburger */}
           <button
             type="button"
-            className="flex min-h-11 min-w-11 items-center justify-center text-txt-1 md:hidden"
+            className="flex min-h-11 min-w-11 items-center justify-center text-txt-1 lg:hidden"
             onClick={() => setMenuOpen((open) => !open)}
             aria-expanded={menuOpen}
             aria-label={menuOpen ? '關閉選單' : '開啟選單'}
@@ -513,7 +514,7 @@ export default function Navbar() {
       {menuOpen &&
         createPortal(
           <nav
-            className="flex flex-col gap-2 overflow-y-auto px-8 pb-10 pt-4 md:hidden"
+            className="flex flex-col gap-2 overflow-y-auto px-8 pb-10 pt-4 lg:hidden"
             style={{
               position: 'fixed',
               // v2.2.13：頂欄加咗 safe-area padding，drawer 頂要跟住避開 iPhone 狀態列

@@ -8,6 +8,7 @@ import { vipTierTheme } from '@/lib/vipTheme';
 import StatusBadge from './StatusBadge';
 import OrderTimeline from './OrderTimeline';
 import PaymentProofDropzone from './PaymentProofDropzone';
+import ShipmentSection, { ItemShipChips, batchMethodMap } from '@/components/orders/ShipmentInfo';
 import { formatHKD, formatOrderDate } from './types';
 import type { MyOrder, MyOrderItem } from './types';
 
@@ -113,11 +114,23 @@ function OnlinePaySection({ orderId, total }: { orderId: number; total: number }
   );
 }
 
-function ItemRow({ item, image }: { item: MyOrderItem; image?: string }) {
+function ItemRow({
+  item,
+  image,
+  showPending,
+  methodMap,
+}: {
+  item: MyOrderItem;
+  image?: string;
+  /** v2.4.0（Wave 2）：訂單已確認後先出「待寄出」chip（未確認單唔出噪音） */
+  showPending: boolean;
+  methodMap: Map<number, string>;
+}) {
+  const cancelled = item.shipStatus === 'cancelled';
   return (
     <li className="flex items-center gap-3 border-t border-space-line py-3 first:border-t-0 first:pt-0 last:pb-0">
       {image ? (
-        <span className="duotone block h-16 w-14 shrink-0 overflow-hidden rounded-lg border border-space-line">
+        <span className={`duotone block h-16 w-14 shrink-0 overflow-hidden rounded-lg border border-space-line ${cancelled ? 'opacity-40 grayscale' : ''}`}>
           <img src={image} alt={item.productName} className="h-full w-full object-cover" loading="lazy" />
         </span>
       ) : (
@@ -134,13 +147,19 @@ function ItemRow({ item, image }: { item: MyOrderItem; image?: string }) {
         </span>
       )}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[15px] font-medium text-txt-1">{item.productName}</span>
+        <span className={`block truncate text-[15px] font-medium ${cancelled ? 'text-txt-3 line-through' : 'text-txt-1'}`}>
+          {item.productName}
+        </span>
         <span className="block font-mono text-[12px] text-txt-3">
           {item.sku}
           {item.size ? ` · ${item.size}` : ''} · ×{item.quantity}
         </span>
+        {/* v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改 chip */}
+        <ItemShipChips item={item} showPending={showPending} methodMap={methodMap} />
       </span>
-      <span className="shrink-0 font-mono text-[15px] text-pink">{formatHKD(item.price * item.quantity)}</span>
+      <span className={`shrink-0 font-mono text-[15px] ${cancelled ? 'text-txt-3 line-through' : 'text-pink'}`}>
+        {formatHKD(item.price * item.quantity)}
+      </span>
     </li>
   );
 }
@@ -169,6 +188,16 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
     : order.region === 'MO' || order.region === 'OVERSEAS'
       ? 'cod'
       : null;
+
+  // v2.4.0（Wave 2 出貨同步）：出貨批次＋逐件狀態（已作廢批次唔顯示）
+  const shipments = (order.shipments ?? []).filter((s) => s.reversedAt == null);
+  const shipMethodMap = batchMethodMap(shipments);
+  const showShipChips = order.status === 'approved' || order.status === 'shipped';
+  // 部分出貨 headline：已確認而且寄咗部分 → 「部分寄出 x/y」
+  const liveItems = order.items.filter((it) => it.shipStatus !== 'cancelled');
+  const shippedCount = order.items.filter((it) => it.shipStatus === 'shipped').length;
+  const partialShip =
+    order.status === 'approved' && shippedCount > 0 && shippedCount < liveItems.length;
 
   return (
     <article
@@ -212,6 +241,13 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         </span>
       </div>
 
+      {/* v2.4.0（Wave 2）：部分出貨 headline（全寄咗 StatusBadge 會出「已寄出」） */}
+      {partialShip && (
+        <p className="mt-2 text-right text-[12.5px] font-medium" style={{ color: 'var(--success)' }}>
+          部分寄出：已寄 {shippedCount}／共 {liveItems.length} 件
+        </p>
+      )}
+
       {/* v2.2.46（直播抽獎）：中獎框——金框＋獎品圖＋「中獎商品」標記，
           訂單日期本身就係抽獎日（server 落單時 createdAt=抽獎時間） */}
       {order.prize && (
@@ -248,9 +284,18 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
       <ul className="mt-4">
         {order.items.map((item) => (
           // v2.2.46：中獎商品係隱藏商品（products.list 唔包）→ 用中獎框嘅獎品圖兜底
-          <ItemRow key={item.id} item={item} image={productImages[item.productId] ?? order.prize?.imagePath} />
+          <ItemRow
+            key={item.id}
+            item={item}
+            image={productImages[item.productId] ?? order.prize?.imagePath}
+            showPending={showShipChips}
+            methodMap={shipMethodMap}
+          />
         ))}
       </ul>
+
+      {/* v2.4.0（Wave 2）：出貨批次區（順豐單號＋追蹤連結＋寄出時間；面交/自取/儲貨各自文案） */}
+      {shipments.length > 0 && <ShipmentSection shipments={shipments} items={order.items} />}
 
       {/* VIP 折扣行（v2.1.0：落單次序先 VIP 後 coupon，所以排優惠碼行上面） */}
       {vipDiscount > 0 && (

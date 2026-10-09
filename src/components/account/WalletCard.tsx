@@ -2,21 +2,16 @@ import { Link } from 'react-router';
 import { ArrowRight, Wallet } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import WishingStar from './WishingStar';
+import WalletLedgerList from './WalletLedgerList';
 import { formatHKD } from '@/components/cart/format';
 
 /**
- * v2.5.0（會員購物金）會員中心購物金卡—— trpc.wallet.myWallet
- * 內容：而家餘額（金框大字）＋最近 5 條流水（充值／扣減／返還）＋
- * 待批核／待付款充值單提示＋「去充值 →」去 /wallet-topup。
+ * v2.5.1（會員購物金）會員中心購物金卡—— trpc.wallet.myWallet
+ * 內容：而家餘額（金框大字）＋購物金紀錄（每頁 15 筆分頁；存入有付款方式、
+ * 使用／返還有貨品摘要＋訂單連結）＋待批核／待付款充值單提示＋「去充值 →」。
  * 設計跟會員中心玻璃卡風格，金框呼應購物金主題；金額全部整數港元。
  * 載入失敗唔阻住會員中心，成張卡收埋（同 VipCard 一致）。
  */
-
-const LEDGER_TYPE_LABEL: Record<string, string> = {
-  topup: '充值入帳',
-  spend: '購物扣減',
-  refund: '取消返還',
-};
 
 const TOPUP_STATUS_LABEL: Record<string, string> = {
   pending_payment: '待付款',
@@ -26,26 +21,12 @@ const TOPUP_STATUS_LABEL: Record<string, string> = {
   cancelled: '已取消',
 };
 
-/** ISO → 10月9日 14:32 */
-function fmtShort(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString('zh-HK', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Hong_Kong',
-  });
-}
-
 export default function WalletCard() {
   const walletQuery = trpc.wallet.myWallet.useQuery();
 
   if (walletQuery.isError) return null;
 
   const wallet = walletQuery.data;
-  const recentLedger = wallet?.ledger.slice(0, 5) ?? [];
   // 需要客人跟進嘅充值單（待付款／待批核）置頂提示
   const openTopups =
     wallet?.topups.filter((t) => t.status === 'pending_payment' || t.status === 'payment_review') ??
@@ -102,7 +83,7 @@ export default function WalletCard() {
                   <span className="font-mono text-txt-1">{t.topupNo}</span>
                   <span className="mx-2 text-gold">{TOPUP_STATUS_LABEL[t.status] ?? t.status}</span>
                   {t.status === 'pending_payment'
-                    ? '未付款｜48 小時內付款，逾時自動取消'
+                    ? '未付款｜30 分鐘內付款，逾時自動取消'
                     : '已收款，等同事批核入帳'}
                   {t.status === 'pending_payment' && (
                     <Link to="/wallet-topup" className="ml-2 text-lavender underline underline-offset-4">
@@ -114,46 +95,13 @@ export default function WalletCard() {
             </div>
           )}
 
-          {/* 最近流水 */}
-          {recentLedger.length > 0 ? (
-            <div className="mt-5 flex flex-col gap-2.5">
-              {recentLedger.map((l) => (
-                <div
-                  key={l.id}
-                  className="flex items-center justify-between gap-4 rounded-xl border px-4 py-2.5"
-                  style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-[13px] text-txt-1">
-                      {LEDGER_TYPE_LABEL[l.type] ?? l.type}
-                      {l.note && <span className="ml-2 text-[12px] text-txt-3">{l.note}</span>}
-                    </p>
-                    <p className="font-mono text-[11.5px] text-txt-3">{fmtShort(l.createdAt)}</p>
-                  </div>
-                  <span
-                    className={`shrink-0 font-mono text-[14px] font-bold ${
-                      l.amount >= 0 ? 'text-gold' : 'text-txt-2'
-                    }`}
-                  >
-                    {l.amount >= 0 ? '+' : '−'}
-                    {formatHKD(Math.abs(l.amount))}
-                  </span>
-                </div>
-              ))}
-              <Link
-                to="/wallet-topup"
-                className="mt-1 self-end text-[13px] text-lavender underline underline-offset-4 transition-colors hover:text-txt-1"
-              >
-                睇晒全部紀錄 →
-              </Link>
-            </div>
-          ) : (
-            openTopups.length === 0 && (
-              <p className="mt-5 text-[13px] leading-relaxed text-txt-3">
-                仲未有購物金紀錄。充值後結帳可以直接用購物金扣數，快過過數 ♡
-              </p>
-            )
-          )}
+          {/* 購物金紀錄（每頁 15 筆；存入有付款方式、使用/返還有訂單連結） */}
+          <div className="mt-5">
+            <p className="mb-2.5 font-mono text-[11px] uppercase tracking-[0.24em] text-gold">
+              購物金紀錄
+            </p>
+            <WalletLedgerList emptyText="仲未有購物金紀錄。充值後結帳可以直接用購物金扣數，快過過數 ♡" />
+          </div>
         </>
       )}
     </section>

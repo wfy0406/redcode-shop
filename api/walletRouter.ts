@@ -3,7 +3,7 @@
  *
  * ─ packages（登入）：上架中套票列表（充值頁）
  * ─ myWallet（登入）：我嘅餘額＋流水賬＋充值紀錄（會員中心）
- * ─ createTopup（登入）：開充值單（48 小時付款期；待付款）
+ * ─ createTopup（登入）：開充值單（30 分鐘付款期；待付款）
  * ─ attachTopupProof（登入）：上傳付款截圖 → 待批核（圖先經 /api/upload 落 disk）
  * ─ adminPackages／upsertPackage（staff/supervisor）：後台套票管理
  * ─ adminTopups（staff）：待批核充值單＋最近紀錄
@@ -17,9 +17,9 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { users, walletLedger, walletPackages, walletTopups } from "@db/schema";
+import { orders, users, walletLedger, walletPackages, walletTopups } from "@db/schema";
 import {
   createRouter,
   authedProcedure,
@@ -125,34 +125,86 @@ export const walletRouter = createRouter({
     });
   }),
 
-  /** 我嘅購物金：餘額＋最近流水（50 條）＋充值紀錄（50 條） */
-  myWallet: authedProcedure.query(async ({ ctx }) => {
-    const db = getDb();
-    const me = await db.query.users.findFirst({
-      where: eq(users.id, ctx.user.userId),
-      columns: { storeCredit: true },
-    });
-    const [ledger, topups] = await Promise.all([
-      db.query.walletLedger.findMany({
-        where: eq(walletLedger.userId, ctx.user.userId),
-        orderBy: [desc(walletLedger.createdAt), desc(walletLedger.id)],
-        limit: 50,
-      }),
-      db.query.walletTopups.findMany({
-        where: eq(walletTopups.userId, ctx.user.userId),
-        orderBy: [desc(walletTopups.createdAt), desc(walletTopups.id)],
-        limit: 50,
-      }),
-    ]);
-    return {
-      balance: me?.storeCredit ?? 0,
-      ledger: ledger.map(ledgerPayload),
-      topups: topups.map(topupPayload),
-    };
-  }),
+  /**
+   * 我嘅購物金：餘額＋流水賬（**每頁 15 筆**，老闆指令）＋充值紀錄（50 條）。
+   * 流水賬每條附埋對照資料，會員中心直接顯示：
+   *   存入 → channelByTopupNo 攞付款方式（用咩方式比錢）；
+   *   使用／返還 → orderIdByNo 攞 orderId，前端撳得落去睇返張訂單（/receipt/:id）。
+   */
+  myWallet: authedProcedure
+    .input(z.object({ ledgerPage: z.number().int().min(1).default(1) }).optional())
+    .query(async ({ ctx, input }) => {
+      const db = getDb();
+      const page = input?.ledgerPage ?? 1;
+      const PAGE_SIZE = 15;
+      const me = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+        columns: { storeCredit: true },
+      });
+      const [countRow] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(walletLedger)
+        .where(eq(walletLedger.userId, ctx.user.userId));
+      const ledgerTotal = countRow?.n ?? 0;
+      const [ledger, topups] = await Promise.all([
+        db.query.walletLedger.findMany({
+          where: eq(walletLedger.userId, ctx.user.userId),
+          orderBy: [desc(walletLedger.createdAt), desc(walletLedger.id)],
+          limit: PAGE_SIZE,
+          offset: (page - 1) * PAGE_SIZE,
+        }),
+        // 充值紀錄淨係第一頁先返（會員中心首屏用；慳流量）
+        page === 1
+          ? db.query.walletTopups.findMany({
+              where: eq(walletTopups.userId, ctx.user.userId),
+              orderBy: [desc(walletTopups.createdAt), desc(walletTopups.id)],
+              limit: 50,
+            })
+          : Promise.resolve([]),
+      ]);
+      // 呢頁流水涉及嘅訂單號／充值單號 → 對照 orderId／付款方式
+      const orderNos = [...new Set(ledger.filter((l) => l.refType === "order").map((l) => l.refId))];
+      const topupNos = [...new Set(ledger.filter((l) => l.refType === "topup").map((l) => l.refId))];
+      const [orderRows, topupRows] = await Promise.all([
+        orderNos.length > 0
+          ? db.query.orders.findMany({
+              where: and(eq(orders.userId, ctx.user.userId), inArray(orders.orderNo, orderNos)),
+              columns: { id: true, orderNo: true },
+              // 「買左咩」摘要：貨名（尺寸）×數量，頭兩件＋等 N 件
+              with: { items: { columns: { productName: true, size: true, quantity: true } } },
+            })
+          : Promise.resolve([]),
+        topupNos.length > 0
+          ? db
+              .select({ topupNo: walletTopups.topupNo, paymentChannel: walletTopups.paymentChannel })
+              .from(walletTopups)
+              .where(inArray(walletTopups.topupNo, topupNos))
+          : Promise.resolve([]),
+      ]);
+      const orderInfoByNo = Object.fromEntries(
+        orderRows.map((o) => {
+          const names = o.items.map(
+            (it) => `${it.productName}${it.size ? `（${it.size}）` : ""} ×${it.quantity}`,
+          );
+          const summary =
+            names.length <= 2 ? names.join("、") : `${names.slice(0, 2).join("、")} 等 ${names.length} 件`;
+          return [o.orderNo, { id: o.id, summary }];
+        }),
+      );
+      return {
+        balance: me?.storeCredit ?? 0,
+        ledger: ledger.map(ledgerPayload),
+        ledgerTotal,
+        ledgerPage: page,
+        ledgerPageSize: PAGE_SIZE,
+        orderInfoByNo,
+        channelByTopupNo: Object.fromEntries(topupRows.map((t) => [t.topupNo, t.paymentChannel])),
+        topups: topups.map(topupPayload),
+      };
+    }),
 
   /**
-   * 開充值單：揀套票 → pending_payment（48 小時死線）→ 寄待付款信。
+   * 開充值單：揀套票 → pending_payment（30 分鐘死線）→ 寄待付款信。
    * 同一時間最多 3 張未完成充值單（pending_payment／payment_review）——防洗版式開單。
    */
   createTopup: authedProcedure
@@ -228,14 +280,14 @@ export const walletRouter = createRouter({
         action: "wallet.topupCreate",
         targetType: "walletTopup",
         targetId: topupNo,
-        detail: `開充值單 ${topupNo}：「${pkg.label}」面額 HK$${pkg.creditAmount}、售價 HK$${pkg.price}，48 小時付款期${emailNote}`,
+        detail: `開充值單 ${topupNo}：「${pkg.label}」面額 HK$${pkg.creditAmount}、售價 HK$${pkg.price}，30 分鐘付款期${emailNote}`,
       });
       return topupPayload(created);
     }),
 
   /**
    * 上傳付款截圖：圖先經 /api/upload 落 disk 攞 imagePath；呢度綁上充值單＋轉待批核。
-   * 只限自己嘅單＋pending_payment＋未過 48 小時。
+   * 只限自己嘅單＋pending_payment＋未過 30 分鐘。
    */
   attachTopupProof: authedProcedure
     .input(
