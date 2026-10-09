@@ -11,6 +11,7 @@ import { userFromAuthHeader } from "./auth";
 import { exportDaily } from "./exportDaily";
 import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
+import { wmsWalletTopupReview } from "./wmsWallet";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushDeliveries, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
@@ -20,9 +21,10 @@ import { buildMerchantFeedXml } from "./merchantFeed";
 import { env } from "./lib/env";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { orders, productImageArchive, products, users } from "@db/schema";
+import { orders, productImageArchive, products, users, walletTopups } from "@db/schema";
 import { getAirwallexConfig, retrievePaymentIntent, verifyWebhookSignature } from "./airwallex";
-import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail, orderVipEmailInfo } from "./email";
+import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail, orderVipEmailInfo, sendWalletTopupPaidEmail, sendWalletTopupReviewAlertEmail } from "./email";
+import { isTopupNo } from "./wallet";
 import { logAudit } from "./audit";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
@@ -60,6 +62,9 @@ app.post("/api/wms/review-callback", wmsReviewCallback);
 
 // WMS → 官網退款回調（2026-09 F7 原路退款；同樣 shared secret 驗證）
 app.post("/api/wms/refund-callback", wmsRefundCallback);
+
+// WMS → 官網購物金充值批核回調（v2.5.0 購物金；同樣 shared secret 驗證）
+app.post("/api/wms/wallet-topup-review", wmsWalletTopupReview);
 
 // WMS → 官網批量上架（2026-09-29 F8 直播場次制；同樣 shared secret 驗證）：
 // 手動上傳貨圖（multipart）＋ 批量推送（批准 execute／拒絕 reject）
@@ -121,6 +126,110 @@ app.get("/api/airwallex/return", async (c) => {
   void verifyReturnPayment(Number(orderId));
   return c.redirect(`/#/payment?orderId=${orderId}&ap=done`, 302);
 });
+
+// v2.5.0（購物金）：充值單 Airwallex 回跳中轉——wt=<walletTopups.id>。
+// 同訂單回跳一樣：背景主動查證（webhook 遲到都即時補狀態），302 去 #/wallet-topup?paid=1。
+app.get("/api/airwallex/return-topup", async (c) => {
+  const wt = c.req.query("wt") ?? "";
+  if (!/^\d+$/.test(wt)) {
+    return c.redirect("/#/wallet-topup", 302);
+  }
+  void verifyReturnTopup(Number(wt));
+  return c.redirect(`/#/wallet-topup?paid=1`, 302);
+});
+
+/** 充值單回跳背景查證（同訂單 verifyReturnPayment 同款，淨係查嘅表唔同） */
+async function verifyReturnTopup(topupId: number): Promise<void> {
+  try {
+    const cfg = await getAirwallexConfig();
+    if (!cfg) return;
+    const db = getDb();
+    const topup = await db.query.walletTopups.findFirst({
+      where: eq(walletTopups.id, topupId),
+    });
+    if (!topup || topup.status !== "pending_payment") return;
+    if (!topup.airwallexIntentId) {
+      console.log(`[airwallex] return 查證：充值單 ${topup.topupNo} 未記 intent id，等 webhook 處理`);
+      return;
+    }
+    const intent = await retrievePaymentIntent(cfg, topup.airwallexIntentId);
+    console.log(`[airwallex] return 查證：充值單 ${topup.topupNo}，intent 狀態 ${intent.status}`);
+    if (intent.status === "SUCCEEDED") {
+      await handleTopupPaidOnline(topup.topupNo, intent.id, "return-verify");
+    }
+  } catch (e) {
+    console.error("[airwallex] return 充值主動查證出錯:", e);
+  }
+}
+
+/**
+ * v2.5.0（購物金）：充值單網上收款確認嘅統一入口（webhook／return 查證共用）。
+ * 冪等：conditional update 淨郁 pending_payment 嘅充值單；郁到（第一次）先寄信。
+ * **唔會即時入帳**——收款後狀態＝payment_review（待批核），官網後台／WMS 批核先加餘額。
+ */
+async function handleTopupPaidOnline(
+  topupNo: string,
+  intentId: string | null,
+  source: "webhook" | "return-verify",
+): Promise<boolean> {
+  const db = getDb();
+  const paidAt = new Date();
+  const [paid] = await db
+    .update(walletTopups)
+    .set({
+      status: "payment_review",
+      paymentChannel: "airwallex",
+      airwallexIntentId: intentId,
+      paidAt,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(walletTopups.topupNo, topupNo), eq(walletTopups.status, "pending_payment")))
+    .returning();
+  if (!paid) return false;
+  void logAudit({
+    actorRole: "system",
+    action: "wallet.topupPaidOnline",
+    targetType: "walletTopup",
+    targetId: paid.topupNo,
+    detail: `充值單 ${paid.topupNo} Airwallex 收款成功（HK$${paid.price}${intentId ? `，intent ${intentId}` : ""}，來源：${source === "webhook" ? "webhook" : "return 主動查證"}），轉待批核（批核後先入帳）`,
+  });
+  // 寄信（背景，失敗唔阻）：會員「已收款待批核」＋內部「待批核通知」
+  void (async () => {
+    try {
+      const member = await db.query.users.findFirst({
+        where: eq(users.id, paid.userId),
+        columns: { name: true, phone: true, email: true },
+      });
+      if (!member) return;
+      if (member.email) {
+        const r = await sendWalletTopupPaidEmail({
+          to: member.email,
+          name: member.name,
+          topupNo: paid.topupNo,
+          label: paid.label,
+          creditAmount: paid.creditAmount,
+          price: paid.price,
+          paidAt,
+        });
+        if (!r.ok) console.error(`[email] 充值收款信寄唔出（${paid.topupNo}）：`, r.error);
+      }
+      const r2 = await sendWalletTopupReviewAlertEmail({
+        topupNo: paid.topupNo,
+        memberName: member.name,
+        memberPhone: member.phone,
+        memberEmail: member.email,
+        label: paid.label,
+        creditAmount: paid.creditAmount,
+        price: paid.price,
+        channel: "網上即時付款（Airwallex）",
+      });
+      if (!r2.ok) console.error(`[email] 充值待批核通知寄唔出（${paid.topupNo}）：`, r2.error);
+    } catch (e) {
+      console.error("[airwallex] 充值收款後寄信出錯:", e);
+    }
+  })();
+  return true;
+}
 
 /** 回跳嗰刻嘅背景主動查證（抽出嚟畀訪客/會員兩條跳轉路共用；唔阻 302，失敗淨係 log） */
 async function verifyReturnPayment(orderId: number): Promise<void> {
@@ -302,9 +411,11 @@ app.post("/api/airwallex/webhook", async (c) => {
   if (!merchantOrderId) {
     return c.json({ ok: true, ignored: true });
   }
-  // 收款確認（冪等轉態＋審計＋轉 WMS 官網中心＋寄信）統一走 handlePaidOnline，
-  // 同 /api/airwallex/return 嘅主動查證匯合；Airwallex retry 撞單會郁 0 行 → alreadyHandled
-  const handled = await handlePaidOnline(merchantOrderId, intentId, "webhook");
+  // 收款確認：v2.5.0 充值單（WT 前綴）行 handleTopupPaidOnline；訂單（RC）照舊 handlePaidOnline。
+  // 兩條路都冪等（conditional update 郁 0 行 → alreadyHandled 收檔）。
+  const handled = isTopupNo(merchantOrderId)
+    ? await handleTopupPaidOnline(merchantOrderId, intentId, "webhook")
+    : await handlePaidOnline(merchantOrderId, intentId, "webhook");
   if (!handled) {
     // 唔存在嘅單／已處理過嘅 retry：照回 200 收檔
     return c.json({ ok: true, alreadyHandled: true });

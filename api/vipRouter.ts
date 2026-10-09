@@ -15,6 +15,7 @@ import { getDb } from "./queries/connection";
 import { sfStations, siteSettings, users } from "@db/schema";
 import { createRouter, publicQuery, authedProcedure, adminProcedure } from "./middleware";
 import { logAudit } from "./audit";
+import { computeWalletSplit } from "./wallet";
 import { SF_STATIONS } from "./data/sfStations";
 import { SF_STATIONS_FULL } from "./data/sfStationsFull"; // v2.1.0：reseed 用全量官方清單（HK 1654／MO 51）；樣例清單留作 fallback
 import crypto from "node:crypto";
@@ -428,11 +429,25 @@ export const vipRouter = createRouter({
         deliveryMethod: deliveryMethodInputSchema,
         stationId: z.string().trim().max(64).optional(),
         couponCode: z.string().trim().max(32).optional(),
+        // v2.5.0（購物金）：結帳頁撳咗「用購物金」就傳 true，quote 順便預覽扣幾多／尾數幾多
+        useWallet: z.boolean().optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
       try {
         const q = await computeCheckoutQuote(ctx.user.userId, input);
+        // v2.5.0（購物金）：預覽拆賬——quote 內部用仙，購物金係整數港元（同 orders.total 一個單位）
+        const db = getDb();
+        const me = await db.query.users.findFirst({
+          where: eq(users.id, ctx.user.userId),
+          columns: { storeCredit: true },
+        });
+        const walletBalance = me?.storeCredit ?? 0;
+        const { walletApplied, cashDue } = computeWalletSplit(
+          Math.round(q.totalCents / 100),
+          walletBalance,
+          input.useWallet === true,
+        );
         return {
           subtotalCents: q.subtotalCents,
           vipDiscountCents: q.vipDiscountCents,
@@ -446,6 +461,10 @@ export const vipRouter = createRouter({
           stationId: q.stationId,
           stationName: q.stationName,
           vipTier: q.vipTier,
+          // v2.5.0（購物金）：整數港元；useWallet=false／冇餘額 → walletApplied=0、cashDue=全額
+          walletBalance,
+          walletApplied,
+          cashDue,
         };
       } catch (e) {
         quoteError(e);

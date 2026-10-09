@@ -602,9 +602,12 @@ export async function sendOrderPendingEmail(args: {
   items: OrderEmailItem[];
   /** v2.1.1（Wave 2）：VIP 級別／折扣顯示（optional） */
   vip?: OrderEmailVip;
+  /** v2.5.0（購物金）：呢張單用咗幾多購物金（>0 顯示扣減＋尾數行） */
+  walletUsed?: number;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
+    const cashDue = Math.max(0, args.total - (args.walletUsed ?? 0));
     const content = `
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
       <p style="margin:0;">多謝你喺 RedCode 落單！你嘅訂單已經建立，而家等緊你付款：</p>
@@ -612,6 +615,10 @@ export async function sendOrderPendingEmail(args: {
         ["訂單編號", mono(orderNo)],
         ["落單時間", fmtDateHK(args.createdAt)],
         ...(args.vip?.tierLabel ? ([["會員級別", `<span style="color:${GOLD};">${escapeHtml(args.vip.tierLabel)}</span>`]] as [string, string][]) : []),
+        ...((args.walletUsed ?? 0) > 0 ? ([
+          ["購物金扣減", `<span style="color:${GOLD};font-weight:700;">−${fmtMoney(args.walletUsed ?? 0)}</span>`],
+          ["應付尾數", `<span style="color:${GOLD};font-weight:700;">${fmtMoney(cashDue)}</span>`],
+        ] as [string, string][]) : []),
         ["付款期限", `<span style="color:${GOLD};">48 小時內</span>`],
       ])}
       ${itemsTable(args.items)}
@@ -909,6 +916,8 @@ export async function sendOrderCancelledEmail(args: {
   items: OrderEmailItem[];
   /** v2.1.1（Wave 2）：VIP 級別／折扣顯示（optional） */
   vip?: OrderEmailVip;
+  /** v2.5.0（購物金）：呢張單返還咗幾多購物金（>0 先顯示返還行） */
+  walletRefund?: number;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
@@ -920,6 +929,7 @@ export async function sendOrderCancelledEmail(args: {
         ["落單時間", fmtDateHK(args.createdAt)],
         ...(args.vip?.tierLabel ? ([["會員級別", `<span style="color:${GOLD};">${escapeHtml(args.vip.tierLabel)}</span>`]] as [string, string][]) : []),
         ["取消原因", `<span style="color:${ERROR};">超過 48 小時未收到付款截圖</span>`],
+        ...((args.walletRefund ?? 0) > 0 ? ([["購物金返還", `<span style="color:${GOLD};font-weight:700;">${fmtMoney(args.walletRefund ?? 0)} 已入返你嘅購物金戶口 ✦</span>`]] as [string, string][]) : []),
       ])}
       ${itemsTable(args.items)}
       ${totalsBlock(args.total, args.discountAmount, args.vip)}
@@ -1048,16 +1058,26 @@ export async function sendOrderPaidOnlineEmail(args: {
   paidAt: Date;
   /** v2.1.1（Wave 2）：VIP 級別／折扣／免運標示（optional）；discountAmount 呢封信本來冇，VIP 折扣由 vip 參數帶入 */
   vip?: OrderEmailVip & { discountAmount?: number };
+  /** v2.5.0（購物金）：呢張單用咗幾多購物金（>0 顯示；全購物金單會改標題句式） */
+  walletUsed?: number;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
     const vipDiscount = args.vip?.discountAmount ?? 0;
+    const walletUsed = args.walletUsed ?? 0;
+    const walletOnly = walletUsed > 0 && walletUsed >= args.total;
+    const paidLine = walletOnly
+      ? `多謝你喺 RedCode 購物！你嘅訂單已經<b>全數以購物金支付</b>（${fmtMoney(walletUsed)}）。同事而家正確認你嘅訂單，確認後你會再收到確認電郵（附訂單單據）。`
+      : walletUsed > 0
+        ? `多謝你喺 RedCode 購物！你嘅訂單用咗購物金 <b>${fmtMoney(walletUsed)}</b> 抵銷，尾數 <b>${fmtMoney(args.total - walletUsed)}</b> 已透過網上付款安全收到（付款時間：${fmtDateHK(args.paidAt)}）。同事而家正確認你嘅訂單，確認後你會再收到確認電郵（附訂單單據）。`
+        : `多謝你喺 RedCode 購物！我哋已透過網上付款安全收到你嘅款項 <b>${fmtMoney(args.total)}</b>（付款時間：${fmtDateHK(args.paidAt)}）。同事而家正確認你嘅訂單，確認後你會再收到確認電郵（附訂單單據）。`;
     const content = `
       <p style="margin:0 0 14px;">你好：</p>
-      <p style="margin:0;">多謝你喺 RedCode 購物！我哋已透過網上付款安全收到你嘅款項 <b>${fmtMoney(args.total)}</b>（付款時間：${fmtDateHK(args.paidAt)}）。同事而家正確認你嘅訂單，確認後你會再收到確認電郵（附訂單單據）。</p>
+      <p style="margin:0;">${paidLine}</p>
       ${infoBox([
         ["訂單編號", mono(orderNo)],
-        ["付款時間", fmtDateHK(args.paidAt)],
+        ...(walletUsed > 0 ? ([["購物金扣減", `<span style="color:${GOLD};font-weight:700;">−${fmtMoney(walletUsed)}</span>`]] as [string, string][]) : []),
+        ...(walletOnly ? [] : ([["付款時間", fmtDateHK(args.paidAt)]] as [string, string][])),
         ["訂單狀態", `<span style="color:${GOLD};">已收款，確認中</span>`],
         ...(args.vip?.tierLabel ? ([["會員級別", `<span style="color:${GOLD};">${escapeHtml(args.vip.tierLabel)}</span>`]] as [string, string][]) : []),
         ["取貨方式", fmtDeliveryWithVip(args.delivery, args.vip?.shippingFreeLabel)],
@@ -1070,11 +1090,15 @@ export async function sendOrderPaidOnlineEmail(args: {
     `;
     return await sendEmail({
       to: args.to,
-      subject: `【RedCode】訂單 ${args.orderNo} 已收到網上付款 ✓`,
+      subject: walletOnly
+        ? `【RedCode】訂單 ${args.orderNo} 已全數以購物金支付 ✓`
+        : `【RedCode】訂單 ${args.orderNo} 已收到網上付款 ✓`,
       html: brandedEmail({
-        preheader: `訂單 ${orderNo} 已收到你嘅網上付款（${fmtMoney(args.total)}），同事確認中`,
+        preheader: walletOnly
+          ? `訂單 ${orderNo} 已全數以購物金支付（${fmtMoney(walletUsed)}），同事確認中`
+          : `訂單 ${orderNo} 已收到你嘅網上付款（${fmtMoney(args.total)}），同事確認中`,
         kicker: "REDCODE HK直播台 · 付款確認",
-        title: "已收到你嘅網上付款",
+        title: walletOnly ? "已以購物金支付" : "已收到你嘅網上付款",
         contentHtml: content,
       }),
     });
@@ -1103,13 +1127,20 @@ export async function sendOrderRefundedEmail(args: {
   refundedAt: Date;
   /** v2.1.1（Wave 2）：VIP 級別／折扣顯示（optional） */
   vip?: OrderEmailVip;
+  /** v2.5.0（購物金）：呢張單返還咗幾多購物金（>0 先顯示返還行） */
+  walletRefund?: number;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
-    const refundText = fmtMoney(args.refundAmount);
+    const walletRefund = args.walletRefund ?? 0;
+    // v2.5.0（購物金）：全額購物金單（現金退款 HK$0）唔好顯示「HK$0 原路退回」，
+    // 成封信嘅主角改做購物金返還；混合付款單就現金行＋購物金行並存
+    const walletOnly = args.refundAmount <= 0 && walletRefund > 0;
+    const refundText = fmtMoney(walletOnly ? walletRefund : args.refundAmount);
     const vipDiscount = args.vip?.discountAmount ?? 0;
-    const refundLine =
-      args.channel === "airwallex"
+    const refundLine = walletOnly
+      ? `呢張單全數以購物金支付，購物金 <b>${refundText}</b> 已經全數入返你嘅購物金戶口，下次結帳可以直接扣 ✦`
+      : args.channel === "airwallex"
         ? `你嘅退款 <b>${refundText}</b> 已經原路退回（信用卡／電子錢包），款項一般 3–10 個工作天到賬，實際時間以發卡行／電子錢包為準。`
         : `同事會盡快以你原來嘅付款方式（FPS／PayMe 等）人手退回 <b>${refundText}</b>，請留意收款通知。`;
     const content = `
@@ -1119,10 +1150,11 @@ export async function sendOrderRefundedEmail(args: {
         ["訂單編號", mono(orderNo)],
         ["退款金額", `<span style="color:${GOLD};">${refundText}</span>`],
         ...(args.vip?.tierLabel ? ([["會員級別", escapeHtml(args.vip.tierLabel)]] as [string, string][]) : []),
-        ["退款方式", args.channel === "airwallex" ? "原路退回（信用卡／電子錢包）" : "人手退款（FPS／PayMe 等）"],
+        ["退款方式", walletOnly ? "購物金戶口返還（購物金不設現金退款）" : args.channel === "airwallex" ? "原路退回（信用卡／電子錢包）" : "人手退款（FPS／PayMe 等）"],
         ["退款時間", fmtDateHK(args.refundedAt)],
       ])}
       <p style="margin:0;">${refundLine}</p>
+      ${!walletOnly && walletRefund > 0 ? `<p style="margin:10px 0 0;color:${GOLD};font-weight:700;">購物金 ${fmtMoney(walletRefund)} 已全數入返你嘅購物金戶口 ✦</p>` : ""}
       ${itemsTable(args.items)}
       ${totalsBlock(args.total, vipDiscount, args.vip)}
       ${ctaButton("查看訂單", `${siteUrl()}/#/orders`)}
@@ -1345,6 +1377,266 @@ export async function sendPrizeWinEmail(args: {
     });
   } catch (e) {
     console.error(`[email] 砌中獎信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+// ─────────────────────────── v2.5.0 會員購物金（wallet）信件 ───────────────────────────
+// 全部 never-throw（回 SendResult）；風格同上嘅英式精裝紙單。
+// 購物金條款硬規（老闆 2026-10-09 指令）：每封相關信都寫明「購物金不設退款」＋
+// 「只限官網所銷售之商品，直播商品並不適用」。
+
+/** 購物金條款提示行（重用，唔好封封信改兩次） */
+function walletTermsNote(): string {
+  return note(
+    "購物金條款：購物金不設退款；購物金使用只限購買官網所銷售之商品，直播商品並不適用。",
+  );
+}
+
+/** ⑦a 充值單建立（待付款）：48 小時內要付款，否則自動取消 */
+export async function sendWalletTopupPendingEmail(args: {
+  to: string;
+  name: string;
+  topupNo: string;
+  label: string;
+  creditAmount: number;
+  price: number;
+  expiresAt: Date | string;
+}): Promise<SendResult> {
+  try {
+    const topupNo = escapeHtml(args.topupNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">你嘅購物金充值單已經建立，請喺 <b>48 小時內</b>完成付款——可以去充值頁撳「立即付款」網上俾，或者過數後上傳付款截圖：</p>
+      ${infoBox([
+        ["充值單號", mono(topupNo)],
+        ["套票", escapeHtml(args.label)],
+        ["入帳面額", `<span style="color:${GOLD};font-weight:700;">${fmtMoney(args.creditAmount)}</span>`],
+        ["應付金額", fmtMoney(args.price)],
+        ["付款死線", `<span style="color:${ERROR};font-weight:700;">${fmtDateHK(args.expiresAt)} 前</span>`],
+      ])}
+      ${ctaButton("去付款", `${siteUrl()}/#/wallet-topup`)}
+      ${warnBox("溫馨提示：充值款項要經同事核實批核之後，購物金先會入帳；超過 48 小時未付款，充值單會自動取消。")}
+      ${walletTermsNote()}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】購物金充值單 ${args.topupNo} 待付款 — 請於 48 小時內完成`,
+      html: brandedEmail({
+        preheader: `充值單 ${topupNo} 待付款，48 小時內未完成會自動取消`,
+        kicker: "REDCODE HK直播台 · 購物金充值",
+        title: "充值單待付款",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌充值待付款信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/** ⑦b 網上即時付款已收（待批核）：Airwallex webhook 確認嗰刻寄 */
+export async function sendWalletTopupPaidEmail(args: {
+  to: string;
+  name: string;
+  topupNo: string;
+  label: string;
+  creditAmount: number;
+  price: number;
+  paidAt: Date | string;
+}): Promise<SendResult> {
+  try {
+    const topupNo = escapeHtml(args.topupNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">我哋已經收到你嘅充值款項，而家<b>待同事核實批核</b>——批核後購物金會即時入帳，你會再收到一封入帳確認信：</p>
+      ${infoBox([
+        ["充值單號", mono(topupNo)],
+        ["套票", escapeHtml(args.label)],
+        ["入帳面額", `<span style="color:${GOLD};font-weight:700;">${fmtMoney(args.creditAmount)}</span>`],
+        ["已付金額", fmtMoney(args.price)],
+        ["付款時間", fmtDateHK(args.paidAt)],
+        ["付款方式", "網上即時付款（Airwallex）"],
+      ])}
+      ${ctaButton("睇我嘅購物金", `${siteUrl()}/#/account`)}
+      ${walletTermsNote()}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】已收到充值款項 — ${args.topupNo}（待批核入帳）`,
+      html: brandedEmail({
+        preheader: `充值單 ${topupNo} 款項已收到，批核後購物金即時入帳`,
+        kicker: "REDCODE HK直播台 · 購物金充值",
+        title: "款項已收到",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌充值收款信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/** ⑦c 充值批核通過（入帳成功）：餘額即時可用 */
+export async function sendWalletTopupApprovedEmail(args: {
+  to: string;
+  name: string;
+  topupNo: string;
+  label: string;
+  creditAmount: number;
+  balanceAfter: number;
+  channel: string;
+}): Promise<SendResult> {
+  try {
+    const topupNo = escapeHtml(args.topupNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">好消息——你嘅購物金充值已經批核通過，購物金即時可以用嚟買嘢啦 ✨</p>
+      ${infoBox([
+        ["充值單號", mono(topupNo)],
+        ["套票", escapeHtml(args.label)],
+        ["入帳金額", `<span style="color:${GOLD};font-weight:700;">＋${fmtMoney(args.creditAmount)}</span>`],
+        ["充值方式", escapeHtml(args.channel)],
+        ["最新購物金餘額", `<span style="color:${GOLD};font-weight:700;">${fmtMoney(args.balanceAfter)}</span>`],
+      ])}
+      ${ctaButton("去買嘢啦", `${siteUrl()}/#/products`)}
+      ${note("結帳嗰陣剔選「使用購物金」就可以抵銷；唔夠俾晒嘅話，尾數可以即時網上付款或者上傳截圖。")}
+      ${walletTermsNote()}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】購物金已入帳 ✦ ＋HK$${args.creditAmount}（${args.topupNo}）`,
+      html: brandedEmail({
+        preheader: `充值單 ${topupNo} 已批核，＋HK$${args.creditAmount} 已入帳`,
+        kicker: "REDCODE HK直播台 · 購物金入帳",
+        title: "購物金已入帳",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌充值入帳信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/** ⑦d 充值批核拒絕（款項未過數／單據有問題） */
+export async function sendWalletTopupRejectedEmail(args: {
+  to: string;
+  name: string;
+  topupNo: string;
+  label: string;
+  price: number;
+  note?: string | null;
+}): Promise<SendResult> {
+  try {
+    const topupNo = escapeHtml(args.topupNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">唔好意思——你嘅購物金充值單核實唔通過，購物金未能入帳${args.note ? `，原因：` : "。如果你其實已經付咗款，請盡快 WhatsApp 我哋跟進。"}</p>
+      ${infoBox([
+        ["充值單號", mono(topupNo)],
+        ["套票", escapeHtml(args.label)],
+        ["金額", fmtMoney(args.price)],
+        ...(args.note ? ([["拒絕原因", `<span style="color:${ERROR};">${escapeHtml(args.note)}</span>`]] as [string, string][]) : []),
+      ])}
+      <p style="margin:18px 0 0;">如果你其實已經付咗款，或者想重新充值，隨時 WhatsApp 我哋幫你跟進 ♥</p>
+      ${ctaButton("WhatsApp 我哋幫手", "https://wa.me/85254835368")}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】購物金充值單 ${args.topupNo} 未能入帳`,
+      html: brandedEmail({
+        preheader: `充值單 ${topupNo} 核實唔通過，詳情見內文`,
+        kicker: "REDCODE HK直播台 · 購物金充值",
+        title: "充值未能入帳",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌充值拒絕信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/** ⑦e 充值單逾時取消（48 小時未付款，sweeper 自動取消） */
+export async function sendWalletTopupCancelledEmail(args: {
+  to: string;
+  name: string;
+  topupNo: string;
+  label: string;
+  price: number;
+}): Promise<SendResult> {
+  try {
+    const topupNo = escapeHtml(args.topupNo);
+    const content = `
+      <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
+      <p style="margin:0;">你嘅購物金充值單因為超過 <b>48 小時</b>未完成付款，系統已經自動取消：</p>
+      ${infoBox([
+        ["充值單號", mono(topupNo)],
+        ["套票", escapeHtml(args.label)],
+        ["金額", fmtMoney(args.price)],
+        ["取消原因", `<span style="color:${ERROR};">超過 48 小時未完成付款</span>`],
+      ])}
+      <p style="margin:18px 0 0;">如果你其實已經付咗款，請盡快 WhatsApp 我哋提供付款證明；想充值嘅話亦可以隨時再開新充值單。</p>
+      ${ctaButton("重新充值", `${siteUrl()}/#/wallet-topup`)}
+      ${note("呢張充值單已經取消，唔使再付款。")}
+    `;
+    return await sendEmail({
+      to: args.to,
+      subject: `【RedCode】購物金充值單 ${args.topupNo} 已取消 — 超過 48 小時未付款`,
+      html: brandedEmail({
+        preheader: `充值單 ${topupNo} 已取消（超過 48 小時未付款）`,
+        kicker: "REDCODE HK直播台 · 購物金充值",
+        title: "充值單已取消",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌充值取消信出錯 → ${args.to}`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}
+
+/** ⑦f 內部待批核通知（充值單已付款／已上傳截圖，等官網後台或 WMS 批） */
+export async function sendWalletTopupReviewAlertEmail(args: {
+  topupNo: string;
+  memberName: string;
+  memberPhone: string;
+  memberEmail: string | null;
+  label: string;
+  creditAmount: number;
+  price: number;
+  channel: string;
+}): Promise<SendResult> {
+  const to = process.env.REVIEW_ALERT_EMAIL || "leader@ows.redcode.red";
+  try {
+    const topupNo = escapeHtml(args.topupNo);
+    const content = `
+      <p style="margin:0;">有會員啱啱俾咗購物金充值錢，以下充值單而家<b>待批核</b>，請到官網後台「購物金」或者 WMS 處理：</p>
+      ${infoBox([
+        ["充值單號", mono(topupNo)],
+        ["會員", escapeHtml(args.memberName)],
+        ["會員電話", escapeHtml(args.memberPhone)],
+        ["會員 Email", args.memberEmail ? escapeHtml(args.memberEmail) : "—"],
+        ["套票", escapeHtml(args.label)],
+        ["入帳面額", fmtMoney(args.creditAmount)],
+        ["應收金額", `<span style="color:${GOLD};font-weight:700;">${fmtMoney(args.price)}</span>`],
+        ["付款方式", escapeHtml(args.channel)],
+      ])}
+      ${note("批核通過後，系統會自動入帳＋發確認電郵俾會員；批核拒絕會通知會員跟進。")}
+    `;
+    return await sendEmail({
+      to,
+      subject: `【RedCode 後台】購物金充值 ${args.topupNo} 待批核 — ${args.memberName}（${fmtMoney(args.price)}）`,
+      html: brandedEmail({
+        preheader: `購物金充值單 ${topupNo}（${escapeHtml(args.memberName)}）待批核`,
+        kicker: "REDCODE HK直播台 · 購物金審批通知",
+        title: "充值待批核",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌充值待批核通知出錯 → ${to}`, e);
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }

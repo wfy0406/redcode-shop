@@ -15,6 +15,7 @@ import { airwallexRouter } from "./airwallexRouter";
 import { vipRouter } from "./vipRouter";
 import { pushRouter } from "./pushRouter";
 import { luckyDrawRouter } from "./luckyDrawRouter";
+import { walletRouter } from "./walletRouter";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -37,6 +38,8 @@ export const appRouter = createRouter({
   push: pushRouter,
   // v2.2.46（直播抽獎大輪盤，老闆 2026-10-03 指令）：獎品池／抽獎／重抽／取消／中獎紀錄＋客人領獎
   luckyDraw: luckyDrawRouter,
+  // v2.5.0（會員購物金，老闆 2026-10-09 指令）：套票／充值／餘額／流水／後台批核
+  wallet: walletRouter,
 });
 
 export type AppRouter = typeof appRouter;

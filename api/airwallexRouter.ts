@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { orders } from "@db/schema";
+import { orders, walletTopups } from "@db/schema";
 import { createRouter, authedProcedure, publicProcedure } from "./middleware";
 import { createHostedPayment, getAirwallexConfig } from "./airwallex";
 import {
@@ -47,6 +47,14 @@ export const airwallexRouter = createRouter({
           message: "呢張訂單而家唔係待付款狀態，唔可以再網上付款",
         });
       }
+      // v2.5.0（購物金）：用咗購物金嘅單，網上只收尾數（total − walletUsed）
+      const cashDue = order.total - (order.walletUsed ?? 0);
+      if (cashDue <= 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "呢張訂單已經全數用購物金支付，唔使再付款",
+        });
+      }
       // 俾完錢 Airwallex 跳返呢個 server route，再 302 去 #/payment（HashRouter 收唔到外層 query）
       const returnUrl = `${cfg.publicBaseUrl}/api/airwallex/return?orderId=${order.id}`;
       try {
@@ -55,7 +63,7 @@ export const airwallexRouter = createRouter({
           orderId: order.id,
           orderNo: order.orderNo,
           // orders.total 係 integer 港元（元）；Airwallex amount 亦係 major unit（元），直接傳
-          amount: order.total,
+          amount: cashDue,
           returnUrl,
         });
         // 記低 intent id（2026-09-29 三 bug hotfix）：客人俾完錢跳返 /api/airwallex/return
@@ -77,10 +85,11 @@ export const airwallexRouter = createRouter({
           currency: session.currency,
           returnUrl: session.returnUrl,
           orderNo: order.orderNo,
-          amount: order.total,
+          amount: cashDue,
         };
       } catch (e) {
-        console.error(`[airwallex] 開付款單失敗（訂單 ${order.orderNo}）：`, e);
+        if (e instanceof TRPCError) throw e;
+        console.error(`[airwallex] 開網上付款單失敗（訂單 ${order.orderNo}）：`, e);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "開網上付款單失敗，請稍後再試，或者改用截圖上傳方式付款",
@@ -165,6 +174,75 @@ export const airwallexRouter = createRouter({
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "開網上付款單失敗，請稍後再試",
+        });
+      }
+    }),
+
+  /**
+   * 購物金充值網上付款（v2.5.0）：同會員訂單付款一套做法，
+   * 但 merchant_order_id＝充值單號（WT 前綴）——webhook／return 靠前綴分流去 handleTopupPaidOnline。
+   * 收款後**唔會即時入帳**：狀態轉 payment_review（待批核），後台／WMS 批咗先入。
+   */
+  createTopupPayment: authedProcedure
+    .input(z.object({ topupId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const cfg = await getAirwallexConfig();
+      if (!cfg) {
+        return { enabled: false as const };
+      }
+      const db = getDb();
+      // 只准付自己嘅充值單
+      const topup = await db.query.walletTopups.findFirst({
+        where: and(eq(walletTopups.id, input.topupId), eq(walletTopups.userId, ctx.user.userId)),
+      });
+      if (!topup) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "充值單不存在" });
+      }
+      if (topup.status !== "pending_payment") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "呢張充值單而家唔係待付款狀態，唔可以再付款",
+        });
+      }
+      if (topup.expiresAt.getTime() <= Date.now()) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "付款期已過，充值單會自動取消，請開新單",
+        });
+      }
+      // 回跳去專用 route /api/airwallex/return-topup（wt=充值單 id），302 去 #/wallet-topup?paid=1
+      const returnUrl = `${cfg.publicBaseUrl}/api/airwallex/return-topup?wt=${topup.id}`;
+      try {
+        const session = await createHostedPayment({
+          cfg,
+          orderId: topup.id,
+          orderNo: topup.topupNo,
+          amount: topup.price,
+          returnUrl,
+        });
+        try {
+          await db
+            .update(walletTopups)
+            .set({ airwallexIntentId: session.intentId, paymentChannel: "airwallex" })
+            .where(eq(walletTopups.id, topup.id));
+        } catch (e) {
+          console.error(`[airwallex] 記低充值 intent id 失敗（${topup.topupNo}）：`, e);
+        }
+        return {
+          enabled: true as const,
+          intentId: session.intentId,
+          clientSecret: session.clientSecret,
+          env: session.env,
+          currency: session.currency,
+          returnUrl: session.returnUrl,
+          orderNo: topup.topupNo,
+          amount: topup.price,
+        };
+      } catch (e) {
+        console.error(`[airwallex] 開充值付款單失敗（${topup.topupNo}）：`, e);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "開網上付款單失敗，請稍後再試，或者改用上傳截圖方式付款",
         });
       }
     }),

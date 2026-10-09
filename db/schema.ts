@@ -87,6 +87,11 @@ export const users = pgTable("users", {
   defaultRegion: varchar("defaultRegion", { length: 8 }).notNull().default("HK"),
   // 預設順豐站點 ID（對 sfStations.id；揀咗自取先有意思，送貨上門留 NULL）
   defaultStationId: varchar("defaultStationId", { length: 64 }),
+  // ===== v2.5.0（會員購物金 wallet，2026-10-09 老闆指令）=====
+  // 購物金餘額（整數港元，同 orders.total 一個單位）：後台/WMS 批核充值先入帳；
+  // 落單用購物金即扣（同事務 conditional update 防超扣）；訂單取消自動返還。
+  // 購物金不設退款（條款寫明）——淨可以喺官網買嘢用。
+  storeCredit: integer("storeCredit").notNull().default(0),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
@@ -257,6 +262,14 @@ export const orders = pgTable("orders", {
   // 系統備註（v2.1.0）：免運／到付／澳門單等規則備註，分號分隔；
   // 會隨 WMS order.receiveWebhook 嘅 remark 欄送出（WMS 已有現成 remark 欄，唔使改 WMS）
   remark: text("remark"),
+  // v2.4.0（Wave 2 出貨同步）：全部未取消貨品都寄出嗰刻寫入（status 同步轉 'shipped'）；
+  // 取消出貨（unshipped 回調）會清返 NULL。NULL＝未寄齊
+  shippedAt: timestamp("shippedAt"),
+  // ===== v2.5.0（會員購物金）=====
+  // 落單嗰刻用咗幾多購物金（整數港元；0＝冇用）。實收現金＝total − walletUsed。
+  walletUsed: integer("walletUsed").notNull().default(0),
+  // 購物金返還時間（訂單取消嗰刻寫入）：防重複返還嘅冪等鎖——NULL＝未返還
+  walletReturnedAt: timestamp("walletReturnedAt"),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   // PostgreSQL 冇 ON UPDATE CURRENT_TIMESTAMP，updatedAt 由應用層更新時一併 set
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
@@ -275,6 +288,100 @@ export const orderItems = pgTable("orderItems", {
   size: varchar("size", { length: 64 }),
   price: integer("price").notNull(),
   quantity: integer("quantity").notNull(),
+  // ===== v2.4.0（Wave 2 出貨同步，WMS → 官網 shipment-callback）=====
+  // 逐件出貨狀態：'pending'（待寄出）→ 'shipped'（已寄出／已交收／儲貨中）｜'cancelled'（WMS 刪貨）
+  shipStatus: varchar("shipStatus", { length: 16 }).notNull().default("pending"),
+  // 最近一次出貨批次（對 orderShipments.id；取消出貨會清返 NULL）
+  shipmentId: bigint("shipmentId", { mode: "number" }),
+  // WMS 刪貨：取消原因必填（客人睇到）＋時間
+  cancelReason: text("cancelReason"),
+  cancelledAt: timestamp("cancelledAt"),
+  // WMS 改貨品資料（如改貨號）：客人所有訂單出口出「員工更改」chip＋更改說明
+  staffChangedAt: timestamp("staffChangedAt"),
+  staffChangeNote: text("staffChangeNote"),
+  staffChangedBy: varchar("staffChangedBy", { length: 64 }),
+});
+
+// WMS 出貨批次（2026-10-09 Wave 2）：一張官網單可以分幾次出貨，每次一列。
+// shipMethod：'sf' 順豐（sfNo 必填）｜'face' 面交｜'pickup' 上門自取｜'storage' 儲貨（唔觸發出貨信）
+// itemIds：JSON array（今批寄咗邊幾件 orderItems.id）——出貨信貨品表＋批次「呢批」行用
+// emailedAt：出貨信 debounce 10 分鐘——未寄＝NULL，掃單器批次寄出後寫入
+// reversedAt：取消出貨（unshipped）標記——批次作廢但留底；已寄信嘅批次會觸發致歉信
+export const orderShipments = pgTable("orderShipments", {
+  id: serial("id").primaryKey(),
+  orderId: bigint("orderId", { mode: "number" })
+    .notNull()
+    .references(() => orders.id),
+  shipMethod: varchar("shipMethod", { length: 16 }).notNull(),
+  sfNo: varchar("sfNo", { length: 64 }),
+  itemIds: text("itemIds").notNull().default("[]"),
+  shippedAt: timestamp("shippedAt").notNull(),
+  actorName: varchar("actorName", { length: 64 }),
+  emailedAt: timestamp("emailedAt"),
+  reversedAt: timestamp("reversedAt"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
+// ===== v2.5.0（會員購物金 wallet，2026-10-09 老闆指令）=====
+// 購物金套票（後台上架）：面額 creditAmount（入帳金額）可以高過售價 price
+// （例如面額 $1000 售 $970）——差額即係充值優惠。金額全部整數港元。
+export const walletPackages = pgTable("walletPackages", {
+  id: serial("id").primaryKey(),
+  label: varchar("label", { length: 64 }).notNull(),
+  creditAmount: integer("creditAmount").notNull(),
+  price: integer("price").notNull(),
+  sortOrder: integer("sortOrder").notNull().default(0),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
+// 購物金充值單：同普通訂單一樣有 48 小時付款期（expiresAt），
+// 立即付款（Airwallex）或上傳付款截圖都得，但**一定要官網後台／WMS 批核先入帳**。
+// status：pending_payment（待付款）→ payment_review（已付款待批）→ approved（已入帳）
+//         ｜ rejected（批核拒絕）｜ cancelled（逾時未付款自動取消）
+export const walletTopups = pgTable("walletTopups", {
+  id: serial("id").primaryKey(),
+  // 充值單號：WT + 日期 + 隨機 4 位（Airwallex merchant_order_id 用佢，webhook 靠前綴分流）
+  topupNo: varchar("topupNo", { length: 32 }).notNull().unique(),
+  userId: bigint("userId", { mode: "number" })
+    .notNull()
+    .references(() => users.id),
+  // 套票快照（套票日後改價/下架都唔影響歷史充值單）
+  packageId: integer("packageId"),
+  label: varchar("label", { length: 64 }).notNull(),
+  creditAmount: integer("creditAmount").notNull(),
+  price: integer("price").notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("pending_payment"),
+  // 付款渠道：'manual'＝上傳截圖｜'airwallex'＝網上即時付款
+  paymentChannel: varchar("paymentChannel", { length: 16 }).notNull().default("manual"),
+  airwallexIntentId: varchar("airwallexIntentId", { length: 64 }),
+  paidAt: timestamp("paidAt"),
+  proofImagePath: varchar("proofImagePath", { length: 512 }),
+  // 批核快照（官網後台人或者 WMS 經 callback 批，都記低邊個批）
+  approvedBy: varchar("approvedBy", { length: 64 }),
+  approvedAt: timestamp("approvedAt"),
+  reviewNote: text("reviewNote"),
+  // 付款死線＝落單＋48 小時（同會員購物單一個規則）；orderSweeper 過期自動取消
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
+// 購物金流水賬（永久保留，audit 級）：每一次入帳／扣帳／返還一列，
+// amount 帶正負（入＋扣−），balanceAfter＋refType/refId 對返源頭單據。
+// refType：'topup'（對 walletTopups.topupNo）｜'order'（對 orders.orderNo）
+export const walletLedger = pgTable("walletLedger", {
+  id: serial("id").primaryKey(),
+  userId: bigint("userId", { mode: "number" })
+    .notNull()
+    .references(() => users.id),
+  type: varchar("type", { length: 16 }).notNull(), // 'topup'｜'spend'｜'refund'
+  amount: integer("amount").notNull(),
+  balanceAfter: integer("balanceAfter").notNull(),
+  refType: varchar("refType", { length: 16 }).notNull(),
+  refId: varchar("refId", { length: 32 }).notNull(),
+  note: text("note"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
 
 export const paymentProofs = pgTable("paymentProofs", {
@@ -562,6 +669,10 @@ export type Product = typeof products.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
+export type OrderShipment = typeof orderShipments.$inferSelect;
+export type WalletPackage = typeof walletPackages.$inferSelect;
+export type WalletTopup = typeof walletTopups.$inferSelect;
+export type WalletLedgerEntry = typeof walletLedger.$inferSelect;
 export type PaymentProof = typeof paymentProofs.$inferSelect;
 export type PromoCode = typeof promoCodes.$inferSelect;
 export type PraiseWallEntry = typeof praiseWall.$inferSelect;

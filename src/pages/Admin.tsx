@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, Radio, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, Radio, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users, Wallet } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -26,6 +26,7 @@ import VipSettingsPanel from '@/components/admin/VipSettingsPanel';
 import StationManager from '@/components/admin/StationManager';
 import ApprovalCenter from '@/components/admin/ApprovalCenter';
 import AuditLog from '@/components/admin/AuditLog';
+import WalletPanel from '@/components/admin/WalletPanel';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
 
@@ -54,6 +55,8 @@ type ViewKey =
   // v2.2.46（老闆指令）：直播抽獎大輪盤（主管/管理員先睇到）
   | 'lucky'
   | 'members'
+  // v2.5.0（購物金，2026-10-09 老闆指令）：充值批核（staff+）／套票＋會員餘額（supervisor/admin）
+  | 'wallet'
   // v2.1.0（VIP+免運，2026-09-29）：VIP/免運規則（admin only）
   | 'vip'
   // v2.1.1（2026-09-30 老闆指示）：順豐站點維護由 VIP 頁拆出，獨立一頁（admin only）
@@ -229,6 +232,8 @@ function AdminConsole() {
     // 會員列表（2026-08-06 三級制）：主管同員工都入得——員工改會員資料要主管/管理員審批；
     // 刪會員仍然 admin only（MemberList 入面 canDelete 擋）
     { key: 'members', label: '會員', icon: <Users size={17} aria-hidden="true" /> },
+    // v2.5.0（老闆指令）：購物金充值批核（staff+）；套票管理＋會員餘額查詢喺面板內按 role 分區
+    { key: 'wallet', label: '購物金', icon: <Wallet size={17} aria-hidden="true" /> },
     // VIP＋免運規則只限最高管理員（admin；後端 settings/vip admin API 都係 adminProcedure）
     ...(isAdmin
       ? [{ key: 'vip' as ViewKey, label: 'VIP 設定', icon: <Crown size={17} aria-hidden="true" /> }]
@@ -297,6 +302,7 @@ function AdminConsole() {
       <p className="py-14 text-center text-[14px] text-txt-3">需要主管或管理員權限。</p>
     ),
     members: <MemberList toast={pushToast} />,
+    wallet: <WalletPanel toast={pushToast} />,
     vip: isAdmin ? (
       <VipSettingsPanel toast={pushToast} />
     ) : (

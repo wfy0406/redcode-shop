@@ -519,6 +519,39 @@
   will-change: transform;
 }
 
+/* v2.5.0（購物金充值頁）：揀中套票卡嘅金色 shimmer 掃光——
+   純 transform 位移一道斜光（老闆鐵律：動畫只用 opacity/transform） */
+@keyframes wallet-shimmer-sweep {
+  0% {
+    transform: translateX(-130%) skewX(-18deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(230%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+.wallet-shimmer {
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(233, 209, 160, 0.16) 35%,
+    rgba(233, 209, 160, 0.34) 50%,
+    rgba(233, 209, 160, 0.16) 65%,
+    transparent 100%
+  );
+  animation: wallet-shimmer-sweep 2.8s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
 /* ===== §6.1 Reduced motion：動態星空降格做靜態星空 ===== */
 @media (prefers-reduced-motion: reduce) {
   html {
@@ -533,6 +566,7 @@
   .glo-hop,
   .spark-twinkle,
   .logo-poke,
+  .wallet-shimmer,
   .btn-primary.btn-pulse {
     animation: none;
   }

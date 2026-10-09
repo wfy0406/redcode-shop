@@ -603,10 +603,16 @@ export default function Payment() {
             ) : (
               <>
                 <Lock size={15} aria-hidden="true" />
-                網上付款 {formatHKD(order.total)}
+                {/* v2.5.0（購物金）：用咗購物金嘅單淨收尾數（購物金部分落單時已扣） */}
+                網上付款 {formatHKD(order.total - (order.walletUsed ?? 0))}
               </>
             )}
           </button>
+          {(order.walletUsed ?? 0) > 0 && (
+            <p className="mt-3 text-[13px] text-gold">
+              購物金已扣 {formatHKD(order.walletUsed ?? 0)}，而家淨係找尾數
+            </p>
+          )}
           <p className="mt-3 text-[12px] leading-relaxed text-txt-3">
             以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準。
           </p>

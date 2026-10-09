@@ -24,6 +24,10 @@ export interface CreatedOrder {
   id: number;
   orderNo: string;
   total: number;
+  /** v2.5.0（購物金）：落單扣咗幾多購物金（0／冇 = 冇用） */
+  walletUsed?: number;
+  /** v2.5.0（購物金）：全額購物金單一落單即 'payment_review'（唔使再付尾數） */
+  status?: string;
 }
 
 /** 單價：有折用折後價（discountPrice ?? price） */

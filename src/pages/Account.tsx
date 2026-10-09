@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar from '@/components/account/WishingStar';
 import VipCard from '@/components/account/VipCard';
+import WalletCard from '@/components/account/WalletCard';
 import VipCertCard from '@/components/account/VipCertCard';
 import { vipTierTheme, formatMemberNo } from '@/lib/vipTheme';
 import OrderCard from '@/components/account/OrderCard';
@@ -161,6 +162,12 @@ export default function Account() {
       <SectionLabel en="Tier & Privileges" zh="會員級別" />
       <div className="mt-8">
         <VipCard />
+      </div>
+
+      {/* 購物金區塊（v2.5.0，2026-10-09 老闆指令）：餘額＋待跟進充值單＋最近流水＋充值入口 */}
+      <SectionLabel en="Wallet" zh="購物金" />
+      <div className="mt-8">
+        <WalletCard />
       </div>
 
       <SectionLabel en="Profile & Settings" zh="會員資料" />

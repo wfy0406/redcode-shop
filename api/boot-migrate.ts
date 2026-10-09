@@ -515,6 +515,86 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS "guestToken" varchar(64);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS "expiresAt" timestamp;
 -- orderSweeper 每 5 分鐘掃過期訪客單用（partial index：淨係訪客單先入）
 CREATE INDEX IF NOT EXISTS orders_guest_expiry ON orders ("expiresAt") WHERE "userId" IS NULL;
+
+-- ===== Wave 2 出貨雙向同步（2026-10-09）=====
+-- 訂單全寄出時間（status 轉 'shipped' 嗰刻；取消出貨清返 NULL）
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "shippedAt" timestamp;
+-- orderItems 逐件出貨狀態＋取消原因＋員工更改痕跡
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "shipStatus" varchar(16) NOT NULL DEFAULT 'pending';
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "shipmentId" bigint;
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "cancelReason" text;
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "cancelledAt" timestamp;
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangedAt" timestamp;
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangeNote" text;
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangedBy" varchar(64);
+-- 出貨批次表：一單可以分幾次出貨；emailedAt＝出貨信 debounce 10 分鐘批次寄出記錄
+CREATE TABLE IF NOT EXISTS "orderShipments" (
+  id serial PRIMARY KEY,
+  "orderId" bigint NOT NULL REFERENCES orders(id),
+  "shipMethod" varchar(16) NOT NULL,
+  "sfNo" varchar(64),
+  "itemIds" text NOT NULL DEFAULT '[]',
+  "shippedAt" timestamp NOT NULL,
+  "actorName" varchar(64),
+  "emailedAt" timestamp,
+  "reversedAt" timestamp,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+-- 掃單器搵未寄信批次用
+CREATE INDEX IF NOT EXISTS ordershipments_email ON "orderShipments" ("orderId") WHERE "emailedAt" IS NULL;
+
+-- ===== v2.5.0 會員購物金（2026-10-09 老闆指令）=====
+-- 會員購物金餘額（整數港元；舊會員自動 0）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "storeCredit" integer NOT NULL DEFAULT 0;
+-- 訂單用咗幾多購物金＋返還冪等鎖（NULL＝未返還）
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "walletUsed" integer NOT NULL DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS "walletReturnedAt" timestamp;
+-- 購物金套票（後台上架：面額／售價／排序／上下架）
+CREATE TABLE IF NOT EXISTS "walletPackages" (
+  id serial PRIMARY KEY,
+  label varchar(64) NOT NULL,
+  "creditAmount" integer NOT NULL,
+  price integer NOT NULL,
+  "sortOrder" integer NOT NULL DEFAULT 0,
+  "isActive" boolean NOT NULL DEFAULT true,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+-- 充值單（48 小時付款期；批核先入帳）
+CREATE TABLE IF NOT EXISTS "walletTopups" (
+  id serial PRIMARY KEY,
+  "topupNo" varchar(32) NOT NULL UNIQUE,
+  "userId" bigint NOT NULL REFERENCES users(id),
+  "packageId" integer,
+  label varchar(64) NOT NULL,
+  "creditAmount" integer NOT NULL,
+  price integer NOT NULL,
+  status varchar(16) NOT NULL DEFAULT 'pending_payment',
+  "paymentChannel" varchar(16) NOT NULL DEFAULT 'manual',
+  "airwallexIntentId" varchar(64),
+  "paidAt" timestamp,
+  "proofImagePath" varchar(512),
+  "approvedBy" varchar(64),
+  "approvedAt" timestamp,
+  "reviewNote" text,
+  "expiresAt" timestamp NOT NULL,
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "updatedAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS wallettopups_user ON "walletTopups" ("userId", "createdAt");
+CREATE INDEX IF NOT EXISTS wallettopups_status ON "walletTopups" (status) WHERE status = 'payment_review';
+-- 購物金流水賬（永久保留）：入帳／扣帳／返還每樣一列，balanceAfter 對帳用
+CREATE TABLE IF NOT EXISTS "walletLedger" (
+  id serial PRIMARY KEY,
+  "userId" bigint NOT NULL REFERENCES users(id),
+  type varchar(16) NOT NULL,
+  amount integer NOT NULL,
+  "balanceAfter" integer NOT NULL,
+  "refType" varchar(16) NOT NULL,
+  "refId" varchar(32) NOT NULL,
+  note text,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS walletledger_user ON "walletLedger" ("userId", "createdAt");
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：

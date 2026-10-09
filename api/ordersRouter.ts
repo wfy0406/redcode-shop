@@ -3,13 +3,14 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { randomInt, randomUUID } from "node:crypto";
 import { getDb } from "./queries/connection";
-import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, paymentProofs, products, promoCodes, sfStations, users, wmsSyncLog } from "@db/schema";
+import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, paymentProofs, products, promoCodes, sfStations, users, walletLedger, wmsSyncLog } from "@db/schema";
 import { createRouter, authedProcedure, publicProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
+import { computeWalletSplit, returnWalletForOrder } from "./wallet";
 import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
 import { sendOrderReviewAlertEmail } from "./email";
 import { logAudit } from "./audit";
-import { sendOrderApprovedEmail, sendOrderPendingEmail, orderVipEmailInfo, sendGuestOrderEmail, siteUrl } from "./email";
+import { sendOrderApprovedEmail, sendOrderPendingEmail, orderVipEmailInfo, sendGuestOrderEmail, siteUrl, sendOrderPaidOnlineEmail } from "./email";
 import {
   computeCheckoutQuote,
   getShippingRules,
@@ -217,6 +218,9 @@ export const ordersRouter = createRouter({
           pickupPoint: z.string().max(255).optional(),
           region: z.enum(["HK", "MO", "OVERSEAS", "hk", "mo", "overseas"]).optional(),
           stationId: z.string().trim().max(64).optional(),
+          // v2.5.0（購物金）：true＝用購物金抵銷（server 重算，唔信前端金額）；
+          // 唔夠俾全單 → 尾數照舊即時付款／上傳截圖；訂單取消購物金自動返還
+          useWallet: z.boolean().optional(),
         })
         .optional(),
     )
@@ -289,8 +293,8 @@ export const ordersRouter = createRouter({
           ? null
           : (quote.stationName ?? input?.pickupPoint?.trim() ?? null) || null;
 
-      // PostgreSQL 支援真 transaction：扣庫存 + 優惠碼 + insert order + items + clear cart 一齊 atomic
-      const orderId = await db.transaction(async (tx) => {
+      // PostgreSQL 支援真 transaction：扣庫存 + 優惠碼 + 購物金 + insert order + items + clear cart 一齊 atomic
+      const { orderId, walletApplied } = await db.transaction(async (tx) => {
         // 每件貨驗庫存 + 扣庫存（conditional update 防超賣）
         for (const item of cart) {
           const deducted = await tx
@@ -355,6 +359,33 @@ export const ordersRouter = createRouter({
         const discountAmount = vipDiscountDollars + couponDiscount;
         const total = subtotal - discountAmount;
 
+        // v2.5.0（購物金）：落單即扣（同事務 conditional update 防超扣＋防並發雙使）；
+        // 扣完即記流水賬（spend 負數）。cashDue=0 → 唔使再俾錢，下面直接轉待審批。
+        let walletApplied = 0;
+        let walletBalanceAfter = 0;
+        if (input?.useWallet && total > 0) {
+          const meWallet = await tx.query.users.findFirst({
+            where: eq(users.id, ctx.user.userId),
+            columns: { storeCredit: true },
+          });
+          const { walletApplied: applied } = computeWalletSplit(total, meWallet?.storeCredit ?? 0, true);
+          if (applied > 0) {
+            const [deducted] = await tx
+              .update(users)
+              .set({ storeCredit: sql`${users.storeCredit} - ${applied}` })
+              .where(and(eq(users.id, ctx.user.userId), gte(users.storeCredit, applied)))
+              .returning({ storeCredit: users.storeCredit });
+            if (!deducted) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "購物金餘額唔夠，請刷新結帳頁再試",
+              });
+            }
+            walletApplied = applied;
+            walletBalanceAfter = deducted.storeCredit;
+          }
+        }
+
         const [{ id }] = await tx
           .insert(orders)
           .values({
@@ -376,8 +407,23 @@ export const ordersRouter = createRouter({
             vipTierAtPurchase: quote.vipTier,
             vipDiscountCents: quote.vipDiscountCents,
             remark: quote.remarks.length > 0 ? quote.remarks.join("；") : null,
+            // v2.5.0（購物金）：扣咗幾多寫落單（顯示＋取消返還用）
+            walletUsed: walletApplied,
           })
           .returning({ id: orders.id });
+
+        // 購物金流水賬（同事務；refId 對返 orderNo）
+        if (walletApplied > 0) {
+          await tx.insert(walletLedger).values({
+            userId: ctx.user.userId,
+            type: "spend",
+            amount: -walletApplied,
+            balanceAfter: walletBalanceAfter,
+            refType: "order",
+            refId: orderNo,
+            note: `訂單 ${orderNo} 使用購物金抵銷`,
+          });
+        }
 
         await tx.insert(orderItems).values(
           cart.map((item) => ({
@@ -391,16 +437,92 @@ export const ordersRouter = createRouter({
           })),
         );
         await tx.delete(cartItems).where(eq(cartItems.userId, ctx.user.userId));
-        return id;
+        return { orderId: id, walletApplied, walletBalanceAfter };
       });
 
       const created = await db.query.orders.findFirst({
         where: eq(orders.id, orderId),
         with: { items: true, proofs: true },
       });
+      // v2.5.0（購物金）：購物金全數支付（cashDue=0）→ 唔使再俾錢，直接轉待審批（同已收款一樣），
+      // 背景轉 WMS＋寄「已收款」信＋內部待審批通知。冪等：conditional update 淨郁 pending_payment。
+      const cashDue = (created?.total ?? 0) - walletApplied;
+      if (created && walletApplied > 0 && cashDue <= 0) {
+        const [claimedWallet] = await db
+          .update(orders)
+          .set({ status: "payment_review", paymentChannel: "wallet", paidAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(orders.id, created.id), eq(orders.status, "pending_payment")))
+          .returning({ id: orders.id });
+        if (claimedWallet) {
+          void logAudit({
+            actorId: ctx.user.userId,
+            actorRole: ctx.user.role,
+            action: "order.paidWallet",
+            targetType: "order",
+            targetId: orderNo,
+            detail: `訂單 ${orderNo} 全數以購物金支付（HK$${walletApplied}），轉待審批`,
+          });
+          void forwardOrderToWms(created.id).catch((e) =>
+            console.error(`[wallet] ${orderNo} 轉 WMS 出錯:`, e),
+          );
+          void (async () => {
+            try {
+              const member = await db.query.users.findFirst({
+                where: eq(users.id, ctx.user.userId),
+                columns: { name: true, email: true, phone: true },
+              });
+              if (!member) return;
+              const items = created.items.map((it) => ({
+                productName: it.productName,
+                size: it.size,
+                price: it.price,
+                quantity: it.quantity,
+              }));
+              const delivery = {
+                method: created.deliveryMethod,
+                pickupPoint: created.pickupPoint,
+                address: created.address,
+              };
+              if (member.email) {
+                const r = await sendOrderPaidOnlineEmail({
+                  to: member.email,
+                  orderNo: created.orderNo,
+                  items,
+                  total: created.total,
+                  delivery,
+                  paidAt: new Date(),
+                  vip: orderVipEmailInfo(created),
+                  walletUsed: walletApplied,
+                });
+                if (!r.ok) console.error(`[email] 購物金支付通知寄唔出（${orderNo}）：`, r.error);
+              }
+              const r2 = await sendOrderReviewAlertEmail({
+                orderNo: created.orderNo,
+                createdAt: created.createdAt,
+                customerName: member.name,
+                customerPhone: member.phone,
+                customerEmail: member.email,
+                delivery,
+                note: created.note,
+                promoCode: created.promoCode,
+                items,
+                total: created.total,
+                discountAmount: created.discountAmount,
+              });
+              if (!r2.ok) console.error(`[email] 購物金單待審批通知寄唔出（${orderNo}）：`, r2.error);
+            } catch (e) {
+              console.error("[wallet] 全購物金單寄信出錯:", e);
+            }
+          })();
+          // 回傳俾前端嘅物件同步最新狀態（前端直接跳「已收款待審批」畫面）
+          created.status = "payment_review";
+          created.paymentChannel = "wallet";
+        }
+      }
       // 待付款通知 email（2026-08-04）：會員有綁 email 先寄；結果寫埋入日誌 detail，方便後台排查
+      // v2.5.0（購物金）：全購物金單已轉待審批（上面寄咗「已收款」信），唔好再寄待付款信
       let emailNote = "";
-      if (created) {
+      if (created && cashDue > 0) {
         const member = await db.query.users.findFirst({
           where: eq(users.id, ctx.user.userId),
           columns: { name: true, email: true },
@@ -416,6 +538,8 @@ export const ordersRouter = createRouter({
             createdAt: created.createdAt,
             // v2.1.1（Wave 2）：單據顯示 VIP 級別＋VIP 折扣行
             vip: orderVipEmailInfo(created),
+            // v2.5.0（購物金）：用咗購物金就喺信入面列明扣減＋尾數
+            walletUsed: walletApplied > 0 ? walletApplied : undefined,
             items: created.items.map((it) => ({
               productName: it.productName,
               size: it.size,
@@ -436,7 +560,7 @@ export const ordersRouter = createRouter({
         action: "order.create",
         targetType: "order",
         targetId: orderNo,
-        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${promoCodeDetail(input?.promoCode)}${quote.vipDiscountCents > 0 ? `，VIP${quote.vipTier === "GOLD" ? "金" : "銀"}會員折 HK$${quote.vipDiscountCents / 100}` : ""}${quote.shippingFree ? "，免運" : ""}${region !== "HK" ? `，${region === "MO" ? "澳門" : "國外"}單` : ""}${deliveryMethod !== "address" ? `，自取（${deliveryMethod === "sf_station" ? "順豐站" : "智能櫃"}${pickupPoint ? `：${pickupPoint}` : ""}）` : ""}${emailNote}`,
+        detail: `落單 ${orderNo}，${cart.length} 件貨，合計 HK$${created?.total ?? 0}${walletApplied > 0 ? `，購物金扣減 HK$${walletApplied}（尾數 HK$${Math.max(0, cashDue)}）` : ""}${promoCodeDetail(input?.promoCode)}${quote.vipDiscountCents > 0 ? `，VIP${quote.vipTier === "GOLD" ? "金" : "銀"}會員折 HK$${quote.vipDiscountCents / 100}` : ""}${quote.shippingFree ? "，免運" : ""}${region !== "HK" ? `，${region === "MO" ? "澳門" : "國外"}單` : ""}${deliveryMethod !== "address" ? `，自取（${deliveryMethod === "sf_station" ? "順豐站" : "智能櫃"}${pickupPoint ? `：${pickupPoint}` : ""}）` : ""}${emailNote}`,
       });
       return created;
     }),
@@ -1139,6 +1263,7 @@ export const ordersRouter = createRouter({
       if (!order) {
         throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
       }
+      let walletReturned = 0;
       await db.transaction(async (tx) => {
         await tx
           .update(orders)
@@ -1153,6 +1278,8 @@ export const ordersRouter = createRouter({
               .where(eq(products.id, item.productId));
           }
         }
+        // v2.5.0（購物金）：取消即返還用咗嘅購物金（walletReturnedAt 冪等鎖，唔會返兩次）
+        walletReturned = await returnWalletForOrder(tx, order, "訂單取消返還（後台人手取消）");
       });
       void logAudit({
         actorId: ctx.user.userId,
@@ -1160,7 +1287,7 @@ export const ordersRouter = createRouter({
         action: "order.cancel",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `訂單 ${order.orderNo} 轉做已取消（庫存已加返）`,
+        detail: `訂單 ${order.orderNo} 轉做已取消（庫存已加返）${walletReturned > 0 ? `，購物金 HK$${walletReturned} 已返還` : ""}`,
       });
       return db.query.orders.findFirst({
         where: eq(orders.id, input.orderId),

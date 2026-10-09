@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData } from '@tanstack/react-query';
-import { CreditCard, MapPin, MessageCircle, TicketPercent, Truck, X } from 'lucide-react';
+import { CreditCard, MapPin, MessageCircle, TicketPercent, Truck, Wallet, X } from 'lucide-react';
 import DuotoneImage from '@/components/DuotoneImage';
 import RegionStationPicker from '@/components/shop/RegionStationPicker';
 import LoginPrompt from '@/components/cart/LoginPrompt';
@@ -146,6 +146,9 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   // 站名唔使傳——server 落單時會用 stationId 攞站名做快照
   const [stationId, setStationId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  // v2.5.0（購物金）：結帳用購物金扣數開關——server 報價會預覽扣幾多／尾數幾多，
+  // 落單時 server 同事務實扣（conditional update 防超扣）；餘額 0 唔會出開關
+  const [useWallet, setUseWallet] = useState(false);
 
   // 國外單只支援送貨上門——任何計數／落單都用呢個正規化後嘅方式
   const effectiveMethod = region === 'OVERSEAS' ? 'address' : deliveryMethod;
@@ -282,6 +285,8 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
       deliveryMethod: effectiveMethod,
       stationId: effectiveMethod !== 'address' ? stationId : undefined,
       couponCode: appliedPromo?.code,
+      // v2.5.0（購物金）：開關一撳 server 就重算預覽（walletApplied／cashDue）
+      useWallet,
     },
     {
       enabled: !!user && items.length > 0,
@@ -290,6 +295,12 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
     },
   );
   const quote = quoteQuery.data;
+  // v2.5.0（購物金）：餘額冧到 0（例如另一個分頁使咗）就自動收開關，唔會扣住舊數
+  const walletBalance = quote?.walletBalance ?? 0;
+  useEffect(() => {
+    if (quote && walletBalance <= 0 && useWallet) setUseWallet(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote, walletBalance]);
 
   // 金額全部整數港元顯示（quote 回 cents，÷100；VIP 折扣 server 已四捨五入到港元個位）
   const displaySubtotal = quote ? quote.subtotalCents / 100 : subtotal;
@@ -366,9 +377,13 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
         // v2.1.0：收件地區＋站點 ID（server 會攞站名做快照寫落 stationName／pickupPoint）
         region,
         stationId: effectiveMethod !== 'address' ? stationId : undefined,
+        // v2.5.0（購物金）：有剔先用嘅開關先傳；server 同事務實扣，唔信前端金額
+        useWallet: useWallet || undefined,
       });
       // 後端已清車，invalidate 令購物車頁 / badge 同步
       void utils.cart.list.invalidate();
+      // v2.5.0：購物金有郁過 → 會員中心購物金卡／充值頁餘額即時更新
+      if ((created as CreatedOrder).walletUsed) void utils.wallet.myWallet.invalidate();
       onCreated(created as CreatedOrder);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
@@ -565,6 +580,68 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
               </span>
             </div>
           )}
+          {/* v2.5.0（購物金）：有餘額先出開關——剔咗 server 報價會預覽扣幾多／尾數幾多 */}
+          {quote && walletBalance > 0 && (
+            <div
+              className="mt-3 rounded-xl border px-4 py-3"
+              style={{
+                borderColor: useWallet ? 'var(--gold)' : 'var(--space-line)',
+                background: 'var(--space-2)',
+                animation: 'promo-fade-in .2s ease both',
+              }}
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={useWallet}
+                onClick={() => setUseWallet((v) => !v)}
+                className="flex w-full cursor-pointer items-center justify-between gap-3 text-left"
+              >
+                <span className="inline-flex items-center gap-2 text-[14px] font-medium text-txt-1">
+                  <Wallet size={15} aria-hidden="true" className="text-gold" />
+                  用購物金找數
+                  <span className="font-mono text-[12px] text-txt-3">
+                    餘額 {formatHKD(walletBalance)}
+                  </span>
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+                    useWallet ? 'bg-gold' : 'bg-space-3'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-starlight shadow transition-transform duration-200 ${
+                      useWallet ? 'translate-x-[22px]' : 'translate-x-0.5'
+                    }`}
+                  />
+                </span>
+              </button>
+              {useWallet && (
+                <p className="mt-2 text-[12px] leading-relaxed text-txt-3">
+                  購物金不設退款；只限官網商品，直播商品唔用得。
+                  {quote.walletApplied > 0 && quote.cashDue <= 0
+                    ? '今單購物金全數找埋，落單後唔使再俾錢 ✦'
+                    : '唔夠找嘅尾數，落單後用網上付款或過數找尾數。'}
+                </p>
+              )}
+            </div>
+          )}
+          {/* v2.5.0（購物金）：剔咗用購物金 → 顯示扣減行（金） */}
+          {quote && useWallet && quote.walletApplied > 0 && (
+            <div
+              className="mt-2.5 flex items-baseline justify-between"
+              style={{ animation: 'promo-fade-in .2s ease both' }}
+            >
+              <span className="inline-flex items-center gap-1.5 text-[15px] text-txt-2">
+                <Wallet size={14} aria-hidden="true" />
+                購物金扣減
+              </span>
+              <span className="font-mono text-base tabular-nums text-gold">
+                −{formatHKD(quote.walletApplied)}
+              </span>
+            </div>
+          )}
           {/* key 綁金額：總額變更時 re-mount 觸發 slide 更新，唔會「啪」一聲跳 */}
           <div
             key={displayTotal}
@@ -578,6 +655,24 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
               {formatHKD(displayTotal)}
             </span>
           </div>
+          {/* v2.5.0（購物金）：有扣減 → 應付尾數做主行（pink 大字），全數找埋就 HK$0 */}
+          {quote && useWallet && quote.walletApplied > 0 && (
+            <div
+              className="mt-2 flex items-baseline justify-between rounded-xl border px-4 py-3"
+              style={{
+                borderColor: 'var(--gold)',
+                background: 'rgba(171,140,82,.08)',
+                animation: 'promo-fade-in .2s ease both',
+              }}
+            >
+              <span className="font-serif-tc text-lg font-semibold text-txt-1">
+                {quote.cashDue > 0 ? '應付尾數' : '應付尾數（購物金全數找埋 ✦）'}
+              </span>
+              <span className="font-mono text-2xl tabular-nums text-gold">
+                {formatHKD(quote.cashDue)}
+              </span>
+            </div>
+          )}
           {/* server 備註（澳門單・不包郵・順豐到付／VIP金會員全年免運…）：細字提示 */}
           {quote && quote.remarks.length > 0 && (
             <p className="mt-2.5 text-[13px] leading-relaxed text-txt-3">
@@ -978,7 +1073,8 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
                 正在開啟安全付款頁…
               </>
             ) : (
-              <>💳 網上即時付款 {formatHKD(order.total)}</>
+              // v2.5.0（購物金）：網上付款淨收尾數（購物金部分落單時已扣）
+              <>💳 網上即時付款 {formatHKD(order.total - (order.walletUsed ?? 0))}</>
             )}
           </button>
           <p className="mt-3 text-[12px] leading-relaxed text-txt-3">
@@ -1011,10 +1107,19 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
         <h2 className="font-serif-tc text-xl font-semibold text-txt-1">
           手動過數（FPS／PayMe／AlipayHK）
         </h2>
-        <p className="mt-4 text-sm text-txt-2">應付金額</p>
-        <p className="mt-1 font-mono text-[32px] leading-[1.2] text-pink">
-          {formatHKD(order.total)}
+        <p className="mt-4 text-sm text-txt-2">
+          {/* v2.5.0（購物金）：用咗購物金嘅單，呢度淨係找尾數 */}
+          {(order.walletUsed ?? 0) > 0 ? '應付尾數（購物金已扣減）' : '應付金額'}
         </p>
+        <p className="mt-1 font-mono text-[32px] leading-[1.2] text-pink">
+          {formatHKD(order.total - (order.walletUsed ?? 0))}
+        </p>
+        {(order.walletUsed ?? 0) > 0 && (
+          <p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-gold">
+            <Wallet size={13} aria-hidden="true" />
+            購物金已扣 {formatHKD(order.walletUsed ?? 0)}（訂單總額 {formatHKD(order.total)}）
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
           <span className="text-sm text-txt-3">訂單編號</span>
           <span className="font-mono text-sm text-txt-1">{order.orderNo}</span>
@@ -1111,6 +1216,11 @@ function SuccessStep({ order }: { order: CreatedOrder }) {
   const whatsappTrack = `${WHATSAPP_URL}?text=${encodeURIComponent(
     `你好，想查詢訂單 ${order.orderNo} 嘅狀態`,
   )}`;
+  // v2.5.0（購物金）：全額購物金單冇截圖呢回事——成功頁講返係購物金找晒
+  const walletFullyPaid =
+    order.status === 'payment_review' &&
+    (order.walletUsed ?? 0) > 0 &&
+    order.total - (order.walletUsed ?? 0) <= 0;
 
   return (
     <div className="mt-14 flex flex-col items-center pb-8 text-center">
@@ -1123,11 +1233,20 @@ function SuccessStep({ order }: { order: CreatedOrder }) {
         <CopyButton text={order.orderNo} label="複製訂單編號" />
       </div>
 
-      <p className="mt-5 max-w-md text-[15px] leading-relaxed text-txt-2">
-        付款截圖已收到，而家<span className="font-medium text-gold">職員審核中</span>。
-        當審核完成，訂單將安排同事出貨。
-        你可以隨時去會員中心睇訂單狀態。
-      </p>
+      {walletFullyPaid ? (
+        <p className="mt-5 max-w-md text-[15px] leading-relaxed text-txt-2">
+          已全數用購物金支付（{formatHKD(order.walletUsed ?? 0)}），而家
+          <span className="font-medium text-gold">職員審核中</span>。
+          當審核完成，訂單將安排同事出貨。
+          你可以隨時去會員中心睇訂單狀態。
+        </p>
+      ) : (
+        <p className="mt-5 max-w-md text-[15px] leading-relaxed text-txt-2">
+          付款截圖已收到，而家<span className="font-medium text-gold">職員審核中</span>。
+          當審核完成，訂單將安排同事出貨。
+          你可以隨時去會員中心睇訂單狀態。
+        </p>
+      )}
 
       <div className="mt-8 flex flex-wrap justify-center gap-4">
         <Link to="/account" className="btn btn-primary">
@@ -1219,7 +1338,12 @@ export default function Checkout() {
         items={items}
         onCreated={(created) => {
           setOrder(created);
-          setStep(1);
+          // v2.5.0（購物金）：全額購物金單一落單即轉待審批（server 已將 status 轉
+          // payment_review），唔使經付款步驟，直去成功頁；尾數 > 0 先落入付款步驟
+          const cashDue = created.total - (created.walletUsed ?? 0);
+          const walletFullyPaid = created.status === 'payment_review' && cashDue <= 0;
+          setStep(walletFullyPaid ? 2 : 1);
+          if (walletFullyPaid) return; // 唔使寫 orderId 落 URL——冇付款步驟要還原
           // 寫低 orderId 落 URL——refresh 之後上面個 effect 會送客人返去付款頁繼續
           setSearchParams({ orderId: String(created.id) }, { replace: true });
         }}

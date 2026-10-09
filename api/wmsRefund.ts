@@ -30,6 +30,7 @@ import { orders, products } from "@db/schema";
 import { logAudit } from "./audit";
 import { createAirwallexRefund } from "./airwallex";
 import { sendOrderRefundedEmail, orderVipEmailInfo } from "./email";
+import { returnWalletForOrder } from "./wallet";
 
 /** 已過咗付款階段嘅訂單狀態——淨係呢啲單先可以申請退款 */
 const REFUNDABLE_STATUSES: readonly string[] = [
@@ -133,15 +134,21 @@ export async function wmsRefundCallback(c: Context) {
     }
     const refundAmount = order.refundAmount ?? order.total;
     const refundedAt = new Date();
+    // v2.5.0（購物金）：退款拆賬——購物金部分**唔經 Airwallex／人手退款**，
+    // 訂單取消嗰刻全數返還落購物金戶口（下面 transaction 做）；現金部分先係渠道退款。
+    // 例：total 500、購物金使咗 200（現金收 300）→ 退 HK$500 ＝ Airwallex 退 300＋購物金返 200。
+    const walletUsed = order.walletUsed ?? 0;
+    const cashPaid = Math.max(0, order.total - walletUsed);
+    const cashRefund = Math.min(refundAmount, cashPaid);
     let channel: "airwallex" | "manual";
     let refundId: string | null = null;
 
-    if (order.paymentChannel === "airwallex" && order.airwallexIntentId) {
-      // Airwallex 網上付款單 → 原路退款
+    if (order.paymentChannel === "airwallex" && order.airwallexIntentId && cashRefund > 0) {
+      // Airwallex 網上付款單 → 原路退款（淨退現金部分；購物金部分唔使經渠道）
       try {
         const r = await createAirwallexRefund({
           paymentIntentId: order.airwallexIntentId,
-          amount: refundAmount,
+          amount: cashRefund,
           requestId: `refund-order-${order.id}`,
           reason: order.refundNote ?? undefined,
         });
@@ -172,6 +179,9 @@ export async function wmsRefundCallback(c: Context) {
 
     // 退款成立：訂單轉 cancelled＋每個 item 嘅庫存加返（同一個 transaction，
     // 做法照 wmsReviewCallback cancel；上面冪等檢查已擋重複 approve，唔會補兩次）
+    // v2.5.0（購物金）：訂單取消嗰刻購物金全數返還（walletReturnedAt 冪等鎖，
+    // 就算上面冪等檢查有漏都唔會返兩次；購物金不設退款，永遠唔經渠道退）
+    let walletReturned = 0;
     await db.transaction(async (tx) => {
       await tx
         .update(orders)
@@ -189,6 +199,7 @@ export async function wmsRefundCallback(c: Context) {
           .set({ stock: sql`${products.stock} + ${item.quantity}` })
           .where(eq(products.id, item.productId));
       }
+      walletReturned = await returnWalletForOrder(tx, order, "WMS 退款取消返還");
     });
 
     // 退款通知 email 畀客人（never-throw；失敗淨係寫落日誌 detail，唔阻回應）
@@ -208,7 +219,10 @@ export async function wmsRefundCallback(c: Context) {
           quantity: it.quantity,
         })),
         total: order.total,
-        refundAmount,
+        // v2.5.0（購物金）：現金部分先係渠道退款金額（購物金唔經渠道）；
+        // walletRefund 話畀封信知有幾多購物金返咗落戶口
+        refundAmount: cashRefund,
+        walletRefund: walletReturned > 0 ? walletReturned : undefined,
         channel,
         refundedAt,
         // v2.1.1（Wave 2）：退款信一樣顯示 VIP 級別＋折扣（全網單據統一）
@@ -229,14 +243,16 @@ export async function wmsRefundCallback(c: Context) {
       action: "order.refundApproved",
       targetType: "order",
       targetId: order.orderNo,
-      detail: `WMS 退款已批准（訂單 ${order.orderNo}，HK$${refundAmount}，${channel === "airwallex" ? `Airwallex 原路退款${refundId ? `，refund ${refundId}` : ""}` : "人手退款"}）${reviewedBy ? `，批准人：${reviewedBy}` : ""}；訂單轉已取消，庫存已補返${emailNote}`,
+      detail: `WMS 退款已批准（訂單 ${order.orderNo}，HK$${refundAmount}＝現金 HK$${cashRefund}${channel === "airwallex" ? ` Airwallex 原路退款${refundId ? `，refund ${refundId}` : ""}` : cashRefund > 0 ? " 人手退款" : ""}＋購物金返還 HK$${walletReturned}）${reviewedBy ? `，批准人：${reviewedBy}` : ""}；訂單轉已取消，庫存已補返${emailNote}`,
     });
     console.log(
-      `[wms] refund approve for ${orderNo} → ${channel === "airwallex" ? "refunded" : "manual"}${refundId ? ` (${refundId})` : ""}`,
+      `[wms] refund approve for ${orderNo} → ${channel === "airwallex" ? "refunded" : "manual"}${refundId ? ` (${refundId})` : ""} cash HK$${cashRefund} wallet HK$${walletReturned}`,
     );
     return c.json({
       ok: true,
       result: channel === "airwallex" ? "refunded" : "manual",
+      cashRefunded: cashRefund,
+      walletReturned,
       ...(refundId ? { refundId } : {}),
     });
   }
