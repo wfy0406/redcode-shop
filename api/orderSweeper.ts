@@ -320,6 +320,8 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
       }
       const live = order.items.filter((it) => it.shipStatus !== "cancelled");
       const shippedItems = live.filter((it) => it.shipStatus === "shipped").length;
+      // v2.5.5（老闆指示）：同款多件部分取消嘅件數都要話畀封信知（「已寄出晒（已取消商品除外）」）
+      const cancelledUnits = order.items.reduce((s, it) => s + (it.cancelledQty ?? 0), 0);
       const r = await sendOrderShippedEmail({
         to,
         name,
@@ -327,6 +329,7 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
         batches: emailBatches,
         totalItems: live.length,
         shippedItems,
+        cancelledItems: cancelledUnits,
       });
       if (r.ok) {
         await markAll();

@@ -204,6 +204,8 @@ export default function GuestOrderCard({
   const createdDate = new Date(order.createdAt);
   const pad = (n: number) => String(n).padStart(2, '0');
   const createdLabel = `${createdDate.getFullYear()}-${pad(createdDate.getMonth() + 1)}-${pad(createdDate.getDate())} ${pad(createdDate.getHours())}:${pad(createdDate.getMinutes())}`;
+  // v2.5.5（老闆指示）：同款多件部分取消嘅件數 — 全寄出嗰陣寫明「取消咗 N 件，已寄出晒（已取消商品除外）」
+  const cancelledQtySum = order.items.reduce((s, it) => s + (it.cancelledQty ?? 0), 0);
 
   return (
     <div
@@ -235,6 +237,13 @@ export default function GuestOrderCard({
       <div className="mt-3">
         <StatusBadge status={order.status} secondsLeft={secondsLeft} />
       </div>
+
+      {/* v2.5.5（老闆指示）：部分取消嘅單全寄出 → 寫明件數＋「已取消商品除外」 */}
+      {order.status === 'shipped' && cancelledQtySum > 0 && (
+        <p className="mt-2 text-[12.5px] font-medium" style={{ color: 'var(--success)' }}>
+          取消咗 {cancelledQtySum} 件，其餘已寄出晒（已取消商品除外）
+        </p>
+      )}
 
       <div className="my-4 h-px" style={{ background: 'var(--space-line)' }} aria-hidden="true" />
 

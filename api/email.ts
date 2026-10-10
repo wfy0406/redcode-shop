@@ -280,12 +280,14 @@ function mono(s: string): string {
 }
 
 /** 內容小組件：資料列（訂單編號／金額嗰類）——上下 hairline 金線框住，行間 faint 金線；dt 細字闊字距 */
+// v2.5.5（老闆指示）：label 格加 white-space:nowrap——Gmail 手機版會放大字體兼重排表格，
+// 冇 nowrap 嘅話「訂單編號」會被 value 格壓到一個字一行（直排）；value 格畀 width:100% 吸晒剩餘位。
 function infoBox(rows: [string, string][]): string {
   const trs = rows
     .map(
       ([k, v], i) => `<tr>
-        <td style="padding:11px 0;font-size:11px;letter-spacing:2px;color:${INK_FAINT};vertical-align:top;width:104px;${i > 0 ? `border-top:1px solid ${GOLD_FAINT};` : ""}">${k}</td>
-        <td style="padding:11px 0;font-size:14.5px;color:${INK};font-weight:600;${i > 0 ? `border-top:1px solid ${GOLD_FAINT};` : ""}">${v}</td>
+        <td style="padding:11px 0;font-size:11px;letter-spacing:2px;color:${INK_FAINT};vertical-align:top;width:104px;white-space:nowrap;${i > 0 ? `border-top:1px solid ${GOLD_FAINT};` : ""}">${k}</td>
+        <td style="padding:11px 0 11px 12px;font-size:14.5px;color:${INK};font-weight:600;width:100%;word-break:break-word;${i > 0 ? `border-top:1px solid ${GOLD_FAINT};` : ""}">${v}</td>
       </tr>`,
     )
     .join("");
@@ -294,13 +296,15 @@ function infoBox(rows: [string, string][]): string {
 }
 
 /** 內容小組件：訂單明細表（商品／尺碼／數量／小計）——表頭上下金線，行間 faint 金線，金額右對齊 tabular-nums */
+// v2.5.5（老闆指示）：商品格 width:100%＋word-break——Gmail 手機版放大字體後，
+// 舊寫法商品名會被三個 nowrap 格（尺碼／數量／小計）壓到一個字一行；而家商品格吸晒剩餘闊度。
 function itemsTable(items: OrderEmailItem[]): string {
   const th = `padding:8px 0;font-size:10.5px;font-weight:500;letter-spacing:2px;color:${INK_SOFT};border-top:1px solid ${GOLD};border-bottom:1px solid ${GOLD_HAIR};white-space:nowrap;`;
   const td = `padding:11px 0;border-bottom:1px solid ${GOLD_FAINT};vertical-align:top;`;
   const rows = items
     .map(
       (it) => `<tr>
-        <td style="${td}font-size:14px;color:${INK};">${escapeHtml(it.productName)}</td>
+        <td style="${td}font-size:14px;color:${INK};width:100%;word-break:break-word;">${escapeHtml(it.productName)}</td>
         <td style="${td}padding:11px 8px;font-size:13.5px;color:${INK_SOFT};white-space:nowrap;">${it.size ? escapeHtml(it.size) : "—"}</td>
         <td align="center" style="${td}padding:11px 8px;font-size:14px;color:${INK_SOFT};white-space:nowrap;font-variant-numeric:tabular-nums;">× ${it.quantity}</td>
         <td align="right" style="${td}font-size:14px;color:${INK};font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;">${fmtMoney(it.price * it.quantity)}</td>
@@ -309,7 +313,7 @@ function itemsTable(items: OrderEmailItem[]): string {
     .join("");
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 4px;">
     <tr>
-      <td style="${th}">商品</td>
+      <td style="${th}width:100%;">商品</td>
       <td style="${th}padding:8px 8px;">尺碼</td>
       <td align="center" style="${th}padding:8px 8px;">數量</td>
       <td align="right" style="${th}">小計</td>
@@ -1690,10 +1694,13 @@ export async function sendOrderShippedEmail(args: {
   /** 全單未取消貨品件數＋已寄件數（partial＝未寄齊） */
   totalItems: number;
   shippedItems: number;
+  /** v2.5.5（老闆指示）：已取消件數 — 部分取消嘅單要寫明「取消咗 N 件，已寄出晒（已取消商品除外）」 */
+  cancelledItems?: number;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
     const partial = args.shippedItems < args.totalItems;
+    const cancelled = Math.max(0, args.cancelledItems ?? 0);
     const batchHtml = args.batches
       .map((b) => {
         const methodLabel = SHIP_METHOD_LABEL[b.shipMethod] ?? b.shipMethod;
@@ -1729,12 +1736,18 @@ export async function sendOrderShippedEmail(args: {
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
       <p style="margin:0;">你嘅訂單 <b>${orderNo}</b> ${
         partial
-          ? `已經<b>部分寄出</b>（已寄 <b>${args.shippedItems}</b>／共 ${args.totalItems} 件），其餘貨品同事會盡快安排，寄出後你會再收到通知：`
-          : `<b>全部貨品都寄出晒</b>（共 ${args.totalItems} 件），多謝你耐心等待 ✦`
+          ? `已經<b>部分寄出</b>（已寄 <b>${args.shippedItems}</b>／共 ${args.totalItems} 件${cancelled > 0 ? `，另有 ${cancelled} 件已取消` : ""}），其餘貨品同事會盡快安排，寄出後你會再收到通知：`
+          : cancelled > 0
+            ? `<b>已寄出晒</b>（共 ${args.totalItems} 件，已取消商品除外），多謝你耐心等待 ✦`
+            : `<b>全部貨品都寄出晒</b>（共 ${args.totalItems} 件），多謝你耐心等待 ✦`
       }</p>
       ${infoBox([
         ["訂單編號", mono(orderNo)],
-        ["寄出進度", partial ? `<span style="color:${GOLD};">部分寄出（${args.shippedItems}/${args.totalItems} 件）</span>` : `<span style="color:${GOLD};">全部寄出 ✓</span>`],
+        ["寄出進度", partial
+          ? `<span style="color:${GOLD};">部分寄出（${args.shippedItems}/${args.totalItems} 件）${cancelled > 0 ? `，另有 ${cancelled} 件已取消` : ""}</span>`
+          : `<span style="color:${GOLD};">全部寄出 ✓${cancelled > 0 ? "（已取消商品除外）" : ""}</span>`],
+        // v2.5.5（老闆指示）：有取消件就獨立一行寫明件數，客人一眼睇到
+        ...(cancelled > 0 ? [["取消貨品", `取消咗 ${cancelled} 件（退款安排見取消通知信）`] as [string, string]] : []),
       ])}
       ${batchHtml}
       ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}

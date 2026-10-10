@@ -198,6 +198,8 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
   const shippedCount = order.items.filter((it) => it.shipStatus === 'shipped').length;
   const partialShip =
     order.status === 'approved' && shippedCount > 0 && shippedCount < liveItems.length;
+  // v2.5.5（老闆指示）：同款多件部分取消嘅件數 — 全寄出嗰陣要寫明「取消咗 N 件，已寄出晒（已取消商品除外）」
+  const cancelledQtySum = order.items.reduce((s, it) => s + (it.cancelledQty ?? 0), 0);
 
   return (
     <article
@@ -245,6 +247,14 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
       {partialShip && (
         <p className="mt-2 text-right text-[12.5px] font-medium" style={{ color: 'var(--success)' }}>
           部分寄出：已寄 {shippedCount}／共 {liveItems.length} 件
+          {cancelledQtySum > 0 ? `（另有 ${cancelledQtySum} 件已取消）` : ''}
+        </p>
+      )}
+
+      {/* v2.5.5（老闆指示）：全寄出但有取消件 → 講清楚件數＋「已取消商品除外」 */}
+      {order.status === 'shipped' && cancelledQtySum > 0 && (
+        <p className="mt-2 text-right text-[12.5px] font-medium" style={{ color: 'var(--success)' }}>
+          取消咗 {cancelledQtySum} 件，其餘已寄出晒（已取消商品除外）
         </p>
       )}
 
