@@ -139,3 +139,43 @@ export async function backfillMembersToWmsOnce(): Promise<void> {
     .onConflictDoNothing();
   console.log(`[wms] 會員初次回填完成：${count} 位已推（失敗嘅睇上面 log）`);
 }
+
+/**
+ * v2.5.5 第4版（老闆指示 msg86）：訪客單「移入會員」成功後通知 WMS —
+ * WMS 收到會將呢個官網單號嘅 webhook 行＋正式訂單行嘅客戶名由【訪客】X 改做會員名，
+ * 客戶管理即時由訪客卡過去會員卡（官網中心「修改紀錄」都有留底）。
+ * fire-and-forget：失敗淨係 log，唔阻移入（同 forwardMemberToWms 一個 channel：WMS_API_KEY／WMS_BASE_URL）。
+ * 注意：log 永遠唔准落 payload／apiKey（老闆鐵律）。
+ */
+export async function notifyWmsGuestClaimed(
+  orderNo: string,
+  member: { name: string | null; phone: string | null; email: string | null },
+): Promise<void> {
+  if (!process.env.WMS_API_KEY || process.env.WMS_SYNC_DISABLED === "1") return;
+  const name = (member.name ?? "").trim();
+  if (!name) return; // 冇名唔推（WMS 嗰邊 memberName 必填）
+  const payload: Record<string, unknown> = { apiKey: process.env.WMS_API_KEY, sourceRef: orderNo, memberName: name };
+  // Google 開戶佔位電話（g-xxx）唔推——WMS 用電話做 key，佔位會整污糟嗰邊嘅資料
+  const phone = (member.phone ?? "").trim();
+  if (phone && !phone.startsWith("g-")) payload.memberPhone = phone;
+  const email = (member.email ?? "").trim();
+  if (email) payload.memberEmail = email;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), MEMBER_SYNC_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${wmsBaseUrl()}/api/trpc/order.receiveGuestClaim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ json: payload }),
+      signal: ctrl.signal,
+    });
+    // 淨係落 HTTP 狀態碼，唔准落 payload（入面有 apiKey）
+    if (!resp.ok) console.error(`[wms] 訪客單移入通知失敗（${orderNo}）: HTTP ${resp.status}`);
+  } catch (e) {
+    const reason = e instanceof Error && e.name === "AbortError" ? `timeout ${MEMBER_SYNC_TIMEOUT_MS / 1000}s` : e instanceof Error ? e.message : String(e);
+    console.error(`[wms] 訪客單移入通知出錯（${orderNo}）:`, reason);
+  } finally {
+    clearTimeout(timer);
+  }
+}

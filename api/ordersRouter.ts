@@ -19,6 +19,7 @@ import {
   recomputeVipTierInBackground,
 } from "./vip";
 import { getAirwallexConfig } from "./airwallex";
+import { notifyWmsGuestClaimed } from "./wmsMemberSync";
 import {
   GUEST_LOOKUP_FAIL_MESSAGE,
   GUEST_ORDER_TTL_MS,
@@ -910,9 +911,17 @@ export const ordersRouter = createRouter({
       if (!order || !guestTokenEquals(order.guestToken ?? "", input.guestToken)) {
         throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
       }
+      // v2.5.5 第4版（老闆指示 msg86）：會員資料一次過攞（移入成功／重撫補推兩條路徑都要通知 WMS）
+      const claimer = await db.query.users.findFirst({
+        where: eq(users.id, ctx.user.userId),
+        columns: { name: true, phone: true, email: true },
+      });
       if (order.userId === ctx.user.userId) {
         // v2.5.5（老闆指示 msg79e）：已綁自己都要補計 VIP — 移入嘅訪客單要計入年度消費同會員級別
         recomputeVipTierInBackground(ctx.user.userId, order.orderNo);
+        // v2.5.5 第4版（msg86）：重撫「移入」都補推 WMS — 呢個功能上線前已移入嘅單，WMS 未收過通知，
+        // 客人/老闆再撫一次就補返（WMS 嗰邊冪等，改咗名會返 already）
+        if (claimer) void notifyWmsGuestClaimed(order.orderNo, claimer);
         return { ok: true as const, already: true };
       }
       if (order.userId != null) {
@@ -930,17 +939,16 @@ export const ordersRouter = createRouter({
       // v2.5.5（老闆指示 msg79e「移入會員記得要計翻個消費金額，係計vip幾級」）：
       // 認領成功即重算年度消費＋VIP 級別（背景跑，唔阻回應；升級會寄信＋同步 WMS）
       recomputeVipTierInBackground(ctx.user.userId, order.orderNo);
-      const member = await db.query.users.findFirst({
-        where: eq(users.id, ctx.user.userId),
-        columns: { name: true },
-      });
+      // v2.5.5 第4版（老闆指示 msg86）：通知 WMS 呢張訪客單已移入會員 —
+      // WMS 客戶管理即時由訪客卡過去會員卡；fire-and-forget，失敗淨 log 唔阻移入
+      if (claimer) void notifyWmsGuestClaimed(order.orderNo, claimer);
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
         action: "order.claim_guest",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `會員「${member?.name ?? ctx.user.userId}」將訪客訂單 ${order.orderNo} 移入旗下（寄送方式同地址照舊）`,
+        detail: `會員「${claimer?.name ?? ctx.user.userId}」將訪客訂單 ${order.orderNo} 移入旗下（寄送方式同地址照舊）`,
       });
       return { ok: true as const, already: false };
     }),
