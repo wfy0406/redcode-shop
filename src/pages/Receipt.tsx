@@ -748,6 +748,51 @@ export default function Receipt() {
                 </span>
               </div>
               <div style={{ borderTop: `1px solid ${GOLD_FAINT}`, marginTop: 4 }} />
+
+              {/* ---- v2.5.5 第8版：購物金明細（老闆指令 2026-10-11：有用購物金嘅單據，要寫扣咗幾多＋餘額截至幾時幾點） ---- */}
+              {(order.walletUsed ?? 0) > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 6px' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                      購物金扣減 Wallet Credit
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: '#8a6d1f', fontVariantNumeric: 'tabular-nums' }}>
+                      −{fmtMoney(order.walletUsed ?? 0)}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 6px' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                      實付現金 Cash Paid
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtMoney(Math.max(0, order.total - (order.walletUsed ?? 0)))}
+                    </span>
+                  </div>
+                  {order.walletSpend && (
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 6px' }}>
+                      <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                        購物金餘額 Wallet Balance
+                        <span style={{ display: 'block', fontSize: 9.5, letterSpacing: '0.04em', color: INK_FAINT }}>
+                          （截至{' '}
+                          {new Date(order.walletSpend.at).toLocaleString('zh-HK', {
+                            year: 'numeric',
+                            month: 'numeric',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                            timeZone: 'Asia/Hong_Kong',
+                          })}
+                          )
+                        </span>
+                      </span>
+                      <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmtMoney(order.walletSpend.balanceAfter)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* ---- 全網統一手續費免責聲明（§0 逐字，唔准改） ---- */}

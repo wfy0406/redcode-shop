@@ -14,8 +14,9 @@
  * 所有 sendXxxEmail 都係 never-throw：任何失敗（包括砌 HTML 出錯）淨係 console.error 兼回 SendResult，
  * 唔會阻到主流程（落單／審批唔會因為寄信失敗而彈錯）。
  *
- * 訂單確認信會附上「訂單單據」HTML 附件（base64，經 Resend attachments 寄出），
- * 客人打開可以睇返成張單，仲可以列印或另存 PDF。
+ * 訂單確認信會附上「訂單單據」PDF 附件（base64，經 Resend attachments 寄出）——
+ * v2.5.5 第8版（老闆指令 2026-10-11）：「email張單要改做pdf，唔好html了」；
+ * 做法同 VIP 證書一致（SVG → sharp 渲染 → pdf-lib 嵌入 A4），PDF 生成失敗會響錯兼用 HTML 兜底。
  *
  * 2026-09 第四版設計方向（跟 WMS BillPage v2.0.0「英式優雅精裝紙單」）：
  * 奶油底 #fcfcf8／紙面 #fffefb／深棕墨 #2a160d／青銅金 #ab8c52；hairline 金線；
@@ -76,6 +77,38 @@ export type OrderEmailVip = {
   discountAmount?: number;
   shippingFreeLabel?: string | null;
 };
+
+/**
+ * v2.5.5 第8版（老闆指令 2026-10-11）：「官網全網所有單據，如果有用購物金，
+ * 就要寫埋購物金減左幾多，要寫埋購物金餘額（截止幾時幾點）」。
+ * ─ used：呢張單扣咗幾多購物金（正數港元）
+ * ─ balanceAfter／at：流水賬扣減紀錄（walletLedger type='spend'）嘅餘額同時間，
+ *   即「截至」口徑；冇傳就淨顯示扣減行（向後兼容舊 caller）
+ */
+export type OrderEmailWallet = {
+  used: number;
+  balanceAfter?: number | null;
+  at?: Date | string | null;
+};
+
+/** 購物金行 HTML（總計區＋單據共用）：扣減 −X（金）→ 實付現金 Y → 餘額 Z（截至 …） */
+function walletRowsHtml(wallet: OrderEmailWallet, cashDue: number): string {
+  const balanceRow =
+    wallet.balanceAfter != null
+      ? `<tr>
+          <td style="padding:4px 0;font-size:13px;color:${INK_SOFT};">購物金餘額</td>
+          <td align="right" style="padding:4px 0;font-size:13px;color:${INK_SOFT};font-variant-numeric:tabular-nums;">${fmtMoney(wallet.balanceAfter)}${wallet.at ? `<span style="color:${INK_FAINT};font-size:11.5px;">（截至 ${fmtDateHK(wallet.at)}）</span>` : ""}</td>
+        </tr>`
+      : "";
+  return `<tr>
+      <td style="padding:4px 0;font-size:13.5px;color:${GOLD};">購物金扣減</td>
+      <td align="right" style="padding:4px 0;font-size:13.5px;color:${GOLD};font-weight:700;font-variant-numeric:tabular-nums;">−${fmtMoney(wallet.used)}</td>
+    </tr>
+    <tr>
+      <td style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};">實付現金</td>
+      <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK};font-weight:600;font-variant-numeric:tabular-nums;">${fmtMoney(cashDue)}</td>
+    </tr>${balanceRow}`;
+}
 
 /**
  * 由 order row 嘅 v2.1.0 欄位砌 email 用嘅 VIP 顯示資料（call sites 統一用呢個，口徑一致）：
@@ -325,10 +358,23 @@ function itemsTable(items: OrderEmailItem[]): string {
 /** 內容小組件：金額總結（小計／VIP 折扣／優惠碼折扣／總額）——總計行上 1px 金線＋下 3px double 金線，大字粗體 serif */
 // v2.1.1（Wave 2）：加 optional vip 參數——VIP 折扣行排優惠碼折扣行**上面**（折扣次序：先 VIP 後 coupon）。
 // 注意 orders.discountAmount 係「VIP 折扣＋優惠碼折扣」嘅總和，所以優惠碼行要減返 VIP 部分先顯示。
-function totalsBlock(total: number, discountAmount: number, vip?: OrderEmailVip): string {
+function totalsBlock(
+  total: number,
+  discountAmount: number,
+  vip?: OrderEmailVip,
+  wallet?: OrderEmailWallet | null,
+): string {
   const vipDiscount = vip?.discountAmount ?? 0;
   const couponDiscount = Math.max(0, discountAmount - vipDiscount);
   const subtotal = total + discountAmount;
+  // v2.5.5 第8版（購物金）：有用購物金 → 總額行下面補「扣減／實付現金／餘額（截至）」三行
+  const walletBlock =
+    wallet && wallet.used > 0
+      ? `<tr>
+          <td colspan="2" style="padding:10px 0 0;font-size:10.5px;letter-spacing:2px;color:${INK_FAINT};">付款明細（購物金）</td>
+        </tr>
+        ${walletRowsHtml(wallet, Math.max(0, total - wallet.used))}`
+      : "";
   const vipRow =
     vipDiscount > 0
       ? `<tr>
@@ -359,6 +405,7 @@ function totalsBlock(total: number, discountAmount: number, vip?: OrderEmailVip)
       <td style="${grand}font-size:12px;font-weight:700;letter-spacing:3px;color:${INK};">應付總額</td>
       <td align="right" style="${grand}font-family:${SERIF_STACK};font-size:23px;font-weight:700;color:${INK};font-variant-numeric:tabular-nums;white-space:nowrap;">${fmtMoney(total)}</td>
     </tr>
+    ${walletBlock}
   </table>`;
 }
 
@@ -412,6 +459,8 @@ function buildInvoiceHtml(args: {
   discountAmount: number;
   /** v2.1.1（Wave 2）：VIP 級別／折扣／免運標示（optional，舊 caller 唔傳都得） */
   vip?: OrderEmailVip;
+  /** v2.5.5 第8版（購物金）：扣減＋餘額（截至）要落埋單據 */
+  wallet?: OrderEmailWallet | null;
 }): string {
   const site = siteUrl();
   const orderNo = escapeHtml(args.orderNo);
@@ -438,6 +487,14 @@ function buildInvoiceHtml(args: {
   // 有級別就喺訂單資料區加「會員級別」一欄
   const tierCell = args.vip?.tierLabel
     ? `<div><div class="k">會員級別</div><div class="v"><span class="gold">${escapeHtml(args.vip.tierLabel)}</span></div></div>`
+    : "";
+  // v2.5.5 第8版（購物金）：有用購物金 → 總額行下面加扣減／實付現金／餘額（截至）三行
+  const wallet = args.wallet && args.wallet.used > 0 ? args.wallet : null;
+  const walletRows = wallet
+    ? `<tr><td colspan="2" style="padding-top:10px;font-size:10.5px;letter-spacing:2px;color:${INK_FAINT};">付款明細（購物金）</td></tr>
+       <tr><td style="color:${GOLD};">購物金扣減</td><td class="num" style="color:${GOLD};font-weight:700;">−${fmtMoney(wallet.used)}</td></tr>
+       <tr><td>實付現金</td><td class="num" style="font-weight:600;">${fmtMoney(Math.max(0, args.total - wallet.used))}</td></tr>
+       ${wallet.balanceAfter != null ? `<tr><td>購物金餘額</td><td class="num">${fmtMoney(wallet.balanceAfter)}${wallet.at ? `<span style="color:${INK_FAINT};font-size:11.5px;">（截至 ${fmtDateHK(wallet.at)}）</span>` : ""}</td></tr>` : ""}`
     : "";
 
   return `<!DOCTYPE html>
@@ -528,6 +585,7 @@ function buildInvoiceHtml(args: {
         ${vipRow}
         ${discountRow}
         <tr class="grand"><td>應付總額</td><td class="num">${fmtMoney(args.total)}</td></tr>
+        ${walletRows}
       </table>
       <hr />
       <p style="margin:0;font-size:13px;color:${INK_SOFT};">
@@ -545,12 +603,224 @@ function buildInvoiceHtml(args: {
 </html>`;
 }
 
-/** 訂單單據附件（base64 HTML），檔名全 ASCII 確保所有 email client 睇得明 */
-function invoiceAttachment(args: Parameters<typeof buildInvoiceHtml>[0]): {
+/** 訂單單據附件參數（HTML 版同 PDF 版共用） */
+type InvoiceArgs = Parameters<typeof buildInvoiceHtml>[0];
+
+/* ─────────── v2.5.5 第8版：單據 PDF（老闆指令 2026-10-11「email張單要改做pdf」） ───────────
+ * 做法同 VIP 證書引擎（vipCert.ts）一致：砌 SVG → sharp 渲染 PNG → pdf-lib 嵌入 A4 直向一頁。
+ * 中文靠 Docker 嘅 fonts-noto-cjk（SVG 字型栈同證書同款）；sharp／pdf-lib 動態 import。
+ * 失敗處理（鐵律「失敗即報錯唔靜默」）：PDF 任何一步出錯 → console.error 寫明單號，
+ * 然後用返 HTML 附件兜底（客人唔會因為 PDF 壞而收唔到單據）。 */
+
+/** 候選路徑搵 public 靜態檔（production 喺 ./dist/public，dev 喺 ./public；同 vipCert 嘅思路一致） */
+function findPublicAsset(filename: string): string | null {
+  const candidates = [
+    path.resolve(process.cwd(), "dist/public", filename),
+    path.resolve(process.cwd(), "public", filename),
+    path.resolve(import.meta.dirname, "../dist/public", filename),
+    path.resolve(import.meta.dirname, "../../dist/public", filename),
+    path.resolve(import.meta.dirname, "../public", filename),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) ?? null;
+}
+
+/** SVG 文字 escape（XML 規則） */
+function xe(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * 砌單據 SVG（闊 1024，高按內容伸縮；y-cursor 逐段落）。
+ * 版面同 HTML 版同一套精裝紙單語言：奶油底＋白紙卡＋雙金線框＋logo＋訂單/收件資料＋
+ * 明細表＋總額（雙金線封口）＋購物金明細（有先用）＋出貨說明＋免責署名。
+ */
+function buildInvoiceSvg(args: InvoiceArgs): string {
+  const W = 1024;
+  const L = 100; // 內容左緣
+  const R = 924; // 內容右緣
+  const F = "'Noto Serif CJK TC','Noto Sans CJK TC',serif";
+  const logoFile = findPublicAsset("logo.png");
+  const logoUri = logoFile
+    ? `data:image/png;base64,${fs.readFileSync(logoFile).toString("base64")}`
+    : null;
+  const wallet = args.wallet && args.wallet.used > 0 ? args.wallet : null;
+
+  const parts: string[] = [];
+  let y = 0;
+
+  // ---- 卡頂：logo＋文件標題 ----
+  y = 96;
+  if (logoUri) {
+    // logo.png 1242×698（≈16:9）：以高 112 等比置中
+    parts.push(`<image href="${logoUri}" x="${W / 2 - 100}" y="${y}" width="200" height="112" preserveAspectRatio="xMidYMid meet"/>`);
+    y += 132;
+  } else {
+    console.error(`[email] 單據 PDF 搵唔到 public/logo.png（${args.orderNo}），用純文字標題`);
+    parts.push(`<text x="${W / 2}" y="${y + 40}" text-anchor="middle" font-family="${F}" font-size="30" font-weight="700" fill="${INK}" letter-spacing="6">REDCODE HK直播台</text>`);
+    y += 72;
+  }
+  parts.push(`<text x="${W / 2}" y="${y + 34}" text-anchor="middle" font-family="${F}" font-size="34" font-weight="700" fill="${INK}" letter-spacing="7">訂單單據</text>`);
+  parts.push(`<text x="${W / 2}" y="${y + 62}" text-anchor="middle" font-family="${F}" font-size="15" fill="${INK_FAINT}" letter-spacing="4">ORDER INVOICE</text>`);
+  y += 92;
+  // 雙金線（標題下）
+  parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD}" stroke-width="1.4"/>`);
+  parts.push(`<line x1="${L}" y1="${y + 5}" x2="${R}" y2="${y + 5}" stroke="${GOLD}" stroke-opacity="0.45" stroke-width="1"/>`);
+  y += 40;
+
+  // ---- 訂單資料（兩欄：label 上、value 下） ----
+  const metaRows: [string, string][] = [];
+  metaRows.push(["訂單編號", xe(args.orderNo)], ["落單日期", xe(fmtDateHK(args.createdAt))]);
+  metaRows.push(["訂單狀態", "已確認 ✓"], ["付款狀態", "已確認付款"]);
+  if (args.vip?.tierLabel) metaRows.push(["會員級別", xe(args.vip.tierLabel)]);
+  // 兩兩一組排兩欄
+  for (let i = 0; i < metaRows.length; i += 2) {
+    const pair = metaRows.slice(i, i + 2);
+    pair.forEach(([k, v], j) => {
+      const x = L + j * 420;
+      parts.push(`<text x="${x}" y="${y}" font-family="${F}" font-size="14" fill="${INK_FAINT}" letter-spacing="2">${k}</text>`);
+      parts.push(`<text x="${x}" y="${y + 30}" font-family="${F}" font-size="21" font-weight="600" fill="${INK}">${v}</text>`);
+    });
+    y += 62;
+  }
+  y += 14;
+
+  // ---- 收件資料盒（極淺金底＋hairline 金框） ----
+  const deliveryText = fmtDelivery(args.delivery) + (args.vip?.shippingFreeLabel ? `（${args.vip.shippingFreeLabel}）` : "");
+  parts.push(`<rect x="${L}" y="${y}" width="${R - L}" height="86" fill="${GOLD_TINT}" stroke="${GOLD_HAIR}" stroke-width="1"/>`);
+  parts.push(`<text x="${L + 24}" y="${y + 26}" font-family="${F}" font-size="13" fill="${INK_FAINT}" letter-spacing="2">收件資料</text>`);
+  parts.push(`<text x="${L + 24}" y="${y + 52}" font-family="${F}" font-size="19" font-weight="600" fill="${INK}">${xe(args.name)}${args.phone ? ` · ${xe(args.phone)}` : ""}</text>`);
+  parts.push(`<text x="${L + 24}" y="${y + 74}" font-family="${F}" font-size="15" fill="${INK_SOFT}">${xe(deliveryText)}</text>`);
+  y += 116;
+
+  // ---- 明細表 ----
+  parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD}" stroke-width="1.2"/>`);
+  const th = (x: number, anchor: string, t: string) =>
+    `<text x="${x}" y="${y + 24}" text-anchor="${anchor}" font-family="${F}" font-size="13" fill="${INK_SOFT}" letter-spacing="2">${t}</text>`;
+  parts.push(th(L, "start", "商品"));
+  parts.push(th(660, "start", "尺碼"));
+  parts.push(th(724, "middle", "數量"));
+  parts.push(th(816, "end", "單價"));
+  parts.push(th(R, "end", "小計"));
+  y += 34;
+  parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD_HAIR}" stroke-width="1"/>`);
+  for (const it of args.items) {
+    const name = it.productName.length > 30 ? `${it.productName.slice(0, 29)}…` : it.productName;
+    parts.push(`<text x="${L}" y="${y + 30}" font-family="${F}" font-size="17" fill="${INK}">${xe(name)}</text>`);
+    parts.push(`<text x="660" y="${y + 30}" font-family="${F}" font-size="16" fill="${INK_SOFT}">${it.size ? xe(it.size) : "—"}</text>`);
+    parts.push(`<text x="724" y="${y + 30}" text-anchor="middle" font-family="${F}" font-size="16" fill="${INK_SOFT}">× ${it.quantity}</text>`);
+    parts.push(`<text x="816" y="${y + 30}" text-anchor="end" font-family="${F}" font-size="16" fill="${INK}">${fmtMoney(it.price)}</text>`);
+    parts.push(`<text x="${R}" y="${y + 30}" text-anchor="end" font-family="${F}" font-size="17" font-weight="600" fill="${INK}">${fmtMoney(it.price * it.quantity)}</text>`);
+    y += 44;
+    parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD_FAINT}" stroke-width="1"/>`);
+  }
+  y += 20;
+
+  // ---- 總額區 ----
+  const vipDiscount = args.vip?.discountAmount ?? 0;
+  const couponDiscount = Math.max(0, args.discountAmount - vipDiscount);
+  const subtotal = args.total + args.discountAmount;
+  const totalRow = (label: string, value: string, color: string, bold = false) => {
+    parts.push(`<text x="${L}" y="${y + 22}" font-family="${F}" font-size="16" fill="${color}"${bold ? ' font-weight="700"' : ""}>${label}</text>`);
+    parts.push(`<text x="${R}" y="${y + 22}" text-anchor="end" font-family="${F}" font-size="17" fill="${color}"${bold ? ' font-weight="700"' : ""}>${value}</text>`);
+    y += 34;
+  };
+  if (args.discountAmount > 0) totalRow("小計", fmtMoney(subtotal), INK_SOFT);
+  if (vipDiscount > 0) totalRow(`VIP 折扣${args.vip?.tierLabel ? `（${xe(args.vip.tierLabel)}）` : ""}`, `−${fmtMoney(vipDiscount)}`, GOLD);
+  if (couponDiscount > 0) totalRow("優惠碼折扣", `−${fmtMoney(couponDiscount)}`, INK_SOFT);
+  // 總額行：上 1px 金線、下 3px 雙金線封口
+  parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD}" stroke-width="1.4"/>`);
+  y += 18;
+  parts.push(`<text x="${L}" y="${y + 22}" font-family="${F}" font-size="15" font-weight="700" fill="${INK}" letter-spacing="3">應付總額</text>`);
+  parts.push(`<text x="${R}" y="${y + 26}" text-anchor="end" font-family="${F}" font-size="30" font-weight="700" fill="${INK}">${fmtMoney(args.total)}</text>`);
+  y += 44;
+  parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD}" stroke-width="1"/>`);
+  parts.push(`<line x1="${L}" y1="${y + 3}" x2="${R}" y2="${y + 3}" stroke="${GOLD}" stroke-width="1"/>`);
+  y += 22;
+
+  // ---- 購物金明細（有用先出；老闆指令：扣減幾多＋餘額（截至幾時幾點）） ----
+  if (wallet) {
+    parts.push(`<text x="${L}" y="${y + 16}" font-family="${F}" font-size="13" fill="${INK_FAINT}" letter-spacing="2">付款明細（購物金）</text>`);
+    y += 30;
+    totalRow("購物金扣減", `−${fmtMoney(wallet.used)}`, GOLD, true);
+    totalRow("實付現金", fmtMoney(Math.max(0, args.total - wallet.used)), INK, true);
+    if (wallet.balanceAfter != null) {
+      totalRow(
+        "購物金餘額",
+        `${fmtMoney(wallet.balanceAfter)}${wallet.at ? `（截至 ${fmtDateHK(wallet.at)}）` : ""}`,
+        INK_SOFT,
+      );
+    }
+    y += 6;
+  }
+
+  // ---- 出貨說明＋署名 ----
+  parts.push(`<text x="${L}" y="${y + 20}" font-family="${F}" font-size="14.5" fill="${INK_SOFT}">同事會安排出貨，一般情況下會喺 7-10 個工作天內寄出，請留意收件。</text>`);
+  parts.push(`<text x="${L}" y="${y + 44}" font-family="${F}" font-size="14.5" fill="${INK_SOFT}">如有疑問，請到 redcode.red 「我的訂單」揾返呢張單。</text>`);
+  y += 84;
+  parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD_FAINT}" stroke-width="1"/>`);
+  parts.push(`<text x="${W / 2}" y="${y + 30}" text-anchor="middle" font-family="${F}" font-size="13" fill="${INK_FAINT}">RedCode Fashion Design · redcode.red</text>`);
+  y += 58;
+
+  const H = y + 42; // 底留白
+  // 外層：奶油底全版＋白紙卡（8px 位）＋雙框（同 HTML 版 .card/.frame 結構）
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  <rect x="0" y="0" width="${W}" height="${H}" fill="${CREAM}"/>
+  <rect x="42" y="42" width="${W - 84}" height="${H - 84}" fill="${PAPER}" stroke="${GOLD_HAIR}" stroke-width="1"/>
+  <rect x="54" y="54" width="${W - 108}" height="${H - 108}" fill="none" stroke="${GOLD_FAINT}" stroke-width="1"/>
+  ${parts.join("\n  ")}
+</svg>`;
+}
+
+/**
+ * 生成單據 PDF（A4 直向一頁）：SVG → sharp PNG → pdf-lib embedPng。
+ * 成功回 Buffer；失敗回 null（caller 會響錯＋HTML 兜底）。
+ */
+async function buildInvoicePdf(args: InvoiceArgs): Promise<Buffer | null> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const png = await sharp(Buffer.from(buildInvoiceSvg(args), "utf8")).png().toBuffer();
+    const { PDFDocument } = await import("pdf-lib");
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595.28, 841.89]); // A4 直向
+    const img = await doc.embedPng(png);
+    const margin = 34;
+    const availW = 595.28 - margin * 2;
+    const availH = 841.89 - margin * 2;
+    let w = availW;
+    let h = (img.height / img.width) * w;
+    if (h > availH) {
+      // 貨品特別多嘅長單：改按高度填滿（等比縮細，一頁搞掂）
+      h = availH;
+      w = (img.width / img.height) * h;
+    }
+    page.drawImage(img, { x: (595.28 - w) / 2, y: 841.89 - margin - h, width: w, height: h });
+    return Buffer.from(await doc.save());
+  } catch (e) {
+    console.error(`[email] 單據 PDF 生成失敗（${args.orderNo}）:`, e);
+    return null;
+  }
+}
+
+/**
+ * 訂單單據附件（base64）——v2.5.5 第8版起首選 PDF（老闆：唔好 HTML），
+ * PDF 生成失敗會 console.error 響錯並用 HTML 兜底（唔會靜默，客人一定收到單據）。
+ * 檔名全 ASCII 確保所有 email client 睇得明。
+ */
+async function invoiceAttachment(args: InvoiceArgs): Promise<{
   filename: string;
   content: string;
-} {
+}> {
   const safeNo = args.orderNo.replace(/[^A-Za-z0-9_-]/g, "-");
+  const pdf = await buildInvoicePdf(args);
+  if (pdf) {
+    return { filename: `RedCode-Invoice-${safeNo}.pdf`, content: pdf.toString("base64") };
+  }
+  console.error(`[email] 單據 ${args.orderNo} PDF 不可用，改用 HTML 附件寄出（請查 Render 嘅 sharp/pdf-lib 部署）`);
   return {
     filename: `RedCode-Invoice-${safeNo}.html`,
     content: Buffer.from(buildInvoiceHtml(args), "utf8").toString("base64"),
@@ -610,10 +880,16 @@ export async function sendOrderPendingEmail(args: {
   vip?: OrderEmailVip;
   /** v2.5.0（購物金）：呢張單用咗幾多購物金（>0 顯示扣減＋尾數行） */
   walletUsed?: number;
+  /** v2.5.5 第8版（購物金）：餘額＋扣減時間（「截至」口徑）；有傳先顯示餘額行 */
+  walletBalance?: { balanceAfter: number; at: Date | string } | null;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
     const cashDue = Math.max(0, args.total - (args.walletUsed ?? 0));
+    const wallet: OrderEmailWallet | null =
+      (args.walletUsed ?? 0) > 0
+        ? { used: args.walletUsed ?? 0, balanceAfter: args.walletBalance?.balanceAfter ?? null, at: args.walletBalance?.at ?? null }
+        : null;
     const content = `
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
       <p style="margin:0;">多謝你喺 RedCode 落單！你嘅訂單已經建立，而家等緊你付款：</p>
@@ -628,7 +904,7 @@ export async function sendOrderPendingEmail(args: {
         ["付款期限", `<span style="color:${GOLD};">48 小時內</span>`],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount, args.vip)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet)}
       <p style="margin:22px 0 10px;font-weight:700;color:${INK};">付款之後，記得做埋呢步先算完成：</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
         ${[
@@ -667,7 +943,7 @@ export async function sendOrderPendingEmail(args: {
   }
 }
 
-/** ③ 審批通過後：訂單已確認（7-10 個工作天寄出）＋附訂單單據 HTML 附件 */
+/** ③ 審批通過後：訂單已確認（7-10 個工作天寄出）＋附訂單單據 PDF 附件（v2.5.5 第8版起，HTML 只做兜底） */
 export async function sendOrderApprovedEmail(args: {
   to: string;
   name: string;
@@ -680,9 +956,12 @@ export async function sendOrderApprovedEmail(args: {
   delivery: OrderEmailDelivery;
   /** v2.1.1（Wave 2）：VIP 級別／折扣／免運標示（optional） */
   vip?: OrderEmailVip;
+  /** v2.5.5 第8版（購物金）：有用購物金嘅單要寫扣減＋餘額（截至） */
+  wallet?: OrderEmailWallet | null;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
+    const wallet = args.wallet && args.wallet.used > 0 ? args.wallet : null;
     const content = `
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
       <p style="margin:0;">好消息！你嘅訂單付款已經確認，多謝你支持 RedCode：</p>
@@ -691,14 +970,15 @@ export async function sendOrderApprovedEmail(args: {
         ["確認時間", fmtDateHK(new Date())],
         ["訂單狀態", `<span style="color:${GOLD};">已確認 ✓</span>`],
         ...(args.vip?.tierLabel ? ([["會員級別", `<span style="color:${GOLD};">${escapeHtml(args.vip.tierLabel)}</span>`]] as [string, string][]) : []),
+        ...(wallet ? ([["購物金扣減", `<span style="color:${GOLD};font-weight:700;">−${fmtMoney(wallet.used)}</span>`]] as [string, string][]) : []),
         ["送貨方式", fmtDeliveryWithVip(args.delivery, args.vip?.shippingFreeLabel)],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount, args.vip)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet)}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;">
         <tr><td style="background:${GOLD_TINT};border:1px solid ${GOLD_HAIR};padding:14px 18px;">
           <p style="margin:0;font-size:13px;line-height:1.85;color:${INK};">
-            <b>附件：</b>呢封電郵附埋你嘅<b>訂單單據</b>（HTML 檔案），打開可以睇返成張單，仲可以列印或另存 PDF 收藏。
+            <b>附件：</b>呢封電郵附埋你嘅<b>訂單單據</b>（PDF 檔案），打開可以睇返成張單，仲可以列印或儲存收藏。
           </p>
         </td></tr>
       </table>
@@ -715,7 +995,7 @@ export async function sendOrderApprovedEmail(args: {
         contentHtml: content,
       }),
       attachments: [
-        invoiceAttachment({
+        await invoiceAttachment({
           orderNo: args.orderNo,
           createdAt: args.createdAt,
           name: args.name,
@@ -725,6 +1005,7 @@ export async function sendOrderApprovedEmail(args: {
           total: args.total,
           discountAmount: args.discountAmount,
           vip: args.vip,
+          wallet,
         }),
       ],
     });
@@ -927,9 +1208,12 @@ export async function sendOrderCancelledEmail(args: {
   vip?: OrderEmailVip;
   /** v2.5.0（購物金）：呢張單返還咗幾多購物金（>0 先顯示返還行） */
   walletRefund?: number;
+  /** v2.5.5 第8版（購物金）：原本扣咗幾多＋餘額（截至）——取消信都係單據嘅一環 */
+  wallet?: OrderEmailWallet | null;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
+    const wallet = args.wallet && args.wallet.used > 0 ? args.wallet : null;
     const content = `
       <p style="margin:0 0 14px;">你好，${escapeHtml(args.name)}：</p>
       <p style="margin:0;">你嘅訂單因為落單後超過 <b>48 小時</b>仍未收到付款截圖，系統已經自動取消，貨品已放返出嚟發售：</p>
@@ -941,7 +1225,7 @@ export async function sendOrderCancelledEmail(args: {
         ...((args.walletRefund ?? 0) > 0 ? ([["購物金返還", `<span style="color:${GOLD};font-weight:700;">${fmtMoney(args.walletRefund ?? 0)} 已入返你嘅購物金戶口 ✦</span>`]] as [string, string][]) : []),
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount, args.vip)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet)}
       <p style="margin:22px 0 0;">如果你其實已經付咗款，請盡快聯絡我哋提供付款證明，同事會幫你跟進；想買返嘅話，亦可以隨時再落單。</p>
       ${ctaButton("再去逛逛", `${siteUrl()}/#/products`)}
       ${note("呢張訂單已經取消，唔使再付款。多謝你對 RedCode 嘅支持 ♥")}
@@ -1069,12 +1353,18 @@ export async function sendOrderPaidOnlineEmail(args: {
   vip?: OrderEmailVip & { discountAmount?: number };
   /** v2.5.0（購物金）：呢張單用咗幾多購物金（>0 顯示；全購物金單會改標題句式） */
   walletUsed?: number;
+  /** v2.5.5 第8版（購物金）：餘額＋扣減時間（「截至」口徑） */
+  walletBalance?: { balanceAfter: number; at: Date | string } | null;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
     const vipDiscount = args.vip?.discountAmount ?? 0;
     const walletUsed = args.walletUsed ?? 0;
     const walletOnly = walletUsed > 0 && walletUsed >= args.total;
+    const walletInfo: OrderEmailWallet | null =
+      walletUsed > 0
+        ? { used: walletUsed, balanceAfter: args.walletBalance?.balanceAfter ?? null, at: args.walletBalance?.at ?? null }
+        : null;
     const paidLine = walletOnly
       ? `多謝你喺 RedCode 購物！你嘅訂單已經<b>全數以購物金支付</b>（${fmtMoney(walletUsed)}）。同事而家正確認你嘅訂單，確認後你會再收到確認電郵（附訂單單據）。`
       : walletUsed > 0
@@ -1092,7 +1382,7 @@ export async function sendOrderPaidOnlineEmail(args: {
         ["取貨方式", fmtDeliveryWithVip(args.delivery, args.vip?.shippingFreeLabel)],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, vipDiscount, args.vip)}
+      ${totalsBlock(args.total, vipDiscount, args.vip, walletInfo)}
       ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
       ${note("你嘅付款資料由安全支付平台處理，本站不會儲存信用卡資料，請放心使用。")}
       ${feeDisclaimer()}
@@ -1138,9 +1428,12 @@ export async function sendOrderRefundedEmail(args: {
   vip?: OrderEmailVip;
   /** v2.5.0（購物金）：呢張單返還咗幾多購物金（>0 先顯示返還行） */
   walletRefund?: number;
+  /** v2.5.5 第8版（購物金）：原本扣咗幾多＋扣減後餘額（截至）——退款信一樣要寫 */
+  wallet?: OrderEmailWallet | null;
 }): Promise<SendResult> {
   try {
     const orderNo = escapeHtml(args.orderNo);
+    const wallet = args.wallet && args.wallet.used > 0 ? args.wallet : null;
     const walletRefund = args.walletRefund ?? 0;
     // v2.5.0（購物金）：全額購物金單（現金退款 HK$0）唔好顯示「HK$0 原路退回」，
     // 成封信嘅主角改做購物金返還；混合付款單就現金行＋購物金行並存
@@ -1165,7 +1458,7 @@ export async function sendOrderRefundedEmail(args: {
       <p style="margin:0;">${refundLine}</p>
       ${!walletOnly && walletRefund > 0 ? `<p style="margin:10px 0 0;color:${GOLD};font-weight:700;">購物金 ${fmtMoney(walletRefund)} 已全數入返你嘅購物金戶口 ✦</p>` : ""}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, vipDiscount, args.vip)}
+      ${totalsBlock(args.total, vipDiscount, args.vip, wallet)}
       ${ctaButton("查看訂單", `${siteUrl()}/#/orders`)}
       ${note("如有疑問，請到 redcode.red 「我的訂單」揾返呢張單，或者聯絡我哋客服跟進。")}
       ${feeDisclaimer()}

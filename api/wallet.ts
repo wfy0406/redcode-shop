@@ -93,6 +93,30 @@ export function splitRefundChannels(
 type Tx = Parameters<Parameters<ReturnType<typeof import("./queries/connection").getDb>["transaction"]>[0]>[0];
 
 /**
+ * v2.5.5 第8版（老闆指令 2026-10-11）：「全網所有單據，如果有用購物金，
+ * 就要寫埋購物金減左幾多，要寫埋購物金餘額（截止幾時幾點）」。
+ * 由流水賬攞呢張單嘅購物金扣減紀錄（type='spend'、refType='order'、refId=orderNo）——
+ * balanceAfter＝扣完嗰刻嘅餘額、createdAt＝扣減時間（即「截至」時間），email／單據頁共用。
+ * 冇扣過（舊單／訪客單）→ null，caller 唔顯示購物金行。
+ */
+export async function getOrderWalletSpend(
+  orderNo: string,
+): Promise<{ used: number; balanceAfter: number; at: Date } | null> {
+  const { getDb } = await import("./queries/connection");
+  const db = getDb();
+  const row = await db.query.walletLedger.findFirst({
+    where: and(
+      eq(walletLedger.refType, "order"),
+      eq(walletLedger.refId, orderNo),
+      eq(walletLedger.type, "spend"),
+    ),
+    orderBy: [walletLedger.id],
+  });
+  if (!row) return null;
+  return { used: Math.abs(row.amount), balanceAfter: row.balanceAfter, at: row.createdAt };
+}
+
+/**
  * 訂單取消／退款時返還購物金（要喺 caller 嘅 transaction 入面 call）。
  * 冪等鎖：orders.walletReturnedAt——conditional update 郁到先返，第二次 call 郁 0 行 → 唔會返兩次。
  * 返咗幾多就回幾多（0＝冇得返／已返過）。walletUsed=0 嘅單即刻回 0 唔郁 DB。

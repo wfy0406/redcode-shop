@@ -49,10 +49,13 @@ const REFUND_BADGES: Record<string, { text: string; className: string }> = {
  * { enabled:true, intentId, clientSecret, env, currency, returnUrl } → redirectToAirwallexCheckout
  * 跳去 Airwallex Hosted Payment Page；{ enabled:false }（未配置）→ 成個區收起（寫法跟 Payment.tsx）。
  */
-function OnlinePaySection({ orderId, total }: { orderId: number; total: number }) {
+function OnlinePaySection({ orderId, total, walletUsed = 0 }: { orderId: number; total: number; walletUsed?: number }) {
   const createPayment = trpc.airwallex.createPayment.useMutation();
   const [airwallexUnavailable, setAirwallexUnavailable] = useState(false);
   const [payOnlineError, setPayOnlineError] = useState<string | null>(null);
+  // v2.5.5 第8版（老闆實測 2026-10-11 購物金單顯示全額）：用咗購物金嘅單淨收尾數——
+  // 後端 Airwallex 一直都係收 total−walletUsed，呢度係顯示漏咗（顯示全額 → 老闆以為購物金冇扣到）
+  const cashDue = Math.max(0, total - walletUsed);
 
   if (airwallexUnavailable) return null;
 
@@ -102,8 +105,13 @@ function OnlinePaySection({ orderId, total }: { orderId: number; total: number }
         disabled={createPayment.isPending}
         className="btn btn-primary w-full disabled:opacity-70"
       >
-        {createPayment.isPending ? '正在開啟安全付款頁…' : `💳 即時網上支付 ${formatHKD(total)}`}
+        {createPayment.isPending ? '正在開啟安全付款頁…' : `💳 即時網上支付 ${formatHKD(cashDue)}`}
       </button>
+      {walletUsed > 0 && (
+        <p className="mt-2 text-[12.5px] font-medium text-gold">
+          購物金已扣 {formatHKD(walletUsed)}（訂單總額 {formatHKD(total)}），而家淨係找尾數
+        </p>
+      )}
       {payOnlineError && (
         <p role="alert" className="mt-2 text-[12px] leading-relaxed text-pink-soft">
           {payOnlineError}
@@ -352,6 +360,28 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         <span className="font-mono text-xl font-medium text-pink">{formatHKD(order.total)}</span>
       </div>
 
+      {/* v2.5.5 第8版（購物金）：用咗購物金嘅單——扣減行＋應付尾數行（金框）。
+          老闆實測 2026-10-11：購物金扣咗但全網顯示全額；付款要以尾數為準 */}
+      {(order.walletUsed ?? 0) > 0 && (
+        <>
+          <div className="mt-2 flex items-baseline justify-between text-[13px]">
+            <span className="text-txt-3">購物金扣減</span>
+            <span className="font-mono text-gold">−{formatHKD(order.walletUsed ?? 0)}</span>
+          </div>
+          <div
+            className="mt-2 flex items-baseline justify-between rounded-xl border px-3.5 py-2.5"
+            style={{ borderColor: 'var(--gold)', background: 'rgba(171,140,82,.08)' }}
+          >
+            <span className="text-sm font-medium text-txt-1">
+              {order.total - (order.walletUsed ?? 0) > 0 ? '應付尾數' : '應付尾數（購物金全數找埋 ✦）'}
+            </span>
+            <span className="font-mono text-xl font-bold text-gold">
+              {formatHKD(Math.max(0, order.total - (order.walletUsed ?? 0)))}
+            </span>
+          </div>
+        </>
+      )}
+
       {/* 取貨方式（順豐站／智能櫃自取；揀咗有填站點就一齊顯示） */}
       {order.deliveryMethod && order.deliveryMethod !== 'address' && (
         <p className="mt-3 text-[13px] text-txt-3">
@@ -414,13 +444,22 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
       {needsPayment && (
         <div className="mt-5 flex flex-col gap-4 border-t border-space-line pt-5">
           {order.status === 'pending_payment' && (
-            <OnlinePaySection orderId={order.id} total={order.total} />
+            <OnlinePaySection orderId={order.id} total={order.total} walletUsed={order.walletUsed ?? 0} />
           )}
           <div className="rounded-xl border border-space-line bg-space-3 px-4 py-3 text-[13px] leading-relaxed text-txt-2">
             <p className="font-medium text-txt-1">付款資料</p>
+            {/* v2.5.5 第8版（購物金）：手動過數金額＝尾數（total−walletUsed），唔係全額——
+                之前寫全額，客人照住過數會過多咗（購物金落單時已扣） */}
             <p className="mt-1">
               請用 FPS 轉數快 / PayMe / AlipayHK 過數{' '}
-              <span className="font-mono text-pink">{formatHKD(order.total)}</span>
+              <span className="font-mono text-pink">
+                {formatHKD(Math.max(0, order.total - (order.walletUsed ?? 0)))}
+              </span>
+              {(order.walletUsed ?? 0) > 0 && (
+                <span className="text-gold">
+                  （購物金已扣 {formatHKD(order.walletUsed ?? 0)}，淨找尾數）
+                </span>
+              )}
               ，然後上傳付款截圖，Glo Glo 團隊對完數就會確認訂單。
             </p>
           </div>

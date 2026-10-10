@@ -6,7 +6,7 @@ import { getDb } from "./queries/connection";
 import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, orderShipments, paymentProofs, products, promoCodes, sfStations, users, walletLedger, wmsSyncLog } from "@db/schema";
 import { createRouter, authedProcedure, publicProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
-import { computeWalletSplit, returnWalletForOrder } from "./wallet";
+import { computeWalletSplit, returnWalletForOrder, getOrderWalletSpend } from "./wallet";
 import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
 import { hardDeleteOrder } from "./orderDelete";
 import { sendOrderReviewAlertEmail } from "./email";
@@ -328,7 +328,7 @@ export const ordersRouter = createRouter({
           : (quote.stationName ?? input?.pickupPoint?.trim() ?? null) || null;
 
       // PostgreSQL 支援真 transaction：扣庫存 + 優惠碼 + 購物金 + insert order + items + clear cart 一齊 atomic
-      const { orderId, walletApplied } = await db.transaction(async (tx) => {
+      const { orderId, walletApplied, walletBalanceAfter } = await db.transaction(async (tx) => {
         // 每件貨驗庫存 + 扣庫存（conditional update 防超賣）
         for (const item of cart) {
           const deducted = await tx
@@ -527,6 +527,8 @@ export const ordersRouter = createRouter({
                   paidAt: new Date(),
                   vip: orderVipEmailInfo(created),
                   walletUsed: walletApplied,
+                  // v2.5.5 第8版（購物金）：單據要寫埋扣完嗰刻嘅餘額＋時間（「截至」口徑）
+                  walletBalance: { balanceAfter: walletBalanceAfter, at: new Date() },
                 });
                 if (!r.ok) console.error(`[email] 購物金支付通知寄唔出（${orderNo}）：`, r.error);
               }
@@ -574,6 +576,8 @@ export const ordersRouter = createRouter({
             vip: orderVipEmailInfo(created),
             // v2.5.0（購物金）：用咗購物金就喺信入面列明扣減＋尾數
             walletUsed: walletApplied > 0 ? walletApplied : undefined,
+            // v2.5.5 第8版（購物金）：扣完嗰刻嘅餘額＋時間（「截至」口徑，全網單據統一）
+            walletBalance: walletApplied > 0 ? { balanceAfter: walletBalanceAfter, at: new Date() } : undefined,
             items: created.items.map((it) => ({
               productName: it.productName,
               size: it.size,
@@ -999,7 +1003,11 @@ export const ordersRouter = createRouter({
       if (!order) {
         throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
       }
-      return order;
+      // v2.5.5 第8版（購物金）：用咗購物金嘅單附埋扣減紀錄（餘額＋時間），
+      // 付款頁訂單確認書／單據要寫「購物金扣減 HK$X、餘額 HK$Y（截至 …）」
+      const walletSpend =
+        (order.walletUsed ?? 0) > 0 ? await getOrderWalletSpend(order.orderNo) : null;
+      return { ...order, walletSpend };
     }),
 
   /**
@@ -1022,7 +1030,10 @@ export const ordersRouter = createRouter({
       if (!isStaff && order.userId !== ctx.user.userId) {
         throw new TRPCError({ code: "FORBIDDEN", message: "呢張唔係你嘅訂單" });
       }
-      return order;
+      // v2.5.5 第8版（購物金）：單據頁要寫購物金扣減＋餘額（截至扣減時間），資料由流水賬出
+      const walletSpend =
+        (order.walletUsed ?? 0) > 0 ? await getOrderWalletSpend(order.orderNo) : null;
+      return { ...order, walletSpend };
     }),
 
   attachPaymentProof: authedProcedure
@@ -1179,6 +1190,11 @@ export const ordersRouter = createRouter({
         const recipientName = member?.name ?? reviewedOrder.guestName;
         const recipientPhone = member?.phone ?? reviewedOrder.guestPhone;
         if (recipient && recipientName) {
+          // v2.5.5 第8版（購物金）：確認信＋PDF 單據要列購物金扣減＋餘額（截至扣減時間）
+          const walletSpend =
+            (reviewedOrder.walletUsed ?? 0) > 0
+              ? await getOrderWalletSpend(reviewedOrder.orderNo)
+              : null;
           const result = await sendOrderApprovedEmail({
             to: recipient,
             name: recipientName,
@@ -1199,6 +1215,7 @@ export const ordersRouter = createRouter({
               pickupPoint: reviewedOrder.pickupPoint,
               address: reviewedOrder.address,
             },
+            wallet: walletSpend ?? ((reviewedOrder.walletUsed ?? 0) > 0 ? { used: reviewedOrder.walletUsed ?? 0 } : null),
           });
           emailNote = result.ok
             ? `；確認信＋單據已寄出至 ${recipient}`
@@ -1263,6 +1280,9 @@ export const ordersRouter = createRouter({
       const recipientName = member?.name ?? order.guestName;
       const recipientPhone = member?.phone ?? order.guestPhone;
       if (recipient && recipientName) {
+        // v2.5.5 第8版（購物金）：確認信＋PDF 單據要列購物金扣減＋餘額（截至扣減時間）
+        const walletSpend =
+          (order.walletUsed ?? 0) > 0 ? await getOrderWalletSpend(order.orderNo) : null;
         const result = await sendOrderApprovedEmail({
           to: recipient,
           name: recipientName,
@@ -1283,6 +1303,7 @@ export const ordersRouter = createRouter({
             pickupPoint: order.pickupPoint,
             address: order.address,
           },
+          wallet: walletSpend ?? ((order.walletUsed ?? 0) > 0 ? { used: order.walletUsed ?? 0 } : null),
         });
         emailNote = result.ok
           ? `；確認信＋單據已寄出至 ${recipient}`

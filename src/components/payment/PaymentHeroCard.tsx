@@ -241,8 +241,12 @@ export default function PaymentHeroCard(props: {
   receiptUrl?: string;
   /** v2.2.0：落單當刻 VIP 級別——VIP 單刊頭下加級別絲綢帶＋accent 點綴；唔傳／NONE 保持原味 */
   vipTier?: VipTierKey;
+  /** v2.5.5 第8版（老闆指令 2026-10-11）：購物金明細——有用購物金嘅單要寫扣咗幾多；balance/at 來自 walletLedger 流水 */
+  walletUsed?: number;
+  walletBalance?: number;
+  walletAt?: string | Date;
 }): JSX.Element {
-  const { orderNo, createdAt, statusLabel, total, discountAmount, vipDiscountAmount, vipTierLabel, items, deliveryLabel, receiptUrl, vipTier = 'NONE' } = props;
+  const { orderNo, createdAt, statusLabel, total, discountAmount, vipDiscountAmount, vipTierLabel, items, deliveryLabel, receiptUrl, vipTier = 'NONE', walletUsed = 0, walletBalance, walletAt } = props;
   // 級別主題（v2.2.0）：色一律來自 vipTheme.ts，唔准自己創色
   const vipTheme = vipTierTheme(vipTier);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -252,6 +256,9 @@ export default function PaymentHeroCard(props: {
   const hasItems = Array.isArray(items) && items.length > 0;
   const hasDiscount = typeof discountAmount === 'number' && discountAmount > 0;
   const hasVipDiscount = typeof vipDiscountAmount === 'number' && vipDiscountAmount > 0;
+  // v2.5.5 第8版：購物金扣減行（現金實付＝總計 − 購物金，同後端收款口徑一致）
+  const hasWallet = walletUsed > 0;
+  const walletCashDue = Math.max(0, total - walletUsed);
 
   /* html2canvas 截卡（按鈕喺卡外，唔會入鏡；卡內以純 CSS/SVG 繪製，截圖保真） */
   const captureCard = async (): Promise<HTMLCanvasElement> => {
@@ -585,6 +592,53 @@ export default function PaymentHeroCard(props: {
                 </span>
               </div>
               <div style={{ borderTop: `1px solid ${GOLD_FAINT}`, marginTop: 4 }} />
+
+              {/* ---- v2.5.5 第8版：購物金明細（老闆指令 2026-10-11：有用購物金嘅單據，要寫扣咗幾多＋餘額截至幾時幾點） ---- */}
+              {hasWallet && (
+                <div style={{ marginTop: 12 }}>
+                  <div className="flex items-baseline justify-between" style={{ padding: '4px 0 6px' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                      購物金扣減 Wallet Credit
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: '#8a6d1f', fontVariantNumeric: 'tabular-nums' }}>
+                      −{fmtMoney(walletUsed)}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between" style={{ padding: '4px 0 6px' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                      實付現金 Cash Paid
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtMoney(walletCashDue)}
+                    </span>
+                  </div>
+                  {typeof walletBalance === 'number' && (
+                    <div className="flex items-baseline justify-between" style={{ padding: '4px 0 6px' }}>
+                      <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                        購物金餘額 Wallet Balance
+                        {walletAt && (
+                          <span style={{ display: 'block', fontSize: 9.5, letterSpacing: '0.04em', color: INK_FAINT }}>
+                            （截至{' '}
+                            {new Date(walletAt).toLocaleString('zh-HK', {
+                              year: 'numeric',
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: false,
+                              timeZone: 'Asia/Hong_Kong',
+                            })}
+                            )
+                          </span>
+                        )}
+                      </span>
+                      <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmtMoney(walletBalance)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* ---- 取貨方式 ---- */}

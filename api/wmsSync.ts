@@ -296,6 +296,9 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
       const p = productImageMap.get(i.productId);
       const paths = p ? (p.photos && p.photos.length ? p.photos : [p.image]) : [];
       return {
+        // v2.5.1（Wave 2 出貨同步）：WMS 出貨回調用 orderItemId 對返官網貨品行
+        // （舊單冇呢個欄，WMS 嗰邊會當 legacy 單跳過自動回調，人手跟）
+        orderItemId: i.id,
         sku: i.sku,
         name: i.productName,
         size: i.size,
@@ -496,6 +499,10 @@ export async function wmsReviewCallback(c: Context) {
       ? { email: order.guestEmail, name: order.guestName ?? "客人", phone: order.guestPhone ?? "" }
       : null);
     if (member?.email) {
+      // v2.5.5 第8版（購物金）：確認信＋PDF 單據要列購物金扣減＋餘額（截至扣減時間）
+      const { getOrderWalletSpend } = await import("./wallet");
+      const walletSpend =
+        (order.walletUsed ?? 0) > 0 ? await getOrderWalletSpend(order.orderNo) : null;
       const result = await sendOrderApprovedEmail({
         to: member.email,
         name: member.name,
@@ -516,6 +523,7 @@ export async function wmsReviewCallback(c: Context) {
           pickupPoint: order.pickupPoint,
           address: order.address,
         },
+        wallet: walletSpend ?? ((order.walletUsed ?? 0) > 0 ? { used: order.walletUsed ?? 0 } : null),
       });
       emailNote = result.ok
         ? `；確認信＋單據已寄出至 ${member.email}`

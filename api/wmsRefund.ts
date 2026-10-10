@@ -30,7 +30,7 @@ import { orders, products } from "@db/schema";
 import { logAudit } from "./audit";
 import { createAirwallexRefund } from "./airwallex";
 import { sendOrderRefundedEmail, orderVipEmailInfo } from "./email";
-import { returnWalletForOrder } from "./wallet";
+import { returnWalletForOrder, getOrderWalletSpend } from "./wallet";
 
 /** 已過咗付款階段嘅訂單狀態——淨係呢啲單先可以申請退款 */
 const REFUNDABLE_STATUSES: readonly string[] = [
@@ -208,6 +208,9 @@ export async function wmsRefundCallback(c: Context) {
     const custEmail = order.user?.email ?? order.guestEmail ?? null;
     const custName = order.user?.name ?? order.guestName ?? "客人";
     if (custEmail) {
+      // v2.5.5 第8版（購物金）：退款信都係單據——列埋原本扣咗幾多＋扣減後餘額（截至）
+      const walletSpend =
+        (order.walletUsed ?? 0) > 0 ? await getOrderWalletSpend(order.orderNo) : null;
       const result = await sendOrderRefundedEmail({
         to: custEmail,
         name: custName,
@@ -223,6 +226,7 @@ export async function wmsRefundCallback(c: Context) {
         // walletRefund 話畀封信知有幾多購物金返咗落戶口
         refundAmount: cashRefund,
         walletRefund: walletReturned > 0 ? walletReturned : undefined,
+        wallet: walletSpend ?? ((order.walletUsed ?? 0) > 0 ? { used: order.walletUsed ?? 0 } : null),
         channel,
         refundedAt,
         // v2.1.1（Wave 2）：退款信一樣顯示 VIP 級別＋折扣（全網單據統一）

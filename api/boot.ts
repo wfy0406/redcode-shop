@@ -350,6 +350,12 @@ async function handlePaidOnline(
       };
       // 客人通知（有 email 先寄——訪客單 guestEmail 必填，所以訪客一定收得到）
       if (custEmail) {
+        // v2.5.5 第8版（老闆實測 2026-10-11 購物金單話收咗全額）：webhook 呢度之前漏傳
+        // walletUsed——用咗購物金嘅單封信會寫「已收到你嘅款項 HK$全額」（實際只收咗尾數）。
+        // 而家補返：扣減額＋餘額（截至扣減時間）由流水賬出，同其他單據口徑一致。
+        const { getOrderWalletSpend } = await import("./wallet");
+        const walletSpend =
+          (order.walletUsed ?? 0) > 0 ? await getOrderWalletSpend(order.orderNo) : null;
         const r = await sendOrderPaidOnlineEmail({
           to: custEmail,
           orderNo: order.orderNo,
@@ -359,6 +365,8 @@ async function handlePaidOnline(
           paidAt,
           // v2.1.1（Wave 2）：單據顯示 VIP 級別＋VIP 折扣＋免運標示
           vip: orderVipEmailInfo(order),
+          walletUsed: (order.walletUsed ?? 0) > 0 ? (order.walletUsed ?? 0) : undefined,
+          walletBalance: walletSpend ? { balanceAfter: walletSpend.balanceAfter, at: walletSpend.at } : undefined,
         });
         if (!r.ok) {
           console.error(`[email] 網上收款通知寄唔出（訂單 ${order.orderNo}）：`, r.error);

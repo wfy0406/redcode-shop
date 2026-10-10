@@ -6,8 +6,13 @@
  * ─ createTopup（登入）：開充值單（30 分鐘付款期；待付款）
  * ─ attachTopupProof（登入）：上傳付款截圖 → 待批核（圖先經 /api/upload 落 disk）
  * ─ adminPackages／upsertPackage（staff/supervisor）：後台套票管理
+ * ─ deletePackage（supervisor/admin，老闆 2026-10-11：「主管同管理員都要可以del翻」）：
+ *   有充值紀錄引用嘅套票唔刪得（報錯轉下架），冇引用先 hard delete＋異動紀錄
  * ─ adminTopups（staff）：待批核充值單＋最近紀錄
  * ─ reviewTopup（staff）：批核（入帳＋寄信）／拒絕（寄信）——冪等
+ * ─ deleteTopup（admin 專用，老闆 2026-10-11：「後台紀錄購物金充值要官網管理員先可以刪除」）：
+ *   刪紀錄唔會扣回已入帳嘅購物金（流水賬係獨立 audit 級紀錄，照舊保留）；
+ *   每次刪除都寫完整快照落異動紀錄（邊個刪、刪咗咩、幾時刪）
  * ─ memberWallet（supervisor/admin）：後台睇指定會員餘額＋紀錄
  *
  * 鐵律：
@@ -25,6 +30,7 @@ import {
   authedProcedure,
   staffProcedure,
   supervisorProcedure,
+  adminProcedure,
 } from "./middleware";
 import { logAudit } from "./audit";
 import {
@@ -425,6 +431,46 @@ export const walletRouter = createRouter({
     }),
 
   /**
+   * 刪除套票（supervisor/admin——老闆 2026-10-11：「購物金套票管理，主管同管理員都要可以del翻」）。
+   * 安全閘：有充值紀錄（walletTopups.packageId）引用嘅套票唔刪得——歷史充值單靠快照留名，
+   * 但套票一刪就再冇得對返；呢種情況報錯叫佢改用「下架」（失敗即報錯，唔靜默）。
+   * 刪除成功寫完整快照落異動紀錄。
+   */
+  deletePackage: supervisorProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const pkg = await db.query.walletPackages.findFirst({
+        where: eq(walletPackages.id, input.id),
+      });
+      if (!pkg) throw new TRPCError({ code: "NOT_FOUND", message: "套票不存在" });
+      const [{ n: refCount }] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(walletTopups)
+        .where(eq(walletTopups.packageId, input.id));
+      if (refCount > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `呢個套票有 ${refCount} 張充值單用過，為咗保留紀錄唔可以刪除——可以改用「下架」（唔剔上架），客人就睇唔到`,
+        });
+      }
+      const [deleted] = await db
+        .delete(walletPackages)
+        .where(eq(walletPackages.id, input.id))
+        .returning({ id: walletPackages.id });
+      if (!deleted) throw new TRPCError({ code: "NOT_FOUND", message: "套票不存在" });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "wallet.packageDelete",
+        targetType: "walletPackage",
+        targetId: String(input.id),
+        detail: `刪除套票 #${input.id}：「${pkg.label}」面額 HK$${pkg.creditAmount}、售價 HK$${pkg.price}、排序 ${pkg.sortOrder}、${pkg.isActive ? "上架中" : "已下架"}（冇充值紀錄引用）`,
+      });
+      return { ok: true as const };
+    }),
+
+  /**
    * 充值單列表（staff）：預設待批核單排先＋最近 100 條；會員資料 join 埋。
    * status 篩選：'payment_review'（待批核）｜'approved'｜'rejected'｜'cancelled'｜'pending_payment'｜唔傳＝全部
    */
@@ -539,6 +585,38 @@ export const walletRouter = createRouter({
         detail: `批准充值單 ${topup.topupNo}：入帳 HK$${topup.creditAmount}，會員最新餘額 HK$${result.balanceAfter}${emailNote}`,
       });
       return { ok: true as const, status: "approved" as const, balanceAfter: result.balanceAfter, emailNote };
+    }),
+
+  /**
+   * 刪除充值紀錄（**admin 專用**——老闆 2026-10-11：「後台紀錄購物金充值要官網管理員先可以刪除」）。
+   * 注意：呢度淨係刪「紀錄」——已入帳嘅購物金唔會扣回（流水賬 walletLedger 係 audit 級，
+   * 永久保留，唔會跟住刪）；要扣回餘額係另一個動作，唔係刪紀錄做嘅。
+   * 待批核（payment_review）嘅單刪咗＝放棄批核，會員購物金唔會入帳；刪之前 UI 有 confirm。
+   * 每次刪除都寫完整快照落異動紀錄（單號／會員／金額／狀態／渠道／邊個刪）。
+   */
+  deleteTopup: adminProcedure
+    .input(z.object({ topupId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const topup = await db.query.walletTopups.findFirst({
+        where: eq(walletTopups.id, input.topupId),
+        with: { user: { columns: { name: true, phone: true } } },
+      });
+      if (!topup) throw new TRPCError({ code: "NOT_FOUND", message: "充值紀錄不存在" });
+      const [deleted] = await db
+        .delete(walletTopups)
+        .where(eq(walletTopups.id, input.topupId))
+        .returning({ id: walletTopups.id });
+      if (!deleted) throw new TRPCError({ code: "NOT_FOUND", message: "充值紀錄不存在" });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "wallet.topupDelete",
+        targetType: "walletTopup",
+        targetId: topup.topupNo,
+        detail: `刪除充值紀錄 ${topup.topupNo}：會員「${topup.user?.name ?? topup.userId}」（${topup.user?.phone ?? "—"}）、「${topup.label}」面額 HK$${topup.creditAmount}、實付 HK$${topup.price}、狀態 ${topup.status}、渠道 ${topup.paymentChannel}${topup.approvedBy ? `、批准人 ${topup.approvedBy}` : ""}（只刪紀錄，購物金餘額唔受影響）`,
+      });
+      return { ok: true as const };
     }),
 
   /**

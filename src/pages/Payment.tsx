@@ -496,6 +496,14 @@ export default function Payment() {
               : {})}
             {...(heroItems ? { items: heroItems } : {})}
             {...(deliveryLabel ? { deliveryLabel } : {})}
+            /* v2.5.5 第8版（老闆指令 2026-10-11）：購物金單嘅確認書要寫扣咗幾多＋餘額（截至流水時間） */
+            {...((order.walletUsed ?? 0) > 0
+              ? {
+                  walletUsed: order.walletUsed ?? 0,
+                  walletBalance: order.walletSpend?.balanceAfter,
+                  walletAt: order.walletSpend?.at,
+                }
+              : {})}
           />
         </div>
       )}

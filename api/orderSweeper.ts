@@ -132,6 +132,10 @@ export async function sweepExpiredPendingOrders(now = new Date()): Promise<numbe
             columns: { name: true, email: true },
           });
       if (member?.email) {
+        // v2.5.5 第8版（購物金）：取消信都係單據——列埋原本扣咗幾多＋扣減後餘額（截至）
+        const { getOrderWalletSpend } = await import("./wallet");
+        const walletSpend =
+          (order.walletUsed ?? 0) > 0 ? await getOrderWalletSpend(order.orderNo) : null;
         const result = await sendOrderCancelledEmail({
           to: member.email,
           name: member.name,
@@ -143,6 +147,7 @@ export async function sweepExpiredPendingOrders(now = new Date()): Promise<numbe
           vip: orderVipEmailInfo(order),
           // v2.5.0（購物金）：取消信列明購物金返還
           walletRefund: walletReturned > 0 ? walletReturned : undefined,
+          wallet: walletSpend ?? ((order.walletUsed ?? 0) > 0 ? { used: order.walletUsed ?? 0 } : null),
           items: order.items.map((it) => ({
             productName: it.productName,
             size: it.size,

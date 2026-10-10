@@ -5,6 +5,7 @@ import {
   Hourglass,
   Package,
   Search,
+  Trash2,
   UserRound,
   Wallet,
   XCircle,
@@ -19,8 +20,10 @@ import WishingStar from './WishingStar';
  * v2.5.0（會員購物金）後台購金面板（2026-10-09 老闆指令）
  *
  * ─ 待批核充值單（staff+）：付款截圖放大睇 → 批准（入帳＋寄信）／拒絕（寫原因＋寄信）
- * ─ 最近充值紀錄（staff+）：全部狀態一覽
- * ─ 套票管理（supervisor/admin）：新增／改價／上下架（購物金面額同售價後台話事）
+ * ─ 最近充值紀錄（staff+）：全部狀態一覽；刪除紀錄限管理員
+ *   （老闆 2026-10-11：「後台紀錄購物金充值要官網管理員先可以刪除」；刪紀錄唔會扣回已入帳購物金）
+ * ─ 套票管理（supervisor/admin）：新增／改價／上下架／刪除
+ *   （老闆 2026-10-11：「購物金套票管理，主管同管理員都要可以del翻」；有充值紀錄用過嘅套票後端會擋，只可以下架）
  * ─ 會員購物金查詢（supervisor/admin）：搜會員 → 餘額＋流水＋充值紀錄
  *   （老闆原話：「supervisor同admin要見到客戶既購物金餘額同記錄」）
  */
@@ -59,7 +62,7 @@ type ToastFn = (msg: string, type?: 'success' | 'info' | 'error') => void;
 
 /* ─────────── 待批核／紀錄 ─────────── */
 
-function TopupReviewList({ toast }: { toast: ToastFn }) {
+function TopupReviewList({ toast, isAdmin }: { toast: ToastFn; isAdmin: boolean }) {
   const utils = trpc.useUtils();
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [noteById, setNoteById] = useState<Record<number, string>>({});
@@ -68,8 +71,31 @@ function TopupReviewList({ toast }: { toast: ToastFn }) {
   const pendingQuery = trpc.wallet.adminTopups.useQuery({ status: 'payment_review' });
   const allQuery = trpc.wallet.adminTopups.useQuery();
   const reviewTopup = trpc.wallet.reviewTopup.useMutation();
+  // v2.5.5 第8版（老闆指令 2026-10-11）：充值紀錄刪除限官網管理員（後端 adminProcedure 強制）
+  const deleteTopup = trpc.wallet.deleteTopup.useMutation();
 
   const errMsg = (err: unknown) => (err instanceof Error ? err.message : '操作失敗，請再試');
+
+  const onDeleteTopup = async (t: { id: number; topupNo: string; status: string }) => {
+    const statusLabel = TOPUP_STATUS_META[t.status]?.label ?? t.status;
+    if (
+      !window.confirm(
+        `確定刪除充值紀錄 ${t.topupNo}（${statusLabel}）？\n\n刪咗就攞唔返；會員嘅購物金餘額唔受影響（流水賬會保留），每筆刪除都會記落異動紀錄。`,
+      )
+    ) {
+      return;
+    }
+    setBusyId(t.id);
+    try {
+      await deleteTopup.mutateAsync({ topupId: t.id });
+      toast(`已刪除充值紀錄 ${t.topupNo}`, 'success');
+      await utils.wallet.adminTopups.invalidate();
+    } catch (err) {
+      toast(errMsg(err), 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const onReview = async (topupId: number, topupNo: string, approve: boolean) => {
     setBusyId(topupId);
@@ -235,15 +261,30 @@ function TopupReviewList({ toast }: { toast: ToastFn }) {
                       {t.reviewNote ? ` · 備註：${t.reviewNote}` : ''}
                     </p>
                   </div>
-                  {t.proofImagePath && (
-                    <button
-                      type="button"
-                      onClick={() => setLightboxSrc(t.proofImagePath)}
-                      className="shrink-0 text-[12px] text-lavender underline underline-offset-4"
-                    >
-                      睇截圖
-                    </button>
-                  )}
+                  <div className="flex shrink-0 items-center gap-3">
+                    {t.proofImagePath && (
+                      <button
+                        type="button"
+                        onClick={() => setLightboxSrc(t.proofImagePath)}
+                        className="text-[12px] text-lavender underline underline-offset-4"
+                      >
+                        睇截圖
+                      </button>
+                    )}
+                    {/* v2.5.5 第8版：刪除充值紀錄限官網管理員（老闆指令 2026-10-11） */}
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        disabled={busyId === t.id}
+                        onClick={() => void onDeleteTopup(t)}
+                        aria-label={`刪除充值紀錄 ${t.topupNo}`}
+                        className="btn btn-secondary !px-3 !py-1.5 text-[12px]"
+                      >
+                        <Trash2 size={13} aria-hidden="true" />
+                        刪除
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -262,6 +303,9 @@ function PackageManager({ toast }: { toast: ToastFn }) {
   const utils = trpc.useUtils();
   const packagesQuery = trpc.wallet.adminPackages.useQuery();
   const upsert = trpc.wallet.upsertPackage.useMutation();
+  // v2.5.5 第8版（老闆指令 2026-10-11）：「購物金套票管理，主管同管理員都要可以del翻」
+  // 後端 supervisorProcedure 強制；有充值單用過嘅套票會被後端擋（保住紀錄），建議改用下架
+  const deletePackage = trpc.wallet.deletePackage.useMutation();
 
   // 編輯中嘅套票（id → 草稿）；新增用 id=0 做 key
   const [drafts, setDrafts] = useState<
@@ -303,6 +347,26 @@ function PackageManager({ toast }: { toast: ToastFn }) {
         delete next[id];
         return next;
       });
+      await utils.wallet.adminPackages.invalidate();
+    } catch (err) {
+      toast(errMsg(err), 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onDelete = async (p: { id: number; label: string }) => {
+    if (
+      !window.confirm(
+        `確定刪除套票「${p.label}」？\n\n刪咗就攞唔返，每筆刪除都會記落異動紀錄。\n如果呢個套票有充值單用過，後端會擋住唔准刪（保住紀錄）——嗰種情況請改用「下架」（唔剔上架），客人就睇唔到。`,
+      )
+    ) {
+      return;
+    }
+    setBusyId(p.id);
+    try {
+      await deletePackage.mutateAsync({ id: p.id });
+      toast(`已刪除套票「${p.label}」`, 'success');
       await utils.wallet.adminPackages.invalidate();
     } catch (err) {
       toast(errMsg(err), 'error');
@@ -423,15 +487,27 @@ function PackageManager({ toast }: { toast: ToastFn }) {
                     </span>
                   </p>
                   {!d && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        startEdit(p.id, p.label, String(p.creditAmount), String(p.price), String(p.sortOrder), p.isActive)
-                      }
-                      className="btn btn-secondary !px-4 !py-1.5 text-[12.5px]"
-                    >
-                      編輯
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          startEdit(p.id, p.label, String(p.creditAmount), String(p.price), String(p.sortOrder), p.isActive)
+                        }
+                        className="btn btn-secondary !px-4 !py-1.5 text-[12.5px]"
+                      >
+                        編輯
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyId === p.id}
+                        onClick={() => void onDelete(p)}
+                        aria-label={`刪除套票 ${p.label}`}
+                        className="btn btn-secondary !px-3 !py-1.5 text-[12.5px]"
+                      >
+                        <Trash2 size={13} aria-hidden="true" />
+                        刪除
+                      </button>
+                    </div>
                   )}
                 </div>
                 {d && renderEditor(p.id, d)}
@@ -663,7 +739,7 @@ export default function WalletPanel({ toast }: { toast: ToastFn }) {
         </p>
       </header>
       <div className="mt-6">
-        <TopupReviewList toast={toast} />
+        <TopupReviewList toast={toast} isAdmin={me?.role === 'admin'} />
         {isSupervisorOrAdmin && (
           <>
             <PackageManager toast={toast} />
