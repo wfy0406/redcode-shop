@@ -367,6 +367,12 @@ export default function Receipt() {
 
   // v2.1.0：VIP 折扣（DB 存整數仙 → 顯示港元）
   const vipDiscount = Math.round((order.vipDiscountCents ?? 0) / 100);
+  // v2.5.5 第9版（老闆指令：「全網都要寫翻原價同優惠價」）：貨品原價總和＋貨品折扣
+  // （discountPrice 貨先會多過小計）；舊單冇 originalPrice 快照 → 當冇折扣
+  const itemsOriginalTotal = order.items.reduce((s, i) => s + (i.originalPrice ?? i.price) * i.quantity, 0);
+  const itemsDiscount = Math.max(0, itemsOriginalTotal - subtotal);
+  // v2.5.5 第9版 bugfix：discountAmount 本身已包 VIP 部分——優惠碼行要減返 VIP，唔係會重複顯示
+  const couponDiscount = Math.max(0, order.discountAmount - vipDiscount);
 
   // F7 退款狀態：取消單成張灰階；refunded 顯示退款時間＋原路退回說明
   const isCancelled = order.status === 'cancelled';
@@ -618,8 +624,15 @@ export default function Receipt() {
                         fontVariantNumeric: 'tabular-nums',
                       }}
                     >
+                      {/* v2.5.5 第9版（老闆指令：「全網都要寫翻原價同優惠價」）：有折扣嘅貨，單價位寫原價（刪除線）＋優惠價 */}
+                      {(item.originalPrice ?? 0) > item.price && (
+                        <span style={{ display: 'block', fontSize: 10, color: INK_FAINT, marginBottom: 1 }}>
+                          原價 <span style={{ textDecoration: 'line-through' }}>{fmtMoney(item.originalPrice ?? item.price)}</span>
+                        </span>
+                      )}
                       <span style={{ color: INK_SOFT, marginRight: 12 }}>
                         {item.quantity} × {fmtMoney(item.price)}
+                        {(item.originalPrice ?? 0) > item.price ? '（優惠價）' : ''}
                       </span>
                       {fmtMoney(item.price * item.quantity)}
                     </span>
@@ -687,8 +700,25 @@ export default function Receipt() {
               </div>
             )}
 
-            {/* ---- 小計 → 折扣 → 總計（會計式雙 hairline） ---- */}
+            {/* ---- 原價 → 折扣 → 小計 → 折扣 → 總計（會計式雙 hairline） ---- */}
             <div style={{ marginTop: 22 }}>
+              {/* v2.5.5 第9版：有貨品折扣先出「原價總計 → 貨品折扣」兩行 */}
+              {itemsDiscount > 0 && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 6px' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>原價總計 Original</span>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtMoney(itemsOriginalTotal)}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 6px' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>貨品折扣 Items Discount</span>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: '#8a6d1f', fontVariantNumeric: 'tabular-nums' }}>
+                      −{fmtMoney(itemsDiscount)}
+                    </span>
+                  </div>
+                </>
+              )}
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 6px' }}>
                 <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>小計 Subtotal</span>
                 <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
@@ -706,13 +736,14 @@ export default function Receipt() {
                   </span>
                 </div>
               )}
-              {order.discountAmount > 0 && (
+              {/* v2.5.5 第9版 bugfix：用呢度拆出嘅優惠碼折扣（discountAmount − VIP），唔再重複顯示 VIP 嗰部分 */}
+              {couponDiscount > 0 && (
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '4px 0 10px' }}>
                   <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
                     折扣 Discount{order.promoCode ? `（${order.promoCode}）` : ''}
                   </span>
                   <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
-                    −{fmtMoney(order.discountAmount)}
+                    −{fmtMoney(couponDiscount)}
                   </span>
                 </div>
               )}

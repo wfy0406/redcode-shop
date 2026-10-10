@@ -219,6 +219,7 @@ export async function wmsRefundCallback(c: Context) {
           productName: it.productName,
           size: it.size,
           price: it.price,
+          originalPrice: it.originalPrice,
           quantity: it.quantity,
         })),
         total: order.total,

@@ -162,6 +162,13 @@ function ItemRow({
           {item.sku}
           {item.size ? ` · ${item.size}` : ''} · ×{item.quantity}
         </span>
+        {/* v2.5.5 第9版（老闆指示「全網都要寫翻原價同優惠價」）：有折扣 → 優惠價＋原價劃線 */}
+        {(item.originalPrice ?? 0) > item.price && (
+          <span className="block text-[11.5px] text-txt-3">
+            優惠價 <span className="text-pink">{formatHKD(item.price)}</span>
+            　<s>原價 {formatHKD(item.originalPrice ?? item.price)}</s>
+          </span>
+        )}
         {/* v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改 chip */}
         <ItemShipChips item={item} showPending={showPending} methodMap={methodMap} />
       </span>

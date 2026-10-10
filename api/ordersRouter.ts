@@ -88,6 +88,7 @@ async function guestOrderPayload(
       productName: it.productName,
       size: it.size,
       price: it.price,
+      originalPrice: it.originalPrice,
       quantity: it.quantity,
       // v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改標示
       shipStatus: it.shipStatus,
@@ -227,6 +228,7 @@ async function attachProofCore(
         productName: it.productName,
         size: it.size,
         price: it.price,
+        originalPrice: it.originalPrice,
         quantity: it.quantity,
       })),
       total: order.total,
@@ -467,6 +469,8 @@ export const ordersRouter = createRouter({
             sku: item.product.sku,
             size: item.size,
             price: item.product.discountPrice ?? item.product.price,
+            // v2.5.5 第9版：原價快照（全網單據寫原價＋優惠價）
+            originalPrice: item.product.price,
             quantity: item.quantity,
           })),
         );
@@ -510,6 +514,7 @@ export const ordersRouter = createRouter({
                 productName: it.productName,
                 size: it.size,
                 price: it.price,
+                originalPrice: it.originalPrice,
                 quantity: it.quantity,
               }));
               const delivery = {
@@ -582,6 +587,7 @@ export const ordersRouter = createRouter({
               productName: it.productName,
               size: it.size,
               price: it.price,
+              originalPrice: it.originalPrice,
               quantity: it.quantity,
             })),
           });
@@ -777,6 +783,8 @@ export const ordersRouter = createRouter({
               sku: p.sku,
               size: item.size ?? null,
               price: p.discountPrice ?? p.price,
+              // v2.5.5 第9版：原價快照（訪客單一樣要寫原價＋優惠價）
+              originalPrice: p.price,
               quantity: item.quantity,
             };
           }),
@@ -801,6 +809,7 @@ export const ordersRouter = createRouter({
             productName: p.name,
             size: item.size ?? null,
             price: p.discountPrice ?? p.price,
+            originalPrice: p.price,
             quantity: item.quantity,
           };
         }),
@@ -1205,6 +1214,7 @@ export const ordersRouter = createRouter({
               productName: it.productName,
               size: it.size,
               price: it.price,
+              originalPrice: it.originalPrice,
               quantity: it.quantity,
             })),
             total: reviewedOrder.total,
@@ -1293,6 +1303,7 @@ export const ordersRouter = createRouter({
             productName: it.productName,
             size: it.size,
             price: it.price,
+            originalPrice: it.originalPrice,
             quantity: it.quantity,
           })),
           total: order.total,
@@ -1451,8 +1462,10 @@ export const ordersRouter = createRouter({
       }
       // 價錢：原本喺單度嘅行沿用落單價；新行用而家有效價
       const oldPrice = new Map<string, number>();
+      const oldOriginal = new Map<string, number | null>();
       for (const i of order.items) {
         oldPrice.set(`${i.productId}|${i.size ?? ""}`, i.price);
+        oldOriginal.set(`${i.productId}|${i.size ?? ""}`, i.originalPrice ?? null);
       }
       const newLines = input.items.map((i) => {
         const p = productMap.get(i.productId)!;
@@ -1464,6 +1477,8 @@ export const ordersRouter = createRouter({
           sku: p.sku,
           size: i.size ?? null,
           price,
+          // v2.5.5 第9版：原價快照——沿用舊行嘅快照；冇（舊單／新行）就用而家 products.price
+          originalPrice: oldOriginal.get(`${i.productId}|${i.size ?? ""}`) ?? p.price,
           quantity: i.quantity,
         };
       });

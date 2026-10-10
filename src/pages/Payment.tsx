@@ -382,6 +382,8 @@ export default function Payment() {
       name: it.size ? `${it.productName}（${it.size}）` : it.productName,
       quantity: it.quantity,
       price: it.price,
+      // v2.5.5 第9版：原價快照（確認卡寫原價＋優惠價）
+      originalPrice: it.originalPrice ?? null,
     }));
   }, [order]);
 

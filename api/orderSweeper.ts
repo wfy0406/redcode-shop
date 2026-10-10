@@ -152,6 +152,7 @@ export async function sweepExpiredPendingOrders(now = new Date()): Promise<numbe
             productName: it.productName,
             size: it.size,
             price: it.price,
+            originalPrice: it.originalPrice,
             quantity: it.quantity,
           })),
         });
@@ -315,6 +316,7 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
             productName: it.productName,
             size: it.size,
             price: it.price,
+            originalPrice: it.originalPrice,
             quantity: it.quantity,
           })),
         });

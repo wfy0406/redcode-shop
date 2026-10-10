@@ -7,9 +7,10 @@
  * - RESEND_API_KEY：Resend 攞嘅 API key（冇設＝全部 email 靜默 skip，網站照常運作）
  * - EMAIL_FROM：寄件人，例如 `RedCode官方購物網站 <noreply@ows.redcode.red>`（域名要喺 Resend 驗證咗先用得）
  * - SITE_URL：網站地址，預設 https://redcode.red（email 入面 logo 同掣嘅連結用）
- * - REVIEW_ALERT_EMAIL：購物金待批核通知收件人，預設 leader@ows.redcode.red（2026-08-04 加）
- *   ※ v2.5.4（老闆指示 2026-10-10）：訂單待審批通知已停寄（sendOrderReviewAlertEmail 唔設預設收件人，
- *      一定要明確設 REVIEW_ALERT_EMAIL 先寄）；購物金待批核通知維持原有預設。
+ * - REVIEW_ALERT_EMAIL：內部待批核通知收件人（唔再設預設收件人）
+ *   ※ v2.5.4（老闆指示 2026-10-10）：訂單待審批通知停寄 leader@——一定要明確設 REVIEW_ALERT_EMAIL 先寄。
+ *   ※ v2.5.5 第9版（老闆指示 2026-10-11）：「購物金充值待核實唔洗發email去leader@ows.redcode.red」——
+ *      購物金待批核通知同樣停預設，冇明確設 REVIEW_ALERT_EMAIL 就 skip（購物金批核改去 WMS 官網中心做）。
  *
  * 所有 sendXxxEmail 都係 never-throw：任何失敗（包括砌 HTML 出錯）淨係 console.error 兼回 SendResult，
  * 唔會阻到主流程（落單／審批唔會因為寄信失敗而彈錯）。
@@ -54,8 +55,14 @@ const MONO_STACK = "'JetBrains Mono','Courier New',monospace";
 export type OrderEmailItem = {
   productName: string;
   size: string | null;
+  /** 實收單價（有優惠價就係優惠價） */
   price: number;
   quantity: number;
+  /**
+   * v2.5.5 第9版（老闆指示 2026-10-11「張單要寫翻原價，再寫埋折扣」「全網都要寫翻原價同優惠價」）：
+   * 落單一刻嘅原價快照（orderItems.originalPrice）。舊單冇快照 → null → 當冇折扣咁顯示。
+   */
+  originalPrice?: number | null;
 };
 
 /** 送貨資料（email 內格式化用） */
@@ -184,6 +191,22 @@ function fmtDateHK(d: Date | string): string {
     }).format(new Date(d));
   } catch {
     return new Date(d).toISOString().slice(0, 16).replace("T", " ");
+  }
+}
+
+/** v2.5.5 第9版：英文日期（PDF 單據頂行／郵戳用），例如「11 OCT 2026」——同 fmtDateHK 一樣鎖香港時區 */
+function fmtDateEn(d: Date | string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Hong_Kong",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).formatToParts(new Date(d));
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+    return `${get("day")} ${get("month").toUpperCase()} ${get("year")}`;
+  } catch {
+    return new Date(d).toISOString().slice(0, 10);
   }
 }
 
@@ -335,14 +358,20 @@ function itemsTable(items: OrderEmailItem[]): string {
   const th = `padding:8px 0;font-size:10.5px;font-weight:500;letter-spacing:2px;color:${INK_SOFT};border-top:1px solid ${GOLD};border-bottom:1px solid ${GOLD_HAIR};white-space:nowrap;`;
   const td = `padding:11px 0;border-bottom:1px solid ${GOLD_FAINT};vertical-align:top;`;
   const rows = items
-    .map(
-      (it) => `<tr>
-        <td style="${td}font-size:14px;color:${INK};width:100%;word-break:break-word;">${escapeHtml(it.productName)}</td>
+    .map((it) => {
+      // v2.5.5 第9版：有折扣（原價 > 實收價）→ 商品名下補一行「優惠價 HK$Y　原價 HK$X（劃線）」
+      const orig = it.originalPrice ?? 0;
+      const origLine =
+        orig > it.price
+          ? `<div style="margin-top:4px;font-size:11.5px;line-height:1.5;color:${INK_FAINT};">優惠價 <span style="color:${GOLD};font-weight:700;">${fmtMoney(it.price)}</span>　<span style="text-decoration:line-through;">原價 ${fmtMoney(orig)}</span></div>`
+          : "";
+      return `<tr>
+        <td style="${td}font-size:14px;color:${INK};width:100%;word-break:break-word;">${escapeHtml(it.productName)}${origLine}</td>
         <td style="${td}padding:11px 8px;font-size:13.5px;color:${INK_SOFT};white-space:nowrap;">${it.size ? escapeHtml(it.size) : "—"}</td>
         <td align="center" style="${td}padding:11px 8px;font-size:14px;color:${INK_SOFT};white-space:nowrap;font-variant-numeric:tabular-nums;">× ${it.quantity}</td>
         <td align="right" style="${td}font-size:14px;color:${INK};font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;">${fmtMoney(it.price * it.quantity)}</td>
-      </tr>`,
-    )
+      </tr>`;
+    })
     .join("");
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 4px;">
     <tr>
@@ -355,18 +384,29 @@ function itemsTable(items: OrderEmailItem[]): string {
   </table>`;
 }
 
-/** 內容小組件：金額總結（小計／VIP 折扣／優惠碼折扣／總額）——總計行上 1px 金線＋下 3px double 金線，大字粗體 serif */
+/**
+ * v2.5.5 第9版（原價／優惠價）：由明細計「原價總計」（冇快照嘅行當原價＝實收價）。
+ * totalsBlock／單據共用呢個口徑。
+ */
+function itemsOriginalTotalOf(items: OrderEmailItem[]): number {
+  return items.reduce((s, i) => s + (i.originalPrice ?? i.price) * i.quantity, 0);
+}
+
+/** 內容小組件：金額總結（原價總計／貨品折扣／小計／VIP 折扣／優惠碼折扣／總額）——總計行上 1px 金線＋下 3px double 金線，大字粗體 serif */
 // v2.1.1（Wave 2）：加 optional vip 參數——VIP 折扣行排優惠碼折扣行**上面**（折扣次序：先 VIP 後 coupon）。
 // 注意 orders.discountAmount 係「VIP 折扣＋優惠碼折扣」嘅總和，所以優惠碼行要減返 VIP 部分先顯示。
+// v2.5.5 第9版：加 optional itemsOriginalTotal——有貨品折扣（原價總計 > 小計）先出「原價總計／貨品折扣」兩行。
 function totalsBlock(
   total: number,
   discountAmount: number,
   vip?: OrderEmailVip,
   wallet?: OrderEmailWallet | null,
+  itemsOriginalTotal?: number | null,
 ): string {
   const vipDiscount = vip?.discountAmount ?? 0;
   const couponDiscount = Math.max(0, discountAmount - vipDiscount);
   const subtotal = total + discountAmount;
+  const itemsDiscount = itemsOriginalTotal != null ? Math.max(0, itemsOriginalTotal - subtotal) : 0;
   // v2.5.5 第8版（購物金）：有用購物金 → 總額行下面補「扣減／實付現金／餘額（截至）」三行
   const walletBlock =
     wallet && wallet.used > 0
@@ -389,8 +429,20 @@ function totalsBlock(
           <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};font-variant-numeric:tabular-nums;">−${fmtMoney(couponDiscount)}</td>
         </tr>`
       : "";
+  // v2.5.5 第9版：貨品本身有優惠價 → 小計上面補「原價總計／貨品折扣」（原價總計 − 貨品折扣 = 小計）
+  const originalRows =
+    itemsDiscount > 0 && itemsOriginalTotal != null
+      ? `<tr>
+          <td style="padding:4px 0;font-size:13.5px;color:${INK_FAINT};">原價總計</td>
+          <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK_FAINT};font-variant-numeric:tabular-nums;">${fmtMoney(itemsOriginalTotal)}</td>
+        </tr>
+        <tr>
+          <td style="padding:4px 0;font-size:13.5px;color:${GOLD};">貨品折扣</td>
+          <td align="right" style="padding:4px 0;font-size:13.5px;color:${GOLD};font-variant-numeric:tabular-nums;">−${fmtMoney(itemsDiscount)}</td>
+        </tr>`
+      : "";
   const subtotalRow =
-    discountAmount > 0
+    discountAmount > 0 || itemsDiscount > 0
       ? `<tr>
           <td style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};">小計</td>
           <td align="right" style="padding:4px 0;font-size:13.5px;color:${INK_SOFT};font-variant-numeric:tabular-nums;">${fmtMoney(subtotal)}</td>
@@ -398,6 +450,7 @@ function totalsBlock(
       : "";
   const grand = `padding:14px 2px;border-top:1px solid ${GOLD};border-bottom:3px double ${GOLD};`;
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0 6px;">
+    ${originalRows}
     ${subtotalRow}
     ${vipRow}
     ${discountRow}
@@ -465,19 +518,28 @@ function buildInvoiceHtml(args: {
   const site = siteUrl();
   const orderNo = escapeHtml(args.orderNo);
   const itemRows = args.items
-    .map(
-      (it) => `<tr>
+    .map((it) => {
+      // v2.5.5 第9版：有折扣 → 單價格下補「原價 HK$X（劃線）」
+      const orig = it.originalPrice ?? 0;
+      const origNote =
+        orig > it.price
+          ? `<div style="font-size:11px;color:${INK_FAINT};"><s>原價 ${fmtMoney(orig)}</s></div>`
+          : "";
+      return `<tr>
         <td>${escapeHtml(it.productName)}</td>
         <td>${it.size ? escapeHtml(it.size) : "—"}</td>
         <td class="num">× ${it.quantity}</td>
-        <td class="num">${fmtMoney(it.price)}</td>
+        <td class="num">${fmtMoney(it.price)}${origNote}</td>
         <td class="num">${fmtMoney(it.price * it.quantity)}</td>
-      </tr>`,
-    )
+      </tr>`;
+    })
     .join("");
   const vipDiscount = args.vip?.discountAmount ?? 0;
   const couponDiscount = Math.max(0, args.discountAmount - vipDiscount);
   const subtotal = args.total + args.discountAmount;
+  // v2.5.5 第9版：原價總計／貨品折扣（冇快照嘅舊單 itemsDiscount=0 → 唔顯示）
+  const itemsOriginalTotal = itemsOriginalTotalOf(args.items);
+  const itemsDiscount = Math.max(0, itemsOriginalTotal - subtotal);
   // VIP 折扣行排優惠碼折扣行上面（折扣次序：先 VIP 後 coupon）
   const vipRow = vipDiscount > 0 ? `<tr><td>VIP 折扣</td><td class="num">−${fmtMoney(vipDiscount)}</td></tr>` : "";
   const discountRow =
@@ -581,7 +643,9 @@ function buildInvoiceHtml(args: {
         ${itemRows}
       </table>
       <table class="totals">
-        ${args.discountAmount > 0 ? `<tr><td>小計</td><td class="num">${fmtMoney(subtotal)}</td></tr>` : ""}
+        ${itemsDiscount > 0 ? `<tr><td style="color:${INK_FAINT};">原價總計</td><td class="num" style="color:${INK_FAINT};">${fmtMoney(itemsOriginalTotal)}</td></tr>
+        <tr><td style="color:${GOLD};">貨品折扣</td><td class="num" style="color:${GOLD};">−${fmtMoney(itemsDiscount)}</td></tr>` : ""}
+        ${args.discountAmount > 0 || itemsDiscount > 0 ? `<tr><td>小計</td><td class="num">${fmtMoney(subtotal)}</td></tr>` : ""}
         ${vipRow}
         ${discountRow}
         <tr class="grand"><td>應付總額</td><td class="num">${fmtMoney(args.total)}</td></tr>
@@ -635,112 +699,193 @@ function xe(s: string): string {
 }
 
 /**
+ * v2.5.5 第9版：估算 SVG 字寬（畫原價劃線／點線用）——CJK／全形字≈1em、其餘≈0.58em。
+ * librsvg 對 text-decoration 支援唔穩，所以劃線要手畫 <line>，呢個估算只求視覺接近。
+ */
+function estTextWidth(s: string, fontSize: number): number {
+  let w = 0;
+  for (const ch of s) {
+    const c = ch.charCodeAt(0);
+    const wide = (c >= 0x2e80 && c <= 0x9fff) || (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef);
+    w += wide ? fontSize : fontSize * 0.58;
+  }
+  return w;
+}
+
+/**
  * 砌單據 SVG（闊 1024，高按內容伸縮；y-cursor 逐段落）。
- * 版面同 HTML 版同一套精裝紙單語言：奶油底＋白紙卡＋雙金線框＋logo＋訂單/收件資料＋
- * 明細表＋總額（雙金線封口）＋購物金明細（有先用）＋出貨說明＋免責署名。
+ * v2.5.5 第9版（老闆指令 2026-10-11「email個pdf單據，我想用 https://redcode.red/receipt/87 呢隻款式」）：
+ * 版面改用官網 Receipt 頁嘅英式精裝紙單——頂行 No.＋英文日期、右上圓形郵戳（弧形字
+ * RED CODE · HONG KONG · BOUTIQUE）、置中 logo＋FASHION DESIGN · HONG KONG、
+ * 訂單單據／OFFICIAL RECEIPT、PARTICULARS · 訂單資料（label 左・點線・value 右）、
+ * 收件資料盒、ITEMS · 貨品明細（有折扣補「優惠價／原價劃線」）、
+ * 原價總計 → 貨品折扣 → 小計 → VIP → 優惠碼 → 雙金線「總計 TOTAL」、
+ * 購物金明細、右下 RC 火漆印＋多謝支持 WITH GRATITUDE＋單號、簽發 footer。
+ * ※ 老闆明言「全部資訊係pdf單據都要有」：舊版所有欄位（訂單狀態／付款狀態／會員級別／
+ *   收件資料全行／商品·尺碼·數量·單價·小計五欄／購物金扣減·實付現金·餘額（截至）／
+ *   7-10 工作天出貨說明／redcode.red 查單指引）一個冇少，全部保留。
+ * ※ 字型淨用 F serif 栈（同 vipCert 一致，Render 嘅 fonts-noto-cjk 實測用到）；
+ *   弧形字逐字 rotate 定位、原價劃線手畫 <line>（唔靠 textPath／text-decoration，librsvg 最穩）。
  */
 function buildInvoiceSvg(args: InvoiceArgs): string {
   const W = 1024;
   const L = 100; // 內容左緣
   const R = 924; // 內容右緣
   const F = "'Noto Serif CJK TC','Noto Sans CJK TC',serif";
+  const SEAL_RED = "#9C1B32"; // 火漆印深紅（同 Receipt 頁 SEAL_RED 一致）
   const logoFile = findPublicAsset("logo.png");
   const logoUri = logoFile
     ? `data:image/png;base64,${fs.readFileSync(logoFile).toString("base64")}`
     : null;
   const wallet = args.wallet && args.wallet.used > 0 ? args.wallet : null;
+  const vipDiscount = args.vip?.discountAmount ?? 0;
+  const couponDiscount = Math.max(0, args.discountAmount - vipDiscount);
+  const subtotal = args.total + args.discountAmount;
+  const itemsOriginalTotal = itemsOriginalTotalOf(args.items);
+  const itemsDiscount = Math.max(0, itemsOriginalTotal - subtotal);
+  const orderNo = xe(args.orderNo);
 
   const parts: string[] = [];
   let y = 0;
 
-  // ---- 卡頂：logo＋文件標題 ----
-  y = 96;
+  // ---- 頂行：左 No. 單號／右英文日期（Receipt 頁同款） ----
+  y = 110;
+  parts.push(`<text x="${L}" y="${y}" font-family="${F}" font-size="15" fill="${INK_SOFT}" letter-spacing="2">No. ${orderNo}</text>`);
+  parts.push(`<text x="${R}" y="${y}" text-anchor="end" font-family="${F}" font-size="15" fill="${INK_SOFT}" letter-spacing="2">${fmtDateEn(args.createdAt)}</text>`);
+
+  // ---- 右上圓形郵戳：雙圈＋弧形字（逐字 rotate，唔靠 textPath）＋內裡英文日期 ----
+  {
+    const cx = R - 86;
+    const cy = y + 62;
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="58" fill="none" stroke="${GOLD}" stroke-opacity="0.45" stroke-width="1.4"/>`);
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="40" fill="none" stroke="${GOLD}" stroke-opacity="0.3" stroke-width="1"/>`);
+    const arc = "RED CODE · HONG KONG · BOUTIQUE";
+    const a0 = -162; // 起角（頂弧左端）
+    const a1 = -18; // 終角（頂弧右端）
+    for (let i = 0; i < arc.length; i++) {
+      const deg = a0 + ((a1 - a0) * i) / (arc.length - 1);
+      const rad = (deg * Math.PI) / 180;
+      const tx = cx + 49 * Math.cos(rad);
+      const ty = cy + 49 * Math.sin(rad);
+      parts.push(
+        `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" font-family="${F}" font-size="10.5" fill="${GOLD}" transform="rotate(${(deg + 90).toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)})">${xe(arc[i]!)}</text>`,
+      );
+    }
+    parts.push(`<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-family="${F}" font-size="10" fill="${INK_SOFT}" letter-spacing="1">${fmtDateEn(args.createdAt)}</text>`);
+    parts.push(`<text x="${cx}" y="${cy + 14}" text-anchor="middle" font-family="${F}" font-size="8" fill="${INK_FAINT}" letter-spacing="2">HONG KONG</text>`);
+  }
+
+  // ---- 置中 logo＋品牌行＋文件標題 ----
+  y = 168;
   if (logoUri) {
-    // logo.png 1242×698（≈16:9）：以高 112 等比置中
-    parts.push(`<image href="${logoUri}" x="${W / 2 - 100}" y="${y}" width="200" height="112" preserveAspectRatio="xMidYMid meet"/>`);
-    y += 132;
+    // logo.png 1242×698（≈16:9）：以高 104 等比置中
+    parts.push(`<image href="${logoUri}" x="${W / 2 - 93}" y="${y}" width="186" height="104" preserveAspectRatio="xMidYMid meet"/>`);
+    y += 126;
   } else {
     console.error(`[email] 單據 PDF 搵唔到 public/logo.png（${args.orderNo}），用純文字標題`);
     parts.push(`<text x="${W / 2}" y="${y + 40}" text-anchor="middle" font-family="${F}" font-size="30" font-weight="700" fill="${INK}" letter-spacing="6">REDCODE HK直播台</text>`);
     y += 72;
   }
-  parts.push(`<text x="${W / 2}" y="${y + 34}" text-anchor="middle" font-family="${F}" font-size="34" font-weight="700" fill="${INK}" letter-spacing="7">訂單單據</text>`);
-  parts.push(`<text x="${W / 2}" y="${y + 62}" text-anchor="middle" font-family="${F}" font-size="15" fill="${INK_FAINT}" letter-spacing="4">ORDER INVOICE</text>`);
-  y += 92;
+  parts.push(`<text x="${W / 2}" y="${y}" text-anchor="middle" font-family="${F}" font-size="12.5" fill="${INK_FAINT}" letter-spacing="6">FASHION DESIGN · HONG KONG</text>`);
+  y += 46;
+  parts.push(`<text x="${W / 2}" y="${y}" text-anchor="middle" font-family="${F}" font-size="36" font-weight="700" fill="${INK}" letter-spacing="10">訂單單據</text>`);
+  y += 30;
+  parts.push(`<text x="${W / 2}" y="${y}" text-anchor="middle" font-family="${F}" font-size="13" fill="${INK_FAINT}" letter-spacing="5">OFFICIAL RECEIPT</text>`);
+  y += 34;
   // 雙金線（標題下）
   parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD}" stroke-width="1.4"/>`);
   parts.push(`<line x1="${L}" y1="${y + 5}" x2="${R}" y2="${y + 5}" stroke="${GOLD}" stroke-opacity="0.45" stroke-width="1"/>`);
+  y += 44;
+
+  // ---- PARTICULARS · 訂單資料（label 左・點線・value 右；舊版四項＋會員級別全保留） ----
+  parts.push(`<text x="${L}" y="${y}" font-family="${F}" font-size="12" fill="${INK_FAINT}" letter-spacing="3">PARTICULARS · 訂單資料</text>`);
+  parts.push(`<line x1="${L}" y1="${y + 10}" x2="${R}" y2="${y + 10}" stroke="${GOLD_HAIR}" stroke-width="1"/>`);
   y += 40;
-
-  // ---- 訂單資料（兩欄：label 上、value 下） ----
-  const metaRows: [string, string][] = [];
-  metaRows.push(["訂單編號", xe(args.orderNo)], ["落單日期", xe(fmtDateHK(args.createdAt))]);
-  metaRows.push(["訂單狀態", "已確認 ✓"], ["付款狀態", "已確認付款"]);
-  if (args.vip?.tierLabel) metaRows.push(["會員級別", xe(args.vip.tierLabel)]);
-  // 兩兩一組排兩欄
-  for (let i = 0; i < metaRows.length; i += 2) {
-    const pair = metaRows.slice(i, i + 2);
-    pair.forEach(([k, v], j) => {
-      const x = L + j * 420;
-      parts.push(`<text x="${x}" y="${y}" font-family="${F}" font-size="14" fill="${INK_FAINT}" letter-spacing="2">${k}</text>`);
-      parts.push(`<text x="${x}" y="${y + 30}" font-family="${F}" font-size="21" font-weight="600" fill="${INK}">${v}</text>`);
-    });
-    y += 62;
+  const particulars: [string, string, string][] = [
+    ["訂單編號", orderNo, INK],
+    ["落單日期", xe(fmtDateHK(args.createdAt)), INK],
+    ["訂單狀態", "已確認 ✓", GOLD],
+    ["付款狀態", "已確認付款", INK],
+  ];
+  if (args.vip?.tierLabel) particulars.push(["會員級別", xe(args.vip.tierLabel), GOLD]);
+  for (const [k, v, color] of particulars) {
+    parts.push(`<text x="${L}" y="${y}" font-family="${F}" font-size="13.5" fill="${INK_FAINT}" letter-spacing="2">${k}</text>`);
+    parts.push(`<text x="${R}" y="${y}" text-anchor="end" font-family="${F}" font-size="16.5" font-weight="600" fill="${color}">${v}</text>`);
+    const dotX1 = L + estTextWidth(k, 13.5) + 18;
+    const dotX2 = R - estTextWidth(v, 16.5) - 18;
+    if (dotX2 - dotX1 > 40) {
+      parts.push(`<line x1="${dotX1.toFixed(1)}" y1="${y - 4}" x2="${dotX2.toFixed(1)}" y2="${y - 4}" stroke="${GOLD_HAIR}" stroke-width="1" stroke-dasharray="1 5"/>`);
+    }
+    y += 38;
   }
-  y += 14;
+  y += 16;
 
-  // ---- 收件資料盒（極淺金底＋hairline 金框） ----
+  // ---- 收件資料盒（極淺金底＋hairline 金框；姓名·電話／送貨詳情·免運標示全保留） ----
   const deliveryText = fmtDelivery(args.delivery) + (args.vip?.shippingFreeLabel ? `（${args.vip.shippingFreeLabel}）` : "");
-  parts.push(`<rect x="${L}" y="${y}" width="${R - L}" height="86" fill="${GOLD_TINT}" stroke="${GOLD_HAIR}" stroke-width="1"/>`);
-  parts.push(`<text x="${L + 24}" y="${y + 26}" font-family="${F}" font-size="13" fill="${INK_FAINT}" letter-spacing="2">收件資料</text>`);
-  parts.push(`<text x="${L + 24}" y="${y + 52}" font-family="${F}" font-size="19" font-weight="600" fill="${INK}">${xe(args.name)}${args.phone ? ` · ${xe(args.phone)}` : ""}</text>`);
-  parts.push(`<text x="${L + 24}" y="${y + 74}" font-family="${F}" font-size="15" fill="${INK_SOFT}">${xe(deliveryText)}</text>`);
-  y += 116;
+  parts.push(`<rect x="${L}" y="${y}" width="${R - L}" height="92" fill="${GOLD_TINT}" stroke="${GOLD_HAIR}" stroke-width="1"/>`);
+  parts.push(`<text x="${L + 24}" y="${y + 28}" font-family="${F}" font-size="12.5" fill="${INK_FAINT}" letter-spacing="2">收件資料 RECIPIENT</text>`);
+  parts.push(`<text x="${L + 24}" y="${y + 56}" font-family="${F}" font-size="19" font-weight="600" fill="${INK}">${xe(args.name)}${args.phone ? ` · ${xe(args.phone)}` : ""}</text>`);
+  parts.push(`<text x="${L + 24}" y="${y + 80}" font-family="${F}" font-size="15" fill="${INK_SOFT}">${xe(deliveryText)}</text>`);
+  y += 122;
 
-  // ---- 明細表 ----
-  parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD}" stroke-width="1.2"/>`);
+  // ---- ITEMS · 貨品明細（商品·尺碼·數量·單價·小計五欄保留；有折扣補「優惠價／原價劃線」行） ----
+  parts.push(`<text x="${L}" y="${y}" font-family="${F}" font-size="12" fill="${INK_FAINT}" letter-spacing="3">ITEMS · 貨品明細</text>`);
+  parts.push(`<line x1="${L}" y1="${y + 10}" x2="${R}" y2="${y + 10}" stroke="${GOLD}" stroke-width="1.2"/>`);
   const th = (x: number, anchor: string, t: string) =>
-    `<text x="${x}" y="${y + 24}" text-anchor="${anchor}" font-family="${F}" font-size="13" fill="${INK_SOFT}" letter-spacing="2">${t}</text>`;
+    `<text x="${x}" y="${y + 34}" text-anchor="${anchor}" font-family="${F}" font-size="13" fill="${INK_SOFT}" letter-spacing="2">${t}</text>`;
   parts.push(th(L, "start", "商品"));
   parts.push(th(660, "start", "尺碼"));
   parts.push(th(724, "middle", "數量"));
   parts.push(th(816, "end", "單價"));
   parts.push(th(R, "end", "小計"));
-  y += 34;
+  y += 44;
   parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD_HAIR}" stroke-width="1"/>`);
   for (const it of args.items) {
-    const name = it.productName.length > 30 ? `${it.productName.slice(0, 29)}…` : it.productName;
+    const name = it.productName.length > 28 ? `${it.productName.slice(0, 27)}…` : it.productName;
+    const orig = it.originalPrice ?? 0;
+    const discounted = orig > it.price;
     parts.push(`<text x="${L}" y="${y + 30}" font-family="${F}" font-size="17" fill="${INK}">${xe(name)}</text>`);
     parts.push(`<text x="660" y="${y + 30}" font-family="${F}" font-size="16" fill="${INK_SOFT}">${it.size ? xe(it.size) : "—"}</text>`);
     parts.push(`<text x="724" y="${y + 30}" text-anchor="middle" font-family="${F}" font-size="16" fill="${INK_SOFT}">× ${it.quantity}</text>`);
     parts.push(`<text x="816" y="${y + 30}" text-anchor="end" font-family="${F}" font-size="16" fill="${INK}">${fmtMoney(it.price)}</text>`);
     parts.push(`<text x="${R}" y="${y + 30}" text-anchor="end" font-family="${F}" font-size="17" font-weight="600" fill="${INK}">${fmtMoney(it.price * it.quantity)}</text>`);
-    y += 44;
+    if (discounted) {
+      // 優惠價（金）＋原價（劃線手畫 <line>——librsvg 唔保證 text-decoration）
+      const t1 = `優惠價 ${fmtMoney(it.price)}`;
+      const t2 = `原價 ${fmtMoney(orig)}`;
+      parts.push(`<text x="${L}" y="${y + 52}" font-family="${F}" font-size="12.5" fill="${GOLD}">${t1}</text>`);
+      const x2 = L + estTextWidth(t1, 12.5) + 14;
+      parts.push(`<text x="${x2.toFixed(1)}" y="${y + 52}" font-family="${F}" font-size="12.5" fill="${INK_FAINT}">${t2}</text>`);
+      const w2 = estTextWidth(t2, 12.5);
+      parts.push(`<line x1="${x2.toFixed(1)}" y1="${y + 48}" x2="${(x2 + w2).toFixed(1)}" y2="${y + 48}" stroke="${INK_FAINT}" stroke-width="1"/>`);
+    }
+    y += discounted ? 68 : 46;
     parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD_FAINT}" stroke-width="1"/>`);
   }
-  y += 20;
+  y += 22;
 
-  // ---- 總額區 ----
-  const vipDiscount = args.vip?.discountAmount ?? 0;
-  const couponDiscount = Math.max(0, args.discountAmount - vipDiscount);
-  const subtotal = args.total + args.discountAmount;
+  // ---- 總計區：原價總計 → 貨品折扣 → 小計 → VIP → 優惠碼 → 雙金線「總計 TOTAL」 ----
   const totalRow = (label: string, value: string, color: string, bold = false) => {
     parts.push(`<text x="${L}" y="${y + 22}" font-family="${F}" font-size="16" fill="${color}"${bold ? ' font-weight="700"' : ""}>${label}</text>`);
     parts.push(`<text x="${R}" y="${y + 22}" text-anchor="end" font-family="${F}" font-size="17" fill="${color}"${bold ? ' font-weight="700"' : ""}>${value}</text>`);
     y += 34;
   };
-  if (args.discountAmount > 0) totalRow("小計", fmtMoney(subtotal), INK_SOFT);
+  if (itemsDiscount > 0) {
+    totalRow("原價總計", fmtMoney(itemsOriginalTotal), INK_FAINT);
+    totalRow("貨品折扣", `−${fmtMoney(itemsDiscount)}`, GOLD);
+  }
+  if (args.discountAmount > 0 || itemsDiscount > 0) totalRow("小計", fmtMoney(subtotal), INK_SOFT);
   if (vipDiscount > 0) totalRow(`VIP 折扣${args.vip?.tierLabel ? `（${xe(args.vip.tierLabel)}）` : ""}`, `−${fmtMoney(vipDiscount)}`, GOLD);
   if (couponDiscount > 0) totalRow("優惠碼折扣", `−${fmtMoney(couponDiscount)}`, INK_SOFT);
-  // 總額行：上 1px 金線、下 3px 雙金線封口
+  // 總額行：上 1px 金線、下雙金線封口（Receipt 頁同款 double hairline）
   parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD}" stroke-width="1.4"/>`);
   y += 18;
-  parts.push(`<text x="${L}" y="${y + 22}" font-family="${F}" font-size="15" font-weight="700" fill="${INK}" letter-spacing="3">應付總額</text>`);
+  parts.push(`<text x="${L}" y="${y + 24}" font-family="${F}" font-size="15" font-weight="700" fill="${INK}" letter-spacing="3">總計 TOTAL</text>`);
   parts.push(`<text x="${R}" y="${y + 26}" text-anchor="end" font-family="${F}" font-size="30" font-weight="700" fill="${INK}">${fmtMoney(args.total)}</text>`);
   y += 44;
   parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD}" stroke-width="1"/>`);
   parts.push(`<line x1="${L}" y1="${y + 3}" x2="${R}" y2="${y + 3}" stroke="${GOLD}" stroke-width="1"/>`);
-  y += 22;
+  y += 24;
 
   // ---- 購物金明細（有用先出；老闆指令：扣減幾多＋餘額（截至幾時幾點）） ----
   if (wallet) {
@@ -755,16 +900,32 @@ function buildInvoiceSvg(args: InvoiceArgs): string {
         INK_SOFT,
       );
     }
-    y += 6;
+    y += 8;
   }
 
-  // ---- 出貨說明＋署名 ----
+  // ---- 出貨說明（一字冇少） ----
   parts.push(`<text x="${L}" y="${y + 20}" font-family="${F}" font-size="14.5" fill="${INK_SOFT}">同事會安排出貨，一般情況下會喺 7-10 個工作天內寄出，請留意收件。</text>`);
   parts.push(`<text x="${L}" y="${y + 44}" font-family="${F}" font-size="14.5" fill="${INK_SOFT}">如有疑問，請到 redcode.red 「我的訂單」揾返呢張單。</text>`);
-  y += 84;
+  y += 96;
+
+  // ---- 右下：RC 火漆印＋多謝支持 WITH GRATITUDE＋單號（Receipt 頁同款收尾） ----
+  {
+    const cx = R - 72;
+    const cy = y + 44;
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="44" fill="${SEAL_RED}"/>`);
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="36" fill="none" stroke="#fffefb" stroke-opacity="0.55" stroke-width="1"/>`);
+    parts.push(`<text x="${cx}" y="${cy + 9}" text-anchor="middle" font-family="${F}" font-size="24" font-weight="700" fill="#fffefb" letter-spacing="2">RC</text>`);
+    parts.push(`<text x="${R - 140}" y="${cy - 6}" text-anchor="end" font-family="${F}" font-size="20" font-weight="700" fill="${INK}" letter-spacing="4">多謝支持</text>`);
+    parts.push(`<text x="${R - 140}" y="${cy + 16}" text-anchor="end" font-family="${F}" font-size="9" fill="${INK_FAINT}" letter-spacing="3">WITH GRATITUDE</text>`);
+    parts.push(`<text x="${R - 140}" y="${cy + 36}" text-anchor="end" font-family="${F}" font-size="12" fill="${INK_SOFT}" letter-spacing="1">No. ${orderNo}</text>`);
+    y = cy + 64;
+  }
+
+  // ---- 簽發 footer ----
   parts.push(`<line x1="${L}" y1="${y}" x2="${R}" y2="${y}" stroke="${GOLD_FAINT}" stroke-width="1"/>`);
-  parts.push(`<text x="${W / 2}" y="${y + 30}" text-anchor="middle" font-family="${F}" font-size="13" fill="${INK_FAINT}">RedCode Fashion Design · redcode.red</text>`);
-  y += 58;
+  parts.push(`<text x="${W / 2}" y="${y + 28}" text-anchor="middle" font-family="${F}" font-size="12.5" fill="${INK_FAINT}">此單據由 RED CODE 簽發 · 如有查詢請聯絡客服 · redcode.red</text>`);
+  parts.push(`<text x="${W / 2}" y="${y + 50}" text-anchor="middle" font-family="${F}" font-size="12.5" fill="${INK_FAINT}">RedCode Fashion Design</text>`);
+  y += 70;
 
   const H = y + 42; // 底留白
   // 外層：奶油底全版＋白紙卡（8px 位）＋雙框（同 HTML 版 .card/.frame 結構）
@@ -904,7 +1065,7 @@ export async function sendOrderPendingEmail(args: {
         ["付款期限", `<span style="color:${GOLD};">48 小時內</span>`],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet, itemsOriginalTotalOf(args.items))}
       <p style="margin:22px 0 10px;font-weight:700;color:${INK};">付款之後，記得做埋呢步先算完成：</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
         ${[
@@ -974,7 +1135,7 @@ export async function sendOrderApprovedEmail(args: {
         ["送貨方式", fmtDeliveryWithVip(args.delivery, args.vip?.shippingFreeLabel)],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet, itemsOriginalTotalOf(args.items))}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;">
         <tr><td style="background:${GOLD_TINT};border:1px solid ${GOLD_HAIR};padding:14px 18px;">
           <p style="margin:0;font-size:13px;line-height:1.85;color:${INK};">
@@ -1054,7 +1215,7 @@ export async function sendOrderReviewAlertEmail(args: {
         ...(args.promoCode ? ([["優惠碼", escapeHtml(args.promoCode)]] as [string, string][]) : []),
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount)}
+      ${totalsBlock(args.total, args.discountAmount, undefined, undefined, itemsOriginalTotalOf(args.items))}
       ${args.note ? note(`客戶備註：${escapeHtml(args.note)}`) : ""}
       ${note("請主管到內部系統嘅「官網訂單審批」處理呢張訂單。")}
       ${note("審批通過後，系統會自動發確認電郵（附訂單單據）俾客戶。")}
@@ -1225,7 +1386,7 @@ export async function sendOrderCancelledEmail(args: {
         ...((args.walletRefund ?? 0) > 0 ? ([["購物金返還", `<span style="color:${GOLD};font-weight:700;">${fmtMoney(args.walletRefund ?? 0)} 已入返你嘅購物金戶口 ✦</span>`]] as [string, string][]) : []),
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet)}
+      ${totalsBlock(args.total, args.discountAmount, args.vip, wallet, itemsOriginalTotalOf(args.items))}
       <p style="margin:22px 0 0;">如果你其實已經付咗款，請盡快聯絡我哋提供付款證明，同事會幫你跟進；想買返嘅話，亦可以隨時再落單。</p>
       ${ctaButton("再去逛逛", `${siteUrl()}/#/products`)}
       ${note("呢張訂單已經取消，唔使再付款。多謝你對 RedCode 嘅支持 ♥")}
@@ -1275,7 +1436,7 @@ export async function sendGuestOrderEmail(args: {
         ["付款死線", `<span style="color:${ERROR};font-weight:700;">${fmtDateHK(args.expiresAt)} 前（30 分鐘內）</span>`],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, 0)}
+      ${totalsBlock(args.total, 0, undefined, undefined, itemsOriginalTotalOf(args.items))}
       ${ctaButton("💳 立即網上付款", args.magicUrl)}
       <p style="margin:4px 0 0;text-align:center;font-size:12.5px;line-height:1.9;color:${INK_SOFT};">支援信用卡／AlipayHK／FPS／PayMe，由 Airwallex 安全處理，本站唔會儲存你嘅卡資料。</p>
       ${warnBox("溫馨提示：訪客訂單保留 <b>30 分鐘</b>——逾時未付款訂單會自動取消，貨品會放返出嚟發售。")}
@@ -1382,7 +1543,7 @@ export async function sendOrderPaidOnlineEmail(args: {
         ["取貨方式", fmtDeliveryWithVip(args.delivery, args.vip?.shippingFreeLabel)],
       ])}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, vipDiscount, args.vip, walletInfo)}
+      ${totalsBlock(args.total, vipDiscount, args.vip, walletInfo, itemsOriginalTotalOf(args.items))}
       ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
       ${note("你嘅付款資料由安全支付平台處理，本站不會儲存信用卡資料，請放心使用。")}
       ${feeDisclaimer()}
@@ -1458,7 +1619,7 @@ export async function sendOrderRefundedEmail(args: {
       <p style="margin:0;">${refundLine}</p>
       ${!walletOnly && walletRefund > 0 ? `<p style="margin:10px 0 0;color:${GOLD};font-weight:700;">購物金 ${fmtMoney(walletRefund)} 已全數入返你嘅購物金戶口 ✦</p>` : ""}
       ${itemsTable(args.items)}
-      ${totalsBlock(args.total, vipDiscount, args.vip, wallet)}
+      ${totalsBlock(args.total, vipDiscount, args.vip, wallet, itemsOriginalTotalOf(args.items))}
       ${ctaButton("查看訂單", `${siteUrl()}/#/orders`)}
       ${note("如有疑問，請到 redcode.red 「我的訂單」揾返呢張單，或者聯絡我哋客服跟進。")}
       ${feeDisclaimer()}
@@ -1904,7 +2065,10 @@ export async function sendWalletTopupCancelledEmail(args: {
   }
 }
 
-/** ⑦f 內部待批核通知（充值單已付款／已上傳截圖，等官網後台或 WMS 批） */
+/** ⑦f 內部待批核通知（充值單已付款／已上傳截圖，等 WMS 官網中心批）
+ *  v2.5.5 第9版（老闆指示 2026-10-11）：「購物金充值待核實唔洗發email去leader@ows.redcode.red」——
+ *  唔再預設寄 leader@；只有明確設咗 REVIEW_ALERT_EMAIL 環境變數先會寄，未設就直接 skip（回 ok，唔當失敗）。
+ *  批核入口搬咗去 WMS 官網中心「購物金批核」tab。 */
 export async function sendWalletTopupReviewAlertEmail(args: {
   topupNo: string;
   memberName: string;
@@ -1915,7 +2079,11 @@ export async function sendWalletTopupReviewAlertEmail(args: {
   price: number;
   channel: string;
 }): Promise<SendResult> {
-  const to = process.env.REVIEW_ALERT_EMAIL || "leader@ows.redcode.red";
+  // v2.5.5 第9版：冇明確收件人就唔寄（同 v2.5.4 訂單待審批通知一致）
+  const to = (process.env.REVIEW_ALERT_EMAIL || "").trim();
+  if (!to) {
+    return { ok: true };
+  }
   try {
     const topupNo = escapeHtml(args.topupNo);
     const content = `

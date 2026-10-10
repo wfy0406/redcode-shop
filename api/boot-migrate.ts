@@ -530,6 +530,9 @@ ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "cancelledQty" integer NOT NUL
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangedAt" timestamp;
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangeNote" text;
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangedBy" varchar(64);
+-- v2.5.5 第9版（老闆指令 2026-10-11）：「全網都要寫翻原價同優惠價」——
+-- 落單嗰刻快照貨品原價（products.price；price 欄先有折扣實收價）。舊單 NULL → 顯示時當無折扣。
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "originalPrice" integer;
 -- 出貨批次表：一單可以分幾次出貨；emailedAt＝出貨信 debounce 10 分鐘批次寄出記錄
 CREATE TABLE IF NOT EXISTS "orderShipments" (
   id serial PRIMARY KEY,

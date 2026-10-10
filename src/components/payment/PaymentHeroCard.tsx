@@ -235,7 +235,7 @@ export default function PaymentHeroCard(props: {
   /** v2.1.0（VIP+免運）：VIP 折扣金額（港元整數）＋級別 label；有折扣先顯示，排優惠碼折扣行上面 */
   vipDiscountAmount?: number;
   vipTierLabel?: string;
-  items?: { name: string; quantity: number; price: number }[];
+  items?: { name: string; quantity: number; price: number; originalPrice?: number | null }[];
   deliveryLabel?: string;
   /** 張單嘅單據頁完整 URL——有傳就喺卡尾出真二維碼，掃完開返張單（2026-09-29） */
   receiptUrl?: string;
@@ -254,8 +254,16 @@ export default function PaymentHeroCard(props: {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const date = splitDate(createdAt);
   const hasItems = Array.isArray(items) && items.length > 0;
-  const hasDiscount = typeof discountAmount === 'number' && discountAmount > 0;
+  // v2.5.5 第9版 bugfix：discountAmount 本身已包 VIP 部分——優惠碼行要減返 VIP，唔係會重複顯示
+  const couponDiscount = Math.max(0, (discountAmount ?? 0) - (vipDiscountAmount ?? 0));
+  const hasDiscount = couponDiscount > 0;
   const hasVipDiscount = typeof vipDiscountAmount === 'number' && vipDiscountAmount > 0;
+  // v2.5.5 第9版（老闆指令「全網都要寫翻原價同優惠價」）：貨品原價總和＋貨品折扣
+  const itemsOriginalTotal = hasItems
+    ? (items ?? []).reduce((s, i) => s + (i.originalPrice ?? i.price) * i.quantity, 0)
+    : 0;
+  const itemsSubtotal = hasItems ? (items ?? []).reduce((s, i) => s + i.price * i.quantity, 0) : 0;
+  const itemsDiscount = Math.max(0, itemsOriginalTotal - itemsSubtotal);
   // v2.5.5 第8版：購物金扣減行（現金實付＝總計 − 購物金，同後端收款口徑一致）
   const hasWallet = walletUsed > 0;
   const walletCashDue = Math.max(0, total - walletUsed);
@@ -518,8 +526,15 @@ export default function PaymentHeroCard(props: {
                           fontVariantNumeric: 'tabular-nums',
                         }}
                       >
+                        {/* v2.5.5 第9版（老闆指令「全網都要寫翻原價同優惠價」）：有折扣嘅貨寫原價（刪除線）＋優惠價 */}
+                        {(item.originalPrice ?? 0) > item.price && (
+                          <span style={{ display: 'block', fontSize: 10, color: INK_FAINT, marginBottom: 1 }}>
+                            原價 <span style={{ textDecoration: 'line-through' }}>{fmtMoney(item.originalPrice ?? item.price)}</span>
+                          </span>
+                        )}
                         <span style={{ color: INK_SOFT, marginRight: 12 }}>
                           {item.quantity} × {fmtMoney(item.price)}
+                          {(item.originalPrice ?? 0) > item.price ? '（優惠價）' : ''}
                         </span>
                         {fmtMoney(item.price * item.quantity)}
                       </span>
@@ -529,8 +544,29 @@ export default function PaymentHeroCard(props: {
               </div>
             )}
 
-            {/* ---- 折扣 + 總計（會計式雙 hairline） ---- */}
+            {/* ---- 原價 → 折扣 → 總計（會計式雙 hairline） ---- */}
             <div style={{ marginTop: 22 }}>
+              {/* v2.5.5 第9版：有貨品折扣先出「原價總計 → 貨品折扣」兩行（同單據頁口徑一致） */}
+              {itemsDiscount > 0 && (
+                <>
+                  <div className="flex items-baseline justify-between" style={{ padding: '4px 0 6px' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                      原價總計 Original
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtMoney(itemsOriginalTotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between" style={{ padding: '4px 0 6px' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: INK_SOFT }}>
+                      貨品折扣 Items Discount
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 13, color: '#8a6d1f', fontVariantNumeric: 'tabular-nums' }}>
+                      −{fmtMoney(itemsDiscount)}
+                    </span>
+                  </div>
+                </>
+              )}
               {/* v2.1.0：VIP 折扣行排優惠碼折扣行上面（落單次序先 VIP 後 coupon） */}
               {hasVipDiscount && (
                 <div className="flex items-baseline justify-between" style={{ padding: '4px 0 6px' }}>
@@ -549,7 +585,7 @@ export default function PaymentHeroCard(props: {
                     折扣 Discount
                   </span>
                   <span style={{ fontFamily: MONO, fontSize: 13, color: INK, fontVariantNumeric: 'tabular-nums' }}>
-                    −{fmtMoney(discountAmount)}
+                    −{fmtMoney(couponDiscount)}
                   </span>
                 </div>
               )}

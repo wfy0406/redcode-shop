@@ -341,6 +341,7 @@ async function handlePaidOnline(
         productName: it.productName,
         size: it.size,
         price: it.price,
+        originalPrice: it.originalPrice,
         quantity: it.quantity,
       }));
       const delivery = {

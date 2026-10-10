@@ -287,6 +287,9 @@ export const orderItems = pgTable("orderItems", {
   sku: varchar("sku", { length: 64 }).notNull(),
   size: varchar("size", { length: 64 }),
   price: integer("price").notNull(),
+  // v2.5.5 第9版（老闆指令 2026-10-11「全網都要寫翻原價同優惠價」）：落單嗰刻嘅貨品原價快照
+  // （products.price；price 欄係實收價＝discountPrice ?? price）。舊單 NULL → 顯示當無折扣。
+  originalPrice: integer("originalPrice"),
   quantity: integer("quantity").notNull(),
   // ===== v2.4.0（Wave 2 出貨同步，WMS → 官網 shipment-callback）=====
   // 逐件出貨狀態：'pending'（待寄出）→ 'shipped'（已寄出／已交收／儲貨中）｜'cancelled'（WMS 刪貨）

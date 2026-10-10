@@ -58,8 +58,8 @@ function recipientOf(order: {
   };
 }
 
-function toEmailItem(it: { productName: string; size: string | null; price: number; quantity: number }): OrderEmailItem {
-  return { productName: it.productName, size: it.size, price: it.price, quantity: it.quantity };
+function toEmailItem(it: { productName: string; size: string | null; price: number; quantity: number; originalPrice?: number | null }): OrderEmailItem {
+  return { productName: it.productName, size: it.size, price: it.price, originalPrice: it.originalPrice ?? null, quantity: it.quantity };
 }
 
 /** 全單未取消貨品係咪全部寄出（shipped）；係 → 回 true */
