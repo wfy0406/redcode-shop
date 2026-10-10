@@ -78,6 +78,8 @@ export function ItemShipChips({
     shipStatus?: string;
     shipmentId?: number | null;
     cancelReason?: string | null;
+    /** v2.5.4：同款多件部分取消 — 已取消件數（>0 且未全取消 → 「部分取消 X 件」chip） */
+    cancelledQty?: number | null;
     staffChangedAt?: string | Date | null;
     staffChangeNote?: string | null;
   };
@@ -86,6 +88,20 @@ export function ItemShipChips({
 }) {
   const chips: React.ReactNode[] = [];
   const status = item.shipStatus ?? 'pending';
+  // v2.5.4：同款多件部分取消（未全取消先顯示；全取消咗就由「已取消」chip 話事）
+  const partialQty = status !== 'cancelled' && (item.cancelledQty ?? 0) > 0 ? (item.cancelledQty ?? 0) : 0;
+  if (partialQty > 0) {
+    chips.push(
+      <span
+        key="partial"
+        className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+        style={{ color: '#FFB020', borderColor: 'rgba(255,176,32,0.4)' }}
+      >
+        <XCircle size={11} aria-hidden="true" />
+        部分取消 {partialQty} 件
+      </span>,
+    );
+  }
   if (status === 'shipped') {
     const isStorage =
       item.shipmentId != null && methodMap?.get(item.shipmentId) === 'storage';
@@ -145,6 +161,12 @@ export function ItemShipChips({
     notes.push(
       <span key="cr" className="block text-[12px]" style={{ color: '#FF6B5B' }}>
         取消原因：{item.cancelReason}
+      </span>,
+    );
+  } else if (partialQty > 0 && item.cancelReason) {
+    notes.push(
+      <span key="crp" className="block text-[12px]" style={{ color: '#FFB020' }}>
+        部分取消原因：{item.cancelReason}
       </span>,
     );
   }

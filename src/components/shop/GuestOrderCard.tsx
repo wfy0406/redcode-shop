@@ -34,6 +34,8 @@ export interface GuestOrderPayload {
     /** v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改 */
     shipStatus?: string;
     cancelReason?: string | null;
+    /** v2.5.4：同款多件部分取消 — 已取消件數 */
+    cancelledQty?: number | null;
     staffChangedAt?: string | null;
     staffChangeNote?: string | null;
   }[];

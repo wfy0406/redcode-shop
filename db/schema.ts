@@ -296,6 +296,8 @@ export const orderItems = pgTable("orderItems", {
   // WMS 刪貨：取消原因必填（客人睇到）＋時間
   cancelReason: text("cancelReason"),
   cancelledAt: timestamp("cancelledAt"),
+  // v2.5.4（老闆指示）：同款多件部分取消 — 已取消件數（0 冇取消｜< quantity 部分取消｜= quantity + shipStatus cancelled 全取消）
+  cancelledQty: integer("cancelledQty").notNull().default(0),
   // WMS 改貨品資料（如改貨號）：客人所有訂單出口出「員工更改」chip＋更改說明
   staffChangedAt: timestamp("staffChangedAt"),
   staffChangeNote: text("staffChangeNote"),

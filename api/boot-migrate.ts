@@ -524,6 +524,9 @@ ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "shipStatus" varchar(16) NOT N
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "shipmentId" bigint;
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "cancelReason" text;
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "cancelledAt" timestamp;
+-- v2.5.4（老闆指示 2026-10-10）：同款多件部分取消 — cancelledQty = 已取消件數（0 = 冇取消；
+-- < quantity = 部分取消；= quantity 且 shipStatus=cancelled = 全取消）。WMS 回調帶 remainQty 絕對值，冪等。
+ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "cancelledQty" integer NOT NULL DEFAULT 0;
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangedAt" timestamp;
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangeNote" text;
 ALTER TABLE "orderItems" ADD COLUMN IF NOT EXISTS "staffChangedBy" varchar(64);
@@ -559,7 +562,7 @@ CREATE TABLE IF NOT EXISTS "walletPackages" (
   "isActive" boolean NOT NULL DEFAULT true,
   "createdAt" timestamp NOT NULL DEFAULT now()
 );
--- 充值單（48 小時付款期；批核先入帳）
+-- 充值單（30 分鐘付款期；批核先入帳）
 CREATE TABLE IF NOT EXISTS "walletTopups" (
   id serial PRIMARY KEY,
   "topupNo" varchar(32) NOT NULL UNIQUE,

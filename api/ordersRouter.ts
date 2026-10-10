@@ -90,6 +90,8 @@ async function guestOrderPayload(
       // v2.4.0（Wave 2）：逐件出貨狀態／取消原因／員工更改標示
       shipStatus: it.shipStatus,
       cancelReason: it.cancelReason,
+      // v2.5.4：同款多件部分取消 — 已取消件數（0＝冇取消）
+      cancelledQty: it.cancelledQty ?? 0,
       staffChangedAt: it.staffChangedAt?.toISOString() ?? null,
       staffChangeNote: it.staffChangeNote,
     })),
@@ -854,7 +856,10 @@ export const ordersRouter = createRouter({
       if (!phone || order.guestPhone !== phone) {
         throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
       }
-      return { kind: "guest" as const, ...guestOrderPayload(order, { includeToken: true }) };
+      // v2.5.4 hotfix（老闆指示 msg72 黑屏）：guestOrderPayload 係 async——
+      // 唔 await 就 spread 會得返 { kind:"guest" } 空殼（Promise 冇可列舉屬性），
+      // 前端 items undefined → order.items.map 直接炸 → 成頁黑屏。一定要 await。
+      return { kind: "guest" as const, ...(await guestOrderPayload(order, { includeToken: true })) };
     }),
 
   /**

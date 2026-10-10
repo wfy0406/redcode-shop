@@ -41,7 +41,21 @@ import {
  *   → 兩條路都係「待批核」：官網後台／WMS 批准先入帳（approveTopupCore 冪等）
  * ─ 會員睇返自己：餘額、充值紀錄（狀態 chip＋到期時間）、購物金流水賬
  * ─ Airwallex 回跳 ?paid=1：橫額提示＋每 5 秒 poll 一次（webhook 未必即刻到）
+ * ─ 2026-10-10（老闆指令「購物金手續費唔洗客人比」）：網上付款區加返全網統一
+ *   手續費提示＋指明「手動過數」零平台手續費。注意：網上通道嘅手續費係 Airwallex
+ *   商戶後台 Surcharge 規則加嘅（賬戶級、按支付方式生效，API 冇逐筆豁免）——
+ *   本站傳嘅金額永遠係套票原價；要連網上通道都免費，要喺 Airwallex 後台
+ *   （Payments → Settings → Surcharge rate）關閉／調整規則，唔係改 code。
  */
+
+/**
+ * 網上付款手續費提示（2026-10-10 老闆指令）：同全網 FEE_NOTE 逐字一致。
+ * 手續費係 Airwallex 商戶賬戶後台嘅 Surcharge 規則加嘅（按支付方式全賬戶生效，
+ * API 冇得逐筆豁免）——本站 code 傳嘅金額由頭到尾都係套票原價 topup.price。
+ * 想零手續費：用下面「手動過數」（FPS／銀行轉賬），平台唔收任何費用。
+ */
+const TOPUP_ONLINE_FEE_NOTE =
+  '以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準。';
 
 /** 充值單狀態 chip 配色（同後台 statusMeta 嘅口吻） */
 const TOPUP_STATUS_META: Record<string, { label: string; className: string }> = {
@@ -356,7 +370,8 @@ export default function WalletTopup() {
           }}
         />
         <div className="relative grid items-center gap-8 px-6 py-12 md:grid-cols-[1.4fr_1fr] md:px-12 md:py-16">
-          <div>
+          {/* v2.5.3（老闆實測手機版）：右邊留位畀浮角公仔，標題唔會同佢疊住 */}
+          <div className="pr-24 md:pr-0">
             <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-gold">
               RedCode Wallet
             </p>
@@ -389,7 +404,12 @@ export default function WalletTopup() {
             </div>
           </div>
           {/* 真・透明動畫 Glo Glo 抱金幣（WebM alpha → 動畫 WebP → poster 三層） */}
-          <div className="mx-auto w-48 md:w-64">
+          {/* v2.5.3（老闆實測手機版）：手機唔再獨立成行漂喺中間 — 收成右上角小公仔；
+              桌面版照舊 grid 右欄 w-64 唔郁 */}
+          <div
+            className="absolute right-3 top-4 w-24 md:relative md:right-auto md:top-auto md:mx-auto md:w-64"
+            style={{ filter: 'drop-shadow(0 6px 18px rgba(0,0,0,0.45))' }}
+          >
             <GloCutout
               videoSrc="/wallet/glo-wallet-alpha.webm"
               animSrc="/wallet/glo-wallet-anim.webp"
@@ -568,6 +588,10 @@ export default function WalletTopup() {
                 信用卡 / AlipayHK / FPS / PayMe，由 Airwallex 安全處理；
                 付款成功後充值單自動轉「待批核」，唔使上傳截圖。
               </p>
+              <p className="mt-2 text-[12px] leading-relaxed text-txt-3">
+                {TOPUP_ONLINE_FEE_NOTE}
+                <span className="text-gold">想一分手續費都唔使畀？用下面「手動過數」，付幾多入幾多。</span>
+              </p>
               {payOnlineError && (
                 <p role="alert" className="mt-3 text-[13px] text-pink-soft">
                   {payOnlineError}
@@ -585,7 +609,7 @@ export default function WalletTopup() {
           )}
 
           <p className="mt-8 text-center font-mono text-xs tracking-[0.2em] text-txt-3">
-            或者手動過數
+            或者手動過數 · <span className="text-gold">零平台手續費 ✦ 付幾多入幾多</span>
           </p>
 
           {/* 收款資料（同 /payment 同一來源）＋上傳截圖 */}

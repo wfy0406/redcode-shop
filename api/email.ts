@@ -7,7 +7,9 @@
  * - RESEND_API_KEY：Resend 攞嘅 API key（冇設＝全部 email 靜默 skip，網站照常運作）
  * - EMAIL_FROM：寄件人，例如 `RedCode官方購物網站 <noreply@ows.redcode.red>`（域名要喺 Resend 驗證咗先用得）
  * - SITE_URL：網站地址，預設 https://redcode.red（email 入面 logo 同掣嘅連結用）
- * - REVIEW_ALERT_EMAIL：訂單待審批通知收件人，預設 leader@ows.redcode.red（2026-08-04 加）
+ * - REVIEW_ALERT_EMAIL：購物金待批核通知收件人，預設 leader@ows.redcode.red（2026-08-04 加）
+ *   ※ v2.5.4（老闆指示 2026-10-10）：訂單待審批通知已停寄（sendOrderReviewAlertEmail 唔設預設收件人，
+ *      一定要明確設 REVIEW_ALERT_EMAIL 先寄）；購物金待批核通知維持原有預設。
  *
  * 所有 sendXxxEmail 都係 never-throw：任何失敗（包括砌 HTML 出錯）淨係 console.error 兼回 SendResult，
  * 唔會阻到主流程（落單／審批唔會因為寄信失敗而彈錯）。
@@ -730,8 +732,9 @@ export async function sendOrderApprovedEmail(args: {
 
 /**
  * ④ 訂單待審批通知（2026-08-04 Glo 要求）：
- * 客人（或員工代客）上傳付款截圖、訂單轉 payment_review 嗰刻，發去審批負責人
- * （預設 leader@ows.redcode.red，可用 REVIEW_ALERT_EMAIL 環境變數改）。
+ * 客人（或員工代客）上傳付款截圖、訂單轉 payment_review 嗰刻，發去審批負責人。
+ * v2.5.4（老闆指示 2026-10-10）：唔再預設寄 leader@ows.redcode.red ——
+ *   只有明確設咗 REVIEW_ALERT_EMAIL 環境變數先會寄；未設就直接 skip（回 ok，唔當失敗）。
  * 內含完整客戶資料＋訂單內容（編號／時間／姓名／電話／Email／取貨／明細／總額／備註）。
  * 2026-08-04（Glo 更新）：唔再放「前往後台審批」按鈕——信內文字提示主管到內部系統嘅
  * 「官網訂單審批」處理；跟返官網統一信件格式（brandedEmail 精裝紙單模板）。
@@ -749,7 +752,9 @@ export async function sendOrderReviewAlertEmail(args: {
   total: number;
   discountAmount: number;
 }): Promise<SendResult> {
-  const to = process.env.REVIEW_ALERT_EMAIL || "leader@ows.redcode.red";
+  // v2.5.4：冇明確收件人就唔寄（老闆指示：訂單待審批唔使再寄 leader@）
+  const to = (process.env.REVIEW_ALERT_EMAIL || "").trim();
+  if (!to) return { ok: true };
   try {
     const orderNo = escapeHtml(args.orderNo);
     const content = `
@@ -1803,7 +1808,7 @@ export async function sendOrderItemCancelledEmail(args: {
   to: string;
   name: string;
   orderNo: string;
-  items: (OrderEmailItem & { cancelReason: string })[];
+  items: (OrderEmailItem & { cancelReason: string; /** v2.5.4：部分取消時＝今次取消咗幾多件（同款多件） */ partialQty?: number })[];
   /** true＝全單貨品都取消晒（訂單轉已取消） */
   allCancelled: boolean;
 }): Promise<SendResult> {
@@ -1813,7 +1818,7 @@ export async function sendOrderItemCancelledEmail(args: {
       .map(
         (it) => `
         <tr>
-          <td style="padding:8px 10px;border-bottom:1px solid ${GOLD_FAINT};">${escapeHtml(it.productName)}${it.size ? `（${escapeHtml(it.size)}）` : ""} × ${it.quantity}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid ${GOLD_FAINT};">${escapeHtml(it.productName)}${it.size ? `（${escapeHtml(it.size)}）` : ""} × ${it.partialQty ?? it.quantity}${it.partialQty ? `<span style="color:${INK_FAINT};font-size:12px;">（同款部分取消，原訂 ${it.quantity} 件）</span>` : ""}</td>
           <td style="padding:8px 10px;border-bottom:1px solid ${GOLD_FAINT};color:${ERROR};">${escapeHtml(it.cancelReason)}</td>
         </tr>`,
       )

@@ -13,14 +13,25 @@
  *                   訂單 shipped→approved＋清 shippedAt。**已寄咗出貨信先寄致歉信**，未寄就靜默反轉。
  *   item_cancelled  WMS 刪貨品：items[].cancelReason 必填（客人睇到）→ 件貨轉 cancelled＋回補庫存；
  *                   全單件數都取消 → 訂單轉 cancelled；寄貨品取消信（退款另案，唔自動退）。
- *   item_updated    WMS 改貨品資料：items[].changes（sku/productName/size 擇一或以上）＋
+ *   item_updated    WMS 改貨品資料：items[].changes（sku/productName/size/price 擇一或以上）＋
  *                   changeNote 必填（客人睇到）→ 更新快照＋staffChanged* 欄；寄員工更改信。
+ *                   v2.3.16（老闆指示）：price＝整數港元，改價錢會重計訂單 total；
+ *                   日期／場次官網冇欄，WMS 寫入 changeNote；淨說明更新（冇欄位改）都收得。
+ *   sf_updated      WMS 批准改順豐單號：body.sfNo（新）＋oldSfNo?（舊），唔使 items →
+ *                   更新最新一個生效中嘅順豐批次（shipMethod='sf' 且 reversedAt IS NULL）嘅 sfNo；
+ *                   唔寄 email（WMS 已推播員工），淨落 audit（order.sfUpdated，原→新單號＋經手人）。
+ *                   搵唔到生效批次 → 404 明確報錯，WMS 會留痕【官網回調失敗】。
  *
  * 冪等：每件貨都係 conditional update（pending→shipped、shipped→pending、pending→cancelled），
  *   重複推送郁 0 行 → skip 唔會郁兩次；回應入面列明 skipped 畀 WMS 對數。
  * 每次回調都寫審計日誌（actorRole=system，detail 帶 WMS 同事名）；寄信失敗淨係 log 唔 throw。
+ *
+ * v2.5.4（老闆指示 2026-10-10）：舊單（2026-10-09 前匯入）WMS 嗰邊冇 orderItemId ——
+ *   items[] 而家接受 sku（貨號）對照：orderItems.sku 完全相同、或者 "sku-size" 完整寫法都中；
+ *   多件命中優先揀符合動作來源狀態嗰件（shipped/item_cancelled 要 pending、unshipped 要 shipped）。
+ *   對唔到 → 400 明確報錯（WMS 會留痕【官網回調失敗】），唔再靜默跳過。
  */
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { getDb } from "./queries/connection";
 import { orders, orderItems, orderShipments, products } from "@db/schema";
@@ -77,20 +88,59 @@ export async function wmsShipmentCallback(c: Context) {
   const actorName = typeof b.actorName === "string" ? b.actorName.slice(0, 64) : "";
   if (
     !orderNo ||
-    !["shipped", "unshipped", "item_cancelled", "item_updated"].includes(action)
+    !["shipped", "unshipped", "item_cancelled", "item_updated", "sf_updated"].includes(action)
   ) {
     return c.json(
-      { ok: false, error: "需要 orderNo + action（shipped|unshipped|item_cancelled|item_updated）" },
+      { ok: false, error: "需要 orderNo + action（shipped|unshipped|item_cancelled|item_updated|sf_updated）" },
       400,
     );
   }
+
+  // ─── action=sf_updated：WMS 批准改順豐單號 → 官網最新一個生效中嘅順豐批次跟改 ─────
+  // 唔使 items（成張單嘅順豐單號層面，舊單冇 orderItemId 都搞得）；唔寄 email（WMS 會推播員工），淨落 audit。
+  // 搵唔到生效中嘅順豐批次 → 404 明確報錯（WMS 會寫【官網回調失敗】＋推播主管，唔靜默）
+  if (action === "sf_updated") {
+    const newSfNo = typeof b.sfNo === "string" ? b.sfNo.trim().slice(0, 64) : "";
+    const oldSfNo = typeof b.oldSfNo === "string" ? b.oldSfNo.trim().slice(0, 64) : "";
+    if (!newSfNo) return c.json({ ok: false, error: "sf_updated 需要 sfNo（新單號）" }, 400);
+    const db = getDb();
+    const order = await db.query.orders.findFirst({ where: eq(orders.orderNo, orderNo) });
+    if (!order) return c.json({ ok: false, error: `搵唔到訂單 ${orderNo}` }, 404);
+    const batches = await db
+      .select()
+      .from(orderShipments)
+      .where(
+        and(
+          eq(orderShipments.orderId, order.id),
+          eq(orderShipments.shipMethod, "sf"),
+          isNull(orderShipments.reversedAt),
+        ),
+      )
+      .orderBy(desc(orderShipments.id))
+      .limit(1);
+    const batch = batches[0];
+    if (!batch) {
+      return c.json({ ok: false, error: `訂單 ${orderNo} 冇生效中嘅順豐批次，官網未更新（請人手核對）` }, 404);
+    }
+    await db.update(orderShipments).set({ sfNo: newSfNo }).where(eq(orderShipments.id, batch.id));
+    void logAudit({
+      actorId: null,
+      actorRole: "system",
+      actorNameFallback: "WMS",
+      action: "order.sfUpdated",
+      targetType: "order",
+      targetId: order.orderNo,
+      detail:
+        `WMS 改順豐單號（訂單 ${order.orderNo}，批次 #${batch.id}）：` +
+        `原單號 ${oldSfNo || batch.sfNo || "（冇）"} → 新單號 ${newSfNo}` +
+        `${actorName ? `；經手：${actorName}` : ""}`,
+    });
+    console.log(`[wms] sf_updated ${orderNo} batch#${batch.id} ${oldSfNo || batch.sfNo || "-"}→${newSfNo}`);
+    return c.json({ ok: true, batchId: batch.id });
+  }
   const rawItems = Array.isArray(b.items) ? (b.items as Record<string, unknown>[]) : [];
   if (rawItems.length === 0) {
-    return c.json({ ok: false, error: "items 唔可以係空（最少一件 orderItemId）" }, 400);
-  }
-  const itemIds = rawItems.map((it) => Number(it.orderItemId));
-  if (itemIds.some((n) => !Number.isInteger(n) || n <= 0)) {
-    return c.json({ ok: false, error: "items[].orderItemId 要係正整數" }, 400);
+    return c.json({ ok: false, error: "items 唔可以係空（最少一件 orderItemId 或 sku）" }, 400);
   }
 
   const db = getDb();
@@ -104,8 +154,35 @@ export async function wmsShipmentCallback(c: Context) {
   if (!order) {
     return c.json({ ok: false, error: `搵唔到訂單 ${orderNo}` }, 404);
   }
-  // 核實啲 item 真係屬於呢張單（防 WMS 傳錯 id 郁咗其他單嘅貨）
+
+  // v2.5.4：逐件解析 — orderItemId（正整數）直接用；冇就用 sku 對 orderItems（舊單冇貨品ID嘅補救）
   const owned = new Map(order.items.map((it) => [it.id, it]));
+  const resolved: { id: number; raw: Record<string, unknown>; via: "id" | "sku" }[] = [];
+  const unresolved: string[] = [];
+  for (const it of rawItems) {
+    const n = Number(it.orderItemId);
+    if (Number.isInteger(n) && n > 0) {
+      resolved.push({ id: n, raw: it, via: "id" });
+      continue;
+    }
+    const sku = typeof it.sku === "string" ? it.sku.trim() : "";
+    if (!sku) {
+      unresolved.push("（冇 orderItemId 亦冇 sku）");
+      continue;
+    }
+    const cand = order.items.filter((x) => x.sku === sku || (x.size ? `${x.sku}-${x.size}` : x.sku) === sku);
+    // 多件命中：優先揀動作期望嘅來源狀態（shipped/item_cancelled 由 pending 郁；unshipped 由 shipped 郁）
+    const want = action === "unshipped" ? "shipped" : action === "item_updated" ? null : "pending";
+    const hit = (want ? cand.find((x) => x.shipStatus === want) : undefined) ?? cand[0];
+    if (hit) resolved.push({ id: hit.id, raw: it, via: "sku" });
+    else unresolved.push(`sku:${sku}`);
+  }
+  if (unresolved.length > 0) {
+    return c.json({ ok: false, error: `items 對唔到訂單 ${orderNo} 嘅貨品：${unresolved.join("、")}` }, 400);
+  }
+  const itemIds = resolved.map((r) => r.id);
+
+  // 核實啲 item 真係屬於呢張單（防 WMS 傳錯 id 郁咗其他單嘅貨）
   const unknown = itemIds.filter((id) => !owned.has(id));
   if (unknown.length > 0) {
     return c.json({ ok: false, error: `orderItemId ${unknown.join(",")} 唔屬於訂單 ${orderNo}` }, 400);
@@ -282,10 +359,13 @@ export async function wmsShipmentCallback(c: Context) {
   }
 
   // ─── action=item_cancelled：WMS 刪貨品（原因必填，客人睇到）────────────────
+  // v2.5.4（老闆指示）：同款多件要分「部分取消／已取消」— WMS 帶 remainQty（件貨喺 WMS 仲剩幾多件，
+  // 絕對值，retry 唔會重複扣）。remainQty > 0 → 部分取消（cancelledQty 留痕，shipStatus 維持 pending）；
+  // remainQty = 0／冇帶 → 全取消（舊行為）。張單全部貨品都取消晒先轉 cancelled。
   if (action === "item_cancelled") {
     const cancelMap = new Map<number, string>();
-    for (const it of rawItems) {
-      const id = Number(it.orderItemId);
+    const remainQtyMap = new Map<number, number | null>();
+    for (const { id, raw: it } of resolved) {
       const reason = typeof it.cancelReason === "string" ? it.cancelReason.trim() : "";
       if (!reason) {
         return c.json(
@@ -294,27 +374,57 @@ export async function wmsShipmentCallback(c: Context) {
         );
       }
       cancelMap.set(id, reason);
+      const rq = it.remainQty;
+      remainQtyMap.set(id, typeof rq === "number" && Number.isInteger(rq) && rq >= 0 ? rq : null);
     }
     const cancelledIds: number[] = [];
+    const partialIds: { id: number; cancelledQty: number; delta: number }[] = [];
     const skipped: { id: number; reason: string }[] = [];
     let allCancelledNow = false;
     await db.transaction(async (tx) => {
       for (const [id, reason] of cancelMap) {
-        const [u] = await tx
-          .update(orderItems)
-          .set({ shipStatus: "cancelled", cancelReason: reason, cancelledAt: new Date(), shipmentId: null })
-          .where(and(eq(orderItems.id, id), eq(orderItems.shipStatus, "pending")))
-          .returning({ id: orderItems.id });
-        if (!u) {
-          skipped.push({ id, reason: owned.get(id)!.shipStatus });
+        const item = owned.get(id)!;
+        if (item.shipStatus !== "pending") {
+          skipped.push({ id, reason: item.shipStatus });
           continue;
         }
-        cancelledIds.push(id);
-        // 庫存回補（同取消訂單同款做法，同一個 transaction）
-        const item = owned.get(id)!;
+        const rq = remainQtyMap.get(id) ?? null;
+        // 目標已取消件數（絕對值）：冇 remainQty（舊 WMS）= 全取消
+        const targetCancelled = rq === null ? item.quantity : Math.min(Math.max(item.quantity - rq, 0), item.quantity);
+        const delta = targetCancelled - (item.cancelledQty ?? 0);
+        if (delta <= 0) {
+          skipped.push({ id, reason: "冇新增取消件數" });
+          continue;
+        }
+        if (targetCancelled >= item.quantity) {
+          // 全取消：冪等 conditional update（淨係 pending 郁得）
+          const [u] = await tx
+            .update(orderItems)
+            .set({ shipStatus: "cancelled", cancelReason: reason, cancelledAt: new Date(), cancelledQty: item.quantity, shipmentId: null })
+            .where(and(eq(orderItems.id, id), eq(orderItems.shipStatus, "pending")))
+            .returning({ id: orderItems.id });
+          if (!u) {
+            skipped.push({ id, reason: "狀態已變" });
+            continue;
+          }
+          cancelledIds.push(id);
+        } else {
+          // 部分取消：狀態留 pending，cancelledQty 記低取消咗幾多件（冪等：目標大過現值先郁）
+          const [u] = await tx
+            .update(orderItems)
+            .set({ cancelledQty: targetCancelled, cancelReason: reason })
+            .where(and(eq(orderItems.id, id), eq(orderItems.shipStatus, "pending"), sql`${orderItems.cancelledQty} < ${targetCancelled}`))
+            .returning({ id: orderItems.id });
+          if (!u) {
+            skipped.push({ id, reason: "冇新增取消件數" });
+            continue;
+          }
+          partialIds.push({ id, cancelledQty: targetCancelled, delta });
+        }
+        // 庫存回補（淨係補今次新增取消嘅 delta 件，部分取消唔會重複回補）
         await tx
           .update(products)
-          .set({ stock: sql`${products.stock} + ${item.quantity}` })
+          .set({ stock: sql`${products.stock} + ${delta}` })
           .where(eq(products.id, item.productId));
       }
       if (cancelledIds.length > 0) {
@@ -332,7 +442,7 @@ export async function wmsShipmentCallback(c: Context) {
         }
       }
     });
-    if (cancelledIds.length === 0) {
+    if (cancelledIds.length === 0 && partialIds.length === 0) {
       return c.json({ ok: true, already: true, skipped });
     }
     void logAudit({
@@ -343,9 +453,11 @@ export async function wmsShipmentCallback(c: Context) {
       targetType: "order",
       targetId: order.orderNo,
       detail:
-        `WMS 刪貨品（訂單 ${order.orderNo}，取消 ${cancelledIds.length} 件` +
-        `${allCancelledNow ? "，全單取消" : "，部分取消"}）` +
-        `原因：${cancelledIds.map((id) => `#${id}「${cancelMap.get(id)}」`).join("、")}` +
+        `WMS 刪貨品（訂單 ${order.orderNo}` +
+        `${cancelledIds.length ? `，全取消 ${cancelledIds.length} 項` : ""}` +
+        `${partialIds.length ? `，部分取消 ${partialIds.map((p) => `#${p.id}×${p.delta}`).join("、")}` : ""}` +
+        `${allCancelledNow ? "，全單取消" : "，部分取消"}` +
+        `）原因：${[...cancelMap.entries()].map(([id, r]) => `#${id}「${r}」`).join("、")}` +
         `${actorName ? `，經手：${actorName}` : ""}` +
         `${skipped.length ? `，跳過（${skipped.map((s) => `#${s.id}:${s.reason}`).join("、")}）` : ""}`,
     });
@@ -353,9 +465,15 @@ export async function wmsShipmentCallback(c: Context) {
     const { to, name } = recipientOf(order);
     let emailNote = "";
     if (to) {
-      const items = order.items
-        .filter((it) => cancelledIds.includes(it.id))
-        .map((it) => ({ ...toEmailItem(it), cancelReason: cancelMap.get(it.id)! }));
+      const items = [
+        ...order.items
+          .filter((it) => cancelledIds.includes(it.id))
+          .map((it) => ({ ...toEmailItem(it), cancelReason: cancelMap.get(it.id)! })),
+        ...partialIds.map((p) => {
+          const it = owned.get(p.id)!;
+          return { ...toEmailItem(it), cancelReason: cancelMap.get(p.id)!, partialQty: p.delta };
+        }),
+      ];
       const r = await sendOrderItemCancelledEmail({
         to,
         name,
@@ -368,45 +486,51 @@ export async function wmsShipmentCallback(c: Context) {
     } else {
       emailNote = "（訂單冇 email，取消信未寄）";
     }
-    return c.json({ ok: true, cancelledItemIds: cancelledIds, skipped, allCancelled: allCancelledNow, note: emailNote || undefined });
+    return c.json({ ok: true, cancelledItemIds: cancelledIds, partialCancelled: partialIds, skipped, allCancelled: allCancelledNow, note: emailNote || undefined });
   }
 
   // ─── action=item_updated：WMS 改貨品資料（changeNote 必填，客人睇到）────────
+  // v2.3.16（老闆指示）：changes 加 price（整數港元）——改價錢會更新 orderItems.price ＋ 重計訂單 total；
+  // 日期／場次官網冇對應欄，WMS 會寫入 changeNote。淨說明更新（冇欄位改）都收得，changeNote 必填唔變。
   const changeList: {
     id: number;
-    changes: { sku?: string; productName?: string; size?: string | null };
+    changes: { sku?: string; productName?: string; size?: string | null; price?: number };
     changeNote: string;
   }[] = [];
-  for (const it of rawItems) {
-    const id = Number(it.orderItemId);
+  for (const { id, raw: it } of resolved) {
     const ch = (it.changes ?? {}) as Record<string, unknown>;
-    const changes: { sku?: string; productName?: string; size?: string | null } = {};
+    const changes: { sku?: string; productName?: string; size?: string | null; price?: number } = {};
     if (typeof ch.sku === "string" && ch.sku.trim()) changes.sku = ch.sku.trim().slice(0, 64);
     if (typeof ch.productName === "string" && ch.productName.trim()) changes.productName = ch.productName.trim().slice(0, 255);
     if (typeof ch.size === "string") changes.size = ch.size.trim().slice(0, 64) || null;
-    const changeNote = typeof it.changeNote === "string" ? it.changeNote.trim() : "";
-    if (Object.keys(changes).length === 0) {
-      return c.json({ ok: false, error: `orderItemId ${id} 冇有效 changes（sku/productName/size 最少一項）` }, 400);
+    if (typeof ch.price === "number" && Number.isFinite(ch.price)) {
+      const p = Math.round(ch.price);
+      if (p >= 0) changes.price = p;
     }
+    const changeNote = typeof it.changeNote === "string" ? it.changeNote.trim() : "";
     if (!changeNote) {
       return c.json({ ok: false, error: `更改說明必填（客人會睇到）——orderItemId ${id} 冇 changeNote` }, 400);
     }
     changeList.push({ id, changes, changeNote });
   }
   const updatedIds: number[] = [];
+  const priceChangeDescs: string[] = [];
   const emailItems: {
-    before: { productName: string; sku: string; size: string | null };
-    after: { productName: string; sku: string; size: string | null };
+    before: { productName: string; sku: string; size: string | null; price?: number };
+    after: { productName: string; sku: string; size: string | null; price?: number };
     quantity: number;
     changeNote: string;
   }[] = [];
-  await db.transaction(async (tx) => {
+  // transaction 回傳 total 變更（有改價錢兼金額真係變咗先至有值）
+  const totalChanged = await db.transaction(async (tx): Promise<{ from: number; to: number } | null> => {
     for (const entry of changeList) {
       const before = owned.get(entry.id)!;
+      const priceChanged = entry.changes.price !== undefined && entry.changes.price !== before.price;
       const after = {
         productName: entry.changes.productName ?? before.productName,
         sku: entry.changes.sku ?? before.sku,
         size: entry.changes.size !== undefined ? entry.changes.size : before.size,
+        price: entry.changes.price !== undefined ? entry.changes.price : before.price,
       };
       await tx
         .update(orderItems)
@@ -418,13 +542,29 @@ export async function wmsShipmentCallback(c: Context) {
         })
         .where(eq(orderItems.id, entry.id));
       updatedIds.push(entry.id);
+      if (priceChanged) {
+        priceChangeDescs.push(`#${entry.id} 單價 HK$${before.price} → HK$${after.price}`);
+      }
       emailItems.push({
-        before: { productName: before.productName, sku: before.sku, size: before.size },
+        before: { productName: before.productName, sku: before.sku, size: before.size, price: before.price },
         after,
         quantity: before.quantity,
         changeNote: entry.changeNote,
       });
     }
+    // v2.3.16：有改價錢 → 重計訂單 total = Σ 未取消件（price×qty）− discountAmount，唔准負數
+    if (priceChangeDescs.length > 0) {
+      const fresh = await tx.select().from(orderItems).where(eq(orderItems.orderId, order.id));
+      const sum = fresh
+        .filter((i) => i.shipStatus !== "cancelled")
+        .reduce((s, i) => s + i.price * i.quantity, 0);
+      const newTotal = Math.max(0, sum - (order.discountAmount ?? 0));
+      if (newTotal !== order.total) {
+        await tx.update(orders).set({ total: newTotal }).where(eq(orders.id, order.id));
+        return { from: order.total, to: newTotal };
+      }
+    }
+    return null;
   });
   void logAudit({
     actorId: null,
@@ -436,6 +576,8 @@ export async function wmsShipmentCallback(c: Context) {
     detail:
       `WMS 改貨品資料（訂單 ${order.orderNo}，${updatedIds.length} 件）` +
       `${actorName ? `，經手：${actorName}` : ""}；` +
+      (priceChangeDescs.length > 0 ? `${priceChangeDescs.join("、")}；` : "") +
+      (totalChanged ? `訂單總額 HK$${totalChanged.from} → HK$${totalChanged.to}；` : "") +
       changeList.map((e) => `#${e.id}「${e.changeNote}」`).join("、"),
   });
   const { to, name } = recipientOf(order);

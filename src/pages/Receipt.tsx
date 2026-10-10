@@ -596,6 +596,12 @@ export default function Receipt() {
                           ✕ 已取消{item.cancelReason ? `——${item.cancelReason}` : ''}
                         </span>
                       )}
+                      {/* v2.5.4：同款多件部分取消（未全取消先顯示） */}
+                      {item.shipStatus !== 'cancelled' && (item.cancelledQty ?? 0) > 0 && (
+                        <span style={{ display: 'block', fontFamily: MONO, fontSize: 10.5, color: '#B45309', marginTop: 3, letterSpacing: '0.04em' }}>
+                          ✕ 部分取消 {item.cancelledQty} 件{item.cancelReason ? `——${item.cancelReason}` : ''}
+                        </span>
+                      )}
                       {item.staffChangedAt && (
                         <span style={{ display: 'block', fontFamily: MONO, fontSize: 10.5, color: GOLD_LINE, marginTop: 3, letterSpacing: '0.04em' }}>
                           ✎ 員工更改{item.staffChangeNote ? `——${item.staffChangeNote}` : ''}

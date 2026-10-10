@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useEffect, useMemo, useRef, useState } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Calendar, Crown, Gem, Gift, ReceiptText } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -42,6 +43,41 @@ const MEMBER_STATUS_LABEL: Record<string, string> = {
 };
 
 const WHATSAPP_URL = 'https://wa.me/85254835368';
+
+/**
+ * v2.5.4（老闆指示 msg72）：查單結果區 Error Boundary——
+ * 任何 render 異常都唔好再成頁黑屏，顯示統一錯誤＋WhatsApp 求助。
+ */
+class LookupResultBoundary extends Component<{ children: ReactNode }, { crashed: boolean }> {
+  state = { crashed: false };
+  static getDerivedStateFromError() {
+    return { crashed: true };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[guest-lookup] 結果卡 render 失敗:', error.message, info.componentStack);
+  }
+  render() {
+    if (this.state.crashed) {
+      return (
+        <div
+          role="alert"
+          className="mt-6 w-full max-w-[420px] rounded-2xl border border-pink bg-space-2 px-5 py-5 text-center lg:max-w-[560px]"
+        >
+          <p className="text-[13.5px] text-pink-soft">訂單資料顯示唔到，請重新整理再試。</p>
+          <a
+            href={`${WHATSAPP_URL}?text=${encodeURIComponent('你好，我喺「我的訂單」查單嗰陣畫面出錯，想請你哋幫手。')}`}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-block text-[13px] text-gold underline underline-offset-4"
+          >
+            WhatsApp 我哋幫手
+          </a>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /** 本地日子（YYYY-MM-DD）對照：createdAt 係咪同一日 */
 function sameLocalDay(d: Date | string, ymd: string): boolean {
@@ -99,6 +135,12 @@ function GuestLookupSection() {
     setBusy(true);
     try {
       const data = (await utils.orders.guestLookup.fetch({ orderNo: orderNo.trim(), phone: phone.trim() })) as LookupResult;
+      // v2.5.4（老闆指示 msg72 黑屏）：訪客單 payload 冇 items ＝後端異常空殼，
+      // 唔好照 setResult（一 render 就炸黑屏），當查唔到處理（統一訊息）
+      if (data.kind === 'guest' && !Array.isArray((data as GuestOrderPayload).items)) {
+        setError('搵唔到呢張訂單喎——核對返訂單編號同電話係咪落單嗰組。');
+        return;
+      }
       setResult(data);
       // 訪客單：電話核實過先返 token（付款＋移入會員都要靠佢）；會員單冇 token
       setResultToken(data.kind === 'guest' ? (data.guestToken ?? null) : null);
@@ -202,18 +244,21 @@ function GuestLookupSection() {
         </form>
       </div>
 
-      {/* 查單結果卡（同 max-w 對齊，lg 拉闊）：訪客單→完整卡＋註冊推薦；會員單→引導登入卡 */}
-      {result?.kind === 'guest' && (
-        <div className="mt-6 flex w-full max-w-[420px] flex-col gap-5 lg:max-w-[560px]">
-          <GuestOrderCard order={result} guestToken={resultToken} onExpire={() => void refresh()} focusRef={resultRef} />
-          <RegisterUpsell phone={phone.trim()} />
-        </div>
-      )}
-      {result?.kind === 'member' && (
-        <div className="mt-6 w-full max-w-[420px] lg:max-w-[560px]">
-          <MemberOrderHint result={result} focusRef={resultRef} />
-        </div>
-      )}
+      {/* 查單結果卡（同 max-w 對齊，lg 拉闊）：訪客單→完整卡＋註冊推薦；會員單→引導登入卡
+          v2.5.4（msg72）：Error Boundary 包住——render 異常唔再成頁黑屏 */}
+      <LookupResultBoundary>
+        {result?.kind === 'guest' && (
+          <div className="mt-6 flex w-full max-w-[420px] flex-col gap-5 lg:max-w-[560px]">
+            <GuestOrderCard order={result} guestToken={resultToken} onExpire={() => void refresh()} focusRef={resultRef} />
+            <RegisterUpsell phone={phone.trim()} />
+          </div>
+        )}
+        {result?.kind === 'member' && (
+          <div className="mt-6 w-full max-w-[420px] lg:max-w-[560px]">
+            <MemberOrderHint result={result} focusRef={resultRef} />
+          </div>
+        )}
+      </LookupResultBoundary>
     </>
   );
 }
