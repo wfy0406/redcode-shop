@@ -112,6 +112,9 @@ function GuestLookupSection() {
       .then((data) => {
         setResult({ kind: 'guest', ...(data as GuestOrderPayload) });
         setResultToken(t); // guestByToken 唔返 token，用返 URL 嗰個付款
+        // v2.5.5（msg76c 補窿）：魔法連結入嚟冇填過電話 — 跟單返嘅 guestPhone 補入格，
+        // 咁撳「移入會員訂單」時 claimPhone 先至有料，登入（包括 Google 跳轉）返嚟先接得返
+        if ((data as GuestOrderPayload).guestPhone) setPhone((data as GuestOrderPayload).guestPhone ?? '');
       })
       .catch(() => setError('搵唔到呢張訂單喎——核對返訂單編號同電話係咪落單嗰組。'))
       .finally(() => setBusy(false));

@@ -384,24 +384,28 @@ export async function wmsShipmentCallback(c: Context) {
     await db.transaction(async (tx) => {
       for (const [id, reason] of cancelMap) {
         const item = owned.get(id)!;
-        if (item.shipStatus !== "pending") {
-          skipped.push({ id, reason: item.shipStatus });
-          continue;
-        }
         const rq = remainQtyMap.get(id) ?? null;
         // 目標已取消件數（絕對值）：冇 remainQty（舊 WMS）= 全取消
         const targetCancelled = rq === null ? item.quantity : Math.min(Math.max(item.quantity - rq, 0), item.quantity);
+        // v2.5.5 第3版（msg85）：已出貨嘅貨品都准「全數取消」——WMS 整單取消（已出貨後客訴／退款）
+        // 官網要照跟，否則 WMS 已轉「已取消」而官網永遠停喺「已寄出＋取消咗 N 件」，兩邊唔夾。
+        // 已出貨嘅「部分取消」仲係唔准（出貨包裹已計數，抽唔到件返嚟）。
+        const shippedFullCancel = item.shipStatus === "shipped" && targetCancelled >= item.quantity;
+        if (item.shipStatus !== "pending" && !shippedFullCancel) {
+          skipped.push({ id, reason: item.shipStatus });
+          continue;
+        }
         const delta = targetCancelled - (item.cancelledQty ?? 0);
         if (delta <= 0) {
           skipped.push({ id, reason: "冇新增取消件數" });
           continue;
         }
         if (targetCancelled >= item.quantity) {
-          // 全取消：冪等 conditional update（淨係 pending 郁得）
+          // 全取消：冪等 conditional update（pending／shipped 郁得；cancelled 唔會再中）
           const [u] = await tx
             .update(orderItems)
             .set({ shipStatus: "cancelled", cancelReason: reason, cancelledAt: new Date(), cancelledQty: item.quantity, shipmentId: null })
-            .where(and(eq(orderItems.id, id), eq(orderItems.shipStatus, "pending")))
+            .where(and(eq(orderItems.id, id), inArray(orderItems.shipStatus, ["pending", "shipped"])))
             .returning({ id: orderItems.id });
           if (!u) {
             skipped.push({ id, reason: "狀態已變" });
@@ -421,11 +425,14 @@ export async function wmsShipmentCallback(c: Context) {
           }
           partialIds.push({ id, cancelledQty: targetCancelled, delta });
         }
-        // 庫存回補（淨係補今次新增取消嘅 delta 件，部分取消唔會重複回補）
-        await tx
-          .update(products)
-          .set({ stock: sql`${products.stock} + ${delta}` })
-          .where(eq(products.id, item.productId));
+        // 庫存回補（淨係補今次新增取消嘅 delta 件，部分取消唔會重複回補；
+        // 已出貨嘅全數取消唔回補——貨已離倉，唔會返架上）
+        if (!shippedFullCancel) {
+          await tx
+            .update(products)
+            .set({ stock: sql`${products.stock} + ${delta}` })
+            .where(eq(products.id, item.productId));
+        }
       }
       if (cancelledIds.length > 0) {
         const fresh = await tx.query.orderItems.findMany({

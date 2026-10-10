@@ -298,6 +298,7 @@ export default function GuestPayment() {
             countdownVariant="hero"
             autoOpenClaim={params.get('claim') === '1'}
             onClaimed={() => void navigate('/orders')}
+            claimPhone={order.guestPhone ?? ''}
           />
         </div>
       </div>

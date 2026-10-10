@@ -84,6 +84,16 @@ export default function Login() {
   const rawFrom = state?.from;
   const from = typeof rawFrom === 'string' ? rawFrom : (rawFrom?.pathname ?? '/account');
 
+  // v2.5.5（老闆實測 msg76c）：有未完成的「移入訪客訂單」→ 登入後直去 /orders 接返確認框。
+  // Google 登入喺手機/in-app browser 可能行全頁跳轉，location.state 會丟（from 變返 /account），
+  // 靠 sessionStorage 嘅記號兜底，唔會再「登入完變空嘅我的訂單」。（記號只有單號＋電話，永遠冇 token）
+  const postLoginTarget = () => {
+    try {
+      if (sessionStorage.getItem('rc.pendingClaim')) return '/orders';
+    } catch { /* 私隱模式當冇 */ }
+    return from;
+  };
+
   const switchMode = (m: Mode) => {
     setError(null);
     setInfo(null);
@@ -105,7 +115,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       await login(phone.trim(), password);
-      navigate(from, { replace: true });
+      navigate(postLoginTarget(), { replace: true });
     } catch (err) {
       setError(errorMessage(err, '登入失敗，請稍後再試'));
       setSubmitting(false);
@@ -251,7 +261,7 @@ export default function Login() {
                     setGoogleSubmitting(true);
                     try {
                       await loginWithGoogle(idToken);
-                      navigate(from, { replace: true });
+                      navigate(postLoginTarget(), { replace: true });
                     } catch (err) {
                       setError(errorMessage(err, 'Google 登入失敗，請稍後再試'));
                       setGoogleSubmitting(false);

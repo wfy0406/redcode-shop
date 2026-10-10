@@ -50,6 +50,10 @@ export interface GuestOrderPayload {
   deliveryMethod: string | null;
   address: string | null;
   stationName: string | null;
+  /** v2.5.5（msg76c 補窿）：訪客電話跟單返 — 魔法連結路徑冇填過電話，「移入會員訂單」要靠佢登入後接返 */
+  guestPhone?: string | null;
+  /** v2.5.5 第3版（老闆指示 msg85）：退款狀態（WMS 回調同步）— none／pending／refunded／manual／failed；none／null 唔顯示 */
+  refundStatus?: string | null;
   createdAt: string;
   expiresAt: string | null;
   paidAt: string | null;
@@ -97,6 +101,14 @@ function StatusBadge({ status, secondsLeft }: { status: string; secondsLeft: num
     </span>
   );
 }
+
+/* ---------- v2.5.5 第3版（msg85）：退款 badge（同會員「我的訂單」一套文案，跟 WMS 退款狀態） ---------- */
+const REFUND_BADGES: Record<string, { text: string; color: string; border: string; bg: string }> = {
+  pending: { text: '⏳ 退款審批中', color: 'var(--gold)', border: 'rgba(245,197,24,0.45)', bg: 'rgba(245,197,24,0.08)' },
+  refunded: { text: '❌ 已取消 · 已退款', color: 'var(--text-3, #8D82B3)', border: 'var(--space-line)', bg: 'var(--space-2)' },
+  manual: { text: '❌ 已取消 · 人手退款處理中', color: 'var(--text-3, #8D82B3)', border: 'var(--space-line)', bg: 'var(--space-2)' },
+  failed: { text: '⚠️ 退款失敗 · 請聯絡客服', color: 'var(--pink)', border: 'rgba(255,107,203,0.45)', bg: 'rgba(255,107,203,0.08)' },
+};
 
 function deliveryText(o: GuestOrderPayload): string {
   if (o.deliveryMethod === 'address') return `送貨上門：${o.address ?? '—'}`;
@@ -206,6 +218,9 @@ export default function GuestOrderCard({
   const createdLabel = `${createdDate.getFullYear()}-${pad(createdDate.getMonth() + 1)}-${pad(createdDate.getDate())} ${pad(createdDate.getHours())}:${pad(createdDate.getMinutes())}`;
   // v2.5.5（老闆指示）：同款多件部分取消嘅件數 — 全寄出嗰陣寫明「取消咗 N 件，已寄出晒（已取消商品除外）」
   const cancelledQtySum = order.items.reduce((s, it) => s + (it.cancelledQty ?? 0), 0);
+  // v2.5.5 第3版（msg85）：退款 badge（'none'／null 唔顯示）；refunded／manual 成張卡灰化（同會員卡、WMS 灰卡呼應）
+  const refundBadge = order.refundStatus ? REFUND_BADGES[order.refundStatus] : undefined;
+  const refundGrayed = order.refundStatus === 'refunded' || order.refundStatus === 'manual';
 
   return (
     <div
@@ -220,6 +235,8 @@ export default function GuestOrderCard({
         WebkitBackdropFilter: 'blur(16px)',
         borderColor: expired ? 'var(--space-line)' : 'var(--glass-border)',
         animation: 'promo-fade-in .2s ease-out',
+        // v2.5.5 第3版（msg85）：已退款／人手退款嘅單成張灰化（同會員卡、WMS 灰卡一致）
+        ...(refundGrayed ? { opacity: 0.6, filter: 'grayscale(0.5)' } : {}),
       }}
     >
       {/* 頂行：單號＋訪客標示＋落單時間 */}
@@ -234,8 +251,17 @@ export default function GuestOrderCard({
         <CopyButton text={order.orderNo} label="複製訂單編號" />
         <span className="ml-auto text-[12px] text-txt-3">{createdLabel}</span>
       </div>
-      <div className="mt-3">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <StatusBadge status={order.status} secondsLeft={secondsLeft} />
+        {/* v2.5.5 第3版（msg85）：退款狀態 badge — 跟 WMS 退款流程（審批中／已退款／人手退款／失敗） */}
+        {refundBadge && (
+          <span
+            className="inline-block rounded-full px-3 py-1 text-[12px] font-semibold"
+            style={{ color: refundBadge.color, border: `1px solid ${refundBadge.border}`, background: refundBadge.bg }}
+          >
+            {refundBadge.text}
+          </span>
+        )}
       </div>
 
       {/* v2.5.5（老闆指示）：部分取消嘅單全寄出 → 寫明件數＋「已取消商品除外」 */}

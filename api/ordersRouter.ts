@@ -108,6 +108,13 @@ async function guestOrderPayload(
     deliveryMethod: order.deliveryMethod,
     address: order.address,
     stationName: order.stationName,
+    // v2.5.5（老闆指示 msg76c 補窿）：訪客電話跟單返 — 魔法連結路徑（guestByToken）前端冇電話，
+    // 唔返嘅話「移入會員訂單」記低嘅 pendingClaim 冇電話，登入返嚟接唔返（老闆實測：Google 登入後變空嘅我的訂單）。
+    // 安全性：呢個 payload 本身已經係 token／電話核實過先拎到（地址都照返），電話係客人自己張單嘅資料。
+    guestPhone: order.guestPhone ?? null,
+    // v2.5.5 第3版（老闆指示 msg85）：訪客查單都要見到退款狀態——同 WMS 退款狀態同步（WMS 退款審批→回調更新），
+    // 同會員「我的訂單」嘅 REFUND_BADGES 一套文案。冇退款就 null。
+    refundStatus: order.refundStatus ?? null,
     createdAt: order.createdAt.toISOString(),
     expiresAt: order.expiresAt?.toISOString() ?? null,
     paidAt: order.paidAt?.toISOString() ?? null,
