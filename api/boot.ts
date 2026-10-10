@@ -767,4 +767,9 @@ if (env.isProduction) {
   // 全程 never-throw，失敗淨係 log，站點清單維持現狀）
   const { startSfSync } = await import("./sfSync");
   startSfSync();
+
+  // 2026-10-10（Wave 4 老闆指示）：操作日誌自動清除 — 開機掃一次，之後每 24 小時；
+  // 刪走舊過保留期（預設 180 日，admin 喺「日誌」頁可改）嘅日誌；失敗淨係 log
+  const { startAuditRetention } = await import("./auditRetention");
+  startAuditRetention();
 }

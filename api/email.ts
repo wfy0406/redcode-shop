@@ -1416,7 +1416,7 @@ export async function sendWalletTopupPendingEmail(args: {
         ["付款死線", `<span style="color:${ERROR};font-weight:700;">${fmtDateHK(args.expiresAt)} 前</span>`],
       ])}
       ${ctaButton("去付款", `${siteUrl()}/#/wallet-topup`)}
-      ${warnBox("溫馨提示：充值款項要經同事核實批核之後，購物金先會入帳；超過 48 小時未付款，充值單會自動取消。")}
+      ${warnBox("溫馨提示：充值款項要經同事核實批核之後，購物金先會入帳；超過 30 分鐘未付款，充值單會自動取消。<!-- v2.5.2：由 48 小時改返 30 分鐘 -->")}
       ${walletTermsNote()}
     `;
     return await sendEmail({
@@ -1579,7 +1579,7 @@ export async function sendWalletTopupCancelledEmail(args: {
         ["充值單號", mono(topupNo)],
         ["套票", escapeHtml(args.label)],
         ["金額", fmtMoney(args.price)],
-        ["取消原因", `<span style="color:${ERROR};">超過 48 小時未完成付款</span>`],
+        ["取消原因", `<span style="color:${ERROR};">超過 30 分鐘未完成付款</span>`],
       ])}
       <p style="margin:18px 0 0;">如果你其實已經付咗款，請盡快 WhatsApp 我哋提供付款證明；想充值嘅話亦可以隨時再開新充值單。</p>
       ${ctaButton("重新充值", `${siteUrl()}/#/wallet-topup`)}
@@ -1587,9 +1587,10 @@ export async function sendWalletTopupCancelledEmail(args: {
     `;
     return await sendEmail({
       to: args.to,
-      subject: `【RedCode】購物金充值單 ${args.topupNo} 已取消 — 超過 48 小時未付款`,
+      // v2.5.2（老闆指示 2026-10-10 msg55）：充值單 TTL 係 30 分鐘（orderSweeper），標題之前寫錯 48 小時
+      subject: `【RedCode】購物金充值單 ${args.topupNo} 已取消 — 超過 30 分鐘未付款`,
       html: brandedEmail({
-        preheader: `充值單 ${topupNo} 已取消（超過 48 小時未付款）`,
+        preheader: `充值單 ${topupNo} 已取消（超過 30 分鐘未付款）`,
         kicker: "REDCODE HK直播台 · 購物金充值",
         title: "充值單已取消",
         contentHtml: content,
@@ -1707,7 +1708,10 @@ export async function sendOrderShippedEmail(args: {
               note(
                 b.shipMethod === "face"
                   ? "貨品已按你揀嘅方式面交交收，如有問題 WhatsApp 我哋。"
-                  : "貨品已可以上門自取，如有問題 WhatsApp 我哋。",
+                  // v2.5.2（msg56 email 審計）：儲貨之前會落入「上門自取」句，而家分開
+                  : b.shipMethod === "storage"
+                    ? "貨品已入倉儲存好，你想取貨或者安排寄出嗰陣 WhatsApp 我哋。"
+                    : "貨品已可以上門自取，如有問題 WhatsApp 我哋。",
               );
         return `
           <div style="margin:0 0 18px;">
@@ -1856,8 +1860,8 @@ export async function sendOrderItemChangedEmail(args: {
   name: string;
   orderNo: string;
   items: {
-    before: { productName: string; sku: string; size: string | null };
-    after: { productName: string; sku: string; size: string | null };
+    before: { productName: string; sku: string; size: string | null; price?: number };
+    after: { productName: string; sku: string; size: string | null; price?: number };
     quantity: number;
     changeNote: string;
   }[];
@@ -1877,6 +1881,7 @@ export async function sendOrderItemChangedEmail(args: {
           ${field("貨品名稱", it.before.productName, it.after.productName)}
           ${field("貨號", it.before.sku, it.after.sku)}
           ${field("尺寸", it.before.size ?? "—", it.after.size ?? "—")}
+          ${it.before.price !== undefined && it.after.price !== undefined ? field("單價", `HK$${it.before.price}`, `HK$${it.after.price}`) : ""}
           <div style="margin:4px 0 0;color:${INK_SOFT};">更改說明：${esc(it.changeNote)}</div>
         </div>`;
       })

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ScrollText } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { LoadingBlock } from './WishingStar';
@@ -58,6 +58,9 @@ const ACTION_LABEL: Record<string, string> = {
   'station.reseed': '重新導入站點清單',
   'station.sync': '順豐站點每日同步',
   'station.syncNow': '順豐站點即時同步',
+  // 2026-10-10（Wave 4 老闆指示）：日誌保留期 / 清除
+  'audit.purge': '清除舊日誌',
+  'audit.retention': '改日誌保留期',
 };
 
 const ROLE_META: Record<string, { label: string; color: string }> = {
@@ -75,7 +78,7 @@ const FILTERS: { key: string; label: string; match: (a: string) => boolean }[] =
   { key: 'product', label: '商品', match: (a) => a.startsWith('product.') },
   { key: 'staff', label: '帳號', match: (a) => a.startsWith('staff.') },
   { key: 'approval', label: '審批', match: (a) => a.startsWith('approval.') },
-  { key: 'other', label: '其他', match: (a) => /^(promo|praise|setting|station)\./.test(a) },
+  { key: 'other', label: '其他', match: (a) => /^(promo|praise|setting|station|audit)\./.test(a) },
 ];
 
 function fmtTime(d: Date | string): string {
@@ -108,6 +111,9 @@ export default function AuditLog() {
       <p className="mt-1.5 text-[13px] text-txt-3">
         管理員、員工同會員嘅關鍵改動都會記低喺度，包括邊個幾時做咗咩。
       </p>
+
+      {/* 2026-10-10（Wave 4 老闆指示）：日誌保留期管理（admin） */}
+      <RetentionCard />
 
       {/* 篩選 chips */}
       <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="按類型篩選">
@@ -189,5 +195,97 @@ export default function AuditLog() {
         </div>
       )}
     </section>
+  );
+}
+
+/** 2026-10-10（Wave 4 老闆指示）：保留期設定 + 人手清除舊日誌（admin only，後端 adminProcedure 把關） */
+function RetentionCard() {
+  const utils = trpc.useUtils();
+  const stats = trpc.audit.stats.useQuery(undefined, { refetchOnWindowFocus: false });
+  const [days, setDays] = useState('');
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    if (stats.data && days === '') setDays(String(stats.data.retentionDays));
+  }, [stats.data, days]);
+
+  const setRetention = trpc.audit.setRetention.useMutation({
+    onSuccess: (r) => {
+      setMsg(`已保存：保留 ${r.retentionDays} 日`);
+      void utils.audit.stats.invalidate();
+    },
+    onError: (e) => setMsg(`保存失敗：${e.message}`),
+  });
+  const purge = trpc.audit.purge.useMutation({
+    onSuccess: (r) => {
+      setMsg(`已清除 ${r.deleted} 條舊日誌（cutoff ${r.cutoff}）`);
+      void utils.audit.list.invalidate();
+      void utils.audit.stats.invalidate();
+    },
+    onError: (e) => setMsg(`清除失敗：${e.message}`),
+  });
+
+  const d = Number(days);
+  const daysValid = Number.isInteger(d) && d >= 30 && d <= 3650;
+
+  return (
+    <div
+      className="mt-4 rounded-xl border p-3.5 text-[13px]"
+      style={{ borderColor: 'var(--space-line)', background: 'var(--glass-bg)' }}
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-txt-3">
+        <span className="font-bold text-txt-1">日誌保留期</span>
+        <span>
+          總數 <span className="font-mono">{stats.data ? stats.data.total.toLocaleString() : '—'}</span> 條
+        </span>
+        <span>最舊 {stats.data?.oldest ? fmtTime(stats.data.oldest) : '—'}</span>
+        <span>
+          而家保留 <span className="font-mono text-gold">{stats.data?.retentionDays ?? '—'}</span> 日
+        </span>
+      </div>
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        <input
+          type="number"
+          min={30}
+          max={3650}
+          value={days}
+          onChange={(e) => setDays(e.target.value)}
+          className="w-24 rounded-lg border bg-transparent px-2.5 py-1.5 font-mono text-txt-1"
+          style={{ borderColor: 'var(--space-line)' }}
+          aria-label="保留日數"
+        />
+        <span className="text-txt-3">日（30–3650）</span>
+        <button
+          type="button"
+          disabled={!daysValid || setRetention.isPending}
+          onClick={() => {
+            setMsg('');
+            setRetention.mutate({ days: d });
+          }}
+          className="rounded-full border px-3.5 py-1.5 transition-colors disabled:opacity-40"
+          style={{ borderColor: 'var(--pink)', color: 'var(--pink)' }}
+        >
+          {setRetention.isPending ? '保存中…' : '保存保留期'}
+        </button>
+        <button
+          type="button"
+          disabled={purge.isPending}
+          onClick={() => {
+            if (window.confirm('確定即刻清除舊過保留期嘅日誌？刪咗就攞唔返。')) {
+              setMsg('');
+              purge.mutate();
+            }
+          }}
+          className="rounded-full border px-3.5 py-1.5 transition-colors disabled:opacity-40"
+          style={{ borderColor: '#e06c7d', color: '#e06c7d' }}
+        >
+          {purge.isPending ? '清除中…' : '立即清除舊紀錄'}
+        </button>
+        {msg && <span className="text-txt-3">{msg}</span>}
+      </div>
+      <p className="mt-2 text-[12px] text-txt-3">
+        系統開機同埋每 24 小時會自動清除超過保留期嘅日誌；呢度可以即時人手清一次。清除動作本身都會入日誌。
+      </p>
+    </div>
   );
 }
