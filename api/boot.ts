@@ -13,6 +13,7 @@ import { wmsReviewCallback, forwardOrderToWms } from "./wmsSync";
 import { wmsRefundCallback } from "./wmsRefund";
 import { wmsWalletTopupReview } from "./wmsWallet";
 import { wmsShipmentCallback } from "./wmsShipment";
+import { wmsDeleteOrderCallback } from "./wmsDeleteOrder";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushDeliveries, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
@@ -71,6 +72,10 @@ app.post("/api/wms/wallet-topup-review", wmsWalletTopupReview);
 // WMS → 官網出貨回調（v2.4.0 Wave 2 出貨雙向同步；同樣 shared secret 驗證）：
 // shipped／unshipped／item_cancelled／item_updated 四個 action
 app.post("/api/wms/shipment-callback", wmsShipmentCallback);
+
+// WMS → 官網刪單回調（v2.5.5 第7版 2026-10-11 老闆指示：WMS 官網中心刪單，官網要真刪，
+// 唔可以淨係標已取消；同樣 shared secret 驗證；刪除邏輯同官網後台「永久刪除」共用 api/orderDelete.ts）
+app.post("/api/wms/delete-order", wmsDeleteOrderCallback);
 
 // WMS → 官網批量上架（2026-09-29 F8 直播場次制；同樣 shared secret 驗證）：
 // 手動上傳貨圖（multipart）＋ 批量推送（批准 execute／拒絕 reject）

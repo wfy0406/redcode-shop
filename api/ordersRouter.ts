@@ -8,6 +8,7 @@ import { createRouter, authedProcedure, publicProcedure, staffProcedure } from "
 import { resolvePromoDiscount } from "./promoRouter";
 import { computeWalletSplit, returnWalletForOrder } from "./wallet";
 import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
+import { hardDeleteOrder } from "./orderDelete";
 import { sendOrderReviewAlertEmail } from "./email";
 import { logAudit } from "./audit";
 import { sendOrderApprovedEmail, sendOrderPendingEmail, orderVipEmailInfo, sendGuestOrderEmail, siteUrl, sendOrderPaidOnlineEmail } from "./email";
@@ -184,9 +185,13 @@ async function attachProofCore(
     .insert(paymentProofs)
     .values({ orderId, imagePath, status: "pending" })
     .returning({ id: paymentProofs.id });
+  // v2.5.5 第7版（老闆實測 2026-10-11）：上傳截圖＝人手過數，paymentChannel 必須轉 "manual"。
+  // 舊邏輯冇郁 channel——訪客單落單時鎖死咗 "airwallex"（網上付款意向），中途轉會員再改傳截圖之後
+  // channel 仲係 airwallex，搞到 WMS 備註寫「網上收款已確認，無需付款截圖」（其實錢係截圖收嘅），
+  // 更嚴重係退款會行 Airwallex 原路退款——張 intent 根本未收過錢，一定失敗。截圖一到即轉 manual。
   await db
     .update(orders)
-    .set({ status: "payment_review", updatedAt: new Date() })
+    .set({ status: "payment_review", paymentChannel: "manual", updatedAt: new Date() })
     .where(eq(orders.id, orderId));
   void forwardOrderToWms(orderId).catch((e) => console.error("[wms] forward error:", e));
   // 2026-08-04（Glo 要求）：訂單一轉待審批，即刻背景電郵通知負責人（leader@ows.redcode.red）
@@ -1663,47 +1668,21 @@ export const ordersRouter = createRouter({
   remove: staffProcedure
     .input(z.object({ orderId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
-      const db = getDb();
-      const order = await db.query.orders.findFirst({
-        where: eq(orders.id, input.orderId),
-        with: { items: true },
-      });
-      if (!order) {
+      // v2.5.5 第7版：刪除邏輯抽出落 api/orderDelete.ts（WMS 官網中心刪單回調共用同一路徑）
+      const r = await hardDeleteOrder(input.orderId);
+      if (!r) {
         throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
       }
-      const restoreStock = ["pending_payment", "payment_review", "rejected"].includes(
-        order.status,
-      );
-      // v2.2.55：中獎訂單連抽獎紀錄一齊刪（見交易入面註解）— 計數畀 audit 用
-      let drawRowsDeleted = 0;
-      await db.transaction(async (tx) => {
-        if (restoreStock) {
-          for (const item of order.items) {
-            await tx
-              .update(products)
-              .set({ stock: sql`${products.stock} + ${item.quantity}` })
-              .where(eq(products.id, item.productId));
-          }
-        }
-        // v2.2.55（老闆指令「刪除咗中獎紀錄都要刪除」）：中獎訂單嘅抽獎紀錄一併硬刪——
-        // luckyDraws.orderId 有 FK 指住 orders（冇 cascade），唔刪佢先張單會 23503 刪唔到；
-        // 刪咗紀錄件獎品自然返返入池（takenCount 只計 pending/confirmed）
-        const delDraws = await tx.delete(luckyDraws).where(eq(luckyDraws.orderId, order.id)).returning({ id: luckyDraws.id });
-        drawRowsDeleted = delDraws.length;
-        await tx.delete(paymentProofs).where(eq(paymentProofs.orderId, order.id));
-        await tx.delete(wmsSyncLog).where(eq(wmsSyncLog.orderId, order.id));
-        await tx.delete(orderItems).where(eq(orderItems.orderId, order.id));
-        await tx.delete(orders).where(eq(orders.id, order.id));
-      });
+      const { order, restoreStock, drawsDeleted } = r;
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
         action: "order.delete",
         targetType: "order",
         targetId: order.orderNo,
-        detail: `完整刪除訂單 ${order.orderNo}（${order.items.length} 件貨，合計 HK$${order.total}，狀態 ${order.status}）${restoreStock ? "，庫存已加返" : "，庫存不變"}${drawRowsDeleted > 0 ? `，中獎紀錄一併刪咗 ${drawRowsDeleted} 筆` : ""}`,
+        detail: `完整刪除訂單 ${order.orderNo}（${order.items.length} 件貨，合計 HK$${order.total}，狀態 ${order.status}）${restoreStock ? "，庫存已加返" : "，庫存不變"}${drawsDeleted > 0 ? `，中獎紀錄一併刪咗 ${drawsDeleted} 筆` : ""}`,
       });
-      return { ok: true, restoredStock: restoreStock, drawsDeleted: drawRowsDeleted };
+      return { ok: true, restoredStock: restoreStock, drawsDeleted };
     }),
 
   /** WMS 同步狀態（後台訂單列表 chip 用）：一單一列，冇列 = 未觸發過同步 */

@@ -261,7 +261,9 @@ export async function wmsRefundCallback(c: Context) {
   if (order.refundStatus === "refunded" || order.refundStatus === "manual") {
     return c.json({ ok: true, already: true });
   }
-  if (order.refundStatus !== "pending") {
+  // v2.5.5 第7版（老闆實測 2026-10-11）：failed 都准拒絕——Airwallex 退款衰咗之後
+  // 主管可以決定唔退，唔可以因為狀態卡住就永遠 reject 唔到（錢未郁過，拒絕係安全嘅）
+  if (order.refundStatus !== "pending" && order.refundStatus !== "failed") {
     return c.json(
       { ok: false, error: `退款狀態係 ${order.refundStatus}，冇待審批嘅退款申請` },
       409,
