@@ -303,6 +303,10 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
         });
         continue;
       }
+      // v2.5.5 第10版（老闆指示 RC202610107742）：件數要數「件」唔係數「行」——
+      // 同款多件係一行 quantity>1，部分取消嘅行要扣走 cancelledQty（同款3件取消1件 → 共2件，唔係1件）。
+      // 批次貨品表都一樣：寄出嗰陣顯示嘅數量＝呢行嘅存活件數（已出貨行唔會部分取消，淨係 0 或全取消）。
+      const liveUnitsOf = (it: (typeof order.items)[number]) => Math.max(0, it.quantity - (it.cancelledQty ?? 0));
       // 逐批砌貨品表：以「而家仲掛住呢個批次」嘅 item 為準（unship 後再出貨會轉批次）
       const emailBatches: ShipmentEmailBatch[] = [];
       for (const b of nonStorage.sort((a, b2) => a.shippedAt.getTime() - b2.shippedAt.getTime())) {
@@ -317,7 +321,7 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
             size: it.size,
             price: it.price,
             originalPrice: it.originalPrice,
-            quantity: it.quantity,
+            quantity: liveUnitsOf(it),
           })),
         });
       }
@@ -325,8 +329,11 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
         await markAll();
         continue;
       }
-      const live = order.items.filter((it) => it.shipStatus !== "cancelled");
-      const shippedItems = live.filter((it) => it.shipStatus === "shipped").length;
+      const live = order.items.filter((it) => it.shipStatus !== "cancelled" && liveUnitsOf(it) > 0);
+      const totalUnits = live.reduce((s, it) => s + liveUnitsOf(it), 0);
+      const shippedUnits = live
+        .filter((it) => it.shipStatus === "shipped")
+        .reduce((s, it) => s + liveUnitsOf(it), 0);
       // v2.5.5（老闆指示）：同款多件部分取消嘅件數都要話畀封信知（「已寄出晒（已取消商品除外）」）
       const cancelledUnits = order.items.reduce((s, it) => s + (it.cancelledQty ?? 0), 0);
       const r = await sendOrderShippedEmail({
@@ -334,8 +341,8 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
         name,
         orderNo: order.orderNo,
         batches: emailBatches,
-        totalItems: live.length,
-        shippedItems,
+        totalItems: totalUnits,
+        shippedItems: shippedUnits,
         cancelledItems: cancelledUnits,
       });
       if (r.ok) {
@@ -347,7 +354,7 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
           action: "order.shippedEmail",
           targetType: "order",
           targetId: order.orderNo,
-          detail: `出貨信已寄出至 ${to}（訂單 ${order.orderNo}，${emailBatches.length} 個批次，已寄 ${shippedItems}/${live.length} 件）`,
+          detail: `出貨信已寄出至 ${to}（訂單 ${order.orderNo}，${emailBatches.length} 個批次，已寄 ${shippedUnits}/${totalUnits} 件）`,
         });
       } else {
         // 失敗唔標 emailedAt——下輪自動 retry；log 大聲出嚟唔靜默

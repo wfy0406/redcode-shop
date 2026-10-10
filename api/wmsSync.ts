@@ -112,6 +112,61 @@ async function callReceiveWebhook(body: Record<string, unknown>): Promise<WmsCal
 
 type ProofRow = { id: number; imagePath: string; status: string; createdAt: Date };
 
+/**
+ * v2.5.5 第10版（老闆指示 2026-10-11「點解購物金審批無推送？？」）：
+ * 會員上傳充值截圖（轉 payment_review）後，即時打 WMS `order.receiveTopupAlert` ——
+ * WMS 會推送落主管/管理員手機（同官網新訂單推播同款待遇，tag 冚舊唔會炸通知）。
+ * never-throw：WMS 冇配置／call 唔通／WMS 彈錯都淨係 console.error，唔會阻到會員流程；
+ * apiKey 永遠唔落 log（錯誤訊息淨係 WMS 回嘅字／HTTP 碼）。
+ */
+export async function notifyWmsTopupReview(args: {
+  topupNo: string;
+  memberName: string | null;
+  label: string;
+  price: number;
+  channel?: string;
+}): Promise<void> {
+  if (!wmsConfigured()) return;
+  const apiKey = process.env.WMS_API_KEY;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PER_CALL_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${wmsBaseUrl()}/api/trpc/order.receiveTopupAlert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        json: {
+          apiKey,
+          topupNo: args.topupNo,
+          memberName: args.memberName ?? "會員",
+          label: args.label,
+          price: args.price,
+          channel: args.channel,
+        },
+      }),
+      signal: ctrl.signal,
+    });
+    const data = (await resp.json().catch(() => null)) as {
+      result?: { data?: { json?: { success?: boolean } } };
+      error?: { json?: { message?: string } };
+    } | null;
+    const errMsg = data?.error?.json?.message;
+    if (errMsg || !data?.result?.data?.json?.success) {
+      console.error(`[wmsSync] 購物金待批推送失敗（${args.topupNo}）：${errMsg ?? `HTTP ${resp.status}`}`);
+    }
+  } catch (e) {
+    const msg =
+      e instanceof Error && e.name === "AbortError"
+        ? `timeout ${PER_CALL_TIMEOUT_MS / 1000}s`
+        : e instanceof Error
+          ? e.message
+          : "network error";
+    console.error(`[wmsSync] 購物金待批推送失敗（${args.topupNo}）：${msg}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 最新嗰張 pending 截圖（冇 pending 就攞最新一張） */
 function pickProof(proofs: ProofRow[]): ProofRow | null {
   const sorted = [...proofs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

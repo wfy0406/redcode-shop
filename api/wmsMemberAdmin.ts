@@ -11,8 +11,11 @@
  *       ＋充值單（包括已取消）＋訂單一覽 —— WMS 官網中心會員頁用（2026-10-09 老闆指令）
  *     ─ walletTopupList（全部員工可，唯讀）：待批核充值單＋最近已處理紀錄
  *       —— WMS 官網中心「購物金批核」tab 用（v2.5.5 第9版，2026-10-11 老闆指令：批核搬去 WMS 官網中心）
- *     ─ walletTopupReview（全部員工可，同官網後台 reviewTopup 嘅 staff 級）：批准入帳／拒絕
- *       {topupNo, approve, note?}；同 wmsWallet.ts 回調共用 approveTopupCore（conditional update 冪等）
+ *     ─ walletTopupPendingCount（全部員工可，唯讀）：待批核充值單數量，淨係回一個數字
+ *       —— WMS 審批中心入口燈號用（v2.5.5 第10版，老闆指令：購物金審批要喺審批中心睇到）
+ *     ─ walletTopupReview（supervisor/admin；v2.5.5 第10版老闆指示「購物金審批權限比照審批訂單權限」，
+ *       由全部員工收緊做主管/管理員，同官網後台 reviewTopup＝supervisorProcedure 兩層一致）：
+ *       批准入帳／拒絕 {topupNo, approve, note?}；同 wmsWallet.ts 回調共用 approveTopupCore（conditional update 冪等）
  *     ─ removePushDevice（supervisor/admin）：踢走一部裝置 {deviceId}
  *     ─ unsubscribePush（supervisor/admin）：拒絕接收直播推送＋註銷全部裝置
  *     ─ setMarketing（supervisor/admin）：直接促銷 設為接受/唔接受 {optIn}
@@ -26,7 +29,7 @@
  */
 import { timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { pushSubscriptions, users, walletLedger, walletTopups, orders } from "@db/schema";
 import { logAudit } from "./audit";
@@ -39,11 +42,14 @@ import { buildVipVerifyUrl } from "./vipCert";
 import { approveTopupCore } from "./walletRouter";
 import { TOPUP_CHANNEL_LABEL } from "./wallet";
 
-const ACTIONS = ["get", "walletGet", "walletTopupList", "walletTopupReview", "removePushDevice", "unsubscribePush", "setMarketing", "setVipTier"] as const;
+const ACTIONS = ["get", "walletGet", "walletTopupList", "walletTopupPendingCount", "walletTopupReview", "removePushDevice", "unsubscribePush", "setMarketing", "setVipTier"] as const;
 type Action = (typeof ACTIONS)[number];
 
 /** 變更類 action 淨准主管／管理員（WMS 後端已按員工名查 DB 驗咗 role 先傳嚟；呢度再擋一層） */
-const MUTATE_ACTIONS: Action[] = ["removePushDevice", "unsubscribePush", "setMarketing", "setVipTier"];
+// v2.5.5 第10版（老闆指示「購物金審批權限比照審批訂單權限」）：walletTopupReview 由全部員工
+// 改做 supervisor/admin 級（WMS 訂單審批 approveWebhook 就係呢個級數），同官網後台 reviewTopup
+// （supervisorProcedure）兩層一致。
+const MUTATE_ACTIONS: Action[] = ["walletTopupReview", "removePushDevice", "unsubscribePush", "setMarketing", "setVipTier"];
 
 /** 攞 JSON body ＋ 常數時間比對 shared secret（同 wmsLivePush 一致嘅回錯款） */
 async function readJsonWithSecret(
@@ -98,11 +104,22 @@ export async function wmsMemberAdmin(c: Context): Promise<Response> {
 
   const action = typeof b.action === "string" ? (b.action as Action) : ("" as Action);
   if (!ACTIONS.includes(action)) {
-    return c.json({ ok: false, error: "action 唔啱（get/walletGet/walletTopupList/walletTopupReview/removePushDevice/unsubscribePush/setMarketing/setVipTier）" }, 400);
+    return c.json({ ok: false, error: "action 唔啱（get/walletGet/walletTopupList/walletTopupPendingCount/walletTopupReview/removePushDevice/unsubscribePush/setMarketing/setVipTier）" }, 400);
   }
   const actor = wmsActor(b);
   if (MUTATE_ACTIONS.includes(action) && actor.role !== "supervisor" && actor.role !== "admin") {
     return c.json({ ok: false, error: "呢個動作要主管或管理員" }, 403);
+  }
+
+  // ─── walletTopupPendingCount（v2.5.5 第10版）：待批核充值單數量 —— WMS 審批中心燈號用。
+  //     淨係回一個數字，唔帶任何會員資料；官網瞓着／出錯嗰邊（WMS）會當 0 處理，唔會炸入口。
+  if (action === "walletTopupPendingCount") {
+    const db = getDb();
+    const [row] = await db
+      .select({ c: sql<number>`count(*)::int` })
+      .from(walletTopups)
+      .where(eq(walletTopups.status, "payment_review"));
+    return c.json({ ok: true, count: Number(row?.c ?? 0) });
   }
 
   // ─── walletTopupList（v2.5.5 第9版；全部員工可，唯讀）：待批核充值單＋最近已處理紀錄 ───
@@ -145,7 +162,8 @@ export async function wmsMemberAdmin(c: Context): Promise<Response> {
     return c.json({ ok: true, pending: pendingRows.map(mapRow), recent: recentRows.map(mapRow) });
   }
 
-  // ─── walletTopupReview（v2.5.5 第9版；員工級，同官網後台 reviewTopup 一個級數）───
+  // ─── walletTopupReview（v2.5.5 第9版新增；第10版收緊做 supervisor/admin——老闆指示
+  //     「購物金審批權限比照審批訂單權限」，MUTATE_ACTIONS 閘已擋，同官網後台 supervisorProcedure 一致）───
   // 批准＝approveTopupCore 入帳（冪等）＋寄入帳信；拒絕＝conditional update＋寄拒絕信。兩邊都記 audit。
   if (action === "walletTopupReview") {
     const topupNo = typeof b.topupNo === "string" ? b.topupNo.trim() : "";

@@ -33,6 +33,7 @@ import {
   adminProcedure,
 } from "./middleware";
 import { logAudit } from "./audit";
+import { notifyWmsTopupReview } from "./wmsSync";
 import {
   sendWalletTopupPendingEmail,
   sendWalletTopupApprovedEmail,
@@ -347,6 +348,15 @@ export const walletRouter = createRouter({
           channel: "手動上傳截圖",
         });
         if (!r.ok) console.error(`[wallet] 充值待批核通知寄唔出（${topup.topupNo}）：`, r.error);
+        // v2.5.5 第10版（老闆指示 2026-10-11「無推送？？」）：通知 WMS 推送主管手機
+        // （同官網新訂單推播一個待遇）；never-throw，失敗淨係 console.error。
+        await notifyWmsTopupReview({
+          topupNo: topup.topupNo,
+          memberName: member.name,
+          label: topup.label,
+          price: topup.price,
+          channel: "手動上傳截圖",
+        });
       })();
       void logAudit({
         actorId: ctx.user.userId,
@@ -493,10 +503,11 @@ export const walletRouter = createRouter({
     }),
 
   /**
-   * 批核充值單（staff 以上）：approve＝入帳（冪等 core）＋寄入帳信；
-   * reject＝轉已拒絕＋寄拒絕信（購物金唔會郁）。
+   * 批核充值單（supervisor/admin；v2.5.5 第10版老闆指示「購物金審批權限比照審批訂單權限」——
+   * 訂單審批係主管/管理員級，購物金批核同級；之前 staff 級係錯嘅）：
+   * approve＝入帳（冪等 core）＋寄入帳信；reject＝轉已拒絕＋寄拒絕信（購物金唔會郁）。
    */
-  reviewTopup: staffProcedure
+  reviewTopup: supervisorProcedure
     .input(
       z.object({
         topupId: z.number().int().positive(),

@@ -62,7 +62,16 @@ type ToastFn = (msg: string, type?: 'success' | 'info' | 'error') => void;
 
 /* ─────────── 待批核／紀錄 ─────────── */
 
-function TopupReviewList({ toast, isAdmin }: { toast: ToastFn; isAdmin: boolean }) {
+function TopupReviewList({
+  toast,
+  isAdmin,
+  canReview,
+}: {
+  toast: ToastFn;
+  isAdmin: boolean;
+  /** v2.5.5 第10版（老闆指示「購物金審批權限比照審批訂單權限」）：批核限主管/管理員；staff 唯讀 */
+  canReview: boolean;
+}) {
   const utils = trpc.useUtils();
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [noteById, setNoteById] = useState<Record<number, string>>({});
@@ -183,37 +192,45 @@ function TopupReviewList({ toast, isAdmin }: { toast: ToastFn; isAdmin: boolean 
                     </button>
                   )}
                 </div>
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <input
-                    type="text"
-                    value={noteById[t.id] ?? ''}
-                    onChange={(e) =>
-                      setNoteById((prev) => ({ ...prev, [t.id]: e.target.value }))
-                    }
-                    placeholder="備註／拒絕原因（可留空）"
-                    maxLength={500}
-                    className="h-10 min-w-0 flex-1 rounded-xl border bg-transparent px-3.5 text-[13px] text-txt-1 placeholder:text-txt-3 focus:outline-none"
-                    style={{ borderColor: 'var(--space-line)' }}
-                  />
-                  <button
-                    type="button"
-                    disabled={busyId === t.id}
-                    onClick={() => void onReview(t.id, t.topupNo, true)}
-                    className="btn btn-primary !px-4 !py-2 text-[13px]"
-                  >
-                    <BadgeCheck size={14} aria-hidden="true" />
-                    批准入帳
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busyId === t.id}
-                    onClick={() => void onReview(t.id, t.topupNo, false)}
-                    className="btn btn-secondary !px-4 !py-2 text-[13px]"
-                  >
-                    <XCircle size={14} aria-hidden="true" />
-                    拒絕
-                  </button>
-                </div>
+                {/* v2.5.5 第10版：批核限主管/管理員（同訂單審批一個級數）；staff 唯讀＋提示 */}
+                {canReview ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <input
+                      type="text"
+                      value={noteById[t.id] ?? ''}
+                      onChange={(e) =>
+                        setNoteById((prev) => ({ ...prev, [t.id]: e.target.value }))
+                      }
+                      placeholder="備註／拒絕原因（可留空）"
+                      maxLength={500}
+                      className="h-10 min-w-0 flex-1 rounded-xl border bg-transparent px-3.5 text-[13px] text-txt-1 placeholder:text-txt-3 focus:outline-none"
+                      style={{ borderColor: 'var(--space-line)' }}
+                    />
+                    <button
+                      type="button"
+                      disabled={busyId === t.id}
+                      onClick={() => void onReview(t.id, t.topupNo, true)}
+                      className="btn btn-primary !px-4 !py-2 text-[13px]"
+                    >
+                      <BadgeCheck size={14} aria-hidden="true" />
+                      批准入帳
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === t.id}
+                      onClick={() => void onReview(t.id, t.topupNo, false)}
+                      className="btn btn-secondary !px-4 !py-2 text-[13px]"
+                    >
+                      <XCircle size={14} aria-hidden="true" />
+                      拒絕
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-[12px] text-txt-3">
+                    批核權限：主管／管理員（同訂單審批一致）——你可以睇單，批核請搵主管。
+                  </p>
+                )}
+
               </div>
             ))}
           </div>
@@ -739,7 +756,7 @@ export default function WalletPanel({ toast }: { toast: ToastFn }) {
         </p>
       </header>
       <div className="mt-6">
-        <TopupReviewList toast={toast} isAdmin={me?.role === 'admin'} />
+        <TopupReviewList toast={toast} isAdmin={me?.role === 'admin'} canReview={isSupervisorOrAdmin} />
         {isSupervisorOrAdmin && (
           <>
             <PackageManager toast={toast} />

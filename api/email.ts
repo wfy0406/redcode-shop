@@ -2163,11 +2163,15 @@ export async function sendOrderShippedEmail(args: {
     const partial = args.shippedItems < args.totalItems;
     const cancelled = Math.max(0, args.cancelledItems ?? 0);
     const batchHtml = args.batches
-      .map((b) => {
+      .map((b, idx) => {
         const methodLabel = SHIP_METHOD_LABEL[b.shipMethod] ?? b.shipMethod;
+        // v2.5.5 第10版（老闆指示）：每批寫明「本次寄出 N 件」，下面貨品表列明係邊幾件
+        const batchUnits = b.items.reduce((s, it) => s + it.quantity, 0);
+        const batchLabel = args.batches.length > 1 ? `第 ${idx + 1} 批寄出` : "本次寄出";
         const head =
           b.shipMethod === "sf" && b.sfNo
             ? infoBox([
+                [batchLabel, `<b>${batchUnits} 件</b>（明細見下表）`],
                 ["物流方式", `<b>${methodLabel}</b>`],
                 ["順豐單號", mono(escapeHtml(b.sfNo))],
                 ["寄出時間", fmtDateHK(b.shippedAt)],
@@ -2175,6 +2179,7 @@ export async function sendOrderShippedEmail(args: {
               ctaButton("即撳追蹤貨件 →", sfTrackingUrl(b.sfNo)) +
               note("順豐系統一般需要 2–10 小時先更新追蹤狀態，暫時撳入去未見到資料係正常嘅，請稍候再睇。")
             : infoBox([
+                [batchLabel, `<b>${batchUnits} 件</b>（明細見下表）`],
                 ["交收方式", `<b>${methodLabel}</b>`],
                 ["時間", fmtDateHK(b.shippedAt)],
               ]) +
