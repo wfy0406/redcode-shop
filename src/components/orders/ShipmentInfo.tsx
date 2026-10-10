@@ -12,9 +12,9 @@
 import { Archive, Handshake, Home, PencilLine, Truck, XCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-/** 順豐官方追蹤連結（同 api/email.ts sfTrackingUrl 同一格式） */
+/** 順豐官方追蹤連結（香港繁中版，同 WMS SfQrScanButton 同一格式；舊 chn/sc 內地版唔啱香港客用） */
 export function sfTrackingUrl(sfNo: string): string {
-  return `https://www.sf-express.com/we/ow/chn/sc/waybill/waybill-detail/${encodeURIComponent(sfNo)}`;
+  return `https://www.sf-express.com/hk/tc/dynamic_function/waybill/#search/bill-number/${encodeURIComponent(sfNo)}`;
 }
 
 /** 順豐追蹤更新提示（老闆指定原句，email 同前台一致） */

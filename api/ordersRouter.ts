@@ -904,6 +904,8 @@ export const ordersRouter = createRouter({
         throw new TRPCError({ code: "NOT_FOUND", message: GUEST_LOOKUP_FAIL_MESSAGE });
       }
       if (order.userId === ctx.user.userId) {
+        // v2.5.5（老闆指示 msg79e）：已綁自己都要補計 VIP — 移入嘅訪客單要計入年度消費同會員級別
+        recomputeVipTierInBackground(ctx.user.userId, order.orderNo);
         return { ok: true as const, already: true };
       }
       if (order.userId != null) {
@@ -918,6 +920,9 @@ export const ordersRouter = createRouter({
       if (claimed.length === 0) {
         throw new TRPCError({ code: "CONFLICT", message: "呢張單已經綁定咗另一個帳號" });
       }
+      // v2.5.5（老闆指示 msg79e「移入會員記得要計翻個消費金額，係計vip幾級」）：
+      // 認領成功即重算年度消費＋VIP 級別（背景跑，唔阻回應；升級會寄信＋同步 WMS）
+      recomputeVipTierInBackground(ctx.user.userId, order.orderNo);
       const member = await db.query.users.findFirst({
         where: eq(users.id, ctx.user.userId),
         columns: { name: true },

@@ -249,7 +249,8 @@ function GuestLookupSection() {
       <LookupResultBoundary>
         {result?.kind === 'guest' && (
           <div className="mt-6 flex w-full max-w-[420px] flex-col gap-5 lg:max-w-[560px]">
-            <GuestOrderCard order={result} guestToken={resultToken} onExpire={() => void refresh()} focusRef={resultRef} />
+            {/* v2.5.5（msg76c）：claimPhone 帶住已核實電話 — 未登入撳「移入」時記低，登入返嚟自動接返 */}
+            <GuestOrderCard order={result} guestToken={resultToken} onExpire={() => void refresh()} focusRef={resultRef} claimPhone={phone.trim()} />
             <RegisterUpsell phone={phone.trim()} />
           </div>
         )}
@@ -390,6 +391,36 @@ export default function MyOrders() {
   const claimOrderNo = params.get('guest') ?? '';
   const claimToken = params.get('token') ?? '';
   const [claimDismissed, setClaimDismissed] = useState(false);
+  // v2.5.5（老闆指示 msg76c）：未登入撲「移入會員訂單」去登入，返嚟自動接返 —
+  // GuestOrderCard 去登入前記低 sessionStorage rc.pendingClaim={orderNo,phone}（永遠唔記 token），
+  // 登入後呢度重新 guestLookup 拎新 token 自動彈確認框；失敗 → 統一訊息（防枚舉，唔講邊步錯）。
+  const [resumeClaim, setResumeClaim] = useState<{ orderNo: string; token: string } | null>(null);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const resumeTried = useRef(false);
+  useEffect(() => {
+    if (!user || resumeTried.current) return;
+    if (claimOrderNo && claimToken) return; // URL 魔法連結路徑優先，唔好重複彈
+    resumeTried.current = true;
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem('rc.pendingClaim'); } catch { /* 私隱模式當冇 */ }
+    if (!raw) return;
+    try { sessionStorage.removeItem('rc.pendingClaim'); } catch { /* 一 take 過，唔留尾 */ }
+    let parsed: { orderNo?: string; phone?: string } | null = null;
+    try { parsed = JSON.parse(raw) as { orderNo?: string; phone?: string }; } catch { /* 壞資料當冇 */ }
+    const orderNo = (parsed?.orderNo || '').trim();
+    const phone = (parsed?.phone || '').trim();
+    if (!orderNo || !phone) return;
+    void utils.orders.guestLookup
+      .fetch({ orderNo, phone })
+      .then((data) => {
+        const token = data.kind === 'guest' ? (data.guestToken ?? null) : null;
+        if (token) setResumeClaim({ orderNo, token });
+        else setResumeError('移入訪客訂單唔成功——請用確認 email 嘅連結再試一次，或者 WhatsApp 我哋幫手。');
+      })
+      .catch(() =>
+        setResumeError('移入訪客訂單唔成功——請用確認 email 嘅連結再試一次，或者 WhatsApp 我哋幫手。'),
+      );
+  }, [user, claimOrderNo, claimToken, utils]);
 
   const ordersQuery = trpc.orders.myOrders.useQuery(undefined, { enabled: !!user });
 
@@ -470,6 +501,25 @@ export default function MyOrders() {
         未過數嘅單可以喺下面即場網上付款，或者上傳付款截圖。
       </p>
 
+      {/* v2.5.5（msg76c）：登入後接返「移入訪客單」失敗 → 統一訊息（防枚舉），可關 */}
+      {resumeError && (
+        <p
+          role="alert"
+          className="mt-4 flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-[13px]"
+          style={{ borderColor: 'rgba(255,107,91,0.4)', color: '#FF6B5B', background: 'var(--space-2)' }}
+        >
+          <span>{resumeError}</span>
+          <button
+            type="button"
+            aria-label="關閉提示"
+            onClick={() => setResumeError(null)}
+            className="shrink-0 text-txt-3 transition-colors hover:text-txt-1"
+          >
+            ✕
+          </button>
+        </p>
+      )}
+
       {/* 按日期搜尋訂單 */}
       {orders.length > 0 && (
         <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -538,6 +588,19 @@ export default function MyOrders() {
           guestToken={claimToken}
           onClose={() => clearClaimParams(false)}
           onClaimed={() => clearClaimParams(true)}
+        />
+      )}
+
+      {/* v2.5.5（msg76c）：登入前撳咗「移入會員訂單」→ 登入返嚟自動彈返確認框 */}
+      {resumeClaim && (
+        <ClaimGuestOrderModal
+          orderNo={resumeClaim.orderNo}
+          guestToken={resumeClaim.token}
+          onClose={() => setResumeClaim(null)}
+          onClaimed={() => {
+            setResumeClaim(null);
+            void utils.orders.myOrders.invalidate();
+          }}
         />
       )}
     </section>

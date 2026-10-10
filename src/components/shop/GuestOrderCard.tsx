@@ -112,6 +112,7 @@ export default function GuestOrderCard({
   countdownVariant = 'inline',
   autoOpenClaim = false,
   onClaimed,
+  claimPhone,
 }: {
   order: GuestOrderPayload;
   /** 付款用：guestLookup（電話核實）先會返；guestByToken 路徑由 caller 裝返 URL token 入嚟 */
@@ -124,6 +125,10 @@ export default function GuestOrderCard({
   autoOpenClaim?: boolean;
   /** 成功移入後 callback（caller 清 params／refetch） */
   onClaimed?: () => void;
+  /** v2.5.5（老闆指示 msg76c）：手動查單路徑嘅已核實電話 — 去登入前記落 sessionStorage，
+   *  登入返嚟 MyOrders 用佢重新 guestLookup 拎新 token，自動接返「移入會員訂單」流程。
+   *  安全規矩：永遠唔好將 guestToken 寫入 sessionStorage／URL — 淨係 orderNo＋phone。 */
+  claimPhone?: string;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -143,13 +148,18 @@ export default function GuestOrderCard({
     }
   }, [autoOpenClaim, user, guestToken]);
 
-  /** 撳「移入會員訂單」：已登入直接彈框；未登入先去登入（返嚟 URL 帶 claim=1 自動彈） */
+  /** 撳「移入會員訂單」：已登入直接彈框；未登入先去登入（返嚟自動接返 — 見 sessionStorage 一段） */
   const onClaimClick = () => {
     if (!guestToken) return;
     if (user) {
       setClaimOpen(true);
       return;
     }
+    // v2.5.5（老闆指示 msg76c）：未登入撳「移入」→ 記低 orderNo＋已核實電話（**唔係** token），
+    // 登入／註冊完返嚟 MyOrders 會重新查單拎新 token 自動彈確認框，唔會再「登入完冇反應」。
+    try {
+      sessionStorage.setItem('rc.pendingClaim', JSON.stringify({ orderNo: order.orderNo, phone: (claimPhone || '').trim() }));
+    } catch { /* 私隱模式寫唔入都唔阻登入 */ }
     const sp = new URLSearchParams(location.search);
     sp.set('claim', '1');
     void navigate('/login', { state: { from: `${location.pathname}?${sp.toString()}` } });

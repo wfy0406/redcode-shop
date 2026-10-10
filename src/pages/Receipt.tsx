@@ -676,7 +676,7 @@ export default function Receipt() {
                           　・　{dt.toLocaleString('zh-HK', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
                           {s.shipMethod === 'sf' && s.sfNo && (
                             <span style={{ display: 'block', color: INK_SOFT, fontSize: 10.5 }}>
-                              追蹤：https://www.sf-express.com/we/ow/chn/sc/waybill/waybill-detail/{s.sfNo}
+                              追蹤：https://www.sf-express.com/hk/tc/dynamic_function/waybill/#search/bill-number/{s.sfNo}
                               　（順豐系統一般需要 2–10 小時先更新追蹤狀態）
                             </span>
                           )}

@@ -1664,9 +1664,9 @@ export const SHIP_METHOD_LABEL: Record<string, string> = {
   storage: "已入倉儲存",
 };
 
-/** 順豐官方追蹤連結（契約指定格式；2–10 小時更新提示寫喺信入面） */
+/** 順豐官方追蹤連結（香港繁中版，同 WMS 一致；2–10 小時更新提示寫喺信入面） */
 export function sfTrackingUrl(sfNo: string): string {
-  return `https://www.sf-express.com/we/ow/chn/sc/waybill/waybill-detail/${encodeURIComponent(sfNo)}`;
+  return `https://www.sf-express.com/hk/tc/dynamic_function/waybill/#search/bill-number/${encodeURIComponent(sfNo)}`;
 }
 
 /** 出貨信嘅批次結構：一張單可以分幾次寄，debounce 後一次過列出 */
