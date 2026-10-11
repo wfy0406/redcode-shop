@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   BadgeCheck,
   CircleDollarSign,
+  CircleMinus,
+  CirclePlus,
   Hourglass,
   Package,
   Search,
@@ -45,6 +47,8 @@ const LEDGER_TYPE_LABEL: Record<string, string> = {
   topup: '充值入帳',
   spend: '購物扣減',
   refund: '取消返還',
+  // v2.5.5 第11版（老闆指示）：主管/管理員人手加減 → 客人端同後台都顯示「官方調整」
+  adjust: '官方調整',
 };
 
 function fmtDT(iso: string): string {
@@ -558,15 +562,24 @@ function PackageManager({ toast }: { toast: ToastFn }) {
 
 /* ─────────── 會員購物金查詢（supervisor/admin） ─────────── */
 
-function MemberWalletLookup() {
+function MemberWalletLookup({ toast }: { toast: ToastFn }) {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // v2.5.5 第11版（老闆指示）：主管/管理員人手增加／扣減會員購物金（客人端流水帳顯示「官方調整」）
+  const [adjAmount, setAdjAmount] = useState('');
+  const [adjNote, setAdjNote] = useState('');
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
     return () => window.clearTimeout(t);
   }, [q]);
+
+  // 轉會員就清空調整表單，防打錯入隔籬會員
+  useEffect(() => {
+    setAdjAmount('');
+    setAdjNote('');
+  }, [selectedId]);
 
   const searchQuery = trpc.members.list.useQuery(
     { q: debouncedQ },
@@ -582,6 +595,38 @@ function MemberWalletLookup() {
     [searchQuery.data],
   );
   const wallet = walletQuery.data ?? null;
+
+  // v2.5.5 第11版：官方調整（增加／扣減購物金）——金額正整數＋原因必填；後端 supervisorProcedure 再閘
+  const adjustMut = trpc.wallet.adjustWallet.useMutation();
+  const submitAdjust = async (sign: 1 | -1) => {
+    if (selectedId === null || !wallet) return;
+    const abs = Math.floor(Number(adjAmount));
+    if (!Number.isFinite(abs) || abs <= 0) {
+      toast('請輸入正整數金額（港元）', 'error');
+      return;
+    }
+    const note = adjNote.trim();
+    if (!note) {
+      toast('調整原因必填（客人會喺流水賬睇到）', 'error');
+      return;
+    }
+    if (
+      !window.confirm(
+        `確定${sign > 0 ? '增加' : '扣減'}「${wallet.member.name}」購物金 HK$${abs.toLocaleString()}？\n原因：${note}\n\n客人嘅流水賬會顯示「官方調整」同呢個原因。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const r = await adjustMut.mutateAsync({ userId: selectedId, amount: sign * abs, note });
+      toast(`已調整，最新餘額 ${formatHKD(r.balanceAfter)}`, 'success');
+      setAdjAmount('');
+      setAdjNote('');
+      await walletQuery.refetch();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  };
 
   return (
     <section
@@ -665,6 +710,60 @@ function MemberWalletLookup() {
                     {formatHKD(wallet.member.storeCredit)}
                   </p>
                 </div>
+              </div>
+
+              {/* v2.5.5 第11版（老闆指示）：主管/管理員增加／扣減購物金——原因必填，客人端流水帳顯示「官方調整」 */}
+              <div
+                className="mt-4 rounded-2xl border p-4"
+                style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
+              >
+                <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-txt-3">
+                  官方調整（增加／扣減）
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2.5">
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={adjAmount}
+                    onChange={(e) => setAdjAmount(e.target.value)}
+                    placeholder="金額 HK$"
+                    aria-label="調整金額（港元）"
+                    className="h-10 w-32 rounded-xl border px-3 font-mono text-[13.5px] text-txt-1 placeholder:text-txt-3 focus:outline-none"
+                    style={{ borderColor: 'var(--space-line)', background: 'var(--space-1)' }}
+                  />
+                  <input
+                    type="text"
+                    value={adjNote}
+                    onChange={(e) => setAdjNote(e.target.value)}
+                    placeholder="調整原因（必填，客人會睇到）"
+                    aria-label="調整原因"
+                    maxLength={200}
+                    className="h-10 min-w-56 flex-1 rounded-xl border px-4 text-[13.5px] text-txt-1 placeholder:text-txt-3 focus:outline-none"
+                    style={{ borderColor: 'var(--space-line)', background: 'var(--space-1)' }}
+                  />
+                  <button
+                    type="button"
+                    disabled={adjustMut.isPending}
+                    onClick={() => void submitAdjust(1)}
+                    className="btn btn-gold !px-4 !py-2 text-[13px] disabled:opacity-40"
+                  >
+                    <CirclePlus size={14} aria-hidden="true" />
+                    增加
+                  </button>
+                  <button
+                    type="button"
+                    disabled={adjustMut.isPending}
+                    onClick={() => void submitAdjust(-1)}
+                    className="btn btn-ghost !px-4 !py-2 text-[13px] disabled:opacity-40"
+                  >
+                    <CircleMinus size={14} aria-hidden="true" />
+                    扣減
+                  </button>
+                </div>
+                <p className="mt-2 text-[11.5px] text-txt-3">
+                  扣減唔可以扣到負數；每次調整都會寫入流水賬（客人睇到「官方調整」）同異動紀錄。
+                </p>
               </div>
 
               <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.24em] text-txt-3">
@@ -760,7 +859,7 @@ export default function WalletPanel({ toast }: { toast: ToastFn }) {
         {isSupervisorOrAdmin && (
           <>
             <PackageManager toast={toast} />
-            <MemberWalletLookup />
+            <MemberWalletLookup toast={toast} />
           </>
         )}
       </div>

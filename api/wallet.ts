@@ -54,6 +54,8 @@ export const LEDGER_TYPE_LABEL: Record<string, string> = {
   topup: "充值入帳",
   spend: "購物扣減",
   refund: "取消返還",
+  // v2.5.5 第11版（老闆指示 2026-10-11）：主管/管理員人手加減購物金，客人端流水帳統一寫「官方調整」
+  adjust: "官方調整",
 };
 
 /**
@@ -114,6 +116,41 @@ export async function getOrderWalletSpend(
   });
   if (!row) return null;
   return { used: Math.abs(row.amount), balanceAfter: row.balanceAfter, at: row.createdAt };
+}
+
+/**
+ * v2.5.5 第11版（老闆指示 2026-10-11）：「主管及管理員可以增加／扣減會員購物金，
+ * 客人端流水帳要寫官方調整」。官網後台 walletRouter.adjustWallet 同 WMS wmsMemberAdmin
+ * walletAdjust 共用呢個核心（要喺 caller 嘅 transaction 入面 call）：
+ * - amount 係**有符號整數港元**（正＝增加／負＝扣減），唔准 0；
+ * - 防負數：conditional update 唔俾扣到負（郁 0 行 → 回 error，唔會靜默）；
+ * - 流水賬 type='adjust'（客人端顯示「官方調整」），note＝調整原因（必填，客人睇到）。
+ */
+export async function adjustWalletCore(
+  tx: Tx,
+  args: { userId: number; amount: number; note: string; operatorName: string },
+): Promise<{ ok: true; balanceAfter: number } | { ok: false; error: string }> {
+  if (!Number.isInteger(args.amount) || args.amount === 0) {
+    return { ok: false, error: "調整金額要係非零整數港元" };
+  }
+  const [u] = await tx
+    .update(users)
+    .set({ storeCredit: sql`${users.storeCredit} + ${args.amount}` })
+    .where(and(eq(users.id, args.userId), sql`${users.storeCredit} + ${args.amount} >= 0`))
+    .returning({ storeCredit: users.storeCredit });
+  if (!u) {
+    return { ok: false, error: "扣減後餘額會變負數（或者會員唔存在）——唔准扣" };
+  }
+  await tx.insert(walletLedger).values({
+    userId: args.userId,
+    type: "adjust",
+    amount: args.amount,
+    balanceAfter: u.storeCredit,
+    refType: "manual",
+    refId: args.operatorName.slice(0, 32),
+    note: args.note,
+  });
+  return { ok: true, balanceAfter: u.storeCredit };
 }
 
 /**

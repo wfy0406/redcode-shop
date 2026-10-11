@@ -14,6 +14,7 @@ import { wmsRefundCallback } from "./wmsRefund";
 import { wmsWalletTopupReview } from "./wmsWallet";
 import { wmsShipmentCallback } from "./wmsShipment";
 import { wmsDeleteOrderCallback } from "./wmsDeleteOrder";
+import { wmsDeleteItemCallback } from "./wmsDeleteItem";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushDeliveries, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
@@ -76,6 +77,11 @@ app.post("/api/wms/shipment-callback", wmsShipmentCallback);
 // WMS → 官網刪單回調（v2.5.5 第7版 2026-10-11 老闆指示：WMS 官網中心刪單，官網要真刪，
 // 唔可以淨係標已取消；同樣 shared secret 驗證；刪除邏輯同官網後台「永久刪除」共用 api/orderDelete.ts）
 app.post("/api/wms/delete-order", wmsDeleteOrderCallback);
+
+// WMS → 官網刪單件貨回調（v2.5.5 第11版 2026-10-11 老闆指示：WMS 官網中心訂單詳細資料單項商品刪除，
+// 官網張單入面嗰件貨要一同真刪，唔可以淨係標已取消；同樣 shared secret 驗證；
+// 淨係刪已取消嘅貨——WMS 流程係先 item_cancelled（取消＋補庫存＋原因留底）成功後先調用）
+app.post("/api/wms/delete-item", wmsDeleteItemCallback);
 
 // WMS → 官網批量上架（2026-09-29 F8 直播場次制；同樣 shared secret 驗證）：
 // 手動上傳貨圖（multipart）＋ 批量推送（批准 execute／拒絕 reject）

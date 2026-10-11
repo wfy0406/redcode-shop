@@ -9,7 +9,7 @@
  */
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowDownToLine, ArrowUpFromLine, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, ChevronLeft, ChevronRight, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import WishingStar from './WishingStar';
 import { formatHKD } from '@/components/cart/format';
@@ -18,6 +18,8 @@ const TYPE_META: Record<string, { label: string; icon: typeof ArrowDownToLine; p
   topup: { label: '存入', icon: ArrowDownToLine, positive: true },
   spend: { label: '使用', icon: ArrowUpFromLine, positive: false },
   refund: { label: '返還', icon: RotateCcw, positive: true },
+  // v2.5.5 第11版（老闆指示）：官方人手調整（主管/管理員加減購物金）——客人端統一寫「官方調整」
+  adjust: { label: '官方調整', icon: SlidersHorizontal, positive: true },
 };
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -68,7 +70,9 @@ export default function WalletLedgerList({
     <div>
       <div className="flex flex-col gap-2.5">
         {ledger.map((l) => {
-          const meta = TYPE_META[l.type] ?? { label: l.type, icon: ArrowDownToLine, positive: l.amount >= 0 };
+          const baseMeta = TYPE_META[l.type] ?? { label: l.type, icon: ArrowDownToLine, positive: l.amount >= 0 };
+          // 官方調整可正可負——圖示色跟金額正負（正＝金、負＝淡），其餘類型正負固定唔使郁
+          const meta = l.type === 'adjust' ? { ...baseMeta, positive: l.amount >= 0 } : baseMeta;
           const Icon = meta.icon;
           const orderInfo = l.refType === 'order' ? orderInfoByNo[l.refId] : undefined;
           const channel = l.refType === 'topup' ? channelByTopupNo[l.refId] : undefined;
@@ -114,7 +118,8 @@ export default function WalletLedgerList({
                   {l.refType === 'topup' && (
                     <p className="mt-0.5 font-mono text-[12px] text-txt-3">{l.refId}</p>
                   )}
-                  {l.note && l.type === 'spend' && !orderInfo && (
+                  {/* 使用／官方調整：顯示備註（官方調整＝調整原因，老闆指示客人要睇到） */}
+                  {l.note && (l.type === 'spend' || l.type === 'adjust') && !orderInfo && (
                     <p className="mt-0.5 text-[12px] text-txt-3">{l.note}</p>
                   )}
                   <p className="mt-0.5 font-mono text-[11.5px] text-txt-3">{fmtShort(l.createdAt)}</p>

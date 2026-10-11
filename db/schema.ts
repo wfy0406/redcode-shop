@@ -380,7 +380,7 @@ export const walletLedger = pgTable("walletLedger", {
   userId: bigint("userId", { mode: "number" })
     .notNull()
     .references(() => users.id),
-  type: varchar("type", { length: 16 }).notNull(), // 'topup'｜'spend'｜'refund'
+  type: varchar("type", { length: 16 }).notNull(), // 'topup'｜'spend'｜'refund'｜'adjust'（官方調整：主管/管理員人手加減）
   amount: integer("amount").notNull(),
   balanceAfter: integer("balanceAfter").notNull(),
   refType: varchar("refType", { length: 16 }).notNull(),

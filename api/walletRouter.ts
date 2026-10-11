@@ -44,6 +44,7 @@ import {
   generateTopupNo,
   TOPUP_TTL_MS,
   TOPUP_CHANNEL_LABEL,
+  adjustWalletCore,
 } from "./wallet";
 
 /** 充值單對外輸出（整數港元直接出；日期 ISO） */
@@ -628,6 +629,56 @@ export const walletRouter = createRouter({
         detail: `刪除充值紀錄 ${topup.topupNo}：會員「${topup.user?.name ?? topup.userId}」（${topup.user?.phone ?? "—"}）、「${topup.label}」面額 HK$${topup.creditAmount}、實付 HK$${topup.price}、狀態 ${topup.status}、渠道 ${topup.paymentChannel}${topup.approvedBy ? `、批准人 ${topup.approvedBy}` : ""}（只刪紀錄，購物金餘額唔受影響）`,
       });
       return { ok: true as const };
+    }),
+
+  /**
+   * v2.5.5 第11版（老闆指示 2026-10-11）：「主管及管理員可以增加／扣減會員購物金，
+   * 客人端流水帳要寫官方調整」——後台人手調整會員購物金（supervisor/admin）。
+   * amount 有符號整數港元（正＝增加／負＝扣減）；原因必填（客人喺流水賬睇到）；
+   * 防負數（唔准扣到負）；同事務記流水（type='adjust' → 客人端顯示「官方調整」）＋異動紀錄。
+   */
+  adjustWallet: supervisorProcedure
+    .input(
+      z.object({
+        userId: z.number().int().positive(),
+        amount: z.number().int().refine((n) => n !== 0, "調整金額唔可以係 0"),
+        note: z.string().trim().min(1, "調整原因必填（客人會睇到）").max(200),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [member, operatorRow] = await Promise.all([
+        db.query.users.findFirst({
+          where: eq(users.id, input.userId),
+          columns: { id: true, name: true, phone: true, role: true },
+        }),
+        // AuthUser 淨係有 userId＋role，經手人名要另外查
+        db.query.users.findFirst({
+          where: eq(users.id, ctx.user.userId),
+          columns: { name: true },
+        }),
+      ]);
+      if (!member || member.role !== "member") {
+        throw new TRPCError({ code: "NOT_FOUND", message: "會員不存在" });
+      }
+      const operator = operatorRow?.name ?? `員工#${ctx.user.userId}`;
+      const result = await db.transaction(async (tx) =>
+        adjustWalletCore(tx, { userId: member.id, amount: input.amount, note: input.note, operatorName: operator }),
+      );
+      if (!result.ok) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: result.error });
+      }
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "wallet.adjust",
+        targetType: "member",
+        targetId: member.id,
+        detail:
+          `官方調整購物金：會員「${member.name}」（${member.phone}）${input.amount > 0 ? "增加" : "扣減"} ` +
+          `HK$${Math.abs(input.amount)}，原因「${input.note}」，調整後餘額 HK$${result.balanceAfter}（經手：${operator}，官網後台）`,
+      });
+      return { ok: true as const, balanceAfter: result.balanceAfter };
     }),
 
   /**

@@ -13,6 +13,9 @@
  *       —— WMS 官網中心「購物金批核」tab 用（v2.5.5 第9版，2026-10-11 老闆指令：批核搬去 WMS 官網中心）
  *     ─ walletTopupPendingCount（全部員工可，唯讀）：待批核充值單數量，淨係回一個數字
  *       —— WMS 審批中心入口燈號用（v2.5.5 第10版，老闆指令：購物金審批要喺審批中心睇到）
+ *     ─ walletAdjust（supervisor/admin；v2.5.5 第11版老闆指示「主管及管理員可以增加／扣減會員購物金」）：
+ *       人手調整 {amount（有符號整數港元，正增加/負扣減）, note（原因必填，客人會睇到）}；
+ *       流水賬 type='adjust' → 客人端顯示「官方調整」；防負數；同官網後台 adjustWallet 共用 adjustWalletCore
  *     ─ walletTopupReview（supervisor/admin；v2.5.5 第10版老闆指示「購物金審批權限比照審批訂單權限」，
  *       由全部員工收緊做主管/管理員，同官網後台 reviewTopup＝supervisorProcedure 兩層一致）：
  *       批准入帳／拒絕 {topupNo, approve, note?}；同 wmsWallet.ts 回調共用 approveTopupCore（conditional update 冪等）
@@ -40,16 +43,16 @@ import { sendVipUpgradeEmail, sendWalletTopupApprovedEmail, sendWalletTopupRejec
 import { buildVipVerifyUrl } from "./vipCert";
 // v2.5.5 第9版：WMS 官網中心購物金批核（同 wmsWallet.ts 回調共用入帳核心，冪等）
 import { approveTopupCore } from "./walletRouter";
-import { TOPUP_CHANNEL_LABEL } from "./wallet";
+import { TOPUP_CHANNEL_LABEL, adjustWalletCore } from "./wallet";
 
-const ACTIONS = ["get", "walletGet", "walletTopupList", "walletTopupPendingCount", "walletTopupReview", "removePushDevice", "unsubscribePush", "setMarketing", "setVipTier"] as const;
+const ACTIONS = ["get", "walletGet", "walletTopupList", "walletTopupPendingCount", "walletTopupReview", "walletAdjust", "removePushDevice", "unsubscribePush", "setMarketing", "setVipTier"] as const;
 type Action = (typeof ACTIONS)[number];
 
 /** 變更類 action 淨准主管／管理員（WMS 後端已按員工名查 DB 驗咗 role 先傳嚟；呢度再擋一層） */
 // v2.5.5 第10版（老闆指示「購物金審批權限比照審批訂單權限」）：walletTopupReview 由全部員工
 // 改做 supervisor/admin 級（WMS 訂單審批 approveWebhook 就係呢個級數），同官網後台 reviewTopup
 // （supervisorProcedure）兩層一致。
-const MUTATE_ACTIONS: Action[] = ["walletTopupReview", "removePushDevice", "unsubscribePush", "setMarketing", "setVipTier"];
+const MUTATE_ACTIONS: Action[] = ["walletTopupReview", "walletAdjust", "removePushDevice", "unsubscribePush", "setMarketing", "setVipTier"];
 
 /** 攞 JSON body ＋ 常數時間比對 shared secret（同 wmsLivePush 一致嘅回錯款） */
 async function readJsonWithSecret(
@@ -104,7 +107,7 @@ export async function wmsMemberAdmin(c: Context): Promise<Response> {
 
   const action = typeof b.action === "string" ? (b.action as Action) : ("" as Action);
   if (!ACTIONS.includes(action)) {
-    return c.json({ ok: false, error: "action 唔啱（get/walletGet/walletTopupList/walletTopupPendingCount/walletTopupReview/removePushDevice/unsubscribePush/setMarketing/setVipTier）" }, 400);
+    return c.json({ ok: false, error: "action 唔啱（get/walletGet/walletTopupList/walletTopupPendingCount/walletTopupReview/walletAdjust/removePushDevice/unsubscribePush/setMarketing/setVipTier）" }, 400);
   }
   const actor = wmsActor(b);
   if (MUTATE_ACTIONS.includes(action) && actor.role !== "supervisor" && actor.role !== "admin") {
@@ -287,6 +290,34 @@ export async function wmsMemberAdmin(c: Context): Promise<Response> {
     return c.json({ ok: false, error: "會員唔存在" }, 404);
   }
 
+  // ─── walletAdjust（v2.5.5 第11版；supervisor/admin——MUTATE_ACTIONS 閘已擋）───
+  // WMS 官網中心會員頁人手加減購物金；原因必填（客人端流水賬會睇到「官方調整」＋原因）。
+  // 同事務郁餘額＋記賬（adjustWalletCore 防負數）；成功失敗都寫異動紀錄。
+  if (action === "walletAdjust") {
+    const amount = typeof b.amount === "number" ? b.amount : NaN;
+    if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 100_000) {
+      return c.json({ ok: false, error: "amount 要係非零整數港元（±100,000 內），正＝增加／負＝扣減" }, 400);
+    }
+    const note = typeof b.note === "string" ? b.note.trim().slice(0, 200) : "";
+    if (!note) {
+      return c.json({ ok: false, error: "調整原因必填（客人會喺流水賬睇到）" }, 400);
+    }
+    const result = await db.transaction(async (tx) =>
+      adjustWalletCore(tx, { userId: target.id, amount, note, operatorName: actor.name }),
+    );
+    if (!result.ok) {
+      return c.json({ ok: false, error: result.error }, 409);
+    }
+    auditFromWms(actor, {
+      action: "wallet.adjust",
+      targetId: target.id,
+      detail:
+        `WMS ${actor.role === "admin" ? "管理員" : "主管"} ${actor.name} 官方調整會員「${target.name}」（${target.phone}）購物金：` +
+        `${amount > 0 ? "增加" : "扣減"} HK$${Math.abs(amount)}，原因「${note}」，調整後餘額 HK$${result.balanceAfter}`,
+    });
+    return c.json({ ok: true, balanceAfter: result.balanceAfter });
+  }
+
   // ─── get：會員資料＋直播推送狀態（裝置清單齊 label，唔齊 endpoint）───
   if (action === "get") {
     const push = await getMemberPushStatus(target.id);
@@ -336,7 +367,7 @@ export async function wmsMemberAdmin(c: Context): Promise<Response> {
       wallet: { balance: target.storeCredit ?? 0 },
       ledger: ledgerRows.map((l) => ({
         id: l.id,
-        type: l.type, // topup=存入｜spend=使用｜refund=返還（WMS 側譯返中文）
+        type: l.type, // topup=存入｜spend=使用｜refund=返還｜adjust=官方調整（WMS 側譯返中文）
         amount: l.amount,
         balanceAfter: l.balanceAfter,
         refType: l.refType, // 'topup'→充值單號｜'order'→訂單號
