@@ -668,6 +668,19 @@ export const luckyDraws = pgTable("luckyDraws", {
   notifiedAt: timestamp("notifiedAt"),
 });
 
+// v2.5.5 第12版（老闆指令 2026-10-11「抽獎名單想剔除某啲人」）：會員條件名單嘅個別剔除——
+// 被剔除嘅會員唔入池（預覽同抽獎都會隔開），直到後台「恢復」。一人一列（userId unique）。
+export const luckyDrawExclusions = pgTable("luckyDrawExclusions", {
+  id: serial("id").primaryKey(),
+  userId: bigint("userId", { mode: "number" })
+    .notNull()
+    .references(() => users.id),
+  // 邊個剔除（主管/管理員 user id＋名快照）
+  createdBy: bigint("createdBy", { mode: "number" }),
+  createdByName: varchar("createdByName", { length: 255 }),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type Product = typeof products.$inferSelect;

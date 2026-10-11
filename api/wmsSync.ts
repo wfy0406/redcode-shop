@@ -167,6 +167,48 @@ export async function notifyWmsTopupReview(args: {
   }
 }
 
+/**
+ * v2.5.5 第12版（老闆實測 2026-10-11「會員訂單同官網資訊唔同，我已經刪咗呢2張訂單」）：
+ * 官網後台「永久刪除」訂單之後，fire-and-forget 通知 WMS 跟住刪（webhook 行＋正式訂單行），
+ * 唔會再出現「官網冇咗、WMS 會員訂單仲見到」嘅兩邊唔夾。
+ * 規矩照舊：失敗唔影響本地刪除結果（已經刪咗），但一定要 loud console.error（唔靜默）；
+ * log 永遠唔准落 apiKey。
+ */
+export async function forwardOrderDeleteToWms(orderNo: string, deletedBy: string): Promise<void> {
+  if (!wmsConfigured()) return;
+  const apiKey = process.env.WMS_API_KEY;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PER_CALL_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${wmsBaseUrl()}/api/trpc/order.receiveOrderDelete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        json: { apiKey, sourceRef: orderNo, deletedBy },
+      }),
+      signal: ctrl.signal,
+    });
+    const data = (await resp.json().catch(() => null)) as {
+      result?: { data?: { json?: { ok?: boolean } } };
+      error?: { json?: { message?: string } };
+    } | null;
+    const errMsg = data?.error?.json?.message;
+    if (errMsg || !data?.result?.data?.json?.ok) {
+      console.error(`[wmsSync] 刪單同步失敗（${orderNo}）：${errMsg ?? `HTTP ${resp.status}`} — WMS 嗰邊要人手跟（官網中心訂單詳細資料刪多一次）`);
+    }
+  } catch (e) {
+    const msg =
+      e instanceof Error && e.name === "AbortError"
+        ? `timeout ${PER_CALL_TIMEOUT_MS / 1000}s`
+        : e instanceof Error
+          ? e.message
+          : "network error";
+    console.error(`[wmsSync] 刪單同步失敗（${orderNo}）：${msg} — WMS 嗰邊要人手跟（官網中心訂單詳細資料刪多一次）`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 最新嗰張 pending 截圖（冇 pending 就攞最新一張） */
 function pickProof(proofs: ProofRow[]): ProofRow | null {
   const sorted = [...proofs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

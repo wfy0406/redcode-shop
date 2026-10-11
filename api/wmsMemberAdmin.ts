@@ -286,7 +286,10 @@ export async function wmsMemberAdmin(c: Context): Promise<Response> {
     .from(users)
     .where(eq(users.phone, phone))
     .limit(1);
-  if (!target || target.role !== "member") {
+  // v2.5.5 第12版（老闆實測 2026-10-11「管理員讀取唔到會員資料狀態」）：
+  // 唔再限 role="member"——員工／管理員帳號都係 users 行（會綁推送、會落測試單），
+  // WMS 會員資料頁撳入去要睇到狀態先合理。endpoint 本身已有 secret＋MUTATE 雙重把關。
+  if (!target) {
     return c.json({ ok: false, error: "會員唔存在" }, 404);
   }
 

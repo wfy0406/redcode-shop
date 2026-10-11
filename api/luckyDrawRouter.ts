@@ -35,6 +35,7 @@ import { and, desc, eq, gte, inArray, isNull, like, lt, sql } from "drizzle-orm"
 import { createRouter, authedProcedure, supervisorProcedure, adminProcedure } from "./middleware";
 import { getDb } from "./queries/connection";
 import {
+  luckyDrawExclusions,
   luckyDrawLists,
   luckyDraws,
   luckyDrawSessions,
@@ -247,6 +248,10 @@ async function collectParticipantIds(f: ParticipantFilter): Promise<Set<number>>
   // 佢哋嘅 0 元中獎單批咗會變 approved，唔排除會混入消費池
   const shadows = await db.select({ id: users.id }).from(users).where(like(users.phone, "DRAW#%"));
   for (const s of shadows) out.delete(s.id);
+  // v2.5.5 第12版（老闆指令「抽獎名單想剔除某啲人」）：後台剔除咗嘅個別人選永遠唔入池，
+  // 預覽／抽獎／特別重抽都行呢度，一處隔離全網生效（恢復即返返嚟）
+  const excluded = await db.select({ userId: luckyDrawExclusions.userId }).from(luckyDrawExclusions);
+  for (const e of excluded) out.delete(e.userId);
   return out;
 }
 
@@ -612,6 +617,71 @@ export const luckyDrawRouter = createRouter({
         .orderBy(users.id)
         .limit(500);
       return { total: idArr.length, rows };
+    }),
+
+  // ===== v2.5.5 第12版（老闆指令 2026-10-11「抽獎名單想剔除某啲人」）：剔除個別人選 =====
+  // 被剔除嘅會員唔入會員條件名單池（collectParticipantIds 一處隔離，預覽／抽獎／重抽全生效），
+  // 直到後台「恢復」。剔除／恢復都寫審計留底。
+  /** 已剔除名單（連會員名／電話／邊個剔／幾時剔） */
+  adminListExclusions: supervisorProcedure.query(async () => {
+    const db = getDb();
+    const rows = await db
+      .select({
+        userId: luckyDrawExclusions.userId,
+        name: users.name,
+        phone: users.phone,
+        createdByName: luckyDrawExclusions.createdByName,
+        createdAt: luckyDrawExclusions.createdAt,
+      })
+      .from(luckyDrawExclusions)
+      .innerJoin(users, eq(luckyDrawExclusions.userId, users.id))
+      .orderBy(desc(luckyDrawExclusions.createdAt));
+    return { rows };
+  }),
+
+  /** 剔除一個會員（冪等：已剔除就當成功，onConflictDoNothing） */
+  adminExcludeParticipant: supervisorProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [u] = await db
+        .select({ id: users.id, name: users.name, phone: users.phone })
+        .from(users)
+        .where(eq(users.id, input.userId))
+        .limit(1);
+      if (!u) throw new TRPCError({ code: "NOT_FOUND", message: "會員唔存在" });
+      const operator = await actorName(ctx.user.userId);
+      await db
+        .insert(luckyDrawExclusions)
+        .values({ userId: u.id, createdBy: ctx.user.userId, createdByName: operator })
+        .onConflictDoNothing();
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.exclude",
+        targetType: "member", targetId: String(u.id),
+        detail: `抽獎剔除人選：${u.name}（${u.phone}）——之後嘅會員條件名單抽獎唔會再抽中佢（直到恢復）`,
+      });
+      return { ok: true };
+    }),
+
+  /** 恢復一個被剔除嘅會員（即返返入池） */
+  adminRemoveExclusion: supervisorProcedure
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [u] = await db
+        .select({ id: users.id, name: users.name, phone: users.phone })
+        .from(users)
+        .where(eq(users.id, input.userId))
+        .limit(1);
+      await db.delete(luckyDrawExclusions).where(eq(luckyDrawExclusions.userId, input.userId));
+      if (u) {
+        void logAudit({
+          actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.excludeRemove",
+          targetType: "member", targetId: String(u.id),
+          detail: `抽獎恢復人選：${u.name}（${u.phone}）——即時返返入抽獎池`,
+        });
+      }
+      return { ok: true };
     }),
 
   /** 抽一件獎品：server 按剔選條件即場攞全池隨機（唔經 client 名單——

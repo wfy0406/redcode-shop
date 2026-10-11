@@ -7,7 +7,7 @@ import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, orderShipments,
 import { createRouter, authedProcedure, publicProcedure, staffProcedure } from "./middleware";
 import { resolvePromoDiscount } from "./promoRouter";
 import { computeWalletSplit, returnWalletForOrder, getOrderWalletSpend } from "./wallet";
-import { forwardOrderToWms, resetWmsSyncLogForReupload } from "./wmsSync";
+import { forwardOrderToWms, forwardOrderDeleteToWms, resetWmsSyncLogForReupload } from "./wmsSync";
 import { hardDeleteOrder } from "./orderDelete";
 import { sendOrderReviewAlertEmail } from "./email";
 import { logAudit } from "./audit";
@@ -1718,6 +1718,12 @@ export const ordersRouter = createRouter({
         targetId: order.orderNo,
         detail: `完整刪除訂單 ${order.orderNo}（${order.items.length} 件貨，合計 HK$${order.total}，狀態 ${order.status}）${restoreStock ? "，庫存已加返" : "，庫存不變"}${drawsDeleted > 0 ? `，中獎紀錄一併刪咗 ${drawsDeleted} 筆` : ""}`,
       });
+      // v2.5.5 第12版（老闆實測）：官網刪咗，WMS 都要跟住刪（唔准兩邊唔夾）。
+      // fire-and-forget：失敗唔影響本地刪除，wmsSync 嗰邊會 loud error 提水人手跟。
+      const [op] = await getDb().select({ name: users.name }).from(users).where(eq(users.id, ctx.user.userId)).limit(1);
+      void forwardOrderDeleteToWms(order.orderNo, op?.name ?? `員工#${ctx.user.userId}`).catch((e) =>
+        console.error(`[wmsSync] 刪單同步例外（${order.orderNo}）：`, e),
+      );
       return { ok: true, restoredStock: restoreStock, drawsDeleted };
     }),
 

@@ -442,6 +442,41 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   });
   const participants = (participantsQuery.data?.rows ?? []) as Participant[];
 
+  // v2.5.5 第12版（老闆指令「抽獎名單想剔除某啲人」）：剔除個別人選——
+  // 剔除咗嘅會員唔入池（server collectParticipantIds 隔離），呢度管「已剔除名單」＋剔除/恢復
+  const exclusionsQuery = trpc.luckyDraw.adminListExclusions.useQuery(undefined, {
+    enabled: mode === 'member',
+    refetchOnWindowFocus: false,
+  });
+  const exclusions = exclusionsQuery.data?.rows ?? [];
+  const excludeMut = trpc.luckyDraw.adminExcludeParticipant.useMutation({
+    onSuccess: () => {
+      void utils.luckyDraw.adminPreviewParticipants.invalidate();
+      void utils.luckyDraw.adminListExclusions.invalidate();
+    },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
+  const removeExclusionMut = trpc.luckyDraw.adminRemoveExclusion.useMutation({
+    onSuccess: () => {
+      void utils.luckyDraw.adminPreviewParticipants.invalidate();
+      void utils.luckyDraw.adminListExclusions.invalidate();
+    },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
+  const excludePerson = async (p: Participant) => {
+    if (!window.confirm(`剔除「${p.name}」（${p.phone}）？\n\n佢之後唔會再喺會員條件名單嘅抽獎池出現（預覽同抽獎都會隔開佢），直到你喺下面「已剔除名單」恢復佢。`)) return;
+    try {
+      await excludeMut.mutateAsync({ userId: p.id });
+      toast(`已剔除 ${p.name}（可隨時喺下面恢復）`, 'success');
+    } catch { /* onError 已 toast */ }
+  };
+  const restorePerson = async (userId: number, name: string) => {
+    try {
+      await removeExclusionMut.mutateAsync({ userId });
+      toast(`已恢復 ${name} 返入抽獎池`, 'success');
+    } catch { /* onError 已 toast */ }
+  };
+
   // 自訂名單
   const listsQuery = trpc.luckyDraw.adminListLists.useQuery(undefined, {
     enabled: mode === 'list',
@@ -1402,7 +1437,19 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                         style={{ borderColor: 'var(--space-line)' }}
                       >
                         <span className="text-txt-1">{p.name}</span>
-                        <span className="font-mono text-[11px] text-txt-3">{p.phone}</span>
+                        <span className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] text-txt-3">{p.phone}</span>
+                          <button
+                            type="button"
+                            onClick={() => void excludePerson(p)}
+                            disabled={excludeMut.isPending}
+                            className="rounded-full border px-2 py-0.5 text-[10.5px] font-bold text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
+                            style={{ borderColor: 'rgba(248,113,113,0.4)' }}
+                            title="剔除佢：之後嘅抽獎唔會再抽中（可恢復）"
+                          >
+                            剔除
+                          </button>
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -1412,6 +1459,33 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                     </p>
                   )}
                 </>
+              )}
+              {/* v2.5.5 第12版：已剔除名單（剔除咗唔入池；恢復即返）——冇剔來源都睇到，先至恢復得到 */}
+              {mode === 'member' && exclusions.length > 0 && (
+                <div className="mt-3 rounded-lg border px-2.5 py-2" style={{ borderColor: 'var(--space-line)' }}>
+                  <p className="text-[11.5px] text-txt-3">
+                    已剔除名單（{exclusions.length} 人）——呢啲人唔會被抽中，撳「恢復」即返返入池
+                  </p>
+                  <ul className="mt-1.5 space-y-1">
+                    {exclusions.map((x) => (
+                      <li key={x.userId} className="flex items-center justify-between text-[12.5px]">
+                        <span className="text-txt-3">
+                          {x.name}
+                          <span className="ml-2 font-mono text-[11px] text-txt-3">{x.phone}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void restorePerson(x.userId, x.name)}
+                          disabled={removeExclusionMut.isPending}
+                          className="rounded-full border px-2 py-0.5 text-[10.5px] font-bold text-emerald-300 transition hover:bg-emerald-500/10 disabled:opacity-50"
+                          style={{ borderColor: 'rgba(52,211,153,0.4)' }}
+                        >
+                          恢復
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
               </>

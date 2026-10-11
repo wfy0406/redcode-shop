@@ -501,6 +501,17 @@ DO $$ BEGIN
 END $$;
 CREATE INDEX IF NOT EXISTS luckydraws_list ON "luckyDraws" ("listId");
 
+-- ===== v2.5.5 第12版（老闆指令 2026-10-11）：抽獎「剔除個別人選」=====
+-- 被剔除嘅會員唔入會員條件名單池（預覽＋抽獎＋重抽都隔開），直到後台恢復；一人一列
+CREATE TABLE IF NOT EXISTS "luckyDrawExclusions" (
+  id serial PRIMARY KEY,
+  "userId" bigint NOT NULL REFERENCES "users"("id"),
+  "createdBy" bigint,
+  "createdByName" varchar(255),
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS luckydrawexclusions_user ON "luckyDrawExclusions" ("userId");
+
 -- ===== 訪客購買 Guest Checkout（2026-10-09）=====
 -- orders.userId 放寬做 nullable：會員單照舊有值；訪客單＝NULL，客戶資料落 guest* 快照欄。
 -- 全新部署上面 CREATE TABLE 已經 nullable；呢句 ALTER 專放寬現有 DB 嘅舊 NOT NULL。
