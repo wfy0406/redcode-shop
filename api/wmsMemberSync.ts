@@ -51,6 +51,9 @@ export async function forwardMemberToWms(userId: number): Promise<WmsMemberSyncR
   if (!user || user.role !== "member") return { ok: false, skipped: "not-member" };
   // Google 開戶佔位電話（g-xxx）唔推——WMS 用電話做 key，補咗真電話先有意義
   if (user.phone.startsWith("g-")) return { ok: false, skipped: "placeholder-phone" };
+  // v2.5.5 第11版（老闆指示 2026-10-11）：抽獎影子帳號（phone="DRAW#名"）都唔推——
+  // 官網後台會員管理本身唔顯示佢哋（v2.2.48），推落 WMS 只會令兩邊會員數唔夾
+  if (user.phone.startsWith("DRAW#")) return { ok: false, skipped: "shadow-account" };
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), MEMBER_SYNC_TIMEOUT_MS);
