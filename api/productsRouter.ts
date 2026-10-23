@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, eq, gt, inArray, isNotNull, isNull, like, or, desc } from "drizzle-orm";
+import { and, eq, gt, ilike, inArray, isNotNull, isNull, or, desc } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { cartItems, listingBatchItems, listingBatches, orderItems, productImageArchive, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
@@ -162,9 +162,16 @@ export const productsRouter = createRouter({
       const keyword = input?.keyword?.trim();
       const conditions = [eq(products.isActive, true), notAutoDelisted()];
       if (keyword) {
+        // v2.5.7（老闆：「上架商品依家邊有lu8？你自己睇下啦」）：搜尋加埋貨號 sku，
+        // 而且 like → ilike（唔分大小寫）—— 打 LU8 / lu8 / Lu8 都搵到；
+        // 品名／描述照舊搵（一樣唔分大小寫）。
         const pattern = `%${keyword}%`;
         conditions.push(
-          or(like(products.name, pattern), like(products.description, pattern))!,
+          or(
+            ilike(products.sku, pattern),
+            ilike(products.name, pattern),
+            ilike(products.description, pattern),
+          )!,
         );
       }
       if (input?.category) {
