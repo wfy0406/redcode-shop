@@ -16,6 +16,7 @@ import { wmsShipmentCallback } from "./wmsShipment";
 import { wmsDeleteOrderCallback } from "./wmsDeleteOrder";
 import { wmsDeleteItemCallback } from "./wmsDeleteItem";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
+import { wmsPhotoFeed } from "./wmsPhotoFeed"; // 2026-10-23（老闆指令）：貨圖庫官網區資料 feed（唯讀）
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushDeliveries, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
@@ -87,6 +88,11 @@ app.post("/api/wms/delete-item", wmsDeleteItemCallback);
 // 手動上傳貨圖（multipart）＋ 批量推送（批准 execute／拒絕 reject）
 app.post("/api/wms/listing-image", listingImageUpload);
 app.post("/api/wms/listing-batch", wmsListingBatch);
+
+// WMS → 官網貨圖庫資料 feed（2026-10-23 老闆指令；同樣 shared secret 驗證）：
+// 唯讀——全量商品（上架中＋已下架＋定時下架已到）＋抽獎獎品池＋已刪商品圖檔案庫，
+// 畀 WMS 貨圖庫「官網貨圖」區一次過攞齊（公開 products.list 淨係返上架中，睇唔到舊貨）。
+app.post("/api/wms/photo-feed", wmsPhotoFeed);
 
 // WMS → 官網直播開播推送（2026-09-30 v2.2.0 合約 §8；同樣 WMS_CALLBACK_SECRET 驗證）：
 // 申請／直接發送、審批（通過即發送）、近 50 筆紀錄
