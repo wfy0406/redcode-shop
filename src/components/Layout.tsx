@@ -8,6 +8,7 @@ import Footer from '@/components/Footer';
 import MessengerIcon from '@/components/MessengerIcon';
 import MarketingConsentModal from '@/components/MarketingConsentModal';
 import PrizeWinModal from '@/components/PrizeWinModal';
+import InstallBanner from '@/components/InstallBanner';
 
 /**
  * 全站 Layout —— Nested-route pattern（react-dev.md Pattern B）：
@@ -39,6 +40,14 @@ export default function Layout() {
 
   return (
     <div className="relative min-h-[100dvh] bg-space-1 text-txt-1">
+      {/* 無障礙 skip link（2026-10）：鍵盤/讀屏用戶一 Tab 直達主要內容，平時 visually-hidden */}
+      <a
+        href="#main-content"
+        className="sr-only z-[100] rounded-lg bg-gold px-5 py-3 text-base font-bold text-space-1 focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+      >
+        跳到主要內容
+      </a>
+
       {/* §3.2 星空 canvas（fixed, z-index -2） */}
       {!isAdmin && <Starfield />}
 
@@ -60,7 +69,7 @@ export default function Layout() {
 
       <Navbar />
 
-      <main className="relative z-10">
+      <main id="main-content" className="relative z-10">
         <Outlet />
       </main>
 
@@ -91,6 +100,9 @@ export default function Layout() {
       >
         <MessageCircle size={24} aria-hidden="true" />
       </a>
+
+      {/* PWA 安裝提示（2026-10）：原位可收起 banner，唔係彈窗；已安裝／14日內揀過「暫時唔使」唔顯示 */}
+      <InstallBanner />
 
       {/* 推廣同意一次性彈窗（2026-08-06 Glo 要求）：舊會員未表態先會彈，揀完唔再彈 */}
       <MarketingConsentModal />

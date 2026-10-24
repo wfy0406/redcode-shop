@@ -165,7 +165,8 @@ export default function Meteors() {
     };
 
     const tick = () => {
-      if (cancelled) return;
+      // perf-fix：背景分頁唔 spawn（計時器被 throttle 都唔好叫醒 CPU）
+      if (cancelled || document.hidden) return;
       spawnOne();
       // 10% 機率進入 burst：3–5 粒（far/mid 為主）喺 ~2s 內連發，之後 7–12s 冷靜期
       if (Math.random() < BURST_CHANCE && totalRef.current <= 1) {
@@ -184,10 +185,32 @@ export default function Meteors() {
     };
 
     // 第一粒快啲出，等用戶一入嚟就見到
-    scheduleSpawn(600 + Math.random() * 1200);
+    const start = () => {
+      if (cancelled || document.hidden) return;
+      scheduleSpawn(600 + Math.random() * 1200);
+    };
+
+    // perf-fix（P0-2）：背景分頁停晒 spawn/移除計時器兼清場（背景 tab 即刻零流星開銷）；
+    // 返前景先重新 schedule。前景密度、burst 機率全部照舊，一粒都冇減。
+    const suspend = () => {
+      for (const t of timers) window.clearTimeout(t);
+      timers.clear();
+      spawnTimer = 0;
+      totalRef.current = 0;
+      nearRef.current = 0;
+      setMeteors([]);
+    };
+    const onVisibility = () => {
+      if (cancelled) return;
+      if (document.hidden) suspend();
+      else start();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    start();
 
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
       for (const t of timers) window.clearTimeout(t);
       timers.clear();
     };

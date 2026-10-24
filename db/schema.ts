@@ -11,6 +11,7 @@ import {
   jsonb,
   doublePrecision,
   uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
 
 // 2026-08-06：enum 加咗 supervisor（主管）；DB 已 ALTER TYPE，schema 要跟返
@@ -185,7 +186,12 @@ export const products = pgTable("products", {
   stock: integer("stock").notNull().default(0),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
-});
+}, (t) => [
+  // perf-fix（P2-3）：公開列表查詢熱點——isActive 篩＋listedDate desc 排序（products.list/latest）
+  index("products_active_listed_idx").on(t.isActive, t.listedDate),
+  // 直播場次篩選（liveDate=YYYYMMDD）
+  index("products_live_date_idx").on(t.liveDate),
+]);
 
 export const cartItems = pgTable(
   "cartItems",
@@ -273,7 +279,12 @@ export const orders = pgTable("orders", {
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   // PostgreSQL 冇 ON UPDATE CURRENT_TIMESTAMP，updatedAt 由應用層更新時一併 set
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
-});
+}, (t) => [
+  // perf-fix（P2-3）：orderSweeper 每 5 分鐘掃 status=pending AND expiresAt<now
+  index("orders_status_expires_idx").on(t.status, t.expiresAt),
+  // 會員訂單列表按 userId＋新→舊
+  index("orders_user_created_idx").on(t.userId, t.createdAt),
+]);
 
 export const orderItems = pgTable("orderItems", {
   id: serial("id").primaryKey(),

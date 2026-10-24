@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { videoHasRealAlpha } from '@/lib/alphaVideo';
+import { usePageVisible } from '@/hooks/usePageVisible';
 
 /**
  * v2.2.34（老闆指令）：關於區兩個「會郁」嘅透明 Glo Glo —— 真・透明背景影片。
@@ -58,12 +59,17 @@ export default function GloCutout({
     return iOS || safari;
   });
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [near, setNear] = useState(eager);
   // poster=靜態兜底；video=真 alpha WebM 播緊；anim=動畫 WebP（WebKit 或 WebM 掛咗）
   const [mode, setMode] = useState<'poster' | 'video' | 'anim'>(webkit ? 'anim' : 'poster');
   // v2.2.57 補漏：WebKit 開局就係 anim，但要等動畫 WebP 真係 load 完先收 poster——
   // 唔係嘅話 reduced-motion（anim img 唔 mount）同慢網（WebP 下載緊）會成隻公仔唔見咗
   const [animReady, setAnimReady] = useState(false);
+  const pageVisible = usePageVisible();
+  // perf-fix 雙向暫停：真正喺唔喺 viewport（mount 嘅 240px 提前量唔算）。
+  // 舊瀏覽器冇 IntersectionObserver → lazy init 當成常駐可見（照播，唔喺 effect 同步 setState）
+  const [inView, setInView] = useState(eager || typeof IntersectionObserver === 'undefined');
 
   useEffect(() => {
     if (near || reduced) return;
@@ -85,6 +91,35 @@ export default function GloCutout({
     return () => io.disconnect();
   }, [near, reduced]);
 
+  // perf-fix（動畫全保留，離屏/背景先暫停）：mount 之後唔 unmount——
+  // 出 viewport（threshold 0）pause()、入返 play()；背景分頁一律 pause。
+  // pause 唔會重新下載，poster 同影片同一畫面，冇閃爍
+  useEffect(() => {
+    if (!near || reduced) return;
+    const el = hostRef.current;
+    // host div 必定已 render（ref 已綁定）；冇 IO 嘅舊瀏覽器 lazy init 已當 inView=true
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (es) => setInView(es.some((e) => e.isIntersecting)),
+      { threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near, reduced]);
+
+  // 播/停統一喺度（video 模式先係 <video>；anim 模式係動畫 WebP <img>，瀏覽器自己慳電）
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (inView && pageVisible) {
+      void v.play().catch(() => {
+        // 被瀏覽器擋就靜默留喺 poster，唔好拋 unhandled rejection
+      });
+    } else {
+      v.pause();
+    }
+  }, [inView, pageVisible, mode, near]);
+
   return (
     <div ref={hostRef} className={`relative ${className ?? ''}`}>
       {/* 靜態透底 poster：影片一播／動畫 WebP 一上就收（opacity transition） */}
@@ -102,6 +137,7 @@ export default function GloCutout({
       {/* WebKit 唔再試 WebM（解唔到 alpha 會黑盒）；其餘瀏覽器照播＋probe 驗 alpha */}
       {near && !reduced && !webkit && mode !== 'anim' && (
         <video
+          ref={videoRef}
           src={videoSrc}
           className={`absolute inset-0 h-full w-full object-contain ${animClass ?? ''}`}
           autoPlay

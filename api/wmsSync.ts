@@ -41,6 +41,7 @@ import { orders, paymentProofs, products, wmsSyncLog } from "@db/schema";
 import { logAudit } from "./audit";
 import { sendOrderApprovedEmail, orderVipEmailInfo } from "./email";
 import { recomputeVipTierInBackground } from "./vip";
+import { secretEquals } from "./wmsSecret";
 
 const DEFAULT_WMS_BASE_URL = "https://red-code-wms.onrender.com";
 const DEFAULT_PUBLIC_BASE_URL = "https://redcode.red";
@@ -514,7 +515,7 @@ export async function wmsReviewCallback(c: Context) {
     return c.json({ ok: false, error: "body 要係 JSON" }, 400);
   }
   const b = (body ?? {}) as Record<string, unknown>;
-  if (b.secret !== secret) {
+  if (!secretEquals(b.secret, secret)) {
     return c.json({ ok: false, error: "secret 唔啱" }, 401);
   }
   const orderNo = typeof b.sourceRef === "string" ? b.sourceRef.trim() : "";

@@ -13,12 +13,12 @@ RUN apt-get update \
 RUN npm install -g npm@11 --no-audit --no-fund
 
 # 先裝依賴（利用 docker layer cache）
-COPY package.json package-lock.json ./
-# lockfile 生成時寫咗沙盒內部/中國 mirror 嘅 resolved URL，公網 build 要轉返 npmjs 官方 registry
-RUN sed -i -e 's#https://npm\.mirrors\.msh\.team#https://registry.npmjs.org#g' \
-           -e 's#https://registry\.npmmirror\.com#https://registry.npmjs.org#g' \
-           package-lock.json \
-  && npm install --no-audit --no-fund  # F5: 用 install 唔係 ci——lockfile 暫未含 html2canvas/jspdf，build 時自動補齊同步
+COPY package.json package-lock.json .npmrc ./
+# P2-5（2026-10 安全修復）：npm install → npm ci——依賴全部由 lockfile 鎖定，
+# build 唔再即場拉「最新相容版」（供應鏈風險）；audit 報告照跑。
+# lockfile 嘅 mirror resolved URL 由 .npmrc 嘅 replace-registry-host=always 處理，
+# 唔再 sed 改寫 lockfile。（lockfile 補齊 html2canvas/jspdf 由主 agent 跟進）
+RUN npm ci --audit --no-fund
 
 # 拷貝源碼、還原圖片/影片（assets-b64 → public/），然後 build
 COPY . .

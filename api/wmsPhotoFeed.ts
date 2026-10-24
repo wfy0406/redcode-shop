@@ -12,6 +12,7 @@
 import type { Context } from "hono";
 import { getDb } from "./queries/connection";
 import { luckyPrizes, productImageArchive, products } from "@db/schema";
+import { secretEquals } from "./wmsSecret";
 
 const HK_OFFSET_MS = 8 * 3600 * 1000;
 
@@ -44,7 +45,7 @@ export async function wmsPhotoFeed(c: Context) {
   if (!secret) {
     return c.json({ ok: false, error: "官網未設定 WMS_CALLBACK_SECRET" }, 503);
   }
-  if (raw.secret !== secret) {
+  if (!secretEquals(raw.secret, secret)) {
     return c.json({ ok: false, error: "secret 唔啱" }, 401);
   }
 

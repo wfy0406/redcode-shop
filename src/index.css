@@ -183,9 +183,42 @@
       0 24px 48px rgba(255, 0, 84, 0.15);
   }
 
-  /* Hero 主 CTA 呼吸脈衝 */
+  /* Hero 主 CTA 呼吸脈衝（perf-fix P1-4）：
+     舊版 animation 直接郁 5 層 box-shadow——每幀觸發 repaint（非 compositor），
+     低階手機成日為粒掣重畫。改做 ::after 光暈層，淨郁 opacity/transform（compositor），
+     呼吸感同舊版一致：靜態陰影＝舊 keyframes 0%（暗位），::after 補「暗位→光位」嘅差額，
+     opacity 0↔1 來回即係舊版 0%↔50% 嘅呼吸。 */
   .btn-primary.btn-pulse {
-    animation: btn-breathe 3s ease-in-out infinite;
+    position: relative;
+    isolation: isolate;
+    box-shadow:
+      inset 0 1px 0.5px rgba(255, 255, 255, 0.45),
+      inset 0 -8px 16px rgba(143, 0, 255, 0.35),
+      0 0 0 0.75px rgba(255, 0, 84, 0.6),
+      0 8px 24px rgba(255, 0, 84, 0.245),
+      0 24px 48px rgba(255, 0, 84, 0.105);
+  }
+
+  .btn-primary.btn-pulse::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    /* 負 z-index：光暈墊喺掣面漸變底之下、文字之下，陰影照舊透出掣外 */
+    z-index: -1;
+    box-shadow:
+      0 8px 24px rgba(255, 0, 84, 0.105),
+      0 24px 48px rgba(255, 0, 84, 0.045);
+    animation: btn-pulse-glow 3s ease-in-out infinite;
+    will-change: opacity, transform;
+  }
+
+  .btn-primary.btn-pulse:hover::after {
+    /* hover 加光（對應舊 .btn-primary:hover 嘅 0.55 光暈），呼吸動畫照行 */
+    box-shadow:
+      0 8px 36px rgba(255, 0, 84, 0.305),
+      0 24px 48px rgba(255, 0, 84, 0.045);
   }
 
   .btn-secondary {
@@ -355,23 +388,17 @@
   }
 }
 
-@keyframes btn-breathe {
+/* perf-fix P1-4：取代舊 btn-breathe（郁 5 層 box-shadow）——
+   淨郁 ::after 光暈嘅 opacity/transform，呼吸節奏 3s 同舊版一樣 */
+@keyframes btn-pulse-glow {
   0%,
   100% {
-    box-shadow:
-      inset 0 1px 0.5px rgba(255, 255, 255, 0.45),
-      inset 0 -8px 16px rgba(143, 0, 255, 0.35),
-      0 0 0 0.75px rgba(255, 0, 84, 0.6),
-      0 8px 24px rgba(255, 0, 84, 0.245),
-      0 24px 48px rgba(255, 0, 84, 0.105);
+    opacity: 0;
+    transform: scale(1);
   }
   50% {
-    box-shadow:
-      inset 0 1px 0.5px rgba(255, 255, 255, 0.45),
-      inset 0 -8px 16px rgba(143, 0, 255, 0.35),
-      0 0 0 0.75px rgba(255, 0, 84, 0.6),
-      0 8px 24px rgba(255, 0, 84, 0.35),
-      0 24px 48px rgba(255, 0, 84, 0.15);
+    opacity: 1;
+    transform: scale(1.015);
   }
 }
 
@@ -574,9 +601,14 @@
   .glo-hop,
   .spark-twinkle,
   .logo-poke,
-  .wallet-shimmer,
-  .btn-primary.btn-pulse {
+  .wallet-shimmer {
     animation: none;
+  }
+
+  /* btn-pulse 呼吸改咗喺 ::after 光暈層（perf-fix P1-4），reduced-motion 照停 */
+  .btn-primary.btn-pulse::after {
+    animation: none;
+    opacity: 0;
   }
 
   .live-dot {

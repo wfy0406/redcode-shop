@@ -180,15 +180,29 @@ export default function OrderList({
   // 完整刪除訂單（兩步確認；未收款單會加返庫存，server 審計留底）
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deleteMsg, setDeleteMsg] = useState<string | null>(null);
+  // M5（2026-10-24 安全覆核）：員工刪單進咗審批嘅提示（訂單未刪，唔好令用戶以為刪咗）
+  const [deleteNotice, setDeleteNotice] = useState<{ id: number; text: string } | null>(null);
   // 手動改單：邊張單進入編輯模式 + 儲存後嘅 WMS 提示
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editNotice, setEditNotice] = useState<{ id: number; text: string } | null>(null);
   const utils = trpc.useUtils();
   const removeMutation = trpc.orders.remove.useMutation({
-    onSuccess: () => {
+    onSuccess: (result, vars) => {
+      // 員工刪單會進審批：訂單仲未刪，要等主管/管理員批准先生效
+      if ((result as { pendingApproval?: boolean } | null)?.pendingApproval) {
+        setConfirmDeleteId(null);
+        setDeleteMsg(null);
+        setDeleteNotice({
+          id: vars.orderId,
+          text: '已送主管/管理員審批，批准後先會刪除；訂單暫時仍未刪除 ⏳',
+        });
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       setConfirmDeleteId(null);
       setExpandedId(null);
       setDeleteMsg(null);
+      setDeleteNotice(null);
       void utils.orders.adminList.invalidate();
       void utils.orders.wmsSyncStates.invalidate();
     },
@@ -623,6 +637,7 @@ export default function OrderList({
                               disabled={removeMutation.isPending}
                               onClick={() => {
                                 setDeleteMsg(null);
+                                setDeleteNotice(null);
                                 setConfirmDeleteId(order.id);
                               }}
                               className="btn !border !px-5 !py-2.5 text-[13px] disabled:opacity-60"
@@ -648,6 +663,16 @@ export default function OrderList({
                         {deleteMsg && confirmDeleteId === order.id && (
                           <p role="alert" className="mt-2 text-[13px] text-pink-soft">
                             {deleteMsg}
+                          </p>
+                        )}
+                        {/* M5：員工刪單已送審批、訂單未刪嘅提示（唔好令用戶以為刪咗） */}
+                        {deleteNotice && deleteNotice.id === order.id && (
+                          <p
+                            role="status"
+                            className="mt-3 rounded-xl border px-4 py-3 text-[13px] text-gold"
+                            style={{ borderColor: 'var(--gold)' }}
+                          >
+                            {deleteNotice.text}
                           </p>
                         )}
                       </div>

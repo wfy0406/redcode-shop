@@ -26,6 +26,7 @@ import { logAudit } from "./audit";
 import { sendWalletTopupApprovedEmail, sendWalletTopupRejectedEmail } from "./email";
 import { approveTopupCore } from "./walletRouter";
 import { TOPUP_CHANNEL_LABEL } from "./wallet";
+import { secretEquals } from "./wmsSecret";
 
 export async function wmsWalletTopupReview(c: Context) {
   const secret = process.env.WMS_CALLBACK_SECRET;
@@ -39,7 +40,7 @@ export async function wmsWalletTopupReview(c: Context) {
     return c.json({ ok: false, error: "body 要係 JSON" }, 400);
   }
   const b = (body ?? {}) as Record<string, unknown>;
-  if (b.secret !== secret) {
+  if (!secretEquals(b.secret, secret)) {
     return c.json({ ok: false, error: "secret 唔啱" }, 401);
   }
   const topupNo = typeof b.topupNo === "string" ? b.topupNo.trim() : "";

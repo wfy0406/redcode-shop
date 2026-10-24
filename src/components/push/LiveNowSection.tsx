@@ -46,10 +46,14 @@ export default function LiveNowSection() {
   // mount 嗰刻揀定，成個 session 唔變
   const [liveBackupIdx] = useState(pickLiveBackup);
 
+  // perf-fix（P1-1）：三條直播輪詢統一 120s（currentLive 同 LiveTopBanner 共享同一 query key，
+  // 一次請求兩個組件用）；refetchOnWindowFocus 補返新鮮度（直播狀態唔准過時）；
+  // 明確背景分頁唔輪詢（TanStack 預設已停，寫明防回退）
   const liveQuery = trpc.push.currentLive.useQuery(undefined, {
-    refetchInterval: 60_000,
+    refetchInterval: 120_000,
+    refetchIntervalInBackground: false,
     retry: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   });
   // 已登入先查訂閱狀態（決定顯唔顯示「通知我開播」副掣）
   const statusQuery = trpc.push.myPushStatus.useQuery(undefined, {

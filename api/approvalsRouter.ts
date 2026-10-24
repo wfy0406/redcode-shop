@@ -13,6 +13,21 @@ import { getDb } from "./queries/connection";
 import { approvalRequests, users } from "@db/schema";
 import { createRouter, staffProcedure, supervisorProcedure } from "./middleware";
 import { logAudit } from "./audit";
+import { applyMemberPasswordReset } from "./memberPasswordReset";
+
+/**
+ * M3（2026-10-24 安全覆核）：member.resetPassword 嘅 payload 存咗 passwordHash——
+ * pendingList／history／myRequests 全部**唔可以**回傳 hash（舊格式嘅明文更加唔可以）。
+ * 呢類單淨係回安全 metadata（目標會員 id）；其他 action 嘅 payload 照舊全回（審批預覽要靠佢）。
+ */
+function safePayload(action: string, payload: unknown): unknown {
+  if (action !== "member.resetPassword" || !payload || typeof payload !== "object") {
+    return payload;
+  }
+  const p = payload as { input?: { id?: unknown } };
+  const id = p.input && typeof p.input.id === "number" ? p.input.id : null;
+  return { input: { id }, redacted: true };
+}
 
 /** 一次過攞晒相關用戶嘅名（requester／reviewer 顯示用） */
 async function nameMap(ids: number[]): Promise<Map<number, string>> {
@@ -37,6 +52,7 @@ export const approvalsRouter = createRouter({
     const names = await nameMap(rows.map((r) => r.requesterId));
     return rows.map((r) => ({
       ...r,
+      payload: safePayload(r.action, r.payload),
       requesterName: names.get(r.requesterId) ?? `#${r.requesterId}`,
     }));
   }),
@@ -73,6 +89,7 @@ export const approvalsRouter = createRouter({
       return {
         rows: rows.map((r) => ({
           ...r,
+          payload: safePayload(r.action, r.payload),
           requesterName: names.get(r.requesterId) ?? `#${r.requesterId}`,
           reviewerName: r.reviewerId
             ? (names.get(r.reviewerId) ?? `#${r.reviewerId}`)
@@ -87,12 +104,14 @@ export const approvalsRouter = createRouter({
   // 員工睇自己交嘅單（最近 20 條）
   myRequests: staffProcedure.query(async ({ ctx }) => {
     const db = getDb();
-    return db
+    const rows = await db
       .select()
       .from(approvalRequests)
       .where(eq(approvalRequests.requesterId, ctx.user.userId))
       .orderBy(desc(approvalRequests.id))
       .limit(20);
+    // M3：member.resetPassword 嘅 payload 唔回 hash／明文，淨係安全 metadata
+    return rows.map((r) => ({ ...r, payload: safePayload(r.action, r.payload) }));
   }),
 
   approve: supervisorProcedure
@@ -125,6 +144,27 @@ export const approvalsRouter = createRouter({
       switch (req.action) {
         case "member.update":
           await caller.members.update(p.input);
+          break;
+        case "member.resetPassword": {
+          // M3（2026-10-24 安全覆核）：新交嘅單 payload 淨係存 { id, passwordHash }
+          // （明文從來唔落地）——後端驗證 hash 格式＋目標仍係會員，直接套用 hash 並記 audit。
+          // 修復前已在途嘅舊單（payload 有明文 newPassword）照舊經 caller 重跑，
+          // 批完嗰批之後就唔會再有明文單。
+          const pi = p.input as unknown as { id?: unknown; passwordHash?: unknown };
+          if (pi && typeof pi.id === "number" && typeof pi.passwordHash === "string") {
+            await applyMemberPasswordReset({
+              memberId: pi.id,
+              passwordHash: pi.passwordHash,
+              actorId: ctx.user.userId,
+              actorRole: ctx.user.role,
+            });
+          } else {
+            await caller.members.resetPassword(p.input);
+          }
+          break;
+        }
+        case "order.remove":
+          await caller.orders.remove(p.input);
           break;
         case "promo.sendMarketingEmail":
           await caller.promo.sendMarketingEmail(p.input);

@@ -143,8 +143,8 @@ export default function Login() {
       setError('請輸入 Email 收到嘅 6 位驗證碼');
       return;
     }
-    if (newPassword.length < 6) {
-      setError('新密碼至少 6 位');
+    if (newPassword.length < 8) {
+      setError('新密碼至少 8 位');
       return;
     }
     if (newPassword2 !== newPassword) {
@@ -355,7 +355,7 @@ export default function Login() {
                 label="新密碼"
                 type="password"
                 autoComplete="new-password"
-                placeholder="至少 6 位"
+                placeholder="至少 8 位"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
               />

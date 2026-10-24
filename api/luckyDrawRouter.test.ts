@@ -34,6 +34,10 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 const h = vi.hoisted(() => {
   const state = {
     user: null as null | { userId: number; role: string },
+    // JWT 身份同 DB 覆核角色分開模擬；undefined 喺 reset 時預設跟 JWT role。
+    dbRole: null as string | null,
+    userTable: null as any,
+    userRoleColumn: null as any,
     queue: [] as any[],
     // 呼叫順序 log（鎖次序／鎖內查詢斷言用）：op＝select/insert/update/delete/execute
     ops: [] as { op: string; table?: any }[],
@@ -50,7 +54,12 @@ const h = vi.hoisted(() => {
   };
   const pop = () => (state.queue.length > 0 ? state.queue.shift() : []);
   // Error 實例 → reject（模擬 DB 層錯誤，例如 unique 23505）
-  const settle = () => {
+  const settle = (rec?: { from?: any; authRoleQuery?: boolean }) => {
+    // middleware 每 request 都會以 users PK 覆核角色；只攔截佢嘅 { role } 查詢，
+    // 唔可以吃掉下方業務程序預設嘅 queue，更唔可以攔截 router 自己嘅 users 查詢。
+    if (state.userTable && rec?.from === state.userTable && rec?.authRoleQuery) {
+      return Promise.resolve(state.dbRole ? [{ role: state.dbRole }] : []);
+    }
     const v = pop();
     return v instanceof Error ? Promise.reject(v) : Promise.resolve(v);
   };
@@ -60,10 +69,10 @@ const h = vi.hoisted(() => {
       {
         get(_t, prop) {
           if (prop === "then") {
-            return (res: any, rej: any) => settle().then(res, rej);
+            return (res: any, rej: any) => settle(rec).then(res, rej);
           }
           if (prop === "catch") {
-            return (fn: any) => settle().catch(fn);
+            return (fn: any) => settle(rec).catch(fn);
           }
           return (...args: any[]) => {
             if (rec && prop === "values") rec.values = args[0];
@@ -79,9 +88,17 @@ const h = vi.hoisted(() => {
     return chain;
   }
   const db: any = {
-    select: () => {
+    select: (selection?: any) => {
       state.ops.push({ op: "select" });
-      const rec = { from: undefined as any, where: undefined as any };
+      const rec = {
+        from: undefined as any,
+        where: undefined as any,
+        authRoleQuery:
+          selection &&
+          Object.keys(selection).length === 1 &&
+          state.userRoleColumn &&
+          selection.role === state.userRoleColumn,
+      };
       state.selects.push(rec);
       return makeChain(rec);
     },
@@ -136,6 +153,10 @@ import { sendPrizeWinEmail } from "./email";
 import { sendPrizeWinPush } from "./livePush";
 import { forwardOrderToWms } from "./wmsSync";
 
+// hoisted mock 唔直接捕捉 import 綁定；模組載入後先登記 users table identity。
+h.state.userTable = users;
+h.state.userRoleColumn = users.role;
+
 // ───────────────────────── helpers ─────────────────────────
 
 function caller() {
@@ -145,8 +166,12 @@ function caller() {
   });
 }
 
-function reset(user: { userId: number; role: string } | null = { userId: 1, role: "supervisor" }) {
+function reset(
+  user: { userId: number; role: string } | null = { userId: 1, role: "supervisor" },
+  dbRole?: string | null,
+) {
   h.state.user = user;
+  h.state.dbRole = dbRole === undefined ? (user?.role ?? null) : dbRole;
   h.state.queue = [];
   h.state.ops = [];
   h.state.selects = [];
@@ -243,6 +268,14 @@ describe("supervisor 權限", () => {
     reset({ userId: 1, role: "supervisor" });
     h.state.queue.push([]); // prize select → 空
     await expect(caller().adminDrawEvent({ prizeId: 9, eventId: 7 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("DB 帳號已刪 → UNAUTHORIZED；DB 角色同 JWT 唔符 → FORBIDDEN", async () => {
+    reset({ userId: 1, role: "supervisor" }, null);
+    await expect(caller().adminDrawEvent({ prizeId: 9, eventId: 7 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+    reset({ userId: 1, role: "supervisor" }, "member");
+    await expect(caller().adminDrawEvent({ prizeId: 9, eventId: 7 })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 
@@ -1422,7 +1455,7 @@ describe("adminDeleteDrawsByDate 成日刪（以實際 deleted rows 嘅 orderId 
     const r = await caller().adminDeleteDrawsByDate({ drawDate: "20261024" });
     expect(r).toEqual({ ok: true, deleted: 3, ordersDeleted: 2 });
     // 唔准再有 transaction 外嘅 leftJoin 快照 select
-    expect(h.state.selects).toHaveLength(0);
+    expect(h.state.selects.filter((s) => s.from !== users)).toHaveLength(0);
     const dels = h.state.deletes;
     expect(dels.map((d) => d.table)).toEqual([luckyDraws, orderShipments, orderItems, paymentProofs, wmsSyncLog, orders]);
     // 刪 draw 用 drawDate；RETURNING 一定要帶 orderId
@@ -1449,7 +1482,7 @@ describe("adminDeleteDrawsByDate 成日刪（以實際 deleted rows 嘅 orderId 
     const r = await caller().adminDeleteDrawsByDate({ drawDate: "20261024" });
     expect(r).toEqual({ ok: true, deleted: 2, ordersDeleted: 0 });
     expect(h.state.deletes.map((d) => d.table)).toEqual([luckyDraws]); // 淨係刪 draw
-    expect(h.state.selects).toHaveLength(0);
+    expect(h.state.selects.filter((s) => s.from !== users)).toHaveLength(0);
   });
 
   it("嗰日冇紀錄 → deleted=0，零額外寫", async () => {

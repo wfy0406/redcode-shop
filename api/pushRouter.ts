@@ -112,6 +112,33 @@ async function userNameOf(userId: number): Promise<string | null> {
   return u?.name ?? null;
 }
 
+// ── P3-5（2026-10 安全修復）：push endpoint 域白名單 ────────────────────────
+// 官方 push service：Google FCM（＋舊 GCM host）、Apple APNs、Windows WNS、Mozilla autopush。
+// 子域款（*.notify.windows.com／*.push.services.mozilla.com）用 suffix 比對。
+const PUSH_ENDPOINT_EXACT_HOSTS = new Set([
+  "fcm.googleapis.com",
+  "android.googleapis.com",
+  "web.push.apple.com",
+  "notify.windows.com",
+  "push.services.mozilla.com",
+  "updates.push.services.mozilla.com",
+]);
+const PUSH_ENDPOINT_SUFFIXES = [".notify.windows.com", ".push.services.mozilla.com"];
+
+/** endpoint 必須係 https ＋ host 喺白名單（exact 或官方子域）；parse 唔到／其他域 → false */
+export function isAllowedPushEndpoint(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:") return false;
+  const h = u.hostname.toLowerCase();
+  if (PUSH_ENDPOINT_EXACT_HOSTS.has(h)) return true;
+  return PUSH_ENDPOINT_SUFFIXES.some((s) => h.endsWith(s));
+}
+
 export const pushRouter = createRouter({
   // ─── getVapidKey（公開）：前端 subscribe 要用 VAPID public key ───────────
   getVapidKey: publicQuery.query(() => {
@@ -130,6 +157,14 @@ export const pushRouter = createRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
+      // P3-5（2026-10 安全修復）：endpoint 域白名單——之前會員可以註冊任意 URL，
+      // server 推送時會向該 URL 發 POST（有限 SSRF）。淨係收官方 push service 域。
+      if (!isAllowedPushEndpoint(input.endpoint)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "推送服務地址唔受支援，請用返瀏覽器預設嘅推送服務",
+        });
+      }
       // v2.2.44（老闆指令：Android 要讀到廠牌）：Chrome 凍結咗 UA 型號，
       // 真型號喺 sec-ch-ua-model header（boot.ts Accept-CH 協商後瀏覽器先會自帶）；
       // 冇帶（Safari／舊瀏覽器）就 null，parser 跌返 UA 規則。

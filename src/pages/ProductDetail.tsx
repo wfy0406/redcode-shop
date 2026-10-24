@@ -228,9 +228,27 @@ export default function ProductDetail() {
       </nav>
 
       {isDemo && (
-        <p className="mt-4 rounded-xl border px-4 py-2.5 text-[13px] text-gold-soft" style={{ borderColor: 'var(--glass-border)' }}>
-          伺服器暫時連唔到，你而家睇緊示範款，落單功能暫停。
-        </p>
+        /* 示範貨橫額（2026-10 batch1 UX）：同 Home 一致口吻＋重試掣；加車掣喺下面 disabled 咗 */
+        <div
+          role="alert"
+          className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3"
+          style={{ borderColor: 'var(--glass-border)' }}
+        >
+          <p className="text-sm text-gold-soft">
+            伺服器暫時連唔到，而家顯示緊示範款，未能即時落單。
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              void productQuery.refetch();
+              void relatedQuery.refetch();
+            }}
+            className="flex min-h-11 items-center rounded-full border px-4 text-sm font-bold text-gold transition-colors hover:text-gold-soft"
+            style={{ borderColor: 'var(--gold)' }}
+          >
+            重新載入
+          </button>
+        </div>
       )}
 
       <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-14">
@@ -244,12 +262,12 @@ export default function ProductDetail() {
             onTouchEnd={onPhotoTouchEnd}
           >
             {discounted && (
-              <span className="absolute left-4 top-4 z-10 rounded-full bg-pink px-3 py-1 text-[12px] font-bold text-space-1">
+              <span className="absolute left-4 top-4 z-10 rounded-full bg-pink px-3 py-1 text-sm font-bold text-space-1">
                 優惠中
               </span>
             )}
             {outOfStock && (
-              <span className="absolute right-4 top-4 z-10 rounded-full border px-3 py-1 text-[12px] text-txt-2 backdrop-blur" style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}>
+              <span className="absolute right-4 top-4 z-10 rounded-full border px-3 py-1 text-sm text-txt-2 backdrop-blur" style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}>
                 暫時售罄
               </span>
             )}
@@ -301,14 +319,14 @@ export default function ProductDetail() {
               一行過放標題同價錢之間，唔阻落單流程 */}
           <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-2">
             <span
-              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[12px] text-lavender"
+              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-sm text-lavender"
               style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
             >
               <Tag size={12} aria-hidden="true" />
               {productCategoryLabel(product.category)}
             </span>
             {listedDateText && (
-              <span className="inline-flex items-center gap-1.5 font-mono text-[12px] text-txt-3">
+              <span className="inline-flex items-center gap-1.5 font-mono text-sm text-txt-3">
                 <CalendarDays size={13} aria-hidden="true" />
                 {listedDateText} 上架
               </span>
@@ -331,7 +349,7 @@ export default function ProductDetail() {
             <fieldset className="mt-7">
               <legend className="text-[14px] text-txt-2">
                 尺寸
-                <span className="ml-1 text-[12px] text-txt-3">（必填）</span>
+                <span className="ml-1 text-sm text-txt-3">（必填）</span>
               </legend>
               <div className="mt-3 flex flex-wrap gap-2.5" role="radiogroup" aria-label="選擇尺寸">
                 {sizes.map((s) => {
@@ -360,7 +378,7 @@ export default function ProductDetail() {
                 })}
               </div>
               {sizeError && (
-                <p className="mt-2.5 flex items-center gap-1.5 text-[13px] text-pink-soft" role="alert">
+                <p className="mt-2.5 flex items-center gap-1.5 text-sm text-pink-soft" role="alert">
                   <span className="inline-block h-2 w-2 rotate-45" style={{ background: 'var(--gold)' }} aria-hidden="true" />
                   請揀返個尺寸先
                 </p>
@@ -397,7 +415,7 @@ export default function ProductDetail() {
                 <Plus size={16} aria-hidden="true" />
               </button>
             </div>
-            <span className="ml-3 font-mono text-[12px] text-txt-3">
+            <span className="ml-3 font-mono text-sm text-txt-3">
               存貨 {product.stock} 件
             </span>
           </div>

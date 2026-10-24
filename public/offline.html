@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-Hant-HK">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0A0614" />
+    <title>RedCode｜而家離線緊</title>
+    <!--
+      PWA 離線頁（2026-10）：SW network-first 攞唔到、又冇快取嗰陣先會出現。
+      純靜態＋inline CSS（SW 環境唔靠 Vite bundle／外部字體，斷網都一定 render 到）。
+      配色跟全站：深空底 #0A0614、品牌粉紅 #FF0054、金 #F5C518。
+    -->
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        padding: 32px 24px calc(32px + env(safe-area-inset-bottom));
+        background: radial-gradient(ellipse at 50% 0%, #1B1035 0%, #0A0614 65%);
+        color: #F1EDFF;
+        font-family: 'Noto Sans TC', 'PingFang HK', 'Microsoft JhengHei', system-ui, sans-serif;
+        text-align: center;
+      }
+      .logo { width: min(240px, 62vw); height: auto; }
+      .badge {
+        font-size: 14px;
+        letter-spacing: 0.12em;
+        color: #F5C518;
+        border: 1px solid rgba(245, 197, 24, 0.5);
+        border-radius: 999px;
+        padding: 6px 16px;
+      }
+      h1 { font-size: 26px; font-weight: 700; }
+      p { font-size: 16px; line-height: 1.7; color: #C9C1E8; max-width: 30em; }
+      .retry {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        min-width: 160px;
+        padding: 12px 32px;
+        font-size: 17px;
+        font-weight: 700;
+        color: #fff;
+        background: linear-gradient(135deg, #FF4D8D 0%, #FF0054 100%);
+        border: none;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      .retry:active { transform: scale(0.97); }
+      .hint { font-size: 14px; color: #8D82B3; }
+    </style>
+  </head>
+  <body>
+    <img class="logo" src="/logo.png" alt="RedCode Fashion Design" />
+    <span class="badge">OFFLINE</span>
+    <h1>而家離線緊</h1>
+    <p>睇唔到最新內容，可能係網絡斷咗。你之前睇過嘅頁面仲可以返回去睇；檢查返 Wi-Fi／流動數據之後，撳下面粒掣再試一次。</p>
+    <button class="retry" type="button" onclick="location.reload()">重試</button>
+    <p class="hint">開返網絡後，直播通知同最新貨品會自動更新返。</p>
+  </body>
+</html>

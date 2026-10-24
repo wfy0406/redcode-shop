@@ -29,7 +29,7 @@ pushCampaigns）全部建唔到，所以登入、站點、直播紀錄齊齊炸�
    「[boot-migrate] users 核心欄位齊全」呢行字，見到＝搞掂。
 4. 環境變數唔使郁（VAPID 三條如果你 v2.2.0 未加就照 v2.2.0 README 加返）：
    VAPID_PUBLIC_KEY=BLbdWdzmRmc3Zsb7I3XcHGPfcbyuyrn8wNcKW6F7Zu7Boq_5mJY8e7fkSxu63luW5cf62EIQpefX8SvPSzBR_D4
-   VAPID_PRIVATE_KEY=wb43hCF9Ze06BnnNqjy6KZPEWa-3-S6bkjxN8l0Qsz4
+   VAPID_PRIVATE_KEY=<REMOVED_VAPID_PRIVATE_KEY>
    VAPID_SUBJECT=mailto:redcode@redcode.red
    （私密鑰唔好外傳；WMS_CALLBACK_SECRET 之前已設；JWT_SECRET 千祈唔好改）
 

@@ -41,7 +41,7 @@ export const usersRouter = createRouter({
           .min(8, "電話至少 8 位")
           .max(32)
           .regex(/^[0-9+\-\s]+$/, "電話格式唔啱"),
-        password: z.string().min(6, "密碼至少 6 位").max(64),
+        password: z.string().min(8, "密碼至少 8 位").max(64),
         role: roleSchema,
       }),
     )

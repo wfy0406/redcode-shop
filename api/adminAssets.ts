@@ -2,6 +2,7 @@ import type { Context, Next } from "hono";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { userFromAuthHeader } from "./auth";
+import { recheckUserRole } from "./middleware";
 
 /**
  * 網站資產管理（staff/admin）—— 畀非技術用戶喺後台直接上傳 binary 資產，
@@ -67,8 +68,14 @@ export function opsTemplateCandidates(): string[] {
 
 async function requireStaff(c: Context) {
   const user = await userFromAuthHeader(c.req.header("authorization"));
-  if (!user || (user.role !== "staff" && user.role !== "admin")) return null;
-  return user;
+  if (!user) return null;
+  // L2（2026-10-24 安全覆核）：唔好淨信 JWT role 快照（7 日有效）——
+  // 逐 request 以 DB 最新帳號／role 覆核（重用 tRPC middleware 同一套 recheckUserRole）；
+  // 刪號→DB 搵唔到、降職→role 唔符，舊 token 即刻唔上傳得。
+  const dbRole = await recheckUserRole(user);
+  if (!dbRole || dbRole !== user.role) return null;
+  if (dbRole !== "staff" && dbRole !== "admin") return null;
+  return { userId: user.userId, role: dbRole };
 }
 
 /** GET /api/admin/site-assets —— 資產狀態列表（uploaded/repo/missing + size + mtime） */

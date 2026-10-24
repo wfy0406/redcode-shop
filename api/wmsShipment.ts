@@ -43,6 +43,7 @@ import {
   sendOrderItemChangedEmail,
   type OrderEmailItem,
 } from "./email";
+import { secretEquals } from "./wmsSecret";
 
 const SHIP_METHODS = new Set(["sf", "face", "pickup", "storage"]);
 
@@ -80,7 +81,7 @@ export async function wmsShipmentCallback(c: Context) {
     return c.json({ ok: false, error: "body 要係 JSON" }, 400);
   }
   const b = (body ?? {}) as Record<string, unknown>;
-  if (b.secret !== secret) {
+  if (!secretEquals(b.secret, secret)) {
     return c.json({ ok: false, error: "secret 唔啱" }, 401);
   }
   const orderNo = typeof b.orderNo === "string" ? b.orderNo.trim() : "";

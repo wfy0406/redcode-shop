@@ -10,6 +10,21 @@ import { logAudit } from "./audit";
 import { sendPasswordResetEmail, sendWelcomeEmail } from "./email";
 import { forwardMemberToWms } from "./wmsMemberSync";
 import { effectiveVipTier, normalizeDeliveryMethod, normalizeRegion } from "./vip";
+import { RateLimiter, clientIpFromRequest } from "./guestUtils";
+import { LoginFailTracker } from "./loginFailTracker";
+
+// ── P1-1／P2-3（2026-10 安全修復）：登入＋索取重設碼限流 ──────────────────
+// 重用 guestUtils 嘅 in-memory sliding window RateLimiter（server 重啟清零可接受）。
+// 登入：同一 IP 每分鐘 ≤5 次嘗試；同一 phone 連續失敗 10 次鎖 15 分鐘（成功即清零）。
+// 索取重設碼：同一 email 每 10 分鐘 ≤3 次＋同一 IP 每分鐘 ≤5 次（防 email 轟炸／作廢受害人啱收嘅碼）。
+const loginIpLimiter = new RateLimiter(5, 60 * 1000);
+const resetEmailLimiter = new RateLimiter(3, 10 * 60 * 1000);
+const resetIpLimiter = new RateLimiter(5, 60 * 1000);
+
+// H1（2026-10-24 安全覆核修復）：失敗計數＋鎖定邏輯抽落 loginFailTracker.ts
+// （舊版 `cur.lockedUntil <= now` 對未鎖定 entry 永遠成立，次次失敗重設做 1，
+//   10 次鎖 15 分鐘形同虛設；而家真係累加，夠 10 次實鎖，過期 entry 有清理）
+const loginFailTracker = new LoginFailTracker();
 
 /**
  * 電話正規化（2026-08-04 Glo 規則）：香港號碼統一儲 8 位本地號。
@@ -73,7 +88,8 @@ export const authRouter = createRouter({
       z.object({
         name: z.string().min(1),
         phone: z.string().min(4).max(32),
-        password: z.string().min(6),
+        // P1-1：新註冊密碼下限升 8 位（現有帳號登入唔受影響，淨係新註冊收緊）
+        password: z.string().min(8, "密碼至少 8 位"),
         address: z.string().optional(),
         // 預設取貨方式（2026-08-08 Glo 要求）：選填；揀自取可以順手填站點名稱/編號
         // v2.1.0（VIP+免運）：同時接受契約大寫值（HOME/SF_STATION/SF_LOCKER），入 DB 前正規化
@@ -174,18 +190,35 @@ export const authRouter = createRouter({
         password: z.string().min(1),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
+      // P1-1：先過兩層限流先做密碼比對（錯誤訊息統一，唔透露邊層擋）
+      const ip = clientIpFromRequest(ctx.req);
+      if (!loginIpLimiter.allow(ip)) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "嘗試次數太多，請一分鐘後再試",
+        });
+      }
+      const phoneKey = normalizePhone(input.phone);
+      if (loginFailTracker.lockedUntil(phoneKey) !== null) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "呢個帳號因連續登入失敗暫時鎖定，請 15 分鐘後再試",
+        });
+      }
       // 登入都照計 852 變體：舊帳號可能存咗前綴版，客人打 8 位本地號一樣入到
       const user = await db.query.users.findFirst({
         where: inArray(users.phone, phoneLookupVariants(input.phone)),
       });
       if (!user || !verifyPassword(input.password, user.passwordHash)) {
+        loginFailTracker.recordFail(phoneKey);
         throw new TRPCError({
           code: "UNAUTHORIZED",
           message: "電話號碼或密碼錯誤",
         });
       }
+      loginFailTracker.reset(phoneKey); // 成功登入即清零失敗計數
       const token = await signToken({ userId: user.id, role: user.role });
       return { token, user: publicUser(user) };
     }),
@@ -622,7 +655,7 @@ export const authRouter = createRouter({
     .input(
       z.object({
         oldPassword: z.string().min(1),
-        newPassword: z.string().min(6).max(64),
+        newPassword: z.string().min(8, "新密碼至少 8 位").max(64),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -654,8 +687,16 @@ export const authRouter = createRouter({
         email: z.string().trim().email("Email 格式唔啱").max(255),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const email = input.email.toLowerCase();
+      // P2-3：限流喺查 DB 之前——限流錯誤同帳號存唔存在無關，唔會洩露帳號枚舉資訊
+      const ip = clientIpFromRequest(ctx.req);
+      if (!resetIpLimiter.allow(ip) || !resetEmailLimiter.allow(email)) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "索取次數太多，請稍後再試",
+        });
+      }
       const db = getDb();
       const user = await db.query.users.findFirst({
         where: eq(users.email, email),
@@ -685,7 +726,7 @@ export const authRouter = createRouter({
       z.object({
         email: z.string().trim().email("Email 格式唔啱").max(255),
         code: z.string().trim().regex(/^\d{6}$/, "驗證碼係 6 位數字"),
-        newPassword: z.string().min(6, "新密碼至少 6 位").max(64),
+        newPassword: z.string().min(8, "新密碼至少 8 位").max(64),
       }),
     )
     .mutation(async ({ input }) => {

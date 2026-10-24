@@ -31,6 +31,7 @@ import { listingBatchItems, listingBatches, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES } from "@contracts/types";
 import { logAudit } from "./audit";
 import { archiveProductImages } from "./productsRouter";
+import { secretEquals } from "./wmsSecret";
 
 /* ---------- 上傳儲存（同 boot.ts /api/upload 一個模式） ---------- */
 const UPLOAD_DIR = process.env.UPLOADS_DIR || "uploads";
@@ -76,7 +77,7 @@ function checkSecret(c: Context, got: unknown): Response | null {
   if (!secret) {
     return c.json({ ok: false, error: "官網未設定 WMS_CALLBACK_SECRET" }, 503);
   }
-  if (got !== secret) {
+  if (!secretEquals(got, secret)) {
     return c.json({ ok: false, error: "secret 唔啱" }, 401);
   }
   return null;

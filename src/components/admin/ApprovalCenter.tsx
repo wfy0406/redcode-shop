@@ -36,6 +36,7 @@ interface ApprovalRow {
 
 const ACTION_META: Record<string, { label: string; color: string }> = {
   'member.update': { label: '修改會員', color: '#f0b429' },
+  'member.resetPassword': { label: '重設會員密碼', color: '#f0b429' },
   'promo.sendMarketingEmail': { label: '寄促銷電郵', color: '#ff8fb2' },
   'praise.create': { label: '新增打卡相', color: '#7ed491' },
   'praise.update': { label: '修改打卡相', color: '#f0b429' },
@@ -348,6 +349,17 @@ function RequestPreview({ row, onImage }: { row: ApprovalRow; onImage: (src: str
         audienceCount={p.audienceCount}
         onImage={onImage}
       />
+    );
+  }
+  // M3（2026-10-24 安全覆核）：重設密碼單唔顯示新密碼／hash——淨係講邊個會員＋批准後即時生效
+  if (row.action === 'member.resetPassword') {
+    return (
+      <p className="text-[13px] leading-relaxed text-txt-2">
+        重設會員 #{String(input.id ?? '—')} 嘅登入密碼。
+        <span className="text-txt-3">
+          （安全起見，新密碼唔會喺度顯示；批准後即時生效，員工要人手將新密碼話返俾會員。）
+        </span>
+      </p>
     );
   }
   if (row.action.endsWith('.create')) {

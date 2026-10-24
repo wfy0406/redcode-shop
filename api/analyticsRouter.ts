@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { getDb } from "./queries/connection";
 import { orders, orderItems, promoCodes, users } from "@db/schema";
-import { createRouter, adminProcedure } from "./middleware";
+import { createRouter, adminProcedure, staffProcedure } from "./middleware";
+import { createExportTicket } from "./exportDaily";
+import { logAudit } from "./audit";
 
 /**
  * 業務分析 —— 全部 admin only
@@ -237,5 +240,29 @@ export const analyticsRouter = createRouter({
         .groupBy(orderItems.productId, orderItems.productName, orderItems.sku)
         .orderBy(desc(sql`sum(${orderItems.quantity})`))
         .limit(limit);
+    }),
+
+  /**
+   * P2-4（2026-10 安全修復）：每日導出嘅一次性下載 ticket（staff+admin）。
+   * 前端 ExportCard 先攞 ticket，再 window.open /api/export/daily?ticket=…——
+   * 取代舊做法 ?token= 帶成條 7 日 JWT 落 URL（會留 access log／瀏覽器歷史）。
+   * ticket 60 秒有效、用一次即棄（api/exportDaily.ts memory Map）。
+   */
+  exportDailyTicket: staffProcedure
+    .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
+    .mutation(({ ctx, input }) => {
+      // exportDaily route 本身只放 staff／admin（同舊行為一致），supervisor 喺度先擋
+      if (ctx.user.role !== "staff" && ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "需要管理員權限" });
+      }
+      const ticket = createExportTicket(ctx.user);
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "export.dailyTicket",
+        targetType: "export",
+        detail: `簽發 ${input.date} 每日營運數據導出一次性下載 ticket（60 秒有效）`,
+      });
+      return { ticket };
     }),
 });

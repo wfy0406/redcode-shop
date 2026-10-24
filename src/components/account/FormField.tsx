@@ -31,7 +31,7 @@ const FormField = forwardRef<HTMLInputElement, FormFieldProps>(function FormFiel
 ) {
   const errorId = `${id}-error`;
   const errorNode = error ? (
-    <p id={errorId} role="alert" className="mt-2 flex items-center gap-1.5 text-[13px] text-pink-soft">
+    <p id={errorId} role="alert" className="mt-2 flex items-center gap-1.5 text-sm text-pink-soft">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
         <path
           d="M12 1.5C13 6.8 17.2 11 22.5 12C17.2 13 13 17.2 12 22.5C11 17.2 6.8 13 1.5 12C6.8 11 11 6.8 12 1.5Z"
@@ -49,7 +49,7 @@ const FormField = forwardRef<HTMLInputElement, FormFieldProps>(function FormFiel
         <div className="flex h-14 items-center gap-3">
           <label htmlFor={id} className="w-20 shrink-0 text-sm text-txt-3">
             {label}
-            {optional && <span className="ml-1 text-[12px]">（選填）</span>}
+            {optional && <span className="ml-1 text-sm">（選填）</span>}
           </label>
           <input
             ref={ref}
@@ -76,7 +76,7 @@ const FormField = forwardRef<HTMLInputElement, FormFieldProps>(function FormFiel
       <label htmlFor={id} className="mb-2 flex items-baseline justify-between gap-2 text-sm text-txt-2">
         <span>
           {label}
-          {optional && <span className="ml-2 text-[13px] text-txt-3">（選填）</span>}
+          {optional && <span className="ml-2 text-sm text-txt-3">（選填）</span>}
         </span>
         {hint}
       </label>

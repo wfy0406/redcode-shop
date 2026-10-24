@@ -1,57 +1,47 @@
-# Red Code 官網 v2.5.5 — 更新包（2026-10-10，第 4 版）
+# Red Code 官方購物網站
 
-⚠️ 呢個包係**累積包**：第 3 版嘅 3 項修正 ＋ 第 4 版新加嘅「訪客單移入會員即時同步落 WMS」。無論你 push 咗第 2 版定第 3 版，直接覆蓋都得 —— 已核對：底本同 master 最新版完全一致，覆蓋唔會撞車。
+呢個目錄係 **官網完整原始碼**，包括公開購物網、會員及訪客訂單流程、管理後台、抽獎活動、Excel 匯入、Hono／tRPC API、PostgreSQL schema、PWA 及部署文件；唔係舊版七檔 overlay。
 
-## 今次新做（第 4 版）
+## 主要功能
 
-1. **訪客單「移入會員訂單」即時同步落 WMS**（你報：「我係官網已經將訪客張單移入左會員到，但係 WMS 官網中心訂單詳細資料點解無睇到張單移入左？」）
-   - 起因：以前「移入」淨係官網內部改會員歸屬，**冇通知 WMS**，所以 WMS 嗰邊舊紀錄仲係「【訪客】XXX」，客戶管理都仲係計落訪客卡。
-   - 而家：官網移入成功後會**即時回調落 WMS**（新檔 `api/wmsMemberSync.ts` 加咗 `notifyWmsGuestClaimed`，用現有 WMS_API_KEY 嗰條通道）：
-     - WMS 官網中心張單嘅客戶名由「【訪客】XXX」改做會員名，訂單詳細資料即時見到；
-     - 客戶管理嗰邊，張單即時由訪客卡過去會員卡（訂單數／總消費即刻計入會員）；
-     - WMS「修改紀錄」會留一條「【官網訪客單移入會員】」底。
-   - **重撫補推**：如果張單本身已經移入咗（例如部署前已移入嗰啲），返官網嗰張單再撳一次「移入會員訂單」，官網會照推一次落 WMS，WMS 冪等處理（唔會重複改名）。
-   - 回調係 fire-and-forget：WMS 收唔到都**唔會影響官網本地嘅移入結果**，錯誤淨係落 server log（HTTP 狀態＋訊息，**永遠唔落單據內容／apiKey**）。
+- 公開商品、會員、訪客付款及查單、WMS 回調同步。
+- 手機、平板及桌面介面；保留有意義動態效果，只喺背景分頁、頁面隱藏或 off-screen 時減少無謂工作。
+- 名單抽獎及抽獎劵活動：兩種限中規則、重抽、確認中獎、通知、起單及紀錄管理。
+- Excel 範本、預覽及提交：限制檔案大小與行數，逐行錯誤全批顯示，有錯唔寫入。
+- 權限由後端執行；中獎確認、起單、通知認領及刪除綁單使用交易或原子更新保護。
 
-## 第 3 版已有（繼續有效，檔案已包喺呢個包）
+## 本機開發
 
-2. **Google 登入後「移入會員訂單」接得返**——查單 payload 補電話、登入後直去「我嘅訂單」自動彈確認框。
-3. **WMS 整單取消，官網同步轉「已取消」**——全數取消時已出貨嘅件都跟住取消（唔回補庫存）；部分取消照舊唔准郁已出貨嘅件。
-4. **訪客查單顯示退款狀態**——⏳ 退款審批中／❌ 已取消·已退款（灰化）／❌ 已取消·人手退款處理中（灰化）／⚠️ 退款失敗·請聯絡客服。
-
-## 覆蓋清單（7 個檔，其中 1 個係新檔）
-
-```
-api/ordersRouter.ts                      ← 移入成功（兩條路徑）後推落 WMS；查單 payload 加 guestPhone／refundStatus
-api/wmsMemberSync.ts                     ← 【新檔】會員同步通道；新增 notifyWmsGuestClaimed
-api/wmsShipment.ts                       ← WMS 取消回調：已出貨嘅件准「全數取消」，官網跟住轉已取消
-src/components/shop/GuestOrderCard.tsx   ← 退款 badge＋灰化；payload type 加 guestPhone／refundStatus
-src/pages/MyOrders.tsx                   ← 魔法連結入嚟都攞到電話，移入流程接得返
-src/pages/GuestPayment.tsx               ← 訪客付款頁「移入」掣補埋電話
-src/pages/Login.tsx                      ← 有未接嘅移入流程時，登入（密碼／Google）後直去「我嘅訂單」接返
+```bash
+npm ci
+npm run dev
 ```
 
-## 部署步驟
+正式建置及啟動：
 
-1. 解壓，將 7 個檔案按路徑覆蓋／新增落 repo（`api/wmsMemberSync.ts` 係新檔，直接放落 `api/`）。
-2. `git add -A && git commit && push` 去 master。
-3. Render 自動 build 同 deploy。
-4. ⚠️ **兩邊要一齊部署**：呢個官網包同 WMS 第 4 版包係一對 —— WMS 嗰邊先部署咗 `receiveGuestClaim`，官網回調先有人接。次序建議：先 WMS，後官網。
-5. 部署完即場試：
-   - 開一張新訪客單 → 移入會員 → WMS 官網中心張單客戶名應該即時變會員名，客戶管理過咗去會員卡
-   - 舊嘅已移入訪客單：返官網嗰張單再撳一次「移入會員訂單」→ WMS 即時補改名
-   - RC202610107171 補救：WMS 官網中心再撳一次「刪除全單」填原因 → 官網轉「已取消」（會再寄一封取消信畀客人，原因佢會睇到，測試單建議寫「系統測試」）
+```bash
+npm run build
+npm start
+```
 
-## 已過檢查
+環境變數以 `.env.example` 嘅鍵名為準；真 key、connection string、密碼同 `.env` 唔可以落入 Git、ZIP 或報告。
 
-- TypeScript 編譯 ✓
-- 全部 30 個自動測試通過 ✓
-- 正式 build 成功 ✓
-- GitHub master 基線核對：底本同線上最新版完全吻合 ✓（今輪打包前 GitHub 連線中斷，基線係用較早前已核實嘅快照）
+## 檢查
 
-## 安全紅線（今次有跟足）
+```bash
+npm test
+npm run check
+npm run build
+```
 
-- sessionStorage 只記單號＋電話，**token 永遠唔落 storage、唔落 log**
-- 回調 payload／apiKey **永遠唔落 log**；錯誤淨係記 HTTP 狀態＋訊息
-- 查單／移入錯誤繼續用統一訊息（防枚舉）
-- 訪客單照舊唔准手動上傳單據；權限全部後端強制；回調失敗即報錯，唔靜默
+測試只應使用 mock 或隔離資料庫，唔准連 production database。
+
+## Migration 與部署
+
+1. 部署前備份現行源碼及資料庫，先喺 staging 核對 schema 同 migration。
+2. 確認 `db/migrations/0000_perf_indexes.sql` 已被 Git 收錄；唔好用破壞性 `db:push --force`。
+3. 由管理員自行 merge、push、部署及 migration。
+4. Production boot 會執行 `ensureDatabase()`，但個別 SQL 失敗可能只落 log；部署後必須檢查 `[boot-migrate] tables ok`，唔可以見到網頁開到就當 migration 成功。
+5. 每日 Excel 導出如使用自訂營運範本，管理員要上傳 override；總包冇假稱內建 `api/assets/ops-template.xlsx`。
+
+完整變更、驗收證據、rollback 及未驗證限制，以總包根目錄嘅廣東話報告為準。

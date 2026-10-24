@@ -25,6 +25,49 @@ function notAutoDelisted() {
 // ===== 更新日誌：新舊值對比（中文欄位名＋舊值 → 新值） =====
 
 /**
+ * perf-fix（P0-3）：公開列表查詢 select 指定欄位——
+ * 抽走重型 `photos` 陣列（成串圖 url，最大件），商品一多就慳好多 JSON 下載＋parse。
+ * `description` 保留：前台 `ShopProduct` 型別（shop-utils）列佢做 required，
+ * Products 頁 `as ShopProduct[]` cast 需要佢先過到 tsc；而且佢係純文字，體積遠細過 photos。
+ * 注意：搜尋 keyword 仍然喺 server 度 LIKE description（WHERE 用）。
+ */
+const productListColumns = {
+  id: products.id,
+  sku: products.sku,
+  name: products.name,
+  description: products.description,
+  image: products.image,
+  price: products.price,
+  discountPrice: products.discountPrice,
+  sizes: products.sizes,
+  sizeEnabled: products.sizeEnabled,
+  note: products.note,
+  category: products.category,
+  listedDate: products.listedDate,
+  stock: products.stock,
+  isActive: products.isActive,
+  delistEnabled: products.delistEnabled,
+  delistAt: products.delistAt,
+  liveDate: products.liveDate,
+  liveSession: products.liveSession,
+  createdAt: products.createdAt,
+} as const;
+
+/** 首頁「新品上架」卡片專用欄位（products.latest 合約：唔包 description/photos，保留封面圖 image） */
+const productCardColumns = {
+  id: products.id,
+  sku: products.sku,
+  name: products.name,
+  image: products.image,
+  price: products.price,
+  discountPrice: products.discountPrice,
+  sizes: products.sizes,
+  category: products.category,
+  listedDate: products.listedDate,
+  stock: products.stock,
+} as const;
+
+/**
  * 商品圖歸檔（2026-08-06 Glo 要求：WMS 補舊訂單圖嘅保險）。
  * 商品 create/update/remove 時將 SKU → 圖 對照落 productImageArchive；
  * 商品就算日後刪咗，/api/products/:sku/images 都可以喺檔案庫攞返最後嘅圖。
@@ -185,10 +228,33 @@ export const productsRouter = createRouter({
         }
       }
       return db
-        .select()
+        .select(productListColumns)
         .from(products)
         .where(and(...conditions))
         .orderBy(desc(products.listedDate));
+    }),
+
+  /**
+   * 首頁「新品上架」專用（perf-fix P0-3）：最新 N 件（預設 8，上限 24），
+   * 淨返 ProductCard 需要嘅欄位（唔包 description／photos 陣列），
+   * 唔使再成個商品表 dump 落首頁先 slice(0, 8)。
+   */
+  latest: publicQuery
+    .input(
+      z
+        .object({
+          limit: z.number().int().min(1).max(24).default(8),
+        })
+        .optional(),
+    )
+    .query(async ({ input }) => {
+      const db = getDb();
+      return db
+        .select(productCardColumns)
+        .from(products)
+        .where(and(eq(products.isActive, true), notAutoDelisted()))
+        .orderBy(desc(products.listedDate))
+        .limit(input?.limit ?? 8);
     }),
 
   /**

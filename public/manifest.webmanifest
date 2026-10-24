@@ -3,11 +3,33 @@
   "short_name": "RedCode",
   "description": "RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 每晚為你揀選星空下最閃嘅衫。",
   "lang": "zh-Hant-HK",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0A0614",
   "theme_color": "#0A0614",
+  "categories": ["shopping"],
+  "shortcuts": [
+    {
+      "name": "直播",
+      "short_name": "直播",
+      "url": "/live",
+      "icons": [{ "src": "/pwa-icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "商品",
+      "short_name": "商品",
+      "url": "/products",
+      "icons": [{ "src": "/pwa-icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "我的訂單",
+      "short_name": "訂單",
+      "url": "/orders",
+      "icons": [{ "src": "/pwa-icon-192.png", "sizes": "192x192" }]
+    }
+  ],
   "icons": [
     {
       "src": "/pwa-icon-192.png",

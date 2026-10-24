@@ -1,17 +1,21 @@
 import type { Context } from "hono";
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { and, asc, eq, gte, lt, notInArray } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, orderItems, products, users } from "@db/schema";
-import { userFromAuthHeader, verifyToken } from "./auth";
+import { userFromAuthHeader, type AuthUser } from "./auth";
+import { recheckUserRole } from "./middleware";
 import { opsTemplateCandidates } from "./adminAssets";
 import { readZipEntries, writeZipDeflate } from "./xlsxZip";
 
 /**
  * GET /api/export/daily?date=YYYY-MM-DD
- * 每日營運數據導出（staff + admin）。auth 用 Authorization Bearer 或 ?token=
- * （<a download> 加唔到 header，所以兼容 query token）。
- *
+ * 每日營運數據導出（staff + admin）。auth 用 Authorization Bearer 或 ?ticket=
+ * （P2-4，2026-10 安全修復：<a download>／window.open 加唔到 Authorization header，
+ * 以前用 ?token= 帶成條 7 日 JWT——URL 會留喺 access log／瀏覽器歷史。
+ * 而家改兩步：前端先 call tRPC analytics.exportDailyTicket 攞 60 秒一次性 ticket，
+ * 再用 ?ticket= 換檔；舊 ?token= 已移除）。
  * 用 api/assets/ops-template.xlsx 做底，patch「資料填入」sheet（sheet9.xml）：
  * 模板本身預留咗第 2–1275 行空 data row（G 欄 =E-F、N 欄 VLOOKUP formula 已搭好），
  * 所以數據係**填落呢啲預留行**（保留 style 同 formula），多過 1274 條 line item
@@ -204,16 +208,53 @@ export async function buildDailyXlsx(date: string): Promise<Buffer> {
   return writeZipDeflate(entries);
 }
 
+// ── P2-4（2026-10 安全修復）：一次性下載 ticket ────────────────────────────
+// 60 秒有效、用一次即棄；memory Map 存（server 重啟即清，舊 ticket 全部作廢，可接受）。
+const EXPORT_TICKET_TTL_MS = 60 * 1000;
+const exportTickets = new Map<string, { userId: number; role: AuthUser["role"]; expiresAt: number }>();
+
+/** 簽發一次性下載 ticket（由 tRPC analytics.exportDailyTicket 呼叫；caller 已過 staff 閘） */
+export function createExportTicket(user: AuthUser): string {
+  const now = Date.now();
+  // 順手清過期 ticket（bucket 好細，O(n) 冇所謂）
+  for (const [k, v] of exportTickets) {
+    if (v.expiresAt <= now) exportTickets.delete(k);
+  }
+  const ticket = randomUUID();
+  exportTickets.set(ticket, { userId: user.userId, role: user.role, expiresAt: now + EXPORT_TICKET_TTL_MS });
+  return ticket;
+}
+
+/** 用 ticket 換身份：一次性（攞完即刪），過期當冇 */
+function consumeExportTicket(ticket: string): AuthUser | null {
+  const t = exportTickets.get(ticket);
+  if (!t) return null;
+  exportTickets.delete(ticket);
+  if (t.expiresAt <= Date.now()) return null;
+  return { userId: t.userId, role: t.role };
+}
+
 export async function exportDaily(c: Context) {
-  // auth：Authorization Bearer 優先，冇就用 ?token=（<a download> 加唔到 header）
+  // auth：Authorization Bearer 優先；冇就用 ?ticket=（60 秒一次性，由 analytics.exportDailyTicket 簽發）
   let user = await userFromAuthHeader(c.req.header("authorization"));
+  let usedTicket = false;
   if (!user) {
-    const token = c.req.query("token");
-    if (token) user = await verifyToken(token);
+    const ticket = c.req.query("ticket");
+    if (ticket) {
+      user = consumeExportTicket(ticket);
+      usedTicket = user !== null;
+    }
   }
   if (!user) return c.json({ error: "請先登入" }, 401);
   if (user.role !== "staff" && user.role !== "admin") {
     return c.json({ error: "需要管理員權限" }, 403);
+  }
+  // P1-2 配套：Bearer 路徑（ticket 係 60 秒內由已覆核 session 簽發，唔使再查）都要
+  // 以 PK 覆核 role 同 JWT 相符——員工被降職／刪除後舊 token 唔可以攞導出
+  if (!usedTicket) {
+    const dbRole = await recheckUserRole(user);
+    if (!dbRole) return c.json({ error: "請先登入" }, 401);
+    if (dbRole !== user.role) return c.json({ error: "帳號權限已變更，請重新登入" }, 403);
   }
 
   const date = c.req.query("date") ?? "";

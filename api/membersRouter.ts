@@ -7,6 +7,7 @@ import { createRouter, adminProcedure, staffProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { hashPassword } from "./auth";
 import { requestApprovalIfStaff } from "./approvalGuard";
+import { applyMemberPasswordReset } from "./memberPasswordReset";
 import { forwardMemberToWms } from "./wmsMemberSync";
 import { sendVipUpgradeEmail, siteUrl } from "./email";
 import { buildVipVerifyUrl } from "./vipCert";
@@ -375,7 +376,7 @@ export const membersRouter = createRouter({
     .input(
       z.object({
         id: z.number().int().positive(),
-        newPassword: z.string().min(6, "新密碼至少 6 位").max(64),
+        newPassword: z.string().min(8, "新密碼至少 8 位").max(64),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -391,17 +392,25 @@ export const membersRouter = createRouter({
       if (target.role !== "member") {
         throw new TRPCError({ code: "FORBIDDEN", message: "員工帳號請去「員工帳號」頁修改" });
       }
-      await db
-        .update(users)
-        .set({ passwordHash: hashPassword(input.newPassword) })
-        .where(eq(users.id, input.id));
-      void logAudit({
+      // P1-3（2026-10 安全修復）：員工重設會員密碼要過審批（同 member.update 一致）——
+      // 之前 staff 可以直接改任何會員密碼騎劫帳號。主管/管理員照舊直接執行。
+      // M3（2026-10-24 安全覆核）：明文新密碼**唔落審批單**——後端即場 hash，
+      // payload 淨係存 member id + passwordHash；approve 時直接套用 hash（applyMemberPasswordReset）。
+      if (ctx.user.role === "staff") {
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "member.resetPassword",
+          payload: { input: { id: input.id, passwordHash: hashPassword(input.newPassword) } },
+          summary: `重設會員 #${input.id}「${target.name}」密碼`,
+        });
+        if (pending) return pending;
+      }
+      // 主管/管理員直接重設：同一條安全路徑（驗證目標係會員＋套用 hash＋記 audit）
+      await applyMemberPasswordReset({
+        memberId: input.id,
+        passwordHash: hashPassword(input.newPassword),
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
-        action: "member.resetPassword",
-        targetType: "member",
-        targetId: input.id,
-        detail: `重設會員「${target.name}」密碼`,
       });
       return { ok: true };
     }),

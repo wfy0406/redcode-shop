@@ -185,7 +185,9 @@ function PromoVideo({ src, poster, className }: { src: string; poster: string; c
       muted
       loop
       playsInline
-      preload="metadata"
+      // perf-fix（P1-3）：兩條 promo 喺首頁中段，metadata 都會 preload 幾十 KB–幾 MB moov；
+      // 改 none——保留撳即播，唔郁已獲批影片素材
+      preload="none"
       onError={() => setFailed(true)}
       className={`h-full w-full object-cover ${className ?? ''}`}
     />
@@ -460,15 +462,24 @@ export default function Home() {
   // v2.2.2：跟會員級別轉首頁色調（未登入／普通會員＝原色）
   const homeTier = (user?.vipTier ?? 'NONE') as VipTier;
   // 後端連唔到（純前端預覽）時 fallback 用內建示範商品
-  const { data: dbProducts, isError: productsError } = trpc.products.list.useQuery(
-    {},
-    { retry: false },
+  // perf-fix（P0-3）：改用 products.latest(8)——server 直接出最新 8 件、淨係卡片欄位，
+  // 唔再成個商品表（連描述＋圖陣）dump 落首頁先 slice
+  const {
+    data: dbProducts,
+    isError: productsError,
+    refetch: refetchProducts,
+    isFetching: productsFetching,
+  } = trpc.products.latest.useQuery(
+    { limit: 8 },
+    { retry: false, staleTime: 5 * 60_000, refetchOnWindowFocus: false },
   );
-  const allProducts =
-    productsError || !dbProducts ? PRODUCTS : dbProducts.map(mapDbProduct);
+  // UX P0-2：API 故障降級示範貨嗰陣要講到明（橫額＋禁加車），唔准靜默當真貨賣。
+  // 注意：loading 期間（未 error）照舊靜默墊示範貨，唔好閃橫額嚇人——淨係真．故障先出聲。
+  const isDemoProducts = productsError || !dbProducts;
+  const showDemoNotice = productsError;
   // 2026-09（Glo 要求）：新品上架只顯示最新 8 件，唔再成版碌極未完；
   // 其餘商品經「睇全部商品 →」去 /products 睇晒
-  const newArrivals = allProducts.slice(0, 8);
+  const newArrivals = isDemoProducts ? PRODUCTS.slice(0, 8) : dbProducts.map(mapDbProduct);
 
   // 客戶打卡牆：API 失敗或空陣列 → 靜態 6 張預設相
   const { data: praiseData, isError: praiseError } = trpc.praise.list.useQuery(undefined, {
@@ -748,6 +759,27 @@ export default function Home() {
               睇全部商品 →
             </Link>
           </div>
+          {/* UX P0-2：API 故障嗰陣唔准靜默賣示範貨——出橫額講到明＋畀客人重試 */}
+          {showDemoNotice && (
+            <div
+              className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-2.5"
+              style={{ borderColor: 'var(--glass-border)' }}
+              role="status"
+            >
+              <p className="text-[14px] text-gold-soft">
+                伺服器暫時連唔到，而家顯示緊示範款，未能即時落單。
+              </p>
+              <button
+                type="button"
+                onClick={() => void refetchProducts()}
+                disabled={productsFetching}
+                className="min-h-11 rounded-full border px-5 py-2 text-[14px] font-semibold text-gold transition-opacity hover:opacity-80 disabled:opacity-50"
+                style={{ borderColor: 'var(--gold)' }}
+              >
+                {productsFetching ? '重試緊…' : '重試'}
+              </button>
+            </div>
+          )}
           <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6 xl:grid-cols-4">
             {newArrivals.map((product, i) => (
               <div
@@ -755,7 +787,7 @@ export default function Home() {
                 className="reveal"
                 style={{ transitionDelay: `${Math.min(i * 80, 400)}ms` }}
               >
-                <ProductCard product={product} />
+                <ProductCard product={product} demo={showDemoNotice} />
               </div>
             ))}
           </div>

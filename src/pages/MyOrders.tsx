@@ -63,12 +63,12 @@ class LookupResultBoundary extends Component<{ children: ReactNode }, { crashed:
           role="alert"
           className="mt-6 w-full max-w-[420px] rounded-2xl border border-pink bg-space-2 px-5 py-5 text-center lg:max-w-[560px]"
         >
-          <p className="text-[13.5px] text-pink-soft">訂單資料顯示唔到，請重新整理再試。</p>
+          <p className="text-sm text-pink-soft">訂單資料顯示唔到，請重新整理再試。</p>
           <a
             href={`${WHATSAPP_URL}?text=${encodeURIComponent('你好，我喺「我的訂單」查單嗰陣畫面出錯，想請你哋幫手。')}`}
             target="_blank"
             rel="noreferrer"
-            className="mt-2 inline-block text-[13px] text-gold underline underline-offset-4"
+            className="mt-2 inline-block text-sm text-gold underline underline-offset-4"
           >
             WhatsApp 我哋幫手
           </a>
@@ -189,7 +189,7 @@ function GuestLookupSection() {
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="font-serif-tc text-xl font-semibold text-txt-1">查詢訂單</h2>
-            <p className="mt-1 text-[13px] text-txt-3">訪客單、會員單都查到——輸入訂單編號同落單電話就得。</p>
+            <p className="mt-1 text-sm text-txt-3">訪客單、會員單都查到——輸入訂單編號同落單電話就得。</p>
           </div>
           <img src="/guest/glo-magnifier.png" alt="" className="glo-sway w-16 shrink-0" loading="lazy" aria-hidden="true" />
         </div>
@@ -227,8 +227,8 @@ function GuestLookupSection() {
           </div>
           {error && (
             <div role="alert" className="mt-3" style={{ animation: 'promo-fade-in .2s ease-out' }}>
-              <p className="text-[13px] text-pink-soft">{error}</p>
-              <p className="mt-1 text-[12px] text-txt-3">
+              <p className="text-sm text-pink-soft">{error}</p>
+              <p className="mt-1 text-sm text-txt-3">
                 多次都搵唔到？
                 <a
                   href={`${WHATSAPP_URL}?text=${encodeURIComponent('你好，我查唔到訪客訂單，想請你哋幫手。')}`}
@@ -310,9 +310,9 @@ function MemberOrderHint({
         >
           會員單
         </span>
-        <span className="ml-auto text-[12px] text-txt-3">{createdLabel}</span>
+        <span className="ml-auto text-sm text-txt-3">{createdLabel}</span>
       </div>
-      <p className="relative mt-3 text-[13.5px] text-txt-2">
+      <p className="relative mt-3 text-sm text-txt-2">
         狀態：<span className="font-semibold text-txt-1">{MEMBER_STATUS_LABEL[result.status] ?? result.status}</span>
       </p>
 
@@ -324,7 +324,7 @@ function MemberOrderHint({
       <Link to="/login" state={{ from: '/orders' }} className="btn btn-primary relative mt-4 w-full">
         登入會員睇詳情 →
       </Link>
-      <p className="relative mt-3 text-center text-[12px] text-txt-3">
+      <p className="relative mt-3 text-center text-sm text-txt-3">
         唔記得密碼／帳號有問題？
         <a
           href={`${WHATSAPP_URL}?text=${encodeURIComponent(`你好，我嘅會員訂單 ${result.orderNo} 想查詳情，但登入唔到。`)}`}
@@ -364,8 +364,8 @@ function RegisterUpsell({ phone }: { phone: string }) {
         {benefits.map((b) => (
           <div key={b.title} className="rounded-xl border px-3 py-2.5" style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}>
             <b.icon size={15} className="text-gold" aria-hidden="true" />
-            <p className="mt-1.5 text-[13px] font-semibold text-txt-1">{b.title}</p>
-            <p className="mt-0.5 text-[11.5px] leading-[1.5] text-txt-3">{b.desc}</p>
+            <p className="mt-1.5 text-sm font-semibold text-txt-1">{b.title}</p>
+            <p className="mt-0.5 text-sm leading-[1.5] text-txt-3">{b.desc}</p>
           </div>
         ))}
       </div>
@@ -375,7 +375,7 @@ function RegisterUpsell({ phone }: { phone: string }) {
       >
         免費註冊會員 →
       </Link>
-      <p className="mt-2 text-center text-[12px] text-txt-3">
+      <p className="mt-2 text-center text-sm text-txt-3">
         用返落單電話註冊，之後落單唔使再填資料，仲可以將呢張單移入會員旗下
       </p>
     </div>
@@ -508,7 +508,7 @@ export default function MyOrders() {
       {resumeError && (
         <p
           role="alert"
-          className="mt-4 flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-[13px]"
+          className="mt-4 flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-sm"
           style={{ borderColor: 'rgba(255,107,91,0.4)', color: '#FF6B5B', background: 'var(--space-2)' }}
         >
           <span>{resumeError}</span>
@@ -536,7 +536,7 @@ export default function MyOrders() {
               value={orderDate}
               onChange={(e) => setOrderDate(e.target.value)}
               aria-label="按日期搜尋訂單"
-              className="bg-transparent font-mono text-[13px] text-txt-1 focus:outline-none"
+              className="bg-transparent font-mono text-sm text-txt-1 focus:outline-none"
             />
           </label>
           {orderDate && (
@@ -544,7 +544,7 @@ export default function MyOrders() {
               <button
                 type="button"
                 onClick={() => setOrderDate('')}
-                className="text-[13px] text-lavender underline underline-offset-4 transition-colors hover:text-txt-1"
+                className="text-sm text-lavender underline underline-offset-4 transition-colors hover:text-txt-1"
               >
                 清除日期
               </button>
@@ -559,7 +559,7 @@ export default function MyOrders() {
           <WishingStar size={28} spinning />
         </div>
       ) : ordersQuery.isError ? (
-        <p role="alert" className="mt-6 rounded-xl border border-pink bg-space-2 px-4 py-3 text-[13px] text-pink-soft">
+        <p role="alert" className="mt-6 rounded-xl border border-pink bg-space-2 px-4 py-3 text-sm text-pink-soft">
           訂單載入失敗，請稍後重新整理。
         </p>
       ) : orders.length === 0 ? (

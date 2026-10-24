@@ -108,16 +108,16 @@ function OnlinePaySection({ orderId, total, walletUsed = 0 }: { orderId: number;
         {createPayment.isPending ? '正在開啟安全付款頁…' : `💳 即時網上支付 ${formatHKD(cashDue)}`}
       </button>
       {walletUsed > 0 && (
-        <p className="mt-2 text-[12.5px] font-medium text-gold">
+        <p className="mt-2 text-sm font-medium text-gold">
           購物金已扣 {formatHKD(walletUsed)}（訂單總額 {formatHKD(total)}），而家淨係找尾數
         </p>
       )}
       {payOnlineError && (
-        <p role="alert" className="mt-2 text-[12px] leading-relaxed text-pink-soft">
+        <p role="alert" className="mt-2 text-sm leading-relaxed text-pink-soft">
           {payOnlineError}
         </p>
       )}
-      <p className="mt-2 text-[12px] leading-relaxed text-txt-3">{ONLINE_PAYMENT_FEE_NOTE}</p>
+      <p className="mt-2 text-sm leading-relaxed text-txt-3">{ONLINE_PAYMENT_FEE_NOTE}</p>
     </div>
   );
 }
@@ -158,13 +158,13 @@ function ItemRow({
         <span className={`block truncate text-[15px] font-medium ${cancelled ? 'text-txt-3 line-through' : 'text-txt-1'}`}>
           {item.productName}
         </span>
-        <span className="block font-mono text-[12px] text-txt-3">
+        <span className="block font-mono text-sm text-txt-3">
           {item.sku}
           {item.size ? ` · ${item.size}` : ''} · ×{item.quantity}
         </span>
         {/* v2.5.5 第9版（老闆指示「全網都要寫翻原價同優惠價」）：有折扣 → 優惠價＋原價劃線 */}
         {(item.originalPrice ?? 0) > item.price && (
-          <span className="block text-[11.5px] text-txt-3">
+          <span className="block text-sm text-txt-3">
             優惠價 <span className="text-pink">{formatHKD(item.price)}</span>
             　<s>原價 {formatHKD(item.originalPrice ?? item.price)}</s>
           </span>
@@ -232,10 +232,10 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
       {/* 頂行：單號 + 日期 + 狀態 badge */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="font-mono text-sm text-txt-2">{order.orderNo}</span>
-        <span className="text-[13px] text-txt-3">{formatOrderDate(order.createdAt)}</span>
+        <span className="text-sm text-txt-3">{formatOrderDate(order.createdAt)}</span>
         {refundBadge && (
           <span
-            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[12px] ${refundBadge.className}`}
+            className={`inline-flex items-center rounded-full border px-2.5 py-1 text-sm ${refundBadge.className}`}
           >
             {refundBadge.text}
           </span>
@@ -243,7 +243,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         <span className="ml-auto flex items-center gap-3">
           <Link
             to={`/receipt/${order.id}`}
-            className="flex items-center gap-1 text-[12px] text-lavender underline underline-offset-4 transition-colors hover:text-txt-1"
+            className="flex items-center gap-1 text-sm text-lavender underline underline-offset-4 transition-colors hover:text-txt-1"
           >
             <Receipt size={13} aria-hidden="true" />
             單據
@@ -260,7 +260,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
 
       {/* v2.4.0（Wave 2）：部分出貨 headline（全寄咗 StatusBadge 會出「已寄出」） */}
       {partialShip && (
-        <p className="mt-2 text-right text-[12.5px] font-medium" style={{ color: 'var(--success)' }}>
+        <p className="mt-2 text-right text-sm font-medium" style={{ color: 'var(--success)' }}>
           部分寄出：已寄 {shippedCount}／共 {liveItems.length} 件
           {cancelledQtySum > 0 ? `（另有 ${cancelledQtySum} 件已取消）` : ''}
         </p>
@@ -268,7 +268,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
 
       {/* v2.5.5（老闆指示）：全寄出但有取消件 → 講清楚件數＋「已取消商品除外」 */}
       {order.status === 'shipped' && cancelledQtySum > 0 && (
-        <p className="mt-2 text-right text-[12.5px] font-medium" style={{ color: 'var(--success)' }}>
+        <p className="mt-2 text-right text-sm font-medium" style={{ color: 'var(--success)' }}>
           取消咗 {cancelledQtySum} 件，其餘已寄出晒（已取消商品除外）
         </p>
       )}
@@ -297,7 +297,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
             <p className="mt-0.5 truncate text-[14px] font-semibold text-txt-1">
               {order.prize.name}
             </p>
-            <p className="mt-0.5 font-mono text-[11.5px] text-txt-3">
+            <p className="mt-0.5 font-mono text-sm text-txt-3">
               中獎日 {order.prize.drawDate ? `${order.prize.drawDate.slice(0, 4)}-${order.prize.drawDate.slice(4, 6)}-${order.prize.drawDate.slice(6, 8)}` : '—'}
               ・0 元包郵
             </p>
@@ -324,7 +324,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
 
       {/* VIP 折扣行（v2.1.0：落單次序先 VIP 後 coupon，所以排優惠碼行上面） */}
       {vipDiscount > 0 && (
-        <div className="mt-4 flex items-center justify-between border-t border-space-line pt-4 text-[13px]">
+        <div className="mt-4 flex items-center justify-between border-t border-space-line pt-4 text-sm">
           <span className="flex items-center gap-1.5 text-txt-3">
             VIP 折扣
             {vipTier !== 'NONE' && (
@@ -342,8 +342,8 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
         <div
           className={
             vipDiscount > 0
-              ? 'mt-2 flex items-center justify-between text-[13px]'
-              : 'mt-4 flex items-center justify-between border-t border-space-line pt-4 text-[13px]'
+              ? 'mt-2 flex items-center justify-between text-sm'
+              : 'mt-4 flex items-center justify-between border-t border-space-line pt-4 text-sm'
           }
         >
           <span className="flex items-center gap-1.5 text-txt-3">
@@ -371,7 +371,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
           老闆實測 2026-10-11：購物金扣咗但全網顯示全額；付款要以尾數為準 */}
       {(order.walletUsed ?? 0) > 0 && (
         <>
-          <div className="mt-2 flex items-baseline justify-between text-[13px]">
+          <div className="mt-2 flex items-baseline justify-between text-sm">
             <span className="text-txt-3">購物金扣減</span>
             <span className="font-mono text-gold">−{formatHKD(order.walletUsed ?? 0)}</span>
           </div>
@@ -391,7 +391,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
 
       {/* 取貨方式（順豐站／智能櫃自取；揀咗有填站點就一齊顯示） */}
       {order.deliveryMethod && order.deliveryMethod !== 'address' && (
-        <p className="mt-3 text-[13px] text-txt-3">
+        <p className="mt-3 text-sm text-txt-3">
           取貨方式：
           <span className="text-txt-2">
             {order.deliveryMethod === 'sf_station' ? '順豐站自取' : '順豐智能櫃自取'}
@@ -402,17 +402,17 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
 
       {/* 運費（v2.1.0）：免運 ✓ 金字；澳門／國外非免運 → 灰「順豐到付」提示不包郵 */}
       {shippingLabel === 'free' && (
-        <p className="mt-2 text-[13px] font-medium text-gold">免運 ✓</p>
+        <p className="mt-2 text-sm font-medium text-gold">免運 ✓</p>
       )}
       {shippingLabel === 'cod' && (
-        <p className="mt-2 text-[13px] text-txt-3">
+        <p className="mt-2 text-sm text-txt-3">
           順豐到付（{order.region === 'MO' ? '澳門單・不包郵' : '國外單・不包郵'}）
         </p>
       )}
 
       {/* 拒絕原因 */}
       {latestRejectedProof?.reviewNote && (
-        <p className="mt-4 rounded-xl border border-pink bg-space-2 px-4 py-3 text-[13px] text-pink-soft" role="alert">
+        <p className="mt-4 rounded-xl border border-pink bg-space-2 px-4 py-3 text-sm text-pink-soft" role="alert">
           拒絕原因：{latestRejectedProof.reviewNote}
         </p>
       )}
@@ -438,7 +438,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
               loading="lazy"
             />
           </a>
-          <span className="text-[13px] text-txt-3">
+          <span className="text-sm text-txt-3">
             已上傳付款截圖
             {latestProof.status === 'pending' && '（對數中）'}
             {latestProof.status === 'approved' && '（已確認）'}
@@ -453,7 +453,7 @@ export default function OrderCard({ order, productImages }: OrderCardProps) {
           {order.status === 'pending_payment' && (
             <OnlinePaySection orderId={order.id} total={order.total} walletUsed={order.walletUsed ?? 0} />
           )}
-          <div className="rounded-xl border border-space-line bg-space-3 px-4 py-3 text-[13px] leading-relaxed text-txt-2">
+          <div className="rounded-xl border border-space-line bg-space-3 px-4 py-3 text-sm leading-relaxed text-txt-2">
             <p className="font-medium text-txt-1">付款資料</p>
             {/* v2.5.5 第8版（購物金）：手動過數金額＝尾數（total−walletUsed），唔係全額——
                 之前寫全額，客人照住過數會過多咗（購物金落單時已扣） */}

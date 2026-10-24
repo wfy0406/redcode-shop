@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { videoHasRealAlpha } from '@/lib/alphaVideo';
+import { usePageVisible } from '@/hooks/usePageVisible';
 
 /**
  * v2.2.34 老闆指令：全網左上角動態 logo —— 小 Gloria 推 logo → 推唔郁 → 雙手開心揮手，循環播。
@@ -13,6 +14,9 @@ export default function AnimatedLogo() {
   const [reduced, setReduced] = useState(false);
   // poster=靜態兜底；video=真 alpha WebM 播緊；anim=動畫 WebP（Safari 或 WebM 掛咗）
   const [mode, setMode] = useState<'poster' | 'video' | 'anim'>('poster');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // perf-fix：logo 全站常駐 loop——背景分頁時 pause，返前景先播返（動畫保留，唔刪唔降速）
+  const pageVisible = usePageVisible();
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -21,6 +25,16 @@ export default function AnimatedLogo() {
     mq.addEventListener('change', update);
     return () => mq.removeEventListener('change', update);
   }, []);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (pageVisible && !reduced) {
+      void v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  }, [pageVisible, reduced, mode]);
 
   return (
     <Link
@@ -41,13 +55,14 @@ export default function AnimatedLogo() {
         />
         {!reduced && mode !== 'anim' && (
           <video
+            ref={videoRef}
             className="absolute inset-0 h-full w-full object-contain"
             src="/logo-live-alpha.webm"
             autoPlay
             muted
             loop
             playsInline
-            preload="auto"
+            preload="metadata"
             aria-hidden="true"
             onPlaying={(e) => setMode(videoHasRealAlpha(e.currentTarget) ? 'video' : 'anim')}
             onError={() => setMode('anim')}

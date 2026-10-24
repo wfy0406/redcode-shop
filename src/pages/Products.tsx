@@ -389,6 +389,36 @@ export default function Products() {
         </label>
       </div>
 
+      {/* 示範貨橫額（2026-10 batch1 UX，唔准靜默賣示範貨）：API 故障時講明係示範款＋重試掣。
+          加車喺詳情頁已禁（ProductDetail isDemo）；列表快速加車對非數字 id 會去詳情頁，見到同一橫額 */}
+      {listQuery.isError && (
+        <div
+          role="alert"
+          className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5"
+          style={{
+            background: 'var(--glass-bg)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            borderColor: 'var(--glass-border)',
+          }}
+        >
+          <p className="text-sm text-gold-soft">
+            伺服器暫時連唔到，而家顯示緊示範款，未能即時落單。
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              void listQuery.refetch();
+              void allQuery.refetch();
+            }}
+            className="flex min-h-11 items-center rounded-full border px-4 text-sm font-bold text-gold transition-colors hover:text-gold-soft"
+            style={{ borderColor: 'var(--gold)' }}
+          >
+            重新載入
+          </button>
+        </div>
+      )}
+
       {/* 結果 */}
       {isInitialLoading ? (
         <div className="flex min-h-[40vh] items-center justify-center">

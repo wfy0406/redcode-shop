@@ -65,7 +65,10 @@ export function serveStaticFiles(app: App) {
   // Vite build 出嚟嘅 /assets/* 檔名帶內容 hash，名唔變即內容唔變，安心 immutable 長 cache。
   app.use("*", async (c, next) => {
     await next();
-    if (c.req.path.startsWith("/assets/")) {
+    if (c.req.path === "/sw.js") {
+      // Service Worker 更新唔可以等 heuristic cache；每次都同 server 對版。
+      c.header("Cache-Control", "no-cache, must-revalidate");
+    } else if (c.req.path.startsWith("/assets/")) {
       // 2026-08-04 白屏根治：存在嘅 hash 檔 → immutable；**唔存在嘅（404）→ no-store**。
       // 之前舊部署消失咗嘅 chunk 會落入 notFound 回 index.html（200）＋被呢度加 immutable，
       // 瀏覽器將「HTML 扮 JS」cache 足一年 → 部署後白屏點刷新都唔好嘅真正根因。

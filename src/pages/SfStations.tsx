@@ -147,7 +147,7 @@ function StationRow({
           <TypeBadge type={station.type} />
           {isDefault && (
             <span
-              className="inline-flex items-center gap-1 text-[12px] tracking-[0.12em]"
+              className="inline-flex items-center gap-1 text-sm tracking-[0.12em]"
               style={{ color: HERITAGE_GOLD }}
             >
               ✦ 預設
@@ -155,29 +155,29 @@ function StationRow({
           )}
         </div>
         {distanceKm !== undefined && (
-          <p className="mt-1 text-[13px]" style={{ color: HERITAGE_GOLD }}>
+          <p className="mt-1 text-sm" style={{ color: HERITAGE_GOLD }}>
             約 {distanceKm.toFixed(1)} km・步行約 {walkingMinutes(distanceKm)} 分鐘
           </p>
         )}
         {station.address && (
-          <p className="mt-1 text-[13px] leading-relaxed text-txt-3">
+          <p className="mt-1 text-sm leading-relaxed text-txt-3">
             {[station.district, station.address].filter(Boolean).join('・')}
           </p>
         )}
         {metaLine && (
-          <p className="mt-0.5 text-[12px] leading-relaxed text-txt-disabled">{metaLine}</p>
+          <p className="mt-0.5 text-sm leading-relaxed text-txt-disabled">{metaLine}</p>
         )}
       </div>
       <div className="shrink-0 sm:pt-1 sm:text-right">
         {isLoggedIn ? (
           isDefault ? (
-            <span className="text-[13px] text-txt-disabled">現時預設</span>
+            <span className="text-sm text-txt-disabled">現時預設</span>
           ) : (
             <button
               type="button"
               onClick={() => onSetDefault(station)}
               disabled={setting}
-              className="text-[13px] text-gold underline decoration-gold/50 underline-offset-4 transition-colors duration-150 hover:text-gold-soft disabled:opacity-40"
+              className="text-sm text-gold underline decoration-gold/50 underline-offset-4 transition-colors duration-150 hover:text-gold-soft disabled:opacity-40"
             >
               {setting ? '設定中…' : '設為預設'}
             </button>
@@ -185,7 +185,7 @@ function StationRow({
         ) : (
           <Link
             to="/login"
-            className="text-[13px] text-txt-3 underline decoration-gold/40 underline-offset-4 transition-colors duration-150 hover:text-txt-1"
+            className="text-sm text-txt-3 underline decoration-gold/40 underline-offset-4 transition-colors duration-150 hover:text-txt-1"
           >
             登入後可設預設
           </Link>
@@ -496,7 +496,7 @@ export default function SfStations() {
               type="button"
               onClick={findByGeolocation}
               disabled={busy}
-              className="inline-flex shrink-0 items-center gap-2 self-start text-[13px] font-medium text-gold transition-colors duration-150 hover:text-gold-soft disabled:opacity-40 sm:self-auto"
+              className="inline-flex shrink-0 items-center gap-2 self-start text-sm font-medium text-gold transition-colors duration-150 hover:text-gold-soft disabled:opacity-40 sm:self-auto"
             >
               <span
                 className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
@@ -520,19 +520,19 @@ export default function SfStations() {
 
           {/* 狀態提示：載入用 opacity 呼吸；失敗友善提示；成功 banner＋top 5 */}
           {nearest.status === 'busy' && (
-            <p className="mt-4 animate-pulse text-[13px] text-txt-3" aria-live="polite">
+            <p className="mt-4 animate-pulse text-sm text-txt-3" aria-live="polite">
               {nearest.mode === 'geo' ? '定位中，搵緊你附近嘅站點…' : '搵緊最近嘅站點…'}
             </p>
           )}
           {nearest.status === 'error' && (
-            <p role="alert" className="mt-4 text-[13px] leading-relaxed text-pink-soft">
+            <p role="alert" className="mt-4 text-sm leading-relaxed text-pink-soft">
               {nearest.message}
             </p>
           )}
           {nearest.status === 'done' && (
             <div className="mt-5 border-t pt-5" style={{ borderColor: 'rgba(201, 163, 95, 0.22)' }}>
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="text-[13px] text-txt-3">
+                <p className="text-sm text-txt-3">
                   距離
                   <span className="mx-1 text-gold-soft">「{nearest.label}」</span>
                   最近嘅站點
@@ -540,7 +540,7 @@ export default function SfStations() {
                 <button
                   type="button"
                   onClick={() => setNearest({ status: 'idle' })}
-                  className="inline-flex items-center gap-1 text-[12px] text-txt-disabled transition-colors duration-150 hover:text-txt-2"
+                  className="inline-flex items-center gap-1 text-sm text-txt-disabled transition-colors duration-150 hover:text-txt-2"
                 >
                   <X size={12} aria-hidden="true" />
                   收起結果
@@ -606,7 +606,7 @@ export default function SfStations() {
                   setFlatCap(FLAT_PAGE);
                 }}
                 aria-label="揀地區"
-                className="h-10 w-full appearance-none rounded-full border bg-space-2 pl-4 pr-10 text-[13px] text-txt-1 focus:border-gold focus:outline-none sm:w-48"
+                className="h-10 w-full appearance-none rounded-full border bg-space-2 pl-4 pr-10 text-sm text-txt-1 focus:border-gold focus:outline-none sm:w-48"
                 style={{
                   borderColor:
                     districtFilter !== 'ALL' ? 'rgba(201, 163, 95, 0.65)' : 'var(--space-line)',
@@ -639,7 +639,7 @@ export default function SfStations() {
                       setFlatCap(FLAT_PAGE);
                     }}
                     aria-pressed={active}
-                    className="rounded-full border px-3.5 py-1.5 text-[13px] transition-colors duration-150"
+                    className="rounded-full border px-3.5 py-1.5 text-sm transition-colors duration-150"
                     style={
                       active
                         ? {
@@ -679,11 +679,11 @@ export default function SfStations() {
 
           {/* 結果數＋全部展開/收起（分組模式先出） */}
           <div className="flex items-baseline justify-between gap-3">
-            <p className="text-[13px] text-txt-3" aria-live="polite">
+            <p className="text-sm text-txt-3" aria-live="polite">
               {stationsQuery.isLoading ? '載入中…' : `共 ${filtered.length} 個站點`}
             </p>
             {!flatMode && groups.length > 1 && (
-              <div className="flex items-center gap-4 text-[12px]">
+              <div className="flex items-center gap-4 text-sm">
                 <button
                   type="button"
                   onClick={() => {
@@ -723,20 +723,20 @@ export default function SfStations() {
             </div>
           ) : stationsQuery.isError ? (
             <div className="py-10 text-center">
-              <p role="alert" className="text-[13px] text-pink-soft">
+              <p role="alert" className="text-sm text-pink-soft">
                 站點清單載入失敗，請再試一次
               </p>
               <button
                 type="button"
                 onClick={() => void stationsQuery.refetch()}
-                className="mt-2 text-[13px] text-gold underline decoration-gold underline-offset-4 hover:text-gold-soft"
+                className="mt-2 text-sm text-gold underline decoration-gold underline-offset-4 hover:text-gold-soft"
               >
                 重新載入
               </button>
             </div>
           ) : filtered.length === 0 ? (
             /* 空態（澳門站少／搜尋無結果 都照顧到） */
-            <p className="py-12 text-center text-[13px] leading-relaxed text-txt-3">
+            <p className="py-12 text-center text-sm leading-relaxed text-txt-3">
               {query.trim()
                 ? `搵唔到「${query.trim()}」相關嘅站點，試下其他關鍵字`
                 : typeFilter !== 'ALL'
@@ -762,7 +762,7 @@ export default function SfStations() {
                   <button
                     type="button"
                     onClick={() => setFlatCap((c) => c + FLAT_PAGE)}
-                    className="text-[13px] text-gold underline decoration-gold/60 underline-offset-4 transition-colors duration-150 hover:text-gold-soft"
+                    className="text-sm text-gold underline decoration-gold/60 underline-offset-4 transition-colors duration-150 hover:text-gold-soft"
                   >
                     顯示更多（仲有 {filtered.length - flatCap} 個）
                   </button>

@@ -194,8 +194,11 @@ function ReplayCard({ item, index, backupIdx }: { item: HistoryItem; index: numb
 
 export default function LiveHistorySection() {
   const ref = useReveal<HTMLDivElement>();
+  // perf-fix（P1-1）：60s → 120s；背景分頁明確停；focus 補新鮮度
   const historyQuery = trpc.push.liveHistory.useQuery(undefined, {
-    refetchInterval: 60_000,
+    refetchInterval: 120_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: false,
   });
   const items = (historyQuery.data?.items ?? []) as HistoryItem[];

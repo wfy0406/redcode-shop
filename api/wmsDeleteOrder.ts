@@ -19,6 +19,7 @@ import { getDb } from "./queries/connection";
 import { orders } from "@db/schema";
 import { logAudit } from "./audit";
 import { hardDeleteOrder } from "./orderDelete";
+import { secretEquals } from "./wmsSecret";
 
 export async function wmsDeleteOrderCallback(c: Context) {
   const secret = process.env.WMS_CALLBACK_SECRET;
@@ -32,7 +33,7 @@ export async function wmsDeleteOrderCallback(c: Context) {
     return c.json({ ok: false, error: "body 要係 JSON" }, 400);
   }
   const b = (body ?? {}) as Record<string, unknown>;
-  if (b.secret !== secret) {
+  if (!secretEquals(b.secret, secret)) {
     return c.json({ ok: false, error: "secret 唔啱" }, 401);
   }
   const orderNo = typeof b.orderNo === "string" ? b.orderNo.trim() : "";

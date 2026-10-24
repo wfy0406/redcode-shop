@@ -25,6 +25,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { orders, orderItems } from "@db/schema";
 import { logAudit } from "./audit";
+import { secretEquals } from "./wmsSecret";
 
 export async function wmsDeleteItemCallback(c: Context) {
   const secret = process.env.WMS_CALLBACK_SECRET;
@@ -38,7 +39,7 @@ export async function wmsDeleteItemCallback(c: Context) {
     return c.json({ ok: false, error: "body 要係 JSON" }, 400);
   }
   const b = (body ?? {}) as Record<string, unknown>;
-  if (b.secret !== secret) {
+  if (!secretEquals(b.secret, secret)) {
     return c.json({ ok: false, error: "secret 唔啱" }, 401);
   }
   const orderNo = typeof b.orderNo === "string" ? b.orderNo.trim() : "";

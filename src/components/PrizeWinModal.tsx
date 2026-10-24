@@ -7,6 +7,7 @@ import { useAuth } from '@/hooks/useAuth';
 import GloCutout from '@/components/GloCutout';
 import { useFireworks } from '@/components/shop/useFireworks';
 import RegionStationPicker from '@/components/shop/RegionStationPicker';
+import { useDialogA11y } from '@/hooks/useDialogA11y';
 
 /**
  * v2.2.46 中獎賀卡彈窗（老闆指令：「客人中獎後登入，彈出嚟中獎方塊…要放煙花，
@@ -66,6 +67,12 @@ export default function PrizeWinModal() {
       }
     }
   }, [win, dismissedDrawId]);
+
+  // Esc＋focus trap＋背景滾動鎖（useDialogA11y）；Esc 等同「遲啲先揀」（今次收埋，唔影響獎品）
+  const dialogOpen = !!user && !!win && win.drawId !== dismissedDrawId;
+  useDialogA11y(() => {
+    if (win) setDismissedDrawId(win.drawId);
+  }, dialogOpen);
 
   if (!user || !win || win.drawId === dismissedDrawId) return null;
 
@@ -152,6 +159,7 @@ export default function PrizeWinModal() {
           role="dialog"
           aria-modal="true"
           aria-label="恭喜中獎"
+          data-dialog-a11y-root
           className="relative w-full overflow-hidden rounded-3xl border"
           style={{
             borderColor: 'rgba(245,197,24,0.55)',
@@ -168,7 +176,7 @@ export default function PrizeWinModal() {
               <h2 className="mt-1 font-serif-tc text-[24px] font-bold leading-[1.3] text-txt-1">
                 恭喜寶寶中獎！
               </h2>
-              <p className="mt-1 text-[13px] text-txt-2">
+              <p className="mt-1 text-sm text-txt-2">
                 {user.name}，Glo Glo 喺 {drawDateLabel} 直播抽獎抽中你 ♥
               </p>
 
@@ -185,7 +193,7 @@ export default function PrizeWinModal() {
                   className="mx-auto h-40 w-40 rounded-xl object-cover"
                 />
                 <p className="mt-2 text-[15px] font-bold text-txt-1">{win.prizeName}</p>
-                <p className="mt-0.5 font-mono text-[12px] text-gold-soft">
+                <p className="mt-0.5 font-mono text-sm text-gold-soft">
                   價值 HK${win.prizePrice.toLocaleString('en-HK')}・中獎日 {drawDateLabel}
                 </p>
               </div>
@@ -207,7 +215,7 @@ export default function PrizeWinModal() {
                   type="button"
                   onClick={() => void decline()}
                   disabled={respond.isPending}
-                  className="w-full rounded-full border py-2.5 text-[13.5px] text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-40"
+                  className="w-full rounded-full border py-2.5 text-sm text-txt-2 transition-colors hover:text-txt-1 disabled:opacity-40"
                   style={{ borderColor: 'var(--space-line)' }}
                 >
                   唔要
@@ -215,7 +223,7 @@ export default function PrizeWinModal() {
                 <button
                   type="button"
                   onClick={() => setDismissedDrawId(win.drawId)}
-                  className="mx-auto mt-1 text-[12px] text-txt-3 underline underline-offset-4 hover:text-txt-2"
+                  className="mx-auto mt-1 text-sm text-txt-3 underline underline-offset-4 hover:text-txt-2"
                 >
                   遲啲先揀
                 </button>
@@ -229,7 +237,7 @@ export default function PrizeWinModal() {
                 <MapPin size={18} aria-hidden="true" className="text-gold" />
                 揀取貨方式
               </p>
-              <p className="mt-1 text-[12.5px] text-txt-3">
+              <p className="mt-1 text-sm text-txt-3">
                 {win.prizeName}・中獎包郵，唔使俾一分錢
               </p>
 
@@ -239,7 +247,7 @@ export default function PrizeWinModal() {
                     className="rounded-2xl border p-4"
                     style={{ borderColor: 'rgba(245,197,24,0.4)', background: 'rgba(245,197,24,0.06)' }}
                   >
-                    <p className="text-[12px] tracking-[0.1em] text-txt-3">你嘅預設取貨方式</p>
+                    <p className="text-sm tracking-[0.1em] text-txt-3">你嘅預設取貨方式</p>
                     <p className="mt-1 text-[14.5px] font-semibold text-txt-1">{presetLabel}</p>
                   </div>
                   <button
@@ -254,7 +262,7 @@ export default function PrizeWinModal() {
                   <button
                     type="button"
                     onClick={() => setUseOtherStation(true)}
-                    className="w-full rounded-full border py-2.5 text-[13px] text-txt-2 transition-colors hover:text-txt-1"
+                    className="w-full rounded-full border py-2.5 text-sm text-txt-2 transition-colors hover:text-txt-1"
                     style={{ borderColor: 'var(--space-line)' }}
                   >
                     改用其他順豐站／自提點／智能櫃
@@ -288,7 +296,7 @@ export default function PrizeWinModal() {
                     <button
                       type="button"
                       onClick={() => setUseOtherStation(false)}
-                      className="mt-2 w-full text-[12.5px] text-txt-3 underline underline-offset-4 hover:text-txt-2"
+                      className="mt-2 w-full text-sm text-txt-3 underline underline-offset-4 hover:text-txt-2"
                     >
                       返去用預設
                     </button>
@@ -302,7 +310,7 @@ export default function PrizeWinModal() {
             <>
               <PartyPopper size={40} aria-hidden="true" className="mx-auto text-gold" />
               <h2 className="mt-2 font-serif-tc text-[22px] font-bold text-txt-1">搞掂！禮物準備出發 ♥</h2>
-              <p className="mt-2 text-[13.5px] leading-relaxed text-txt-2">
+              <p className="mt-2 text-sm leading-relaxed text-txt-2">
                 訂單 <span className="font-mono text-gold-soft">{orderNo}</span> 已生成（0 元・包郵），
                 訂單日期係你嘅中獎日 {drawDateLabel}。我哋審批後就會寄出，
                 進度隨時喺「我的訂單」睇到。
@@ -318,7 +326,7 @@ export default function PrizeWinModal() {
                 <button
                   type="button"
                   onClick={() => setDismissedDrawId(win.drawId)}
-                  className="w-full rounded-full border py-2.5 text-[13px] text-txt-2 transition-colors hover:text-txt-1"
+                  className="w-full rounded-full border py-2.5 text-sm text-txt-2 transition-colors hover:text-txt-1"
                   style={{ borderColor: 'var(--space-line)' }}
                 >
                   收埋
@@ -327,7 +335,7 @@ export default function PrizeWinModal() {
             </>
           )}
 
-          {err && <p className="mt-3 text-[12.5px] text-pink-soft">{err}</p>}
+          {err && <p className="mt-3 text-sm text-pink-soft">{err}</p>}
           </div>
         </div>
       </div>

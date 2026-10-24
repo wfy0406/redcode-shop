@@ -1,26 +1,14 @@
 import { getDb } from "../api/queries/connection";
-import { users, products } from "./schema";
-import { hashPassword } from "../api/auth";
+import { products } from "./schema";
+import { ensureInitialAdmin } from "../api/initialAdmin";
 
 async function seed() {
   const db = getDb();
   console.log("Seeding database...");
 
-  // Admin account
-  const existingAdmin = await db.query.users.findFirst({
-    where: (t, { eq }) => eq(t.phone, "00000000"),
-  });
-  if (!existingAdmin) {
-    await db.insert(users).values({
-      name: "管理員",
-      phone: "00000000",
-      passwordHash: hashPassword("admin123"),
-      role: "admin",
-    });
-    console.log("Created admin account (phone 00000000)");
-  } else {
-    console.log("Admin account already exists, skipped");
-  }
+  // P0-1（2026-10 安全修復）：admin 帳號唔再寫死密碼——同 boot-migrate 共用 ensureInitialAdmin
+  // （冇 admin 先建；密碼用 ADMIN_INITIAL_PASSWORD env，未設就一次性隨機打印落 log）
+  await ensureInitialAdmin();
 
   // Products
   const existingProducts = await db.query.products.findMany();

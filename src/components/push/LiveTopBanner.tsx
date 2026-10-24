@@ -14,10 +14,13 @@ const fmtSession = (s: string): string => (/^\d+$/.test(s.trim()) ? `第${s.trim
  * 全部淨 opacity／transform，reduced-motion 停。
  */
 export default function LiveTopBanner() {
+  // perf-fix（P1-1）：同 LiveNowSection 共享同一 currentLive query（cache 合一）；
+  // 120s 輪詢＋focus 補新鮮度；背景分頁明確停
   const liveQuery = trpc.push.currentLive.useQuery(undefined, {
-    refetchInterval: 60_000,
+    refetchInterval: 120_000,
+    refetchIntervalInBackground: false,
     retry: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   });
   const live = liveQuery.data?.live ?? null;
   if (!live) return null;
@@ -56,7 +59,8 @@ export default function LiveTopBanner() {
             style={{ background: 'var(--pink)' }}
             aria-hidden="true"
           />
-          <span className="font-mono text-[11px] font-medium tracking-[0.28em] text-pink-tint">
+          {/* UX P1-2：LIVE 標籤 11px → 14px（年長客群閱讀） */}
+          <span className="font-mono text-[14px] font-medium tracking-[0.28em] text-pink-tint">
             LIVE
           </span>
           <span className="font-serif-tc text-[15px] font-bold text-starlight md:text-base">

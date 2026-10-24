@@ -16,6 +16,7 @@ import GloCutout from '@/components/GloCutout';
 import { CopyButton } from '@/components/shop/form-bits';
 import { useFireworks } from '@/components/shop/useFireworks';
 import { WishStarSpinner } from '@/components/cart/WishingStar';
+import { useDialogA11y } from '@/hooks/useDialogA11y';
 
 /** 付款成功賀卡（沿用 PrizeWinModal 慶祝語言：煙花三連爆＋fairy-clap Glo 企卡頂＋金卡入場） */
 function PaidCelebrationModal({ orderNo, token }: { orderNo: string; token: string }) {
@@ -23,6 +24,11 @@ function PaidCelebrationModal({ orderNo, token }: { orderNo: string; token: stri
     () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
   );
   const fireworksRef = useFireworks(!reducedMotion);
+  // Esc／收埋：賀卡係慶祝用，關咗唔影響訂單（頁面本身已有訂單卡）
+  const [dismissed, setDismissed] = useState(false);
+  useDialogA11y(() => setDismissed(true), !dismissed);
+
+  if (dismissed) return null;
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto p-4">
@@ -54,6 +60,7 @@ function PaidCelebrationModal({ orderNo, token }: { orderNo: string; token: stri
           role="dialog"
           aria-modal="true"
           aria-label="付款成功"
+          data-dialog-a11y-root
           className="relative w-full overflow-hidden rounded-3xl border"
           style={{
             borderColor: 'rgba(245,197,24,0.55)',
@@ -80,7 +87,7 @@ function PaidCelebrationModal({ orderNo, token }: { orderNo: string; token: stri
             <h2 className="mt-1 font-serif-tc text-[24px] font-bold leading-[1.3] text-txt-1">
               搞掂！多謝寶寶 ♥
             </h2>
-            <p className="mt-3 text-[13.5px] leading-[1.8] text-txt-2">
+            <p className="mt-3 text-sm leading-[1.8] text-txt-2">
               訂單 <span className="font-mono font-bold text-gold">{orderNo}</span> 已確認收訖，
               確認信飛緊去你 email。出貨進度隨時喺「我的訂單 → 查詢訂單」輸入單號＋電話睇到。
             </p>
@@ -102,7 +109,7 @@ function PaidCelebrationModal({ orderNo, token }: { orderNo: string; token: stri
               </Link>
               <Link
                 to="/products"
-                className="w-full rounded-full border py-2.5 text-center text-[13.5px] text-txt-2 transition-colors hover:text-txt-1"
+                className="w-full rounded-full border py-2.5 text-center text-sm text-txt-2 transition-colors hover:text-txt-1"
                 style={{ borderColor: 'var(--space-line)' }}
               >
                 繼續睇衫
@@ -265,7 +272,7 @@ export default function GuestPayment() {
       {payFailedHint && order.status === 'pending_payment' && (
         <p
           role="alert"
-          className="mt-4 rounded-xl border px-4 py-3 text-[13.5px] text-pink-soft"
+          className="mt-4 rounded-xl border px-4 py-3 text-sm text-pink-soft"
           style={{ borderColor: 'rgba(255,0,84,0.45)', background: 'rgba(255,0,84,0.06)' }}
         >
           啱啱付款未成功，唔使急，貨仲幫你留緊——試多次啦。
@@ -273,7 +280,7 @@ export default function GuestPayment() {
       )}
       {/* 回跳後確認緊 */}
       {confirming && !paid && (
-        <p className="mt-4 flex items-center justify-center gap-2 text-[13px] text-gold">
+        <p className="mt-4 flex items-center justify-center gap-2 text-sm text-gold">
           <WishStarSpinner size={14} /> 確認緊付款結果，唔好閂頁面…
         </p>
       )}

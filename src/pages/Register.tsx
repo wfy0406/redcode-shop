@@ -14,7 +14,7 @@ import PushPermissionGuide from '@/components/push/PushPermissionGuide';
  * 密碼、確認密碼、Email（2026-08-03 加；2026-08-04 起改必填，Glo 要求）、地址（選填）、
  * 預設取貨方式（2026-08-08 加，Glo 要求：送貨上門／順豐站／智能櫃，自取可填站點；結帳自動帶入）、
  * 年齡（選填）、生日月份（選填，2026-07-29 加）。
- * 前端驗證：必填 / 電話 8 位數字起 / 密碼 ≥6 位 / 兩次密碼一致 / Email 格式；
+ * 前端驗證：必填 / 電話 8 位數字起 / 密碼 ≥8 位 / 兩次密碼一致 / Email 格式；
  * 後端 CONFLICT（電話已註冊／Email 已綁定）友善顯示。成功自動登入 → /account。
  */
 
@@ -92,7 +92,7 @@ export default function Register() {
     const normalized = normalizePhone(phone);
     if (!normalized) next.phone = '請輸入電話號碼';
     else if (!/^\d{8,}$/.test(normalized)) next.phone = '電話號碼要至少 8 位數字';
-    if (password.length < 6) next.password = '密碼要至少 6 位';
+    if (password.length < 8) next.password = '密碼要至少 8 位';
     if (confirm !== password) next.confirm = '兩次密碼唔一致，請再確認';
     // Email 必填（2026-08-04 Glo 要求）：留空擋、格式唔啱擋
     if (!email.trim()) next.email = '請輸入你嘅 Email（歡迎信同優惠碼會寄去呢個信箱）';
@@ -216,7 +216,7 @@ export default function Register() {
             label="密碼"
             type="password"
             autoComplete="new-password"
-            placeholder="至少 6 位"
+            placeholder="至少 8 位"
             value={password}
             error={errors.password}
             onChange={(e) => setPassword(e.target.value)}

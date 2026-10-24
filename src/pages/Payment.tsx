@@ -103,7 +103,7 @@ function CopyButton({ value, label }: CopyButtonProps) {
     <button
       type="button"
       onClick={() => void onCopy()}
-      className="btn btn-secondary !px-4 !py-2 text-[13px]"
+      className="btn btn-secondary !px-4 !py-2 text-sm"
       aria-label={`複製${label}`}
     >
       {copied ? (
@@ -160,7 +160,7 @@ function MethodCard({ icon, iconColor, title, subtitle, rows, delay }: MethodCar
             style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }}
           >
             <div className="min-w-0">
-              <p className="text-[12px] tracking-wide text-txt-3">{row.label}</p>
+              <p className="text-sm tracking-wide text-txt-3">{row.label}</p>
               <p className="mt-1 break-all font-mono text-lg font-medium leading-[1.2] text-starlight md:text-xl">
                 {row.value}
               </p>
@@ -208,7 +208,7 @@ function MeteorProgressBar() {
           }}
         />
       </div>
-      <p className="mt-2.5 flex items-center justify-center gap-2 text-[13px] text-txt-3">
+      <p className="mt-2.5 flex items-center justify-center gap-2 text-sm text-txt-3">
         <WishStarSpinner size={14} />
         上傳緊，唔好閂頁面…
       </p>
@@ -514,7 +514,7 @@ export default function Payment() {
       {orderId !== null && orderQuery.isError && (
         <p
           role="alert"
-          className="mx-auto mt-10 max-w-2xl rounded-2xl border px-5 py-4 text-center text-[13px] leading-relaxed"
+          className="mx-auto mt-10 max-w-2xl rounded-2xl border px-5 py-4 text-center text-sm leading-relaxed"
           style={{ borderColor: 'var(--pink-soft)', color: 'var(--pink-soft)' }}
         >
           搵唔到呢張訂單（可能唔屬於你嘅帳號，或者已經唔存在）。你可以去「會員中心 → 我嘅訂單」核對。
@@ -594,7 +594,7 @@ export default function Payment() {
           </div>
 
           {payOnlineError && (
-            <p role="alert" className="mt-5 text-[13px] leading-relaxed text-pink-soft">
+            <p role="alert" className="mt-5 text-sm leading-relaxed text-pink-soft">
               {payOnlineError}
             </p>
           )}
@@ -619,14 +619,14 @@ export default function Payment() {
             )}
           </button>
           {(order.walletUsed ?? 0) > 0 && (
-            <p className="mt-3 text-[13px] text-gold">
+            <p className="mt-3 text-sm text-gold">
               購物金已扣 {formatHKD(order.walletUsed ?? 0)}，而家淨係找尾數
             </p>
           )}
-          <p className="mt-3 text-[12px] leading-relaxed text-txt-3">
+          <p className="mt-3 text-sm leading-relaxed text-txt-3">
             以信用卡或電子錢包付款，支付平台將按所選支付方式收取手續費，最終金額以支付頁顯示為準。
           </p>
-          <p className="mt-3 flex items-center justify-center gap-1.5 text-[12px] text-txt-3">
+          <p className="mt-3 flex items-center justify-center gap-1.5 text-sm text-txt-3">
             <ShieldCheck size={13} aria-hidden="true" className="shrink-0" />
             全程經 Airwallex 加密處理，卡資料唔會經我哋伺服器
           </p>
@@ -674,11 +674,11 @@ export default function Payment() {
             上傳付款截圖
           </h2>
           {order.status === 'rejected' && (
-            <p className="mt-2 text-[13px] leading-relaxed text-pink-soft">
+            <p className="mt-2 text-sm leading-relaxed text-pink-soft">
               之前嘅付款證明未獲接納，請核對收款資料後重新上傳。
             </p>
           )}
-          <p className="mt-2 text-[13px] leading-relaxed text-txt-3">
+          <p className="mt-2 text-sm leading-relaxed text-txt-3">
             過數嗰陣喺備註寫返訂單編號
             <span className="mx-1 font-mono text-txt-1">{order.orderNo}</span>
             ，對數會快啲。上傳後訂單會轉做「審核中」。
@@ -693,7 +693,7 @@ export default function Payment() {
           </div>
 
           {uploadError && (
-            <p role="alert" className="mt-3 text-[13px] leading-relaxed text-pink-soft">
+            <p role="alert" className="mt-3 text-sm leading-relaxed text-pink-soft">
               {uploadError}
             </p>
           )}
@@ -728,7 +728,7 @@ export default function Payment() {
         </p>
         {/* 2026-07-30 落單規則：48 小時內要傳截圖，否則訂單自動取消（2026-08-04 起收緊做 48 小時） */}
         <p
-          className="mx-auto mt-5 max-w-lg rounded-2xl border px-5 py-4 text-[13px] leading-[1.75]"
+          className="mx-auto mt-5 max-w-lg rounded-2xl border px-5 py-4 text-sm leading-[1.75]"
           style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
         >
           ⏳ 溫馨提示：許願後請於 <strong>48 小時內</strong>過數並上傳付款截圖。

@@ -79,8 +79,8 @@ export default function StaffManager({
       setFormError('名稱、電話、密碼全部必填');
       return;
     }
-    if (form.password.length < 6) {
-      setFormError('密碼至少 6 位');
+    if (form.password.length < 8) {
+      setFormError('密碼至少 8 位');
       return;
     }
     setFormError(null);
@@ -134,7 +134,7 @@ export default function StaffManager({
           </div>
           <div>
             <label htmlFor="nu-password" className="mb-1.5 block text-[14px] text-txt-2">
-              密碼（至少 6 位）*
+              密碼（至少 8 位）*
             </label>
             <input
               id="nu-password"

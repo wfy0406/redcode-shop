@@ -425,7 +425,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                 />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium text-txt-1">{line.product.name}</p>
-                  <p className="mt-0.5 font-mono text-[13px] text-txt-3">
+                  <p className="mt-0.5 font-mono text-sm text-txt-3">
                     {line.product.sku}
                     {line.size ? ` · 尺寸 ${line.size}` : ''}
                   </p>
@@ -505,7 +505,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
             {promoError && (
               <p
                 role="alert"
-                className="mt-2 text-[13px] text-pink-soft"
+                className="mt-2 text-sm text-pink-soft"
                 style={{ animation: 'promo-fade-in .2s ease both' }}
               >
                 {promoError}
@@ -600,7 +600,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                 <span className="inline-flex items-center gap-2 text-[14px] font-medium text-txt-1">
                   <Wallet size={15} aria-hidden="true" className="text-gold" />
                   用購物金找數
-                  <span className="font-mono text-[12px] text-txt-3">
+                  <span className="font-mono text-sm text-txt-3">
                     餘額 {formatHKD(walletBalance)}
                   </span>
                 </span>
@@ -618,7 +618,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                 </span>
               </button>
               {useWallet && (
-                <p className="mt-2 text-[12px] leading-relaxed text-txt-3">
+                <p className="mt-2 text-sm leading-relaxed text-txt-3">
                   購物金不設退款；只限官網商品，直播商品唔用得。
                   {quote.walletApplied > 0 && quote.cashDue <= 0
                     ? '今單購物金全數找埋，落單後唔使再俾錢 ✦'
@@ -675,7 +675,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
           )}
           {/* server 備註（澳門單・不包郵・順豐到付／VIP金會員全年免運…）：細字提示 */}
           {quote && quote.remarks.length > 0 && (
-            <p className="mt-2.5 text-[13px] leading-relaxed text-txt-3">
+            <p className="mt-2.5 text-sm leading-relaxed text-txt-3">
               {quote.remarks.join('；')}
             </p>
           )}
@@ -707,7 +707,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                   type="button"
                   onClick={() => onRegionChange(value)}
                   aria-pressed={active}
-                  className="h-11 rounded-xl border text-[13px] transition-colors"
+                  className="h-11 rounded-xl border text-sm transition-colors"
                   style={
                     active
                       ? {
@@ -730,13 +730,13 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
           </div>
           {/* 地區提示：澳門／國外不包郵（同 server 備註同一口徑） */}
           {region === 'MO' && (
-            <p className="mt-2 text-[13px] leading-relaxed text-txt-3">
+            <p className="mt-2 text-sm leading-relaxed text-txt-3">
               澳門單・不包郵・順豐到付
             </p>
           )}
           {region === 'OVERSEAS' && (
             <p
-              className="mt-2 rounded-xl border px-3.5 py-2.5 text-[13px] leading-relaxed"
+              className="mt-2 rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed"
               style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
             >
               海外訂單・不包郵——只支援送貨上門，運費到付
@@ -770,7 +770,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                   }}
                   disabled={disabled}
                   aria-pressed={active}
-                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border px-2 text-center text-[13px] leading-[1.25] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border px-2 text-center text-sm leading-[1.25] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                   style={
                     active
                       ? {
@@ -819,7 +819,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                 else if (type === 'SF_STATION' || type === 'SERVICE_POINT') setDeliveryMethod('sf_station');
               }}
             />
-            <p className="mt-2 text-[13px] text-txt-3">落單前一定要揀返個站點</p>
+            <p className="mt-2 text-sm text-txt-3">落單前一定要揀返個站點</p>
           </div>
         )}
 
@@ -839,10 +839,10 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
             >
               <MapPin size={16} className="mt-0.5 shrink-0 text-pink" aria-hidden="true" />
               <span>
-                <span className="block text-[13px] font-bold text-txt-1">
+                <span className="block text-sm font-bold text-txt-1">
                   {address.trim() === savedAddress ? '已用會員地址 ✓' : '一撳用返會員地址'}
                 </span>
-                <span className="mt-0.5 block whitespace-pre-wrap text-[13px] leading-relaxed text-txt-3">
+                <span className="mt-0.5 block whitespace-pre-wrap text-sm leading-relaxed text-txt-3">
                   {savedAddress}
                 </span>
               </span>
@@ -881,7 +881,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
         </div>
 
         {error && (
-          <p role="alert" className="mt-4 flex items-center gap-2 text-[13px] text-pink-soft">
+          <p role="alert" className="mt-4 flex items-center gap-2 text-sm text-pink-soft">
             <StarGlyph size={12} className="shrink-0" />
             {error}
           </p>
@@ -895,7 +895,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
         >
           {createOrder.isPending ? <WishStarSpinner /> : '建立訂單，去付款'}
         </button>
-        <p className="mt-3 text-center text-[13px] text-txt-3">
+        <p className="mt-3 text-center text-sm text-txt-3">
           建立訂單後先好過數，購物車會即時清空
         </p>
       </div>
@@ -1056,7 +1056,7 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
           </ul>
 
           {payOnlineError && (
-            <p role="alert" className="mt-4 text-[13px] leading-relaxed text-pink-soft">
+            <p role="alert" className="mt-4 text-sm leading-relaxed text-pink-soft">
               {payOnlineError}
             </p>
           )}
@@ -1077,7 +1077,7 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
               <>💳 網上即時付款 {formatHKD(order.total - (order.walletUsed ?? 0))}</>
             )}
           </button>
-          <p className="mt-3 text-[12px] leading-relaxed text-txt-3">
+          <p className="mt-3 text-sm leading-relaxed text-txt-3">
             {ONLINE_PAYMENT_FEE_NOTE}
           </p>
         </div>
@@ -1115,7 +1115,7 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
           {formatHKD(order.total - (order.walletUsed ?? 0))}
         </p>
         {(order.walletUsed ?? 0) > 0 && (
-          <p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-gold">
+          <p className="mt-1.5 flex items-center gap-1.5 text-sm text-gold">
             <Wallet size={13} aria-hidden="true" />
             購物金已扣 {formatHKD(order.walletUsed ?? 0)}（訂單總額 {formatHKD(order.total)}）
           </p>
@@ -1140,7 +1140,7 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
                 <p className="font-medium text-txt-1">{method.label}</p>
                 {/* mono 長帳號字串：break-all 等佢可以斷行，唔會撐爆手機闊度 */}
                 <p className="mt-1 break-all font-mono text-sm text-lavender">{method.account}</p>
-                <p className="mt-0.5 text-[13px] text-txt-3">
+                <p className="mt-0.5 text-sm text-txt-3">
                   {method.extraLabel && method.extraValue
                     ? `${method.extraLabel}：${method.extraValue}`
                     : method.subtitle}
@@ -1151,7 +1151,7 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
           ))}
         </ul>
 
-        <p className="mt-5 text-[13px] leading-relaxed text-txt-3">
+        <p className="mt-5 text-sm leading-relaxed text-txt-3">
           過數嗰陣喺備註寫返訂單編號，對數會快啲。過完數喺右邊上傳截圖。
         </p>
       </div>
@@ -1175,19 +1175,19 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
             onSelect={onSelect}
           />
         </div>
-        <p className="mt-3 text-[13px] leading-relaxed text-txt-3">
+        <p className="mt-3 text-sm leading-relaxed text-txt-3">
           上傳後 Glo Glo 團隊會盡快對數，當審核完成，訂單將安排同事出貨 💫
         </p>
         {/* 2026-07-30 落單規則：48 小時內要傳截圖，否則訂單自動取消（2026-08-04 起收緊做 48 小時） */}
         <p
-          className="mt-3 rounded-xl border px-4 py-3 text-[13px] leading-relaxed"
+          className="mt-3 rounded-xl border px-4 py-3 text-sm leading-relaxed"
           style={{ borderColor: 'var(--gold)', color: 'var(--gold)' }}
         >
           ⏳ 請於落單後 <strong>48 小時內</strong>上傳付款截圖，逾期待付款訂單會自動取消，貨品唔會留貨。
         </p>
 
         {error && (
-          <p role="alert" className="mt-3 flex items-center gap-2 text-[13px] text-pink-soft">
+          <p role="alert" className="mt-3 flex items-center gap-2 text-sm text-pink-soft">
             <StarGlyph size={12} className="shrink-0" />
             {error}
           </p>

@@ -17,6 +17,19 @@ import App from './App.tsx'
 if (window.location.hash.startsWith('#/')) {
   window.history.replaceState(null, '', window.location.hash.slice(1) + window.location.search);
 }
+
+// 2026-10 PWA 化：production 啟動即註冊 Service Worker（離線頁＋可安裝提示嘅前提）。
+// 同一個 /sw.js，同 pushClient.ts ensureSw() 共用 registration（瀏覽器同 scope 只會有一個 SW，
+// register() 重複叫係冇害嘅 no-op）——唔會出現「兩個 SW」。
+// 註冊失敗只 console.warn：唔准阻住 app 開機（老客冇 SW 都照常用到網站）。
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('Service Worker 註冊失敗（唔影響網站正常運作）:', err);
+    });
+  });
+}
+
 createRoot(document.getElementById('root')!).render(
   <BrowserRouter>
     <TRPCProvider>

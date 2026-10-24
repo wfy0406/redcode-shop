@@ -134,7 +134,7 @@ export default function DeliveryPrefCard({
             <Truck size={18} aria-hidden="true" className="text-gold" />
             預設取貨方式
           </h2>
-          <p className="mt-1 text-[13px] text-txt-3">
+          <p className="mt-1 text-sm text-txt-3">
             結帳時會自動用呢個取貨方式，你到時照樣可以改、自己打地址。
           </p>
         </div>
@@ -170,7 +170,7 @@ export default function DeliveryPrefCard({
                     setStationName(undefined);
                   }}
                   aria-pressed={active}
-                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border px-2 text-center text-[13px] leading-[1.25] transition-colors"
+                  className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border px-2 text-center text-sm leading-[1.25] transition-colors"
                   style={
                     active
                       ? {
@@ -218,7 +218,7 @@ export default function DeliveryPrefCard({
                         setStationName(undefined);
                       }}
                       aria-pressed={active}
-                      className="h-11 rounded-xl border text-[13px] transition-colors"
+                      className="h-11 rounded-xl border text-sm transition-colors"
                       style={
                         active
                           ? {
@@ -255,19 +255,19 @@ export default function DeliveryPrefCard({
                 />
               </div>
               {region === 'MO' && (
-                <p className="mt-2 text-[13px] leading-relaxed text-txt-3">
+                <p className="mt-2 text-sm leading-relaxed text-txt-3">
                   澳門單・不包郵・順豐到付
                 </p>
               )}
             </div>
           )}
           {method === 'address' && (
-            <p className="mt-3 text-[13px] leading-[1.7] text-txt-3">
+            <p className="mt-3 text-sm leading-[1.7] text-txt-3">
               送貨上門用嘅地址，喺上面資料卡嘅「地址」行改。
             </p>
           )}
           {error && (
-            <p role="alert" className="mt-2 text-[13px] text-pink-soft">
+            <p role="alert" className="mt-2 text-sm text-pink-soft">
               {error}
             </p>
           )}
@@ -276,7 +276,7 @@ export default function DeliveryPrefCard({
               type="button"
               onClick={() => void save()}
               disabled={updateProfile.isPending}
-              className="btn btn-primary !px-5 !py-2.5 text-[13px] disabled:opacity-50"
+              className="btn btn-primary !px-5 !py-2.5 text-sm disabled:opacity-50"
             >
               {updateProfile.isPending ? '儲存中…' : '儲存'}
             </button>

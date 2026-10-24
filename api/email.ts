@@ -727,16 +727,29 @@ function estTextWidth(s: string, fontSize: number): number {
  * ※ 字型淨用 F serif 栈（同 vipCert 一致，Render 嘅 fonts-noto-cjk 實測用到）；
  *   弧形字逐字 rotate 定位、原價劃線手畫 <line>（唔靠 textPath／text-decoration，librsvg 最穩）。
  */
+/**
+ * perf-fix（P1-5）：logo base64 模組級 cache——
+ * 舊版每封發票信都 `fs.readFileSync(logo.png)`（328K 同步 I/O 阻塞 event loop），
+ * 而家第一次用先讀，之後重用；搵唔到檔都會 cache（null），唔會逐封信重試 I/O。
+ */
+let cachedLogoDataUri: string | null | undefined;
+function getLogoDataUri(): string | null {
+  if (cachedLogoDataUri === undefined) {
+    const logoFile = findPublicAsset("logo.png");
+    cachedLogoDataUri = logoFile
+      ? `data:image/png;base64,${fs.readFileSync(logoFile).toString("base64")}`
+      : null;
+  }
+  return cachedLogoDataUri;
+}
+
 function buildInvoiceSvg(args: InvoiceArgs): string {
   const W = 1024;
   const L = 100; // 內容左緣
   const R = 924; // 內容右緣
   const F = "'Noto Serif CJK TC','Noto Sans CJK TC',serif";
   const SEAL_RED = "#9C1B32"; // 火漆印深紅（同 Receipt 頁 SEAL_RED 一致）
-  const logoFile = findPublicAsset("logo.png");
-  const logoUri = logoFile
-    ? `data:image/png;base64,${fs.readFileSync(logoFile).toString("base64")}`
-    : null;
+  const logoUri = getLogoDataUri();
   const wallet = args.wallet && args.wallet.used > 0 ? args.wallet : null;
   const vipDiscount = args.vip?.discountAmount ?? 0;
   const couponDiscount = Math.max(0, args.discountAmount - vipDiscount);

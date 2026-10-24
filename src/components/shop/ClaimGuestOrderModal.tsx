@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import { WishStarSpinner } from '@/components/cart/WishingStar';
 import { StrokeCheck } from '@/components/shop/form-bits';
+import { useDialogA11y } from '@/hooks/useDialogA11y';
 
 export default function ClaimGuestOrderModal({
   orderNo,
@@ -30,6 +31,11 @@ export default function ClaimGuestOrderModal({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const claim = trpc.orders.claimGuestOrder.useMutation();
+
+  // Esc＋focus trap＋背景滾動鎖；提交中唔俾 Esc 閂（同 backdrop 撳唔郁一致）
+  useDialogA11y(() => {
+    if (!busy) onClose();
+  });
 
   const confirm = async () => {
     if (busy || done) return;
@@ -60,6 +66,7 @@ export default function ClaimGuestOrderModal({
         role="dialog"
         aria-modal="true"
         aria-label="移入訪客訂單至會員旗下"
+        data-dialog-a11y-root
         className="relative my-auto w-full max-w-sm overflow-hidden rounded-3xl border"
         style={{
           borderColor: 'rgba(245,197,24,0.45)',

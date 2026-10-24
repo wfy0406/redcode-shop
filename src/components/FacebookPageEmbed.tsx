@@ -12,6 +12,9 @@ import { loadFacebookSdk } from '@/lib/facebookSdk';
  *   深色 loading 底（--space-2）防「白格」、min-height 300px 防 CLS、
  *   rounded-2xl + overflow hidden 配現有玻璃卡風格
  * - error（多數 ad blocker）→ fallback「直接前往 Facebook 專頁」連結
+ * - perf-fix（P1-6）：FB SDK＋page plugin 係出名重——改做 IntersectionObserver
+ *   入 viewport（提前 400px）先 load SDK；唔好用「撳先載入」facade，保持無縫。
+ *   未入 viewport 前容器維持深色 loading 底＋min-height，唔會 CLS。
  */
 
 interface FacebookPageEmbedProps {
@@ -31,8 +34,30 @@ export default function FacebookPageEmbed({
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const location = useLocation(); // HashRouter 都會觸發
+  // 入 viewport（提前 400px）先 load FB SDK——首屏唔使即刻食數百 KB 第三方 JS；
+  // 舊瀏覽器冇 IntersectionObserver → lazy init 開局即當入埋 viewport（唔喺 effect 同步 setState）
+  const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined');
 
   useEffect(() => {
+    if (near) return;
+    const el = containerRef.current;
+    // 外層 div 必定已 render（effect 跑嗰陣 ref 已綁定），唔使兜底；淨係 IO callback 先 setNear
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es.some((e) => e.isIntersecting)) {
+          setNear(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '400px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near]);
+
+  useEffect(() => {
+    if (!near) return; // 未入 viewport：乜都唔做（SDK 未 load）
     let cancelled = false;
     setStatus('loading');
 
@@ -57,7 +82,7 @@ export default function FacebookPageEmbed({
     return () => {
       cancelled = true;
     };
-  }, [location.pathname, pageUrl, height]); // route change 後重新 parse
+  }, [near, location.pathname, pageUrl, height]); // route change 後重新 parse
 
   return (
     <div

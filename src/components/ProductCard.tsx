@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { Check, Heart, ShoppingBag } from 'lucide-react';
@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils';
 interface ProductCardProps {
   product: Product;
   className?: string;
+  /** 示範模式（API 故障 fallback，UX P0-2）：卡面標「示範款」兼收埋快速加車（示範貨落唔到單） */
+  demo?: boolean;
 }
 
 function sprinkleStars(container: HTMLElement) {
@@ -47,7 +49,7 @@ function sprinkleStars(container: HTMLElement) {
   }
 }
 
-export default function ProductCard({ product, className }: ProductCardProps) {
+function ProductCard({ product, className, demo = false }: ProductCardProps) {
   const [wished, setWished] = useState(false);
   const heartRef = useRef<HTMLButtonElement>(null);
   const navigate = useNavigate();
@@ -131,6 +133,14 @@ export default function ProductCard({ product, className }: ProductCardProps) {
 
           {/* Badge 左上（§4.4） */}
           <div className="absolute left-3 top-3 flex flex-col items-start gap-2">
+            {demo && (
+              <span
+                className="rounded-full border px-3 py-1 font-mono text-xs font-medium text-gold-soft"
+                style={{ borderColor: 'var(--gold)', background: 'rgba(10,6,20,0.72)' }}
+              >
+                示範款
+              </span>
+            )}
             {product.live && (
               <span
                 className="flex items-center gap-1.5 rounded-full bg-pink px-3 py-1 font-mono text-xs font-medium text-space-1"
@@ -193,8 +203,8 @@ export default function ProductCard({ product, className }: ProductCardProps) {
             />
           </button>
 
-          {/* hover 浮出「快速加入購物車」（200ms 由底部滑入） */}
-          {!product.soldOut && (
+          {/* hover 浮出「快速加入購物車」（200ms 由底部滑入）；示範模式收埋（示範貨落唔到單） */}
+          {!product.soldOut && !demo && (
             <button
               type="button"
               onClick={onQuickAdd}
@@ -239,3 +249,6 @@ export default function ProductCard({ product, className }: ProductCardProps) {
     </article>
   );
 }
+
+// perf-fix（P2-1）：列表項 memo——props 係扁平 Product object，上層 state 變唔再成排卡重 render
+export default memo(ProductCard);

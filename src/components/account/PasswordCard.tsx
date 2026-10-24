@@ -7,7 +7,7 @@ import FormField from './FormField';
 /**
  * 更改密碼玻璃卡（R3 §2）
  * 永遠展開三欄：目前密碼 → 新密碼 → 確認新密碼；
- * client 先檢查新密碼 ≥6 位 + 兩次一致先 call auth.changePassword；
+ * client 先檢查新密碼 ≥8 位 + 兩次一致先 call auth.changePassword；
  * server 錯誤（例如「舊密碼唔啱」）persist 顯示喺欄下，唔搖 input；
  * 成功：toast「密碼已更新」+ 清三欄，唔跳頁。
  */
@@ -30,7 +30,7 @@ export default function PasswordCard({ pushToast }: PasswordCardProps) {
   const [errors, setErrors] = useState<FieldErrors>({});
 
   const changePassword = trpc.auth.changePassword.useMutation();
-  const newPasswordOk = newPassword.length >= 6;
+  const newPasswordOk = newPassword.length >= 8;
 
   const clearError = (key: keyof FieldErrors) => {
     setErrors((prev) => {
@@ -45,7 +45,7 @@ export default function PasswordCard({ pushToast }: PasswordCardProps) {
     e.preventDefault();
     const next: FieldErrors = {};
     if (!oldPassword) next.old = '請輸入目前密碼';
-    if (newPassword.length < 6) next.next = '新密碼至少要 6 個字符';
+    if (newPassword.length < 8) next.next = '新密碼至少要 8 個字符';
     if (confirmPassword !== newPassword) next.confirm = '兩次輸入嘅新密碼唔一樣';
     setErrors(next);
     if (Object.keys(next).length > 0) return;
@@ -121,7 +121,7 @@ export default function PasswordCard({ pushToast }: PasswordCardProps) {
                   長度 OK
                 </span>
               ) : (
-                <span className="text-[12px] text-txt-3">至少 6 個字符</span>
+                <span className="text-[12px] text-txt-3">至少 8 個字符</span>
               )
             ) : undefined
           }

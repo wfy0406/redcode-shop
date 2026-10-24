@@ -9,6 +9,7 @@ import { resolvePromoDiscount } from "./promoRouter";
 import { computeWalletSplit, returnWalletForOrder, getOrderWalletSpend } from "./wallet";
 import { forwardOrderToWms, forwardOrderDeleteToWms, resetWmsSyncLogForReupload } from "./wmsSync";
 import { hardDeleteOrder } from "./orderDelete";
+import { requestApprovalIfStaff } from "./approvalGuard";
 import { sendOrderReviewAlertEmail } from "./email";
 import { logAudit } from "./audit";
 import { sendOrderApprovedEmail, sendOrderPendingEmail, orderVipEmailInfo, sendGuestOrderEmail, siteUrl, sendOrderPaidOnlineEmail } from "./email";
@@ -1704,6 +1705,27 @@ export const ordersRouter = createRouter({
   remove: staffProcedure
     .input(z.object({ orderId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
+      // P1-4（2026-10 安全修復）：員工硬刪訂單要過審批閘——之前 staff 一個 mutation
+      // 就永久刪除財務紀錄（連中獎紀錄），繞過成個審批制。主管/管理員照舊直接執行。
+      // 審批通過後 approvalsRouter 以審批人身份重跑呢個 mutation（role 唔係 staff → 唔會再攔）。
+      if (ctx.user.role === "staff") {
+        const db = getDb();
+        const [ord] = await db
+          .select({ orderNo: orders.orderNo, total: orders.total, status: orders.status })
+          .from(orders)
+          .where(eq(orders.id, input.orderId))
+          .limit(1);
+        if (!ord) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "訂單不存在" });
+        }
+        const pending = await requestApprovalIfStaff({
+          user: ctx.user,
+          action: "order.remove",
+          payload: { input },
+          summary: `永久刪除訂單 ${ord.orderNo}（HK$${ord.total}，狀態 ${ord.status}）`,
+        });
+        if (pending) return pending;
+      }
       // v2.5.5 第7版：刪除邏輯抽出落 api/orderDelete.ts（WMS 官網中心刪單回調共用同一路徑）
       const r = await hardDeleteOrder(input.orderId);
       if (!r) {

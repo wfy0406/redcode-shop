@@ -18,6 +18,11 @@ import { logAudit } from "./audit";
 import { computeWalletSplit } from "./wallet";
 import { SF_STATIONS } from "./data/sfStations";
 import { SF_STATIONS_FULL } from "./data/sfStationsFull"; // v2.1.0：reseed 用全量官方清單（HK 1654／MO 51）；樣例清單留作 fallback
+import { RateLimiter, clientIpFromRequest } from "./guestUtils";
+
+// P3-6（2026-10 安全修復）：geocodeAddress 公開代理外部服務，加 per-IP 限流
+// （同 IP 每分鐘 10 次）——防被當免費 geocode proxy 用到我哋 server IP 被上游封
+const geocodeIpLimiter = new RateLimiter(10, 60 * 1000);
 import crypto from "node:crypto";
 import {
   computeCheckoutQuote,
@@ -502,7 +507,11 @@ export const vipRouter = createRouter({
    */
   geocodeAddress: publicQuery
     .input(z.object({ q: z.string().trim().min(1).max(200) }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // P3-6：per-IP 限流喺 cache 命中之前都照計（cache 命中都係一次請求）
+      if (!geocodeIpLimiter.allow(clientIpFromRequest(ctx.req))) {
+        return { ok: false as const, reason: "查詢太頻密，請一分鐘後再試" };
+      }
       const q = input.q;
       const cached = geocodeCacheGet(q);
       if (cached) return { ok: true as const, results: cached };

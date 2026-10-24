@@ -5,8 +5,8 @@
 import { Pool } from "pg";
 import { env } from "./lib/env";
 import { getDb } from "./queries/connection";
-import { users, products, sfStations } from "@db/schema";
-import { hashPassword } from "./auth";
+import { products, sfStations } from "@db/schema";
+import { ensureInitialAdmin } from "./initialAdmin";
 import { SF_STATIONS } from "./data/sfStations";
 // v2.1.0：全量官方清單（HK 1654／MO 51，2026-09-29 抽取）；表空時 seed 全量，樣例清單留作 fallback 參考
 import { SF_STATIONS_FULL } from "./data/sfStationsFull";
@@ -879,18 +879,9 @@ export async function ensureDatabase(): Promise<void> {
   // 種子數據（同 db/seed.ts 一樣，但唔會 process.exit）
   const db = getDb();
 
-  const existingAdmin = await db.query.users.findFirst({
-    where: (t, { eq }) => eq(t.phone, "00000000"),
-  });
-  if (!existingAdmin) {
-    await db.insert(users).values({
-      name: "管理員",
-      phone: "00000000",
-      passwordHash: hashPassword("admin123"),
-      role: "admin",
-    });
-    console.log("[boot-migrate] created admin account (phone 00000000)");
-  }
+  // P0-1（2026-10 安全修復）：首個 admin 帳號唔再寫死密碼——統一由 api/initialAdmin.ts 處理
+  // （冇 admin 先建；密碼用 ADMIN_INITIAL_PASSWORD env 或一次性隨機打印落啟動 log）
+  await ensureInitialAdmin();
 
   const existingProducts = await db.query.products.findMany();
   if (existingProducts.length === 0) {

@@ -11,7 +11,7 @@ redcode-shop v2.2.0 — 英倫會員證書（QR 驗證）＋順豐站點查詢�
    - 現有銀/金會員補返門檻快照（銀 $3000／金 $5000，即佢哋當時晉升嘅門檻）。
 4. 【新】Render 環境變數要加三條（直播推送用，VAPID 密鑰）：
    VAPID_PUBLIC_KEY=BLbdWdzmRmc3Zsb7I3XcHGPfcbyuyrn8wNcKW6F7Zu7Boq_5mJY8e7fkSxu63luW5cf62EIQpefX8SvPSzBR_D4
-   VAPID_PRIVATE_KEY=wb43hCF9Ze06BnnNqjy6KZPEWa-3-S6bkjxN8l0Qsz4
+   VAPID_PRIVATE_KEY=<REMOVED_VAPID_PRIVATE_KEY>
    VAPID_SUBJECT=mailto:redcode@redcode.red
    （私密鑰唔好外傳、唔好貼落群組；WMS_CALLBACK_SECRET 你之前退款功能已設，唔使郁；
    SITE_URL 建議 https://redcode.red；JWT_SECRET 千祈唔好改——改咗舊證書 QR 會驗唔到）

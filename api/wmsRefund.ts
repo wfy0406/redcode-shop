@@ -31,6 +31,7 @@ import { logAudit } from "./audit";
 import { createAirwallexRefund } from "./airwallex";
 import { sendOrderRefundedEmail, orderVipEmailInfo } from "./email";
 import { returnWalletForOrder, getOrderWalletSpend } from "./wallet";
+import { secretEquals } from "./wmsSecret";
 
 /** 已過咗付款階段嘅訂單狀態——淨係呢啲單先可以申請退款 */
 const REFUNDABLE_STATUSES: readonly string[] = [
@@ -52,7 +53,7 @@ export async function wmsRefundCallback(c: Context) {
     return c.json({ ok: false, error: "body 要係 JSON" }, 400);
   }
   const b = (body ?? {}) as Record<string, unknown>;
-  if (b.secret !== secret) {
+  if (!secretEquals(b.secret, secret)) {
     return c.json({ ok: false, error: "secret 唔啱" }, 401);
   }
   const orderNo = typeof b.orderNo === "string" ? b.orderNo.trim() : "";

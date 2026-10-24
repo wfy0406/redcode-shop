@@ -31,6 +31,8 @@ import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail, orderVipEmailInfo,
 import { approveTopupCore } from "./walletRouter";
 import { isTopupNo } from "./wallet";
 import { logAudit } from "./audit";
+import { RateLimiter } from "./guestUtils";
+import { recheckUserRole } from "./middleware";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -38,11 +40,6 @@ const app = new Hono<{ Bindings: HttpBindings }>();
 // 預設相對路徑 "uploads" 啱啱好對應；如需其他路徑用 UPLOADS_DIR 環境變數覆寫）
 const UPLOAD_DIR = process.env.UPLOADS_DIR || "uploads";
 const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_IMAGE_TYPES: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
-};
 
 app.use(bodyLimit({ maxSize: 50 * 1024 * 1024 }));
 
@@ -57,6 +54,46 @@ app.use("*", async (c, next) => {
     "Accept-CH",
     "Sec-CH-UA-Model, Sec-CH-UA-Platform, Sec-CH-UA-Mobile, Sec-CH-UA-Full-Version-List",
   );
+});
+
+// ── P2-1（2026-10 安全修復）：全域 security headers ─────────────────────────
+// 第三方清單（CSP 按實際用量收緊，唔准寬到 *）：
+//   script：Vite 產物（self）＋ index.html 白屏自救 inline script（sha256 hash，唔用 unsafe-inline）
+//           ＋ Airwallex SDK／Facebook SDK／Google 登入 GSI
+//   style：Google Fonts CSS＋unsafe-inline（全站大量 React style attr 同 CSS variable 注入，
+//           style 唔涉及代碼執行，風險可接受）
+//   img：fbcdn（FB plugin 圖）＋weserv（縮圖 proxy 後備）；frame：FB Page Plugin／直播嵌入、
+//   Airwallex 3DS、Google One Tap；connect：Airwallex API、Google GSI、Facebook SDK。
+//   frame-ancestors 'none'＋X-Frame-Options DENY：防 clickjacking（後台刪單掣等）。
+// HSTS 唔加 includeSubDomains——子域策略由 Cloudflare 層決定。
+// 手動驗收重點：FB Page Plugin／直播嵌入、Airwallex 跳轉支付、Google 登入掣、順豐站「搵最近」定位。
+const CSP_BOOT_RESCUE_HASH = "'sha256-Rod+6dyjxEnJyP7XdhEC+PG4wfEePSEz1iHNAoTu38E='"; // index.html 8 秒白屏自救 inline script；CSP hash source 必須連單引號
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  `script-src 'self' ${CSP_BOOT_RESCUE_HASH} https://static.airwallex.com https://connect.facebook.net https://accounts.google.com`,
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "img-src 'self' data: blob: https://*.fbcdn.net https://images.weserv.nl https://www.facebook.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "connect-src 'self' https://api.airwallex.com https://api-demo.airwallex.com https://accounts.google.com https://www.facebook.com https://connect.facebook.net",
+  "frame-src https://www.facebook.com https://staticxx.facebook.com https://static.airwallex.com https://api.airwallex.com https://api-demo.airwallex.com https://accounts.google.com",
+  "media-src 'self' blob:",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+app.use("*", async (c, next) => {
+  await next();
+  c.res.headers.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+  c.res.headers.set("X-Content-Type-Options", "nosniff");
+  c.res.headers.set("X-Frame-Options", "DENY");
+  c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  // geolocation=(self)：順豐站「搵最近」要用瀏覽器定位；相機／mic 全關
+  c.res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)");
+  c.res.headers.set("Strict-Transport-Security", "max-age=31536000");
 });
 
 // 每日營運數據導出（xlsx 下載）——註冊喺 tRPC mount 前，確保唔會跌入 SPA fallback
@@ -544,27 +581,71 @@ app.use("/api/trpc/*", async (c) => {
 });
 
 // Image upload (payment screenshots etc.) — requires Bearer JWT
+// P2-6（2026-10 安全修復）：
+// ─ 唔再信 client 報嘅 MIME：sharp 讀真檔頭，唔係圖即 400；通過就 re-encode 剝走 metadata；
+// ─ 每會員每日 20 張（RateLimiter 按 userId、24 小時滑動窗）；staff 級豁免（後台上貨圖／縮圖靠佢）。
+const uploadDailyLimiter = new RateLimiter(20, 24 * 60 * 60 * 1000);
 app.post("/api/upload", async (c) => {
   const user = await userFromAuthHeader(c.req.header("authorization"));
   if (!user) {
     return c.json({ error: "Unauthorized" }, 401);
+  }
+  // L2（2026-10-24 安全覆核）：唔好淨信 JWT role 快照——以 DB 最新帳號／role 覆核
+  // （重用 tRPC middleware 嘅 recheckUserRole；staff 級逐 request 打 DB，
+  //   member 級行 60 秒 cache，會員上傳量唔會拖垮 DB）。
+  // 刪號（DB 搵唔到）即刻 401；降職後舊 staff token 用 DB role 判，唔再享員工豁免。
+  const dbRole = await recheckUserRole(user);
+  if (!dbRole) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  const isStaff = dbRole !== "member";
+  if (!isStaff && !uploadDailyLimiter.allow(`u${user.userId}`)) {
+    return c.json({ error: "今日上傳已達上限（20 張），請聽日再試" }, 429);
   }
   const form = await c.req.formData();
   const file = form.get("file");
   if (!(file instanceof File)) {
     return c.json({ error: "Missing file field" }, 400);
   }
-  const ext = ALLOWED_IMAGE_TYPES[file.type];
-  if (!ext) {
-    return c.json({ error: "Only jpg/png/webp images are allowed" }, 400);
-  }
   if (file.size > MAX_UPLOAD_SIZE) {
     return c.json({ error: "File too large (max 10MB)" }, 400);
   }
+  const raw = Buffer.from(await file.arrayBuffer());
+  // sharp 讀檔頭驗真身（limitInputPixels 擋解壓炸彈）；read 唔到／格式唔啱一律 400
+  // （sharp 用動態 import，同 vipCert/email 一致——裝唔到唔會炸主流程，呢度變 400）
+  let verified: { pipeline: import("sharp").Sharp; format: string } | null = null;
+  try {
+    const sharp = (await import("sharp")).default;
+    const pipeline = sharp(raw, { limitInputPixels: 25_000_000 });
+    const format = (await pipeline.metadata()).format ?? "";
+    if (format === "jpeg" || format === "png" || format === "webp") {
+      verified = { pipeline, format };
+    }
+  } catch {
+    verified = null;
+  }
+  if (!verified) {
+    return c.json({ error: "檔案唔係有效圖片（只接受 jpg／png／webp）" }, 400);
+  }
+  const { pipeline, format } = verified;
+  const outExt = format === "jpeg" ? ".jpg" : format === "png" ? ".png" : ".webp";
+  let out: Buffer;
+  try {
+    // rotate() 跟 EXIF 方向轉正先好剝 metadata（唔係上傳後張圖會橫咗）；
+    // re-encode 預設已 strip 晒 EXIF／GPS 等 metadata
+    const oriented = pipeline.rotate();
+    out =
+      format === "jpeg"
+        ? await oriented.jpeg({ quality: 85 }).toBuffer()
+        : format === "png"
+          ? await oriented.png({ compressionLevel: 9 }).toBuffer()
+          : await oriented.webp({ quality: 85 }).toBuffer();
+  } catch {
+    return c.json({ error: "圖片處理失敗，請轉做 jpg／png 再試" }, 400);
+  }
   await mkdir(UPLOAD_DIR, { recursive: true });
-  const filename = `${randomUUID()}${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(`${UPLOAD_DIR}/${filename}`, buffer);
+  const filename = `${randomUUID()}${outExt}`;
+  await writeFile(`${UPLOAD_DIR}/${filename}`, out);
   return c.json({ path: `/uploads/${filename}` });
 });
 

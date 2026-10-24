@@ -387,7 +387,7 @@ function MemberEditForm({
 
 /**
  * 幫會員重設密碼表單（員工＋管理員，2026-08-03 加）
- * 唔使舊密碼；新密碼至少 6 位、要輸入兩次確認；成功後要人手話返俾會員知
+ * 唔使舊密碼；新密碼至少 8 位、要輸入兩次確認；成功後要人手話返俾會員知
  */
 function ResetPasswordForm({
   user,
@@ -409,7 +409,7 @@ function ResetPasswordForm({
   const labelCls = 'mb-1 block text-[11px] text-txt-3';
 
   const submit = () => {
-    if (pw.length < 6) return setFormError('新密碼至少 6 位');
+    if (pw.length < 8) return setFormError('新密碼至少 8 位');
     if (pw2 !== pw) return setFormError('兩次密碼唔一致，請再確認');
     setFormError(null);
     onSave(pw);
@@ -428,7 +428,7 @@ function ResetPasswordForm({
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         <div>
           <label className={labelCls} htmlFor={`rp-pw-${user.id}`}>
-            新密碼（至少 6 位）
+            新密碼（至少 8 位）
           </label>
           <input
             id={`rp-pw-${user.id}`}
@@ -838,7 +838,14 @@ export default function MemberList({
   });
 
   const resetPwMutation = trpc.members.resetPassword.useMutation({
-    onSuccess: () => {
+    onSuccess: (result) => {
+      // M5（2026-10-24 安全覆核）：員工提交會進審批，密碼仲未改——唔可以話「已重設」
+      if ((result as { pendingApproval?: boolean } | null)?.pendingApproval) {
+        toast('已送主管/管理員審批，批准後先會重設密碼（暫時未生效）⏳', 'info');
+        setResettingId(null);
+        void utils.approvals.myRequests.invalidate();
+        return;
+      }
       toast('已重設會員密碼 ✓ 記得將新密碼話返俾會員', 'success');
       setResettingId(null);
     },

@@ -8,7 +8,16 @@ import { getToken } from "@/lib/auth";
 
 export const trpc = createTRPCReact<AppRouter>();
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // perf-fix（P1-2）：全局 staleTime 60s——轉頁/返頁唔使樣樣重摷。
+      // 商品/場次類喺各自 useQuery 再加長（5 分鐘）；
+      // 直播狀態／訂單狀態唔設長 staleTime、亦保留預設 focus refetch，唔會過時。
+      staleTime: 60_000,
+    },
+  },
+});
 const trpcClient = trpc.createClient({
   links: [
     httpBatchLink({

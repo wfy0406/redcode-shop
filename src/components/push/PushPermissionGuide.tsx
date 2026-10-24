@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, Check, ExternalLink, X } from 'lucide-react';
 import { subscribeLivePush } from '@/lib/pushClient';
+import { useDialogA11y } from '@/hooks/useDialogA11y';
 
 /**
  * 直播開播通知權限講解 modal（v2.2.0，老闆特別要求：有啲客唔識設定）
@@ -154,6 +155,12 @@ export default function PushPermissionGuide({
     setStep(apple && !isInstalledPwa() ? 'iosSetup' : 'intro');
   }, [open, apple]);
 
+  const close = () => onClose(step === 'success');
+
+  // Esc＋focus trap＋背景滾動鎖（hook 內部用 ref 跟最新 close，步驟切換唔會重置；
+  // 一定要喺 early return 之前 call，否則 hook 數目會跟 open 變）
+  useDialogA11y(close, open);
+
   if (!open) return null;
 
   /** 撳「允許通知」／「再試一次」：真正觸發 requestPermission＋訂閱 */
@@ -182,8 +189,6 @@ export default function PushPermissionGuide({
     }
   };
 
-  const close = () => onClose(step === 'success');
-
   // v2.2.32（老闆實測：Samsung「開播通知」modal 跑晒位、iPhone 要放大先睇到）：
   // 首頁嗰個掛載點喺 hero-enter 動畫 div 入面——transform 緊嘅祖先會令 position:fixed
   // 以佢做定位基準（唔再係 viewport），成個 modal 縮埋一角落。改 portal 直掛 body，
@@ -194,6 +199,7 @@ export default function PushPermissionGuide({
       role="dialog"
       aria-modal="true"
       aria-label="開啟直播開播通知"
+      data-dialog-a11y-root
     >
       {/* 半透明底（撳唔郁，防止誤觸關閉；用戶要用右上角 ×） */}
       <button
@@ -269,7 +275,7 @@ export default function PushPermissionGuide({
             </p>
 
             {errorMsg && (
-              <p role="alert" className="mt-3 text-[13px] leading-[1.7] text-pink-soft">
+              <p role="alert" className="mt-3 text-sm leading-[1.7] text-pink-soft">
                 {errorMsg}
               </p>
             )}
@@ -362,7 +368,7 @@ export default function PushPermissionGuide({
             </p>
             <DeniedSteps />
             {errorMsg && (
-              <p role="alert" className="mt-3 text-[13px] text-pink-soft">
+              <p role="alert" className="mt-3 text-sm text-pink-soft">
                 {errorMsg}
               </p>
             )}

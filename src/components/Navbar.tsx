@@ -11,6 +11,7 @@ import MessengerIcon from '@/components/MessengerIcon';
 import AnimatedLogo from '@/components/AnimatedLogo';
 import { normalizeVipTier } from '@/components/VipBadge';
 import { vipTierTheme } from '@/lib/vipTheme';
+import { useDialogA11y } from '@/hooks/useDialogA11y';
 import { PRODUCT_CATEGORIES } from '@contracts/types';
 
 /**
@@ -199,6 +200,9 @@ export default function Navbar() {
       setLiveMonthOpen(liveMonths[0].key);
     }
   }, [liveMonths]);
+
+  // 手機全屏選單無障礙（2026-10 batch1 UX）：Esc 關閉＋focus trap＋背景滾動鎖＋關閉後焦點返 hamburger
+  useDialogA11y(() => setMenuOpen(false), menuOpen);
 
   // VIP 級別 badge（v2.2.13 老闆指令 bug fix）：同首頁打招呼用同一數據源 auth.me——
   // 後端 publicUser 已用 effectiveVipTier 計好有效級別（過期即 NONE）。
@@ -413,26 +417,27 @@ export default function Navbar() {
 
         {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員 */}
         <div className="flex items-center gap-2 xl:gap-3">
-          {/* Messenger 鈕（2026-08-06 Glo 要求）：icon-only，一撳直開專頁對話 */}
+          {/* Messenger 鈕（2026-08-06 Glo 要求）：icon-only，一撳直開專頁對話。
+              2026-10 batch1 UX：min-h-11（44px 觸控）＋icon 20px（年長客群） */}
           <a
             href={MESSENGER_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-messenger !px-3 !py-2 text-sm"
+            className="btn btn-messenger min-h-11 !px-3 !py-2 text-sm"
             aria-label="Facebook Messenger 聯絡我們"
           >
-            <MessengerIcon size={16} />
+            <MessengerIcon size={20} />
           </a>
 
-          {/* WhatsApp 玻璃鈕（品牌命脈，手機都唔收埋） */}
+          {/* WhatsApp 玻璃鈕（品牌命脈，手機都唔收埋）；min-h-11＝44px 觸控目標 */}
           <a
             href={WHATSAPP_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-whatsapp !px-3 !py-2 text-sm xl:!px-4"
+            className="btn btn-whatsapp min-h-11 !px-3 !py-2 text-sm xl:!px-4"
             aria-label="WhatsApp 聯絡我們"
           >
-            <MessageCircle size={16} aria-hidden="true" />
+            <MessageCircle size={20} aria-hidden="true" />
             <span className="hidden xl:inline">WhatsApp</span>
           </a>
 
@@ -530,6 +535,7 @@ export default function Navbar() {
               WebkitBackdropFilter: 'blur(16px)',
             }}
             aria-label="手機導航"
+            data-dialog-a11y-root
           >
           {/* 2026-08-04 Glo 要求：選項上方放個人化時段問候（已登入先顯示） */}
           {user && (
