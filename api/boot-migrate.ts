@@ -449,19 +449,6 @@ ON CONFLICT (name) DO NOTHING;
 -- v2.2.56（老闆指令）：場次手動歸檔——管理員可以將未抽晒嘅場次放入「歷史場次」
 ALTER TABLE "luckyDrawSessions" ADD COLUMN IF NOT EXISTS "archivedAt" timestamp;
 ALTER TABLE "luckyDrawSessions" ADD COLUMN IF NOT EXISTS "archivedByName" varchar(128);
--- v2.2.57（老闆指令）：抽中唔即時通知客人——撳「好，繼續」先發 email＋推播；null＝未通知。
--- DO block 包住：淨係「第一次加欄」嗰刻先將舊紀錄 backfill 做已通知（舊系統抽中即發）——
--- 重開再跑 column 已存在 → 唔會郁到新抽未通知嘅 pending 單
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'luckyDraws' AND column_name = 'notifiedAt'
-  ) THEN
-    ALTER TABLE "luckyDraws" ADD COLUMN "notifiedAt" timestamp;
-    UPDATE "luckyDraws" SET "notifiedAt" = "createdAt";
-  END IF;
-END $$;
 CREATE TABLE IF NOT EXISTS "luckyDraws" (
   id serial PRIMARY KEY,
   "prizeId" integer NOT NULL REFERENCES "luckyPrizes"("id"),
@@ -477,6 +464,22 @@ CREATE TABLE IF NOT EXISTS "luckyDraws" (
   "createdAt" timestamp NOT NULL DEFAULT now(),
   "respondedAt" timestamp
 );
+-- v2.2.57（老闆指令）：抽中唔即時通知客人——撳「好，繼續」先發 email＋推播；null＝未通知。
+-- DO block 包住：淨係「第一次加欄」嗰刻先將舊紀錄 backfill 做已通知（舊系統抽中即發）——
+-- 重開再跑 column 已存在 → 唔會郁到新抽未通知嘅 pending 單。
+-- ⚠️ 順序攸關：呢個 DO block 必須排喺上面 CREATE TABLE "luckyDraws" **之後**——
+-- fresh DB 第一次開機如果先跑 DO block，information_schema 搵唔到表會直行 ALTER TABLE
+-- 喺未存在嘅表上炸（成句被 skip），跟住 CREATE TABLE 建出嚟嘅表就永遠缺 notifiedAt 欄。
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'luckyDraws' AND column_name = 'notifiedAt'
+  ) THEN
+    ALTER TABLE "luckyDraws" ADD COLUMN "notifiedAt" timestamp;
+    UPDATE "luckyDraws" SET "notifiedAt" = "createdAt";
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS luckydraws_date_status ON "luckyDraws" ("drawDate", status);
 CREATE INDEX IF NOT EXISTS luckydraws_winner ON "luckyDraws" ("winnerUserId", status);
 -- v2.2.55：luckydraws_one_active_win（一獎一單 unique）已廢——獎品有件數，同款可以抽多次；
@@ -511,6 +514,47 @@ CREATE TABLE IF NOT EXISTS "luckyDrawExclusions" (
   "createdAt" timestamp NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS luckydrawexclusions_user ON "luckyDrawExclusions" ("userId");
+
+-- ===== v2.5.6（老闆指令）：名單每日限中 N 次＋抽獎劵活動 =====
+-- 名單模式「每人每個香港抽獎日限中 N 次」（1–100）；預設 1＝同舊一日一次 guard 完全一致
+ALTER TABLE "luckyDrawLists" ADD COLUMN IF NOT EXISTS "maxWinsPerPerson" integer NOT NULL DEFAULT 1;
+-- 抽獎劵活動：名＋全活動累計限中；只歸檔唔硬刪（中獎紀錄要留底追溯）
+CREATE TABLE IF NOT EXISTS "luckyDrawEvents" (
+  id serial PRIMARY KEY,
+  name varchar(128) NOT NULL,
+  "maxWinsPerPerson" integer NOT NULL DEFAULT 1,
+  "createdBy" bigint,
+  "createdByName" varchar(255),
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "archivedAt" timestamp,
+  "archivedByName" varchar(128)
+);
+-- 活動劵持有人：每活動每人一列（eventId+normalizedName 唯一），ticketCount＝劵數（抽獎按劵等權加權）
+CREATE TABLE IF NOT EXISTS "luckyDrawEventEntries" (
+  id serial PRIMARY KEY,
+  "eventId" integer NOT NULL REFERENCES "luckyDrawEvents"(id) ON DELETE CASCADE,
+  "holderName" varchar(255) NOT NULL,
+  "normalizedName" varchar(255) NOT NULL,
+  "ticketCount" integer NOT NULL DEFAULT 1,
+  "createdBy" bigint,
+  "createdByName" varchar(255),
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS luckydrawevententries_event_name ON "luckyDrawEventEntries" ("eventId", "normalizedName");
+ALTER TABLE "luckyDraws" ADD COLUMN IF NOT EXISTS "eventId" integer;
+ALTER TABLE "luckyDraws" ADD COLUMN IF NOT EXISTS "eventEntryId" integer;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'luckydraws_event_fk') THEN
+    ALTER TABLE "luckyDraws" ADD CONSTRAINT luckydraws_event_fk FOREIGN KEY ("eventId") REFERENCES "luckyDrawEvents"(id);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'luckydraws_evententry_fk') THEN
+    ALTER TABLE "luckyDraws" ADD CONSTRAINT luckydraws_evententry_fk FOREIGN KEY ("eventEntryId") REFERENCES "luckyDrawEventEntries"(id);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS luckydraws_event ON "luckyDraws" ("eventId", status);
+CREATE INDEX IF NOT EXISTS luckydraws_evententry ON "luckyDraws" ("eventEntryId", status);
 
 -- ===== 訪客購買 Guest Checkout（2026-10-09）=====
 -- orders.userId 放寬做 nullable：會員單照舊有值；訪客單＝NULL，客戶資料落 guest* 快照欄。
@@ -644,6 +688,24 @@ function splitStatements(sqlText: string): string[] {
   );
 }
 
+// ===== 依賴 DDL 建設先跑得郁嘅語句（執行順序攸關！）=====
+// 三級員工制（2026-08-06 Glo 要求）：role enum 加 supervisor。
+// fresh DB 上 role type 係由 DDL 開頭嘅 DO block 先建立，所以 ADD VALUE 必須排喺
+// 成段 DDL **之後**——否則第一次開機會「type 未建就 ALTER TYPE」直接炸（
+// IF NOT EXISTS 只擋 value 重複，擋唔到 type 本身未存在）。舊 DB type 已存在，
+// ADD VALUE IF NOT EXISTS 幂等 no-op。獨立一句跑（pg 單 query＝implicit transaction，
+// ADD VALUE 唔同其他 SQL 夾埋先安全）。
+const POST_DDL_STATEMENTS: string[] = [
+  `ALTER TYPE role ADD VALUE IF NOT EXISTS 'supervisor';`,
+];
+
+/** 開機 migration 語句嘅執行順序：先 DDL（建 enum／表／欄），後依賴佢哋嘅語句。
+ *  抽做純函數，等測試可以用 mock executor 驗證 fresh／existing／repeat 三種流程
+ *  嘅順序同幂等性，唔使掂真 DB（本 repo 禁止喺測試連真 PostgreSQL）。 */
+export function buildMigrationStatements(): string[] {
+  return [...splitStatements(DDL), ...POST_DDL_STATEMENTS];
+}
+
 export async function ensureDatabase(): Promise<void> {
   const pool = new Pool({
     connectionString: env.databaseUrl,
@@ -653,10 +715,9 @@ export async function ensureDatabase(): Promise<void> {
   });
   try {
     console.log("[boot-migrate] ensuring tables...");
-    // 三級員工制（2026-08-06 Glo 要求）：role enum 加 supervisor。
-    // ADD VALUE 唔可以同其他 SQL 夾埋一個 query（implicit transaction 會炸），要獨立跑。
-    await pool.query(`ALTER TYPE role ADD VALUE IF NOT EXISTS 'supervisor';`);
-    const statements = splitStatements(DDL);
+    // 逐條獨立跑（順序由 buildMigrationStatements 保證：DDL → ALTER TYPE role），
+    // 各自 try/catch：一句失敗唔會拖冧其他，失敗語句會喺 log 大聲列出。
+    const statements = buildMigrationStatements();
     let failed = 0;
     for (const stmt of statements) {
       try {

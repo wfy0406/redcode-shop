@@ -591,6 +591,9 @@ export const luckyDrawLists = pgTable("luckyDrawLists", {
   names: jsonb("names").$type<string[]>().notNull(),
   // 名單入面嘅官網會員 id（users.id）；中咗會員照常彈窗＋通知，自己揀地址寄送
   memberIds: jsonb("memberIds").$type<number[]>().notNull().default([]),
+  // v2.5.6（老闆指令）：名單模式每人每個香港抽獎日限中 N 次（1–100）；
+  // 預設 1＝同舊「一日一個名/id 一次」全域 guard 完全一致（count>=N 先踢，唔係 per-list 放寬）
+  maxWinsPerPerson: integer("maxWinsPerPerson").notNull().default(1),
   createdBy: bigint("createdBy", { mode: "number" }),
   createdByName: varchar("createdByName", { length: 255 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
@@ -655,6 +658,10 @@ export const luckyDraws = pgTable("luckyDraws", {
   winnerName: varchar("winnerName", { length: 255 }),
   // v2.2.48：邊份自訂名單抽出嚟（null＝會員池抽獎）；名單刪咗就 SET NULL，紀錄留底
   listId: integer("listId").references(() => luckyDrawLists.id, { onDelete: "set null" }),
+  // v2.5.6（抽獎劵活動）：邊個活動抽出嚟（null＝非活動抽獎）；活動只歸檔唔硬刪，紀錄留底
+  eventId: integer("eventId").references(() => luckyDrawEvents.id),
+  // v2.5.6：邊張劵持有人中（同名影子帳號會跨活動重用，一定要保留 eventEntryId 先追溯到人）
+  eventEntryId: integer("eventEntryId").references(() => luckyDrawEventEntries.id),
   // 邊個抽（主管/管理員 user id）
   drawnBy: bigint("drawnBy", { mode: "number" }),
   drawnByName: varchar("drawnByName", { length: 255 }),
@@ -680,6 +687,43 @@ export const luckyDrawExclusions = pgTable("luckyDrawExclusions", {
   createdByName: varchar("createdByName", { length: 255 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
 });
+
+// ===== v2.5.6（抽獎劵活動，老闆指令）=====
+// 活動：有名稱嘅抽獎劵抽獎；券模式唔用會員條件池，人由外部 Excel 匯入。
+// maxWinsPerPerson＝全活動累計限中次數（pending+confirmed；cancelled/declined 唔計，同現行一致）。
+// 活動只歸檔唔硬刪——中獎紀錄 luckyDraws.eventId 要留底追溯。
+export const luckyDrawEvents = pgTable("luckyDrawEvents", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  // 每人全活動限中次數（1–100，API 層強制範圍）
+  maxWinsPerPerson: integer("maxWinsPerPerson").notNull().default(1),
+  createdBy: bigint("createdBy", { mode: "number" }),
+  createdByName: varchar("createdByName", { length: 255 }),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  // 歸檔＝唔再匯入/抽獎，紀錄照舊睇到（null＝未歸檔）
+  archivedAt: timestamp("archivedAt"),
+  archivedByName: varchar("archivedByName", { length: 128 }),
+});
+
+// 活動入面嘅劵持有人：每活動每人一列（eventId+normalizedName 唯一），
+// ticketCount＝持有劵數；抽獎按劵等權（人用 ticketCount 加權，唔展開巨型 array）。
+export const luckyDrawEventEntries = pgTable(
+  "luckyDrawEventEntries",
+  {
+    id: serial("id").primaryKey(),
+    eventId: integer("eventId")
+      .notNull()
+      .references(() => luckyDrawEvents.id, { onDelete: "cascade" }),
+    holderName: varchar("holderName", { length: 255 }).notNull(),
+    // trim＋toLowerCase（同 luckyDrawLists 名去重口径一致）；唯一索引靠佢擋同人兩列
+    normalizedName: varchar("normalizedName", { length: 255 }).notNull(),
+    ticketCount: integer("ticketCount").notNull().default(1),
+    createdBy: bigint("createdBy", { mode: "number" }),
+    createdByName: varchar("createdByName", { length: 255 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("luckydrawevententries_event_name").on(t.eventId, t.normalizedName)],
+);
 
 export type User = typeof users.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;

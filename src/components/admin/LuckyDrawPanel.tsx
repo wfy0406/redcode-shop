@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Gift, History, Plus, Search, Sparkles, Trash2, Trophy, Upload, Users, X } from 'lucide-react';
+import { Gift, History, Plus, Search, Sparkles, Ticket, Trash2, Trophy, Upload, Users, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { getToken } from '@/lib/auth';
 import { fmtDateTime } from './format';
 import { LoadingBlock } from './WishingStar';
+import TicketDrawStage from './TicketDrawStage';
+import LuckyDrawEventPanel from './LuckyDrawEventPanel';
+import type { DrawEvent } from './LuckyDrawEventPanel';
+import LuckyDrawExcelImport from './LuckyDrawExcelImport';
 
 /**
  * v2.2.46 直播抽獎大輪盤（老闆 2026-10-03 指令：「整到好華麗，會直播比客睇」）
@@ -57,7 +61,7 @@ const remainingOf = (p: Prize): number =>
 type Participant = { id: number; name: string; phone: string };
 
 type DrawResult = {
-  draw: { id: number; listId?: number | null };
+  draw: { id: number; listId?: number | null; eventId?: number | null; eventEntryId?: number | null };
   // 名單抽獎 winner 有 kind：member＝官網會員（server 彈通知，佢自己揀地址）；manual＝手打名（要出 0 元單）
   winner: { id: number; name: string; phone?: string; kind?: 'member' | 'manual' };
   prize: Prize;
@@ -69,6 +73,8 @@ type NameList = {
   name: string;
   names: string[];
   members: { id: number; name: string }[]; // 由官網會員加入嘅
+  /** v2.5.6：每人每個香港抽獎日限中 N 次（舊名單冇呢個欄 → 當 1） */
+  maxWinsPerPerson?: number;
   createdByName: string;
   createdAt: string | Date;
 };
@@ -86,6 +92,10 @@ type HistoryRow = {
   winnerPhone: string;
   winnerNameSnap: string | null;
   listId: number | null;
+  /** v2.5.6：劵活動追溯；舊 API 未回傳時保持 optional，唔好假裝有活動資料 */
+  eventId?: number | null;
+  eventEntryId?: number | null;
+  eventName?: string | null;
   /** v2.2.57（老闆指令）：通知狀態——null＝抽咗但未發 email/推送（等撳「好，繼續」） */
   notifiedAt: string | Date | null;
   orderStatus: string | null;
@@ -397,9 +407,22 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     [],
   );
 
+  // v2.5.6：兩大抽獎模式——roster＝名單抽獎（輪盤；會員條件／自訂名單，每日限中 N）；
+  // ticket＝抽獎劵活動（TicketDrawStage 非輪盤開獎；全活動累計限中 N）
+  const [source, setSource] = useState<'roster' | 'ticket'>('roster');
   // 名單模式：member＝會員條件剔選；list＝自訂名單
   const [mode, setMode] = useState<'member' | 'list'>('member');
   const [selectedListId, setSelectedListId] = useState<number | null>(null);
+  // 劵模式：揀中邊個活動（EventPanel 回報；stage 楣位／開獎都用佢）
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+  const eventsQuery = trpc.luckyDraw.adminListEvents.useQuery(undefined, {
+    enabled: source === 'ticket',
+    refetchOnWindowFocus: false,
+  });
+  const selectedEvent = useMemo(
+    () => ((eventsQuery.data ?? []) as DrawEvent[]).find((e) => e.id === selectedEventId) ?? null,
+    [eventsQuery.data, selectedEventId],
+  );
 
   // 名單剔選
   const [flt, setFlt] = useState({
@@ -437,7 +460,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     (previewInput.thisMonthMinSpend ?? 0) > 0 || previewInput.newThisMonth ||
     previewInput.joinedBefore != null || previewInput.joinedAfter != null;
   const participantsQuery = trpc.luckyDraw.adminPreviewParticipants.useQuery(previewInput, {
-    enabled: hasAnySource && mode === 'member', // 自訂名單模式唔使預覽會員
+    enabled: source === 'roster' && hasAnySource && mode === 'member', // 自訂名單模式／劵模式唔使預覽會員
     refetchOnWindowFocus: false,
   });
   const participants = (participantsQuery.data?.rows ?? []) as Participant[];
@@ -445,7 +468,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   // v2.5.5 第12版（老闆指令「抽獎名單想剔除某啲人」）：剔除個別人選——
   // 剔除咗嘅會員唔入池（server collectParticipantIds 隔離），呢度管「已剔除名單」＋剔除/恢復
   const exclusionsQuery = trpc.luckyDraw.adminListExclusions.useQuery(undefined, {
-    enabled: mode === 'member',
+    enabled: source === 'roster' && mode === 'member',
     refetchOnWindowFocus: false,
   });
   const exclusions = exclusionsQuery.data?.rows ?? [];
@@ -479,7 +502,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
 
   // 自訂名單
   const listsQuery = trpc.luckyDraw.adminListLists.useQuery(undefined, {
-    enabled: mode === 'list',
+    enabled: source === 'roster' && mode === 'list',
     refetchOnWindowFocus: false,
   });
   const lists = (listsQuery.data ?? []) as NameList[];
@@ -572,6 +595,8 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   // 指定抽：指定嗰件抽晒就唔准靜靜雞跳去第一件（直播上抽錯獎品係事故）——停低等揀返
   const picked = availablePrizes.find((p) => p.id === prizeId) ?? null;
   const prize = drawMode === 'pick' ? picked : picked ?? availablePrizes[0] ?? null;
+  // 劵模式：冇「順序抽/指定抽」之分，獎品 chip 揀咗用揀咗嗰件，冇揀就用呢場第一件可抽嘅
+  const ticketPrize = picked ?? availablePrizes[0] ?? null;
 
   // 抽獎狀態機
   const [phase, setPhase] = useState<'idle' | 'spinning' | 'revealed'>('idle');
@@ -596,6 +621,79 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   const notifyWinMut = trpc.luckyDraw.adminNotifyWin.useMutation();
   const upsertMut = trpc.luckyDraw.adminUpsertPrize.useMutation();
   const deleteMut = trpc.luckyDraw.adminDeletePrize.useMutation();
+  // v2.5.6 劵模式：adminDrawEvent——每張劵等權加權抽，全活動累計限中由 server 鎖內重檢
+  const drawEventMut = trpc.luckyDraw.adminDrawEvent.useMutation();
+
+  // v2.5.6 劵模式開獎狀態機：撳掣即 drawing（mutation pending）；必須 server 回結果先
+  // revealed＋winner——失敗返 idle＋可見錯誤，任何情況唔會顯示假中獎
+  const [ticketPhase, setTicketPhase] = useState<'idle' | 'drawing' | 'revealed'>('idle');
+  const [ticketResult, setTicketResult] = useState<DrawResult | null>(null);
+  const [ticketError, setTicketError] = useState<string | null>(null);
+
+  const ticketReset = useCallback(() => {
+    setTicketPhase('idle');
+    setTicketResult(null);
+    setTicketError(null);
+  }, []);
+
+  /** 劵模式開獎／重抽（redrawOf 有就 server 自動按舊紀錄 eventId 分支重抽） */
+  const startTicketDraw = async (redrawOf?: DrawResult) => {
+    if (ticketPhase === 'drawing') return;
+    if (redrawOf == null) {
+      if (!prize) {
+        setTicketError('呢場冇可抽嘅獎品——去下面「獎品管理」加返先');
+        return;
+      }
+      if (selectedEventId == null) {
+        setTicketError('請先喺右邊揀一個抽獎劵活動');
+        return;
+      }
+      if (selectedEvent?.archivedAt != null) {
+        setTicketError('呢個活動已歸檔，唔可以再抽');
+        return;
+      }
+      if ((selectedEvent?.entryCount ?? 0) === 0) {
+        setTicketError('活動仲未有劵——喺右邊用 Excel 匯入先');
+        return;
+      }
+    }
+    setTicketError(null);
+    setTicketResult(null);
+    setTicketPhase('drawing'); // mutation pending ＝ drawing（舞台照實顯示「伺服器開獎中」）
+    try {
+      const res = (
+        redrawOf
+          ? await redrawMut.mutateAsync({ drawId: redrawOf.draw.id })
+          : await drawEventMut.mutateAsync({ prizeId: prize!.id, eventId: selectedEventId! })
+      ) as unknown as DrawResult;
+      // server 真結果到手先揭曉
+      setTicketResult(res);
+      setTicketPhase('revealed');
+      void utils.luckyDraw.adminListPrizes.invalidate();
+      void utils.luckyDraw.adminHistory.invalidate();
+      void utils.luckyDraw.adminListEvents.invalidate();
+      void utils.luckyDraw.adminListEventEntries.invalidate();
+    } catch (e) {
+      setTicketPhase('idle');
+      setTicketResult(null);
+      setTicketError(fmtErr(e)); // 失敗可見；唔會留低任何假中獎畫面
+    }
+  };
+
+  /** 劵中獎「確定」：同手打名一樣行 adminConfirmManual（影子帳號起 0 元單飛 WMS） */
+  const confirmTicket = async (drawId: number) => {
+    try {
+      const r = await confirmManualMut.mutateAsync({ drawId });
+      toast(`訂單 ${r.orderNo} 已飛去 WMS 等審批`, 'success');
+      void utils.luckyDraw.adminHistory.invalidate();
+      void utils.luckyDraw.adminListPrizes.invalidate();
+      void utils.luckyDraw.adminListEvents.invalidate();
+      void utils.luckyDraw.adminListEventEntries.invalidate();
+      ticketReset();
+    } catch (e) {
+      toast(fmtErr(e), 'error');
+    }
+  };
 
   // 輪盤落畫（名單變/角度變都重畫）；自訂名單模式＝手打名＋官網會員名
   const wheelNames = useMemo(() => {
@@ -634,7 +732,19 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
   }, [repaint, wheelNames, phase]);
 
   // v2.2.56 深度美化：閒置環境動畫 — 跑馬燈膽慢慢追位（輪盤唔郁，淨係燈行）；
-  // ~30fps 慳電；reduced-motion／轉緊就唔開 loop（轉緊由 spin tick 自己畫）
+  // ~30fps 慳電；reduced-motion／轉緊就唔開 loop（轉緊由 spin tick 自己畫）。
+  // 慳電：背景分頁（document.hidden）或輪盤離開視口（IntersectionObserver）就暫停繪圖。
+  const wheelInViewRef = useRef(true);
+  useEffect(() => {
+    const el = wheelRef.current;
+    if (!el || typeof IntersectionObserver !== 'function') return;
+    const io = new IntersectionObserver(
+      (entries) => { wheelInViewRef.current = entries[0]?.isIntersecting ?? true; },
+      { threshold: 0.05 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [source]); // 劵模式輪盤唔 mount——source 轉返 roster 要重新 observe
   useEffect(() => {
     if (reducedMotion || phase === 'spinning') return;
     const canvas = wheelRef.current;
@@ -647,12 +757,15 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       if (!live) return;
       if (now - last > 33) {
         last = now;
-        const ctx = prepWheelCtx(canvas);
-        if (ctx) {
-          drawWheel(ctx, wheelNamesRef.current, angleRef.current, {
-            lightPhase: ((now - t0) / 2600) % 1,
-            speed: 0,
-          });
+        // 背景分頁／離開視口：跳過呢幀（慳電，畫面停喺最後一幀）
+        if (!document.hidden && wheelInViewRef.current) {
+          const ctx = prepWheelCtx(canvas);
+          if (ctx) {
+            drawWheel(ctx, wheelNamesRef.current, angleRef.current, {
+              lightPhase: ((now - t0) / 2600) % 1,
+              speed: 0,
+            });
+          }
         }
       }
       raf = requestAnimationFrame(loop);
@@ -662,7 +775,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       live = false;
       cancelAnimationFrame(raf);
     };
-  }, [phase, reducedMotion, wheelNames]);
+  }, [phase, reducedMotion, wheelNames, source]);
 
   useEffect(() => () => spinCleanupRef.current?.(), []);
 
@@ -828,8 +941,11 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       const r = await cancelMut.mutateAsync({ drawId });
       toast(r.orderCancelled ? '已取消中獎＋相關訂單（WMS 嗰邊記得人手拒絕）' : '已取消中獎', 'success');
       if (result?.draw.id === drawId) finishAndNext();
+      if (ticketResult?.draw.id === drawId) ticketReset();
       void utils.luckyDraw.adminListPrizes.invalidate();
       void utils.luckyDraw.adminHistory.invalidate();
+      void utils.luckyDraw.adminListEvents.invalidate();
+      void utils.luckyDraw.adminListEventEntries.invalidate();
     } catch (e) {
       toast(fmtErr(e), 'error');
     }
@@ -848,12 +964,13 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     }
   };
 
-  /** 建立自訂名單（手打名＋官網會員混搭）：成功 → invalidate＋自動揀新嗰份（回新 list id 俾 form 清場） */
-  const createList = async (name: string, names: string[], memberIds: number[]): Promise<number | null> => {
+  /** 建立自訂名單（手打名＋官網會員混搭；v2.5.6 每人每日限中 N 次）：
+   *  成功 → invalidate＋自動揀新嗰份（回新 list id 俾 form 清場） */
+  const createList = async (name: string, names: string[], memberIds: number[], maxWinsPerPerson = 1): Promise<number | null> => {
     try {
-      const r = (await createListMut.mutateAsync({ name, names, memberIds })) as unknown as NameList;
+      const r = (await createListMut.mutateAsync({ name, names, memberIds, maxWinsPerPerson })) as unknown as NameList;
       const total = (r.names?.length ?? names.length) + (r.members?.length ?? memberIds.length);
-      toast(`名單「${name}」已建立（${total} 人）`, 'success');
+      toast(`名單「${name}」已建立（${total} 人，每人每日限中 ${maxWinsPerPerson} 次）`, 'success');
       void utils.luckyDraw.adminListLists.invalidate();
       setSelectedListId(r.id);
       return r.id;
@@ -905,17 +1022,53 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
         className="rounded-2xl border p-5 backdrop-blur-xl md:p-6"
         style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
       >
-        <h3 className="flex items-center gap-2 text-[15px] font-bold text-txt-1">
+        <h3 className="flex flex-wrap items-center gap-2 text-[15px] font-bold text-txt-1">
           <Sparkles size={16} aria-hidden="true" className="text-gold" />
-          直播抽獎大輪盤
+          {source === 'roster' ? '直播抽獎大輪盤' : '抽獎劵開獎舞台'}
           <span className="font-mono text-[12px] font-normal text-txt-3">
-            （一件獎品一個中獎人・當日一人最多中一件）
+            {source === 'roster'
+              ? '（一件獎品一個中獎人・名單可設每人每日限中 N 次）'
+              : '（每張劵等權・活動可設每人全活動累計限中 N 次）'}
           </span>
         </h3>
 
-        <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_340px]">
+        {/* v2.5.6：名單／抽獎劵兩模式切換（開獎進行中鎖住唔畀轉，防誤操作） */}
+        <div
+          className="mt-3 inline-flex max-w-full items-center gap-1 self-start rounded-full border p-1"
+          style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.03)' }}
+          role="group"
+          aria-label="抽獎名單來源模式"
+        >
+          {(
+            [
+              ['roster', '名單抽獎（輪盤）'],
+              ['ticket', '抽獎劵活動（開獎舞台）'],
+            ] as const
+          ).map(([s, label]) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSource(s)}
+              disabled={phase !== 'idle' || ticketPhase !== 'idle'}
+              className={`rounded-full px-3.5 py-1 text-[12px] transition-colors disabled:opacity-50 ${
+                source === s ? 'font-bold' : 'text-txt-3 hover:text-txt-1'
+              }`}
+              style={
+                source === s
+                  ? { background: 'rgba(245,197,24,0.16)', color: 'var(--gold-soft)', border: `1px solid ${GOLD}` }
+                  : { border: '1px solid transparent' }
+              }
+              aria-pressed={source === s}
+            >
+              {s === 'ticket' ? <Ticket size={11} aria-hidden="true" className="mr-1 inline-block align-[-1px]" /> : null}
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4 grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
           {/* 左：輪盤 */}
-          <div className="flex flex-col items-center">
+          <div className="min-w-0 flex flex-col items-center">
             {/* 場次選擇（成個頁共用：轉場次＝轉獎品池，「下拉列轉場次產品繼續抽」） */}
             <p className="mb-2 flex w-full items-center justify-center gap-2 text-[12.5px] text-txt-2">
               場次
@@ -928,7 +1081,8 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             </p>
 
             {/* v2.2.57（老闆指令）：抽獎模式切換——順序抽（依家咁，自動下一件）／
-                指定抽（直播客人嗌「抽 3 號先」→ 撥號碼即抽嗰件，多件可以連抽） */}
+                指定抽（直播客人嗌「抽 3 號先」→ 撥號碼即抽嗰件，多件可以連抽）；名單輪盤專用 */}
+            {source === 'roster' && (
             <div
               className="mb-2 inline-flex items-center gap-1 self-center rounded-full border p-1"
               style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.03)' }}
@@ -958,6 +1112,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                 </button>
               ))}
             </div>
+            )}
 
             {/* 揀獎品（未抽出嘅先抽得；號碼同下面獎品管理卡一致，直播嗌「N 號」對到） */}
             <div className="flex w-full flex-wrap items-center justify-center gap-2">
@@ -1006,17 +1161,19 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
               )}
             </div>
             {/* 指定抽安全網：指定嗰件抽晒唔會靜靜雞跳去第一件，明講等揀返 */}
-            {drawMode === 'pick' && prizeId != null && !prize && (
+            {source === 'roster' && drawMode === 'pick' && prizeId != null && !prize && (
               <p className="mt-1.5 w-full text-center text-[12.5px] text-gold-soft">
                 你指定嗰件已抽晒——喺上面撥返另一個號碼先抽得
               </p>
             )}
-            {drawMode === 'pick' && prizeId == null && availablePrizes.length > 0 && (
+            {source === 'roster' && drawMode === 'pick' && prizeId == null && availablePrizes.length > 0 && (
               <p className="mt-1.5 w-full text-center text-[12px] text-txt-3">
                 指定抽模式：撥上面嘅號碼揀邊件先，揀咗先抽得
               </p>
             )}
 
+            {source === 'roster' ? (
+            <>
             {/* 輪盤本體（煙花層喺 DOM 後出，自然壓頂，唔用 z-index） */}
             <div className="relative mt-4 w-full max-w-[560px]">
               <div className="relative mx-auto aspect-square w-full max-w-[560px]">
@@ -1268,13 +1425,174 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                 </div>
               </div>
             )}
+            </>
+            ) : (
+            <>
+            {/* ══ 劵模式：TicketDrawStage 非輪盤開獎（v2.5.6）══
+                誠實鐵律：mutation pending＝drawing；server 回結果先 revealed＋winner；
+                失敗（ticketError）可見，舞台唔會顯示假中獎。 */}
+            <div className="mt-4 w-full max-w-[560px]">
+              {selectedEvent ? (
+                <TicketDrawStage
+                  eventName={selectedEvent.name}
+                  prize={{
+                    name: ticketPrize ? ticketPrize.name || ticketPrize.sku : '（未揀獎品）',
+                    imageUrl: ticketPrize?.imagePath ?? null,
+                    value: ticketPrize ? `HK$${ticketPrize.price}` : null,
+                  }}
+                  phase={ticketPhase}
+                  winner={
+                    ticketPhase === 'revealed' && ticketResult
+                      ? {
+                          name: ticketResult.winner.name,
+                          kind: 'manual',
+                          ticketNo: ticketResult.draw.eventEntryId != null ? `#${ticketResult.draw.eventEntryId}` : null,
+                        }
+                      : null
+                  }
+                  winnerTicketCount={selectedEvent.totalTickets}
+                />
+              ) : (
+                <div
+                  className="rounded-2xl border p-8 text-center text-[13px] leading-relaxed text-txt-3"
+                  style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.02)' }}
+                >
+                  先喺右邊揀／開一個抽獎劵活動，開獎舞台就會喺度出現 ✦
+                </div>
+              )}
+            </div>
+
+            {/* 開獎失敗：可見錯誤（唔會留低任何假中獎畫面） */}
+            {ticketError && (
+              <div
+                role="alert"
+                className="mt-3 w-full max-w-[520px] rounded-xl border px-4 py-2.5 text-[13px] leading-relaxed text-pink-soft"
+                style={{ borderColor: 'rgba(255,0,84,0.4)', background: 'rgba(255,0,84,0.06)', overflowWrap: 'anywhere' }}
+              >
+                開獎失敗：{ticketError}
+              </div>
+            )}
+
+            {/* 劵模式開獎大金掣 */}
+            {selectedEvent && ticketPhase !== 'revealed' ? (
+              <button
+                type="button"
+                onClick={() => void startTicketDraw()}
+                disabled={
+                  ticketPhase === 'drawing' ||
+                  drawEventMut.isPending ||
+                  redrawMut.isPending ||
+                  !ticketPrize ||
+                  selectedEvent.archivedAt != null ||
+                  (selectedEvent.entryCount ?? 0) === 0
+                }
+                className="mt-5 rounded-full px-10 py-3.5 font-serif-tc text-[17px] font-bold tracking-[0.2em] transition-opacity disabled:opacity-40"
+                style={{
+                  background: `linear-gradient(160deg, ${GOLD_SOFT} 0%, ${GOLD} 55%, #C99B0F 100%)`,
+                  color: '#241505',
+                  boxShadow: '0 6px 30px rgba(245,197,24,0.35)',
+                }}
+              >
+                {ticketPhase === 'drawing' ? '✦ 伺服器開獎中…' : '✦ 開始開獎 ✦'}
+              </button>
+            ) : null}
+
+            {/* 劵模式開獎結果卡：確定（出 0 元單）／重抽／取消——同手打名流程一致 */}
+            {ticketPhase === 'revealed' && ticketResult && (
+              <div
+                className="relative mt-5 w-full max-w-[520px] overflow-hidden rounded-2xl border p-5 text-center"
+                style={{
+                  borderColor: 'rgba(245,197,24,0.55)',
+                  background: 'linear-gradient(180deg, rgba(245,197,24,0.10), rgba(245,197,24,0.03))',
+                  boxShadow: '0 0 50px rgba(245,197,24,0.18)',
+                  animation: reducedMotion ? undefined : 'luckyPop 420ms cubic-bezier(0.2,1.4,0.4,1)',
+                }}
+              >
+                <p className="script text-2xl text-gold">Congratulations ✦</p>
+                <p className="mt-1 break-words font-serif-tc text-[26px] font-bold text-txt-1">
+                  {ticketResult.winner.name}
+                </p>
+                <div className="mt-3 flex items-center justify-center gap-3">
+                  {ticketResult.prize.imagePath ? (
+                    <img
+                      src={ticketResult.prize.imagePath}
+                      alt={ticketResult.prize.name ?? ticketResult.prize.sku}
+                      className="h-14 w-14 rounded-xl border object-cover"
+                      style={{ borderColor: 'rgba(245,197,24,0.4)' }}
+                    />
+                  ) : (
+                    <span
+                      className="flex h-14 w-14 items-center justify-center rounded-xl border text-txt-3"
+                      style={{ borderColor: 'rgba(245,197,24,0.4)' }}
+                    >
+                      <Gift size={20} aria-hidden="true" />
+                    </span>
+                  )}
+                  <div className="text-left">
+                    <p className="text-[14px] font-semibold text-txt-1">{ticketResult.prize.name || ticketResult.prize.sku}</p>
+                    <p className="font-mono text-[12px] text-txt-3">
+                      {ticketResult.prize.sku}・價值 HK${ticketResult.prize.price}
+                      {ticketResult.draw.eventEntryId != null ? `・中獎券 #${ticketResult.draw.eventEntryId}` : ''}
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-3 text-[12px] text-txt-3">
+                  抽獎劵活動：確定後會即出 0 元訂單飛去 WMS 等審批；劵持有人唔會收到官網通知。
+                </p>
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void confirmTicket(ticketResult.draw.id)}
+                    disabled={confirmManualMut.isPending}
+                    className="rounded-full px-5 py-2 text-[13.5px] font-bold disabled:opacity-40"
+                    style={{ background: GOLD, color: '#241505' }}
+                  >
+                    {confirmManualMut.isPending ? '起單緊…' : '✓ 確定中獎（出 0 元單去 WMS）'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void startTicketDraw(ticketResult)}
+                    disabled={redrawMut.isPending}
+                    className="rounded-full border px-5 py-2 text-[13.5px] text-gold transition-colors hover:bg-white/5 disabled:opacity-40"
+                    style={{ borderColor: 'rgba(245,197,24,0.55)' }}
+                  >
+                    ✦ 重抽
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void cancelWin(ticketResult.draw.id, ticketResult.winner.name)}
+                    disabled={cancelMut.isPending}
+                    className="rounded-full border px-5 py-2 text-[13.5px] text-pink-soft transition-colors hover:bg-white/5 disabled:opacity-40"
+                    style={{ borderColor: 'rgba(255,0,84,0.4)' }}
+                  >
+                    ✕ 取消
+                  </button>
+                </div>
+              </div>
+            )}
+            </>
+            )}
           </div>
 
-          {/* 右：名單剔選 */}
+          {/* 右：名單剔選（名單模式）／劵活動管理（劵模式） */}
           <aside
-            className="rounded-2xl border p-4"
+            className="min-w-0 rounded-2xl border p-4"
             style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.02)' }}
           >
+            {source === 'ticket' ? (
+              <>
+                <p className="flex items-center gap-2 text-[13.5px] font-bold text-txt-1">
+                  <Ticket size={14} aria-hidden="true" className="text-gold" />
+                  抽獎劵活動
+                </p>
+                <LuckyDrawEventPanel
+                  selectedEventId={selectedEventId}
+                  onSelectEvent={setSelectedEventId}
+                  toast={toast}
+                />
+              </>
+            ) : (
+              <>
             <p className="flex items-center gap-2 text-[13.5px] font-bold text-txt-1">
               <Users size={14} aria-hidden="true" className="text-lavender" />
               參加名單
@@ -1423,6 +1741,17 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                 <p className="text-[12.5px] text-txt-3">剔選至少一個來源先有名單</p>
               ) : participantsQuery.isLoading ? (
                 <LoadingBlock text="許願星數緊人…" />
+              ) : participantsQuery.isError ? (
+                <p className="text-[12.5px] text-pink-soft" role="alert">
+                  名單載入失敗：{fmtErr(participantsQuery.error)}
+                  <button
+                    type="button"
+                    onClick={() => void participantsQuery.refetch()}
+                    className="ml-2 underline underline-offset-2 hover:text-txt-1"
+                  >
+                    重試
+                  </button>
+                </p>
               ) : (
                 <>
                   <p className="text-[13px] text-txt-1">
@@ -1490,9 +1819,12 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             </div>
               </>
             ) : (
+              <>
               <NameListPicker
                 lists={lists}
                 loading={listsQuery.isLoading}
+                loadingError={listsQuery.isError ? fmtErr(listsQuery.error) : null}
+                onRetryLists={() => void listsQuery.refetch()}
                 selectedListId={selectedListId}
                 busy={createListMut.isPending || deleteListMut.isPending}
                 toast={toast}
@@ -1500,6 +1832,20 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                 onCreate={createList}
                 onDelete={(id) => void deleteList(id)}
               />
+              {/* v2.5.6：名單 Excel 匯入（範本下載／預覽／確認；成功自動揀新名單） */}
+              <div className="mt-3">
+                <LuckyDrawExcelImport
+                  kind="list"
+                  toast={toast}
+                  onCommitted={(r) => {
+                    void utils.luckyDraw.adminListLists.invalidate();
+                    if (r.listId != null) setSelectedListId(r.listId);
+                  }}
+                />
+              </div>
+              </>
+            )}
+              </>
             )}
           </aside>
         </div>
@@ -1518,6 +1864,8 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
       <PrizeManagerSection
         prizes={sessionPrizes}
         loading={prizesQuery.isLoading}
+        loadingError={prizesQuery.isError ? fmtErr(prizesQuery.error) : null}
+        onRetry={() => void prizesQuery.refetch()}
         busy={upsertMut.isPending || deleteMut.isPending}
         activeSession={activeSession}
         sessions={sessions}
@@ -1664,6 +2012,8 @@ function parseListNames(raw: string): string[] {
 function NameListPicker({
   lists,
   loading,
+  loadingError,
+  onRetryLists,
   selectedListId,
   busy,
   toast,
@@ -1673,15 +2023,20 @@ function NameListPicker({
 }: {
   lists: NameList[];
   loading: boolean;
+  /** v2.5.6：載入失敗（例如 403）可見＋可重試 */
+  loadingError?: string | null;
+  onRetryLists?: () => void;
   selectedListId: number | null;
   busy: boolean;
   toast: (msg: string, kind?: 'success' | 'error') => void;
   onSelect: (id: number) => void;
-  onCreate: (name: string, names: string[], memberIds: number[]) => Promise<number | null>;
+  onCreate: (name: string, names: string[], memberIds: number[], maxWinsPerPerson: number) => Promise<number | null>;
   onDelete: (listId: number) => void;
 }) {
   const [listName, setListName] = useState('');
   const [rawNames, setRawNames] = useState('');
+  // v2.5.6（老闆指令）：每人每個香港抽獎日限中 N 次（1–100，預設 1）
+  const [maxWins, setMaxWins] = useState('1');
   // 「由官網會員加入」：搜尋（300ms debounce，跟 MemberList 做法）＋已揀 chips
   const [memberQ, setMemberQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -1702,6 +2057,7 @@ function NameListPicker({
   const submit = async () => {
     const name = listName.trim();
     const names = parseListNames(rawNames);
+    const mw = Math.floor(Number(maxWins));
     if (!name) {
       toast('名單名都要填', 'error');
       return;
@@ -1710,10 +2066,15 @@ function NameListPicker({
       toast('名單係空——貼返啲客人名，或者由官網會員加入', 'error');
       return;
     }
-    const id = await onCreate(name, names, pickedMembers.map((m) => m.id));
+    if (!Number.isFinite(mw) || mw < 1 || mw > 100) {
+      toast('每人每日限中次數要係 1–100', 'error');
+      return;
+    }
+    const id = await onCreate(name, names, pickedMembers.map((m) => m.id), mw);
     if (id != null) {
       setListName('');
       setRawNames('');
+      setMaxWins('1');
       setPickedMembers([]);
       setMemberQ('');
     }
@@ -1724,6 +2085,15 @@ function NameListPicker({
       {/* 名單 picker（chips 橫排） */}
       {loading ? (
         <LoadingBlock text="許願星搬緊名單…" />
+      ) : loadingError ? (
+        <div className="rounded-lg border px-2.5 py-2 text-[12.5px] text-pink-soft" style={{ borderColor: 'rgba(255,0,84,0.4)' }} role="alert">
+          名單載入失敗：{loadingError}
+          {onRetryLists && (
+            <button type="button" onClick={onRetryLists} className="ml-2 underline underline-offset-2 hover:text-txt-1">
+              重試
+            </button>
+          )}
+        </div>
       ) : lists.length === 0 ? (
         <p className="text-[12.5px] text-txt-3">仲未有自訂名單，下面建立第一份 ✦</p>
       ) : (
@@ -1746,7 +2116,7 @@ function NameListPicker({
                 >
                   {l.name}
                   <span className="ml-1 font-mono text-[11px] text-txt-3">
-                    （{l.names.length + l.members.length} 人）
+                    （{l.names.length + l.members.length} 人・限中 {l.maxWinsPerPerson ?? 1}/日）
                   </span>
                 </button>
                 <button
@@ -1771,6 +2141,9 @@ function NameListPicker({
           <p className="text-[13px] text-txt-1">
             名單共 <b className="text-gold">{selected.names.length + selected.members.length}</b> 人
             <span className="text-txt-3">（{selected.members.length} 位官網會員）</span>
+          </p>
+          <p className="mt-0.5 text-[11.5px] text-txt-3">
+            限中口径：每人每個香港抽獎日全域限中 {selected.maxWinsPerPerson ?? 1} 次（同日跨晒所有名單／模式都計；建立時設定，唔改得）
           </p>
           <div className="mt-2 flex max-h-[180px] flex-wrap gap-1.5 overflow-y-auto pr-1">
             {selected.members.map((m) => (
@@ -1877,6 +2250,24 @@ function NameListPicker({
             ))}
           </div>
         )}
+
+        {/* v2.5.6：每人每日限中 N 次（建立時設定；server 冇 update endpoint → 之後唔改得） */}
+        <label className="flex flex-wrap items-center gap-1.5 text-[12.5px] text-txt-2">
+          每人每個香港抽獎日限中
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={maxWins}
+            onChange={(e) => setMaxWins(e.target.value)}
+            className="w-16 rounded-lg border bg-transparent px-2 py-1 text-center font-mono text-[12.5px] text-txt-1 outline-none focus:border-lavender"
+            style={{ borderColor: 'var(--space-line)' }}
+          />
+          次
+          <span className="basis-full text-[11px] leading-relaxed text-txt-3">
+            全域計：同一個名同日喺任何名單中過都計入，夠 N 次就抽唔中（1＝舊行為一日一次）。
+          </span>
+        </label>
 
         <button
           type="button"
@@ -1999,6 +2390,8 @@ function SessionSelect({
 function PrizeManagerSection({
   prizes,
   loading,
+  loadingError,
+  onRetry,
   busy,
   activeSession,
   sessions,
@@ -2015,6 +2408,9 @@ function PrizeManagerSection({
 }: {
   prizes: Prize[];
   loading: boolean;
+  /** 載入失敗（例如 403）可見＋可重試 */
+  loadingError?: string | null;
+  onRetry?: () => void;
   busy: boolean;
   activeSession: string;
   sessions: string[];
@@ -2135,7 +2531,7 @@ function PrizeManagerSection({
 
       {/* 新增獎品（v2.2.55：加件數欄 — 同款 N 件可以抽 N 次） */}
       <div
-        className="mt-4 grid gap-3 rounded-xl border p-4 md:grid-cols-[140px_1fr_150px_110px_80px_auto]"
+        className="mt-4 grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-4 sm:grid-cols-2 xl:grid-cols-[140px_minmax(0,1fr)_150px_110px_80px_auto]"
         style={{ borderColor: 'var(--space-line)', background: 'rgba(255,255,255,0.02)' }}
       >
         <div className="flex flex-col gap-1">
@@ -2169,14 +2565,14 @@ function PrizeManagerSection({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="獎品名（唔填會用貨號商品名）"
-          className="rounded-xl border bg-transparent px-3 py-2 text-[13.5px] text-txt-1 outline-none focus:border-lavender"
+          className="min-w-0 w-full rounded-xl border bg-transparent px-3 py-2 text-[13.5px] text-txt-1 outline-none focus:border-lavender"
           style={{ borderColor: 'var(--space-line)' }}
         />
         <input
           value={sku}
           onChange={(e) => setSku(e.target.value)}
           placeholder="貨號 SKU（入 WMS 用）"
-          className="rounded-xl border bg-transparent px-3 py-2 font-mono text-[13px] text-txt-1 outline-none focus:border-lavender"
+          className="min-w-0 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-[13px] text-txt-1 outline-none focus:border-lavender"
           style={{ borderColor: 'var(--space-line)' }}
         />
         <input
@@ -2185,7 +2581,7 @@ function PrizeManagerSection({
           type="number"
           min={0}
           placeholder="價錢 HK$"
-          className="rounded-xl border bg-transparent px-3 py-2 font-mono text-[13px] text-txt-1 outline-none focus:border-lavender"
+          className="min-w-0 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-[13px] text-txt-1 outline-none focus:border-lavender"
           style={{ borderColor: 'var(--space-line)' }}
         />
         <input
@@ -2195,7 +2591,7 @@ function PrizeManagerSection({
           min={1}
           placeholder="件數"
           title="同款有幾多件（N 件可以抽 N 次）"
-          className="rounded-xl border bg-transparent px-3 py-2 font-mono text-[13px] text-txt-1 outline-none focus:border-lavender"
+          className="min-w-0 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-[13px] text-txt-1 outline-none focus:border-lavender"
           style={{ borderColor: 'var(--space-line)' }}
         />
         <button
@@ -2208,20 +2604,29 @@ function PrizeManagerSection({
           <Plus size={14} aria-hidden="true" />
           加獎品
         </button>
-        {err && <p className="text-[12.5px] text-pink-soft md:col-span-6">{err}</p>}
+        {err && <p className="text-[12.5px] text-pink-soft sm:col-span-2 xl:col-span-6">{err}</p>}
       </div>
 
       {/* 獎品列表 */}
       {loading ? (
         <LoadingBlock text="許願星搬緊獎品…" />
+      ) : loadingError ? (
+        <div className="mt-4 rounded-xl border px-4 py-3 text-[13px] text-pink-soft" style={{ borderColor: 'rgba(255,0,84,0.4)' }} role="alert">
+          獎品載入失敗：{loadingError}
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="ml-2 underline underline-offset-2 hover:text-txt-1">
+              重試
+            </button>
+          )}
+        </div>
       ) : prizes.length === 0 ? (
         <p className="py-6 text-center text-[13.5px] text-txt-3">呢場仲未有獎品，上面加第一件 ✦</p>
       ) : (
-        <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="mt-4 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {prizes.map((p, i) => (
             <li
               key={p.id}
-              className="rounded-xl border p-3"
+              className="min-w-0 rounded-xl border p-3"
               style={{
                 borderColor: p.takenBy || (p.takenCount ?? 0) > 0 ? 'rgba(245,197,24,0.4)' : 'var(--space-line)',
                 background: 'rgba(255,255,255,0.02)',
@@ -2255,7 +2660,7 @@ function PrizeManagerSection({
                     </span>
                     {p.name || p.sku}
                   </p>
-                  <p className="font-mono text-[11.5px] text-txt-3">
+                  <p className="break-all font-mono text-[11.5px] text-txt-3">
                     {p.sku}・HK${p.price}・共{p.quantity ?? 1}件
                   </p>
                   <p className="mt-0.5 text-[11.5px]">
@@ -2319,7 +2724,7 @@ function historyBadge(r: HistoryRow): BadgeMeta {
     return { label: '已確認寄送', color: '#34D399', border: 'rgba(52,211,153,0.4)' };
   }
   if (r.status === 'pending') {
-    const manual = r.winnerNameSnap != null || r.listId != null;
+    const manual = r.winnerNameSnap != null || r.listId != null || r.eventId != null;
     return {
       label: manual ? '待確定' : '待回覆',
       color: 'var(--text-3, #9d93b8)',
@@ -2402,6 +2807,17 @@ function DrawHistorySection({
 
       {historyQuery.isLoading ? (
         <LoadingBlock text="許願星搬緊紀錄…" />
+      ) : historyQuery.isError ? (
+        <div className="mt-4 rounded-xl border px-4 py-3 text-[13px] text-pink-soft" style={{ borderColor: 'rgba(255,0,84,0.4)' }} role="alert">
+          紀錄載入失敗：{fmtErr(historyQuery.error)}
+          <button
+            type="button"
+            onClick={() => void historyQuery.refetch()}
+            className="ml-2 underline underline-offset-2 hover:text-txt-1"
+          >
+            重試
+          </button>
+        </div>
       ) : days.length === 0 ? (
         <p className="py-6 text-center text-[13.5px] text-txt-3">仲未有抽獎紀錄。</p>
       ) : (
@@ -2484,7 +2900,8 @@ function DrawHistorySection({
                                   className="ml-2 rounded-full border px-2 py-px text-[10.5px] font-normal text-gold"
                                   style={{ borderColor: 'rgba(245,197,24,0.4)' }}
                                 >
-                                  自訂名單
+                                  {/* v2.5.6：劵活動中獎都係影子帳號——標籤分清楚來源 */}
+                                  {r.eventId != null ? '抽獎劵' : '自訂名單'}
                                 </span>
                               ) : (
                                 <span className="ml-2 font-mono text-[11.5px] font-normal text-txt-3">
@@ -2500,6 +2917,13 @@ function DrawHistorySection({
                                 {r.redrawOfId ? `・特別重抽（取代 #${r.redrawOfId}）` : ''}
                               </span>
                             </p>
+                            {/* v2.5.6：劵活動追溯——邊個活動＋邊張券（同名跨活動重用都追到） */}
+                            {r.eventId != null && (
+                              <p className="mt-0.5 text-[11.5px] text-gold-soft">
+                                劵活動《{r.eventName ?? `#${r.eventId}`}》
+                                {r.eventEntryId != null ? `・券 #${r.eventEntryId}` : ''}
+                              </p>
+                            )}
                             <p className="mt-0.5 font-mono text-[11px] text-txt-3">
                               {fmtDateTime(String(r.createdAt))}
                               {r.drawnByName ? `・${r.drawnByName} 抽` : ''}

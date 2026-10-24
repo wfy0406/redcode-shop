@@ -36,7 +36,40 @@ export function crc32(buf: Buffer): number {
 }
 
 // ── 讀 ─────────────────────────────────────────────────────────
-export function readZipEntries(buf: Buffer): Map<string, Buffer> {
+// 防 deflate bomb／畸形 zip 嘅硬上限（fail-closed，超出即刻 throw，唔會回傳截斷數據）：
+// 預設值俾「讀信任模板」（exportDaily）用；上傳入口（luckyDrawXlsx）會傳更緊嘅限。
+export const ZIP_MAX_ENTRY_BYTES = 32 * 1024 * 1024; // 每個 entry 解壓後上限 32MB
+export const ZIP_MAX_TOTAL_BYTES = 64 * 1024 * 1024; // 全部解壓 entry 合計上限 64MB
+
+export type ReadZipOptions = {
+  /** 每個 entry 解壓後上限（bytes）；超出即 throw「解壓後超過每檔上限」 */
+  maxEntryBytes?: number;
+  /** 所有被解壓 entry 合計上限（bytes）；超出即 throw「總解壓大小超過上限」 */
+  maxTotalBytes?: number;
+  /** 只解壓呢啲 entry 名；其他 entry 淨係掃 central directory metadata，完全唔解壓
+   *  （無關嘅巨大 entry 唔會食記憶體）。唔傳＝全部解壓（舊行為）。 */
+  only?: ReadonlySet<string>;
+};
+
+/** entry 名 fail-closed 檢查：path traversal／絕對路徑／Windows drive 一律拒絕 */
+function assertSafeEntryName(name: string): void {
+  if (
+    name.length === 0 ||
+    name.startsWith("/") ||
+    name.startsWith("\\") ||
+    /^[A-Za-z]:/.test(name) ||
+    name.split(/[\\/]/).includes("..")
+  ) {
+    throw new Error(`invalid zip: unsafe entry path "${name}"`);
+  }
+}
+
+export function readZipEntries(buf: Buffer, opts: ReadZipOptions = {}): Map<string, Buffer> {
+  const maxEntry = opts.maxEntryBytes ?? ZIP_MAX_ENTRY_BYTES;
+  const maxTotal = opts.maxTotalBytes ?? ZIP_MAX_TOTAL_BYTES;
+  const only = opts.only;
+
+  if (buf.length < 22) throw new Error("invalid zip: file too small");
   // EOCD 固定 22 bytes，最多跟 65535 bytes comment —— 由尾向前掃 signature
   let eocd = -1;
   const scanFrom = Math.max(0, buf.length - 22 - 65535);
@@ -48,37 +81,91 @@ export function readZipEntries(buf: Buffer): Map<string, Buffer> {
   }
   if (eocd < 0) throw new Error("invalid zip: end of central directory not found");
 
+  // fail-closed：多分碟 zip 唔支援（本系統淨係處理單檔 xlsx）
+  if (buf.readUInt16LE(eocd + 4) !== 0 || buf.readUInt16LE(eocd + 6) !== 0) {
+    throw new Error("invalid zip: multi-disk archives not supported");
+  }
   const count = buf.readUInt16LE(eocd + 10);
-  let off = buf.readUInt32LE(eocd + 16);
+  const cdSize = buf.readUInt32LE(eocd + 12);
+  const cdStart = buf.readUInt32LE(eocd + 16);
+  if (cdStart > eocd || cdStart + cdSize > buf.length) {
+    throw new Error("invalid zip: central directory out of bounds");
+  }
+  let off = cdStart;
   const out = new Map<string, Buffer>();
+  let totalBytes = 0;
 
   for (let i = 0; i < count; i++) {
-    if (buf.readUInt32LE(off) !== CEN_SIG) {
+    if (off + 46 > buf.length || buf.readUInt32LE(off) !== CEN_SIG) {
       throw new Error("invalid zip: corrupt central directory");
     }
     const method = buf.readUInt16LE(off + 10);
     const compSize = buf.readUInt32LE(off + 20);
+    const uncompSize = buf.readUInt32LE(off + 24);
     const nameLen = buf.readUInt16LE(off + 28);
     const extraLen = buf.readUInt16LE(off + 30);
     const commentLen = buf.readUInt16LE(off + 32);
     const localOff = buf.readUInt32LE(off + 42);
+    if (off + 46 + nameLen + extraLen + commentLen > buf.length) {
+      throw new Error("invalid zip: central directory entry out of bounds");
+    }
     const name = buf.subarray(off + 46, off + 46 + nameLen).toString("utf8");
+    assertSafeEntryName(name);
 
-    if (buf.readUInt32LE(localOff) !== LOC_SIG) {
+    // 唔需要嘅 entry：skip——metadata 都唔再深入驗，絕對唔解壓（防無關巨大 entry 拖垮記憶體）
+    if (only && !only.has(name)) {
+      off += 46 + nameLen + extraLen + commentLen;
+      continue;
+    }
+    if (out.has(name)) {
+      throw new Error(`invalid zip: duplicate entry "${name}"`);
+    }
+
+    if (localOff + 30 > buf.length || buf.readUInt32LE(localOff) !== LOC_SIG) {
       throw new Error(`invalid zip: bad local header for ${name}`);
     }
     const lNameLen = buf.readUInt16LE(localOff + 26);
     const lExtraLen = buf.readUInt16LE(localOff + 28);
     const dataStart = localOff + 30 + lNameLen + lExtraLen;
+    if (dataStart + compSize > buf.length) {
+      throw new Error(`invalid zip: data out of bounds for ${name}`);
+    }
     const comp = buf.subarray(dataStart, dataStart + compSize);
 
     let data: Buffer;
     if (method === 0) {
+      // store：未壓縮，大小已知——直接檢查上限
+      if (compSize > maxEntry) {
+        throw new Error(`xlsx entry "${name}" 解壓後超過每檔上限 ${maxEntry} bytes（實際 ${compSize}）`);
+      }
       data = Buffer.from(comp);
     } else if (method === 8) {
-      data = inflateRawSync(comp);
+      // deflate：唔信 header 聲稱嘅 uncompSize，用 maxOutputLength 硬性截停——
+      // 一超上限 zlib 即刻 throw ERR_BUFFER_TOO_LARGE，唔會先解出成個 bomb。
+      try {
+        data = inflateRawSync(comp, { maxOutputLength: maxEntry + 1 });
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
+          throw new Error(`xlsx entry "${name}" 解壓後超過每檔上限 ${maxEntry} bytes`);
+        }
+        throw new Error(`invalid zip: cannot inflate entry "${name}" (${(e as Error).message})`);
+      }
+      if (data.length > maxEntry) {
+        throw new Error(`xlsx entry "${name}" 解壓後超過每檔上限 ${maxEntry} bytes（實際 ${data.length}）`);
+      }
     } else {
       throw new Error(`unsupported zip compression method ${method} for ${name}`);
+    }
+
+    // 大小聲明核實：central header 嘅 uncompSize 同實際解出嚟唔一致＝malformed，fail-closed
+    if (uncompSize !== data.length) {
+      throw new Error(
+        `invalid zip: entry "${name}" 聲稱解壓大小 ${uncompSize} 同實際 ${data.length} 唔符`,
+      );
+    }
+    totalBytes += data.length;
+    if (totalBytes > maxTotal) {
+      throw new Error(`xlsx 總解壓大小超過上限 ${maxTotal} bytes`);
     }
     out.set(name, data);
     off += 46 + nameLen + extraLen + commentLen;
