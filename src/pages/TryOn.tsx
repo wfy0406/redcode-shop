@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigationType, useSearchParams } from 'react-router';
 import {
   AlertTriangle,
   Camera,
@@ -36,6 +36,13 @@ import {
 } from '@contracts/tryon';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
+import {
+  addTryOnProductSelection,
+  moveTryOnProductSelection,
+  parseTryOnBatchPlan,
+  type TryOnBatchPlan,
+  type TryOnProductSelection,
+} from './tryonSelection';
 
 type RouterOutputs = inferRouterOutputs<AppRouter>;
 type TryOnProduct = RouterOutputs['tryon']['listProducts'][number];
@@ -84,6 +91,14 @@ function operationKey(): string {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '');
   const random = Math.random().toString(36).slice(2, 14);
   return `tryon_${Date.now().toString(36)}_${random}`.slice(0, 64);
+}
+
+function currentJobStorageKey(userId: number): string {
+  return `rc_tryon_current_${userId}`;
+}
+
+function batchPlanStorageKey(userId: number): string {
+  return `rc_tryon_batch_${userId}`;
 }
 
 // 用嚟綁定 idempotency key 嘅操作意圖摘要；唔需要加密強度，只要區分唔同原相。
@@ -191,6 +206,7 @@ export default function TryOn() {
   const userIdRef = useRef(userId);
   userIdRef.current = userId;
   const utils = trpc.useUtils();
+  const navigationType = useNavigationType();
   const [searchParams] = useSearchParams();
   const preselectProductId = Number(searchParams.get('productId'));
   const preselectPhotoIndex = Number(searchParams.get('photoIndex') ?? 0);
@@ -209,8 +225,13 @@ export default function TryOn() {
   );
 
   const [modelImage, setModelImage] = useState<string | null>(null);
-  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
-  const [photoIndex, setPhotoIndex] = useState(0);
+  const [selections, setSelections] = useState<TryOnProductSelection[]>([]);
+  const [savedJobPublicId, setSavedJobPublicId] = useState<string | null>(null);
+  const [batchPlan, setBatchPlanState] = useState<TryOnBatchPlan | null>(null);
+  // 異步第二件返回時只可以更新而家仍屬同一次授權嘅計劃，唔可以復活已刪除／已取消嘅舊 closure。
+  const batchPlanRef = useRef<TryOnBatchPlan | null>(null);
+  batchPlanRef.current = batchPlan;
+  const [batchActionPending, setBatchActionPending] = useState(false);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<'all' | TryOnProductKind>('all');
   const [cameraState, setCameraState] = useState<CameraState>('idle');
@@ -221,6 +242,18 @@ export default function TryOn() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<'download' | 'share' | null>(null);
   const [deleteArmed, setDeleteArmed] = useState(false);
+
+  const applyBatchPlan = useCallback(
+    (plan: TryOnBatchPlan | null) => {
+      batchPlanRef.current = plan;
+      setBatchPlanState(plan);
+      if (!userId) return;
+      const key = batchPlanStorageKey(userId);
+      if (plan) window.sessionStorage.setItem(key, JSON.stringify(plan));
+      else window.sessionStorage.removeItem(key);
+    },
+    [userId],
+  );
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -234,6 +267,7 @@ export default function TryOn() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const preselectedRef = useRef(false);
+  const autoBatchInFlightRef = useRef<string | null>(null);
   const previousJobStatusRef = useRef<{ publicId: string; status: string } | null>(null);
 
   const notify = useCallback((message: string) => {
@@ -308,27 +342,40 @@ export default function TryOn() {
     // 換帳號／logout 一律即時停鏡頭（包括開緊途中嘅 getUserMedia，靠 cameraTokenRef 作廢）。
     stopCamera();
     createIntentRef.current = null;
-    if (!userId) {
-      setJobState({ userId: null, publicId: null });
-      setModelImage(null);
-      setSelectedProductId(null);
-      return;
-    }
-    const saved = window.sessionStorage.getItem(`rc_tryon_current_${userId}`);
-    setJobState({ userId, publicId: saved });
+    autoBatchInFlightRef.current = null;
+    setBatchPlanState(null);
     setModelImage(null);
-    setSelectedProductId(null);
-    setPhotoIndex(0);
+    setSelections([]);
     setActionError(null);
     setDeleteArmed(false);
     preselectedRef.current = false;
-  }, [userId, stopCamera]);
+    if (!userId) {
+      setJobState({ userId: null, publicId: null });
+      setSavedJobPublicId(null);
+      return;
+    }
+    const currentKey = currentJobStorageKey(userId);
+    const batchKey = batchPlanStorageKey(userId);
+    const saved = window.sessionStorage.getItem(currentKey);
+    setSavedJobPublicId(saved);
+    if (navigationType === 'POP' && saved) {
+      // 只有 reload／直接載入先自動恢復；由其他頁 PUSH 入嚟一定係新一套。
+      setJobState({ userId, publicId: saved });
+      const restored = parseTryOnBatchPlan(window.sessionStorage.getItem(batchKey), userId);
+      const validPlan = restored?.rootPublicId === saved ? restored : null;
+      setBatchPlanState(validPlan);
+      if (!validPlan) window.sessionStorage.removeItem(batchKey);
+    } else {
+      setJobState({ userId, publicId: null });
+      // fresh navigation 取消未提交嘅後續生成；已完成工作及 current id 保留作明確「繼續舊造型」。
+      window.sessionStorage.removeItem(batchKey);
+    }
+  }, [navigationType, userId, stopCamera]);
 
   useEffect(() => {
-    if (!userId || jobState.userId !== userId) return;
-    const key = `rc_tryon_current_${userId}`;
-    if (jobState.publicId) window.sessionStorage.setItem(key, jobState.publicId);
-    else window.sessionStorage.removeItem(key);
+    if (!userId || jobState.userId !== userId || !jobState.publicId) return;
+    window.sessionStorage.setItem(currentJobStorageKey(userId), jobState.publicId);
+    setSavedJobPublicId(jobState.publicId);
   }, [jobState, userId]);
 
   useEffect(() => {
@@ -339,6 +386,10 @@ export default function TryOn() {
     const code = (jobQuery.error?.data as { code?: string } | null | undefined)?.code;
     if (code !== 'NOT_FOUND') return;
     setJobState({ userId, publicId: null });
+    setSavedJobPublicId(null);
+    setBatchPlanState(null);
+    window.sessionStorage.removeItem(currentJobStorageKey(userId));
+    window.sessionStorage.removeItem(batchPlanStorageKey(userId));
     setActionError('上次嘅試穿工作紀錄已唔存在或已刪除；請由全身相重新開始一套。');
   }, [jobQuery.error, jobQuery.isError, jobState, userId]);
 
@@ -507,7 +558,7 @@ export default function TryOn() {
 
   useEffect(() => {
     if (preselectedRef.current || !products.length) return;
-    if (!Number.isInteger(preselectProductId) || preselectProductId <= 0) {
+    if (currentPublicId || !Number.isInteger(preselectProductId) || preselectProductId <= 0) {
       preselectedRef.current = true;
       return;
     }
@@ -517,18 +568,22 @@ export default function TryOn() {
       setActionError('呢件商品已下架或唔屬支援試穿嘅穿著部位，請揀另一件。');
       return;
     }
-    setSelectedProductId(product.id);
     const gallery = galleryOf(product);
-    setPhotoIndex(
-      Number.isInteger(preselectPhotoIndex) && preselectPhotoIndex >= 0
-        ? Math.min(preselectPhotoIndex, gallery.length - 1)
-        : 0,
-    );
-  }, [preselectPhotoIndex, preselectProductId, products]);
+    const photoIndex = Number.isInteger(preselectPhotoIndex) && preselectPhotoIndex >= 0
+      ? Math.min(preselectPhotoIndex, gallery.length - 1)
+      : 0;
+    setSelections([{ productId: product.id, photoIndex }]);
+  }, [currentPublicId, preselectPhotoIndex, preselectProductId, products]);
 
-  const selectedProduct = products.find((product) => product.id === selectedProductId) ?? null;
-  const selectedGallery = selectedProduct ? galleryOf(selectedProduct) : [];
-  const selectedBlockReason = selectedProduct ? lineageBlockReason(selectedProduct, job) : null;
+  const selectionLimit = canEditRoot ? 2 : 1;
+  const selectedItems = selections.map((selection) => ({
+    selection,
+    product: products.find((product) => product.id === selection.productId) ?? null,
+  }));
+  const missingSelectedProduct = selectedItems.some((item) => !item.product);
+  const selectedBlockReason = !canEditRoot && selectedItems[0]?.product
+    ? lineageBlockReason(selectedItems[0].product, job)
+    : null;
   // 只係未刪除嘅後續有效生成先阻止分叉；已 mediaDeleted 嘅後續 step 唔再阻追加。
   const hasLaterLineage = Boolean(
     job?.lookItems.some(
@@ -548,33 +603,14 @@ export default function TryOn() {
   }, [kindFilter, products, search]);
 
   const generateFor = useCallback(
-    async (product: TryOnProduct, productPhotoIndex: number) => {
+    async (product: TryOnProduct, productPhotoIndex: number, fixedIdempotencyKey?: string): Promise<TryOnJob | null> => {
       setActionError(null);
       if (!access?.allowed) {
         setActionError(access?.reason ?? '你而家未能使用 AI 試穿');
-        return;
+        return null;
       }
-      if (!userId || createMutation.isPending || createInFlightRef.current) return;
+      if (!userId || createMutation.isPending || createInFlightRef.current) return null;
       const submittingUserId = userId;
-      if (job && ACTIVE_STATUSES.has(job.status)) {
-        setActionError('呢件仲生成緊，請等完成或失敗後再提交，唔會自動連續收費。');
-        return;
-      }
-      const laterLineage =
-        job?.lookItems.filter(
-          (item) =>
-            item.stepNumber > job.stepNumber && USAGE_STATUSES.has(item.status) && !isLookItemMediaDeleted(item),
-        ) ?? [];
-      if (job && laterLineage.length > 0) {
-        setActionError('呢一步之後已經有生成，請喺造型紀錄揀返最新一步再追加。');
-        return;
-      }
-      const blockReason = lineageBlockReason(product, job);
-      if (blockReason) {
-        setActionError(`${blockReason}；兩件商品必須係不同穿著部位。`);
-        return;
-      }
-
       let payload:
         | { productId: number; photoIndex: number; idempotencyKey: string; modelImage: string }
         | { productId: number; photoIndex: number; idempotencyKey: string; sourcePublicId: string };
@@ -582,15 +618,42 @@ export default function TryOn() {
       let intent: string | null = null;
       let idempotencyKey: string | null = null;
 
+      // 由第一個 await 之前已鎖住：失敗工作重試要讀原相，雙擊唔可以開兩條收費請求。
+      createInFlightRef.current = true;
       try {
+        if (job && ACTIVE_STATUSES.has(job.status)) {
+          setActionError('呢件仲生成緊，請等完成或失敗後再提交，唔會自動連續收費。');
+          return null;
+        }
+        const laterLineage =
+          job?.lookItems.filter(
+            (item) =>
+              item.stepNumber > job.stepNumber && USAGE_STATUSES.has(item.status) && !isLookItemMediaDeleted(item),
+          ) ?? [];
+        if (job && laterLineage.length > 0) {
+          setActionError('呢一步之後已經有生成，請喺造型紀錄揀返最新一步再追加。');
+          return null;
+        }
+        const blockReason = lineageBlockReason(product, job);
+        if (blockReason) {
+          setActionError(`${blockReason}；兩件商品必須係不同穿著部位。`);
+          return null;
+        }
+
         if (!job || (job.status === 'failed' && job.stepNumber === 1)) {
           let sourceImage = modelImage;
-          if (!sourceImage && job?.status === 'failed' && job.stepNumber === 1 && job.inputUrl) {
-            sourceImage = await privateUrlToDataUri(job.inputUrl);
+          if (!sourceImage && job?.status === 'failed' && job.stepNumber === 1) {
+            // 頁面可能已開超過 signed URL 時效；重試前先取新網址，唔用舊連結碰运气。
+            const refreshed = await jobQuery.refetch();
+            const refreshedJob = refreshed.data;
+            const inputUrl = refreshedJob?.publicId === job.publicId && refreshedJob.status === 'failed'
+              ? refreshedJob.inputUrl
+              : job.inputUrl;
+            if (inputUrl) sourceImage = await privateUrlToDataUri(inputUrl);
           }
           if (!sourceImage) {
             setActionError('請先影一張全身相，或由相簿上傳；相片要頭到腳清晰入鏡。');
-            return;
+            return null;
           }
           intent = `root|${product.id}|${productPhotoIndex}|${intentDigest(sourceImage)}`;
           payload = {
@@ -602,12 +665,12 @@ export default function TryOn() {
         } else if (job.status === 'completed' || job.status === 'failed') {
           if (job.status === 'completed' && job.stepNumber >= access.maxMixSteps) {
             setActionError(`每套造型最多 ${access.maxMixSteps} 件，請開始新一套。`);
-            return;
+            return null;
           }
           const sourcePublicId = job.status === 'completed' ? job.publicId : job.sourcePublicId;
           if (!sourcePublicId) {
             setActionError('搵唔到上一步成功結果，請由第一件衣服重新開始。');
-            return;
+            return null;
           }
           intent = `source|${sourcePublicId}|${product.id}|${productPhotoIndex}`;
           payload = {
@@ -618,83 +681,118 @@ export default function TryOn() {
           };
         } else {
           setActionError('目前狀態未能提交，請重新載入工作紀錄。');
-          return;
+          return null;
         }
 
-        // 回應遺失後用相同 payload 重試會重用同一 key（後台按 requestHash dedupe 返原有工作）；
-        // 成功或操作意圖改變（換一件／換相／換 source）先用新 key，唔會誤用舊 key 觸發 CONFLICT。
-        idempotencyKey =
-          createIntentRef.current?.intent === intent ? createIntentRef.current.key : operationKey();
+        // 已授權第二件會帶固定 key；reload／回應遺失後仍由後台按 requestHash dedupe。
+        idempotencyKey = fixedIdempotencyKey ?? (
+          createIntentRef.current?.intent === intent ? createIntentRef.current.key : operationKey()
+        );
         payload.idempotencyKey = idempotencyKey;
 
-        // 同步鎖＋預先記住 key：即使同一tick雙擊，都唔會用兩個新編號重複建立工作。
-        createInFlightRef.current = true;
+        // 預先記住 key：相同操作意圖嘅網絡重試會由後台 dedupe。
         createIntentRef.current = { intent, key: idempotencyKey };
         const created = await createMutation.mutateAsync(payload);
         createIntentRef.current = null;
-        // logout／換帳號途中舊請求先返嚟：工作仍屬舊帳號，但絕唔將私人 job 寫返入已登出頁面 cache。
-        if (userIdRef.current !== submittingUserId) return;
+        // 即時按提交帳號寫工作編號：就算回應前已 PUSH 離頁、logout 或換帳號，舊帳號下次仍可恢復。
+        // publicId 會按 userId 分隔；getJob／私人 media 另有 owner 檢查，唔會向新帳號披露舊工作。
+        window.sessionStorage.setItem(currentJobStorageKey(submittingUserId), created.publicId);
+        // 已 logout／換帳號就唔將舊私人 job 寫入而家頁面 cache，只保留上述舊帳號恢復線索。
+        if (userIdRef.current !== submittingUserId) return null;
         utils.tryon.getJob.setData({ publicId: created.publicId }, created);
         setCurrentPublicId(created.publicId);
-        setSelectedProductId(null);
-        setPhotoIndex(0);
         stopCamera();
         await utils.tryon.getMyAccess.invalidate();
         notify(`已提交第 ${created.stepNumber} 件商品；生成期間會預留 1 次額度`);
+        return created;
       } catch (error) {
-        if (userIdRef.current !== submittingUserId) return;
+        if (userIdRef.current !== submittingUserId) return null;
         // 只有真正提交過嘅失敗先記住 key，等相同 payload 重試可以重用。
-        if (intent && idempotencyKey) createIntentRef.current = { intent, key: idempotencyKey };
+        if (!fixedIdempotencyKey && intent && idempotencyKey) createIntentRef.current = { intent, key: idempotencyKey };
         setActionError(error instanceof Error ? error.message : '提交失敗，請稍後再試');
         await utils.tryon.getMyAccess.invalidate();
+        return null;
       } finally {
         createInFlightRef.current = false;
       }
     },
-    [access, createMutation, job, modelImage, notify, setCurrentPublicId, stopCamera, userId, utils],
+    [access, createMutation, job, jobQuery, modelImage, notify, setCurrentPublicId, stopCamera, userId, utils],
   );
 
-  const retryFailed = () => {
+  const retryFailed = async () => {
     if (!job || job.status !== 'failed') return;
     const product = products.find((item) => item.id === job.productId);
     if (!product) {
-      setActionError('商品已下架或而家唔合資格，請揀另一件商品重新生成。');
+      if (batchPlan) applyBatchPlan(null);
+      setActionError('商品已下架或而家唔合資格；未提交嘅後續計劃已停止，請揀另一件商品重新生成。');
       return;
     }
     const gallery = galleryOf(product);
     const index = gallery.indexOf(job.productImagePath);
     if (index < 0) {
-      setActionError('商品原圖已更新；請喺商品區重新揀呢件同指定相片，再確認生成。');
-      setSelectedProductId(product.id);
-      setPhotoIndex(0);
+      if (batchPlan) applyBatchPlan(null);
+      setActionError('商品原圖已更新；未提交嘅第 2 件已取消，請重新選相並確認生成。');
+      setSelections([{ productId: product.id, photoIndex: 0 }]);
       return;
     }
-    void generateFor(product, index);
+    const created = await generateFor(product, index);
+    if (created && batchPlan && job.stepNumber === 1) {
+      applyBatchPlan({ ...batchPlan, rootPublicId: created.publicId, paused: false });
+    }
   };
 
   const resetLook = () => {
-    if (createMutation.isPending || createInFlightRef.current) return;
+    if (createMutation.isPending || createInFlightRef.current || batchActionPending) return;
     stopCamera();
     // 明示開始新一套即係新操作意圖；即使揀返同一張相＋同一件，都唔應 dedupe 返舊造型。
     createIntentRef.current = null;
+    autoBatchInFlightRef.current = null;
+    if (userId) {
+      window.sessionStorage.removeItem(currentJobStorageKey(userId));
+      window.sessionStorage.removeItem(batchPlanStorageKey(userId));
+    }
+    setBatchPlanState(null);
+    setSavedJobPublicId(null);
     setCurrentPublicId(null);
     setModelImage(null);
-    setSelectedProductId(null);
-    setPhotoIndex(0);
+    setSelections([]);
     setActionError(null);
     setDeleteArmed(false);
   };
 
+  const continueSavedLook = () => {
+    if (!savedJobPublicId || createMutation.isPending) return;
+    stopCamera();
+    setSelections([]);
+    setModelImage(null);
+    setActionError(null);
+    setCurrentPublicId(savedJobPublicId);
+  };
+
   const deleteCurrentMedia = async () => {
-    if (!job?.canDelete || deleteMutation.isPending) return;
+    // 建立工作或更新已授權計劃途中唔准刪來源：否則第二件可能照扣額，或失敗後復活指向已刪 root 嘅計劃。
+    if (
+      !job?.canDelete ||
+      deleteMutation.isPending ||
+      createMutation.isPending ||
+      createInFlightRef.current ||
+      autoBatchInFlightRef.current ||
+      batchActionPending
+    ) return;
     setActionError(null);
     try {
       await deleteMutation.mutateAsync({ publicId: job.publicId });
       const parentId = job.sourcePublicId;
+      applyBatchPlan(null);
       await utils.tryon.getJob.reset({ publicId: job.publicId });
       setCurrentPublicId(parentId);
-      if (parentId) await utils.tryon.getJob.invalidate({ publicId: parentId });
-      else setModelImage(null);
+      if (parentId) {
+        await utils.tryon.getJob.invalidate({ publicId: parentId });
+      } else {
+        setModelImage(null);
+        setSavedJobPublicId(null);
+        if (userId) window.sessionStorage.removeItem(currentJobStorageKey(userId));
+      }
       setDeleteArmed(false);
       notify(parentId ? '呢一步私人圖片已刪除，並返回上一步' : '呢次原相同結果已即時刪除');
     } catch (error) {
@@ -772,30 +870,149 @@ export default function TryOn() {
     return productsToShare.length ? buildTryOnWhatsAppUrl(productsToShare, window.location.origin) : null;
   }, [job]);
 
+  const creditsPerGeneration = access?.creditsPerGeneration ?? 3;
+  const selectionCount = selections.length;
+  const totalCredits = selectionCount * creditsPerGeneration;
+  const selectionLocked = Boolean(batchPlan) || jobActive || createMutation.isPending;
+  const quotaBlockReason = access && selectionCount > 0 && access.remainingToday < selectionCount
+    ? `今日個人剩額只有 ${access.remainingToday} 次，唔足以確認 ${selectionCount} 次生成`
+    : access && selectionCount > 0 && access.siteRemainingToday < selectionCount
+      ? `全站今日剩額只有 ${access.siteRemainingToday} 次，唔足以確認 ${selectionCount} 次生成`
+      : null;
   const submitBlockedReason = !access?.allowed
     ? access?.reason ?? '權限資料載入中'
-    : jobActive
-      ? '生成進行中'
-      : hasLaterLineage
-        ? '請揀最新一步'
-        : !selectedProduct
-          ? '請先揀商品'
-          : selectedBlockReason
-            ? selectedBlockReason
-            : !job && !modelImage
-              ? '請先準備全身相'
-              : job?.status === 'completed' && job.stepNumber >= access.maxMixSteps
-                ? `每套最多 ${access.maxMixSteps} 件`
-                : null;
+    : batchPlan
+      ? batchPlan.paused
+        ? '已確認嘅第 2 件暫停提交；請先處理錯誤或明確繼續'
+        : '已確認嘅兩件計劃正在順序處理'
+      : jobActive
+        ? '生成進行中'
+        : hasLaterLineage
+          ? '請揀最新一步'
+          : !selectionCount
+            ? '請先揀商品'
+            : missingSelectedProduct
+              ? '有商品已下架，請移除後重新選擇'
+              : selectedBlockReason
+                ? selectedBlockReason
+                : !job && !modelImage
+                  ? '請先準備全身相'
+                  : job?.status === 'completed' && job.stepNumber >= access.maxMixSteps
+                    ? `每套最多 ${access.maxMixSteps} 件`
+                    : quotaBlockReason;
   const canSubmit = Boolean(
-    selectedProduct &&
-      access?.allowed &&
-      !createMutation.isPending &&
-      !jobActive &&
-      !hasLaterLineage &&
-      !selectedBlockReason &&
-      !submitBlockedReason,
+    access?.allowed && selectionCount && !createMutation.isPending && !submitBlockedReason,
   );
+
+  const confirmGeneration = async () => {
+    if (!canSubmit || !userId) return;
+    const confirmed = selections.map((item) => ({ ...item }));
+    const first = selectedItems[0];
+    if (!first?.product) return;
+    const created = await generateFor(first.product, first.selection.photoIndex);
+    if (!created) return;
+    const second = confirmed[1];
+    if (confirmed.length === 2 && canEditRoot && created.stepNumber === 1 && second) {
+      applyBatchPlan({
+        version: 1,
+        userId,
+        rootPublicId: created.publicId,
+        second,
+        idempotencyKey: operationKey(),
+        paused: false,
+      });
+      notify(`已確認兩件：第 1 件已提交；成功後先提交第 2 件，兩次合共 ${2 * creditsPerGeneration} credits`);
+    } else {
+      setSelections([]);
+    }
+  };
+
+  useEffect(() => {
+    const plan = batchPlan;
+    if (
+      !plan ||
+      plan.paused ||
+      !userId ||
+      createMutation.isPending ||
+      !job ||
+      job.publicId !== plan.rootPublicId ||
+      job.status !== 'completed' ||
+      job.stepNumber !== 1 ||
+      autoBatchInFlightRef.current === plan.idempotencyKey
+    ) {
+      return;
+    }
+    const product = products.find((item) => item.id === plan.second.productId);
+    if (!product) {
+      applyBatchPlan({ ...plan, paused: true });
+      setActionError('第 2 件商品已下架或唔合資格，後續提交已暂停；已完成嘅第 1 件不受影響。');
+      return;
+    }
+    if (!access?.allowed || access.remainingToday < 1 || access.siteRemainingToday < 1) {
+      applyBatchPlan({ ...plan, paused: true });
+      setActionError('第 2 件提交前額度已有變化，所以已暂停；請重新讀取額度後明確繼續。');
+      return;
+    }
+    const submittingUserId = userId;
+    autoBatchInFlightRef.current = plan.idempotencyKey;
+    void generateFor(product, plan.second.photoIndex, plan.idempotencyKey)
+      .then((created) => {
+        if (userIdRef.current !== submittingUserId) return;
+        const currentPlan = batchPlanRef.current;
+        // 回應途中如計劃已被刪除、取消或換咗，唔可以用舊 closure 清新計劃或復活舊計劃。
+        if (currentPlan?.idempotencyKey !== plan.idempotencyKey) return;
+        if (created) {
+          applyBatchPlan(null);
+          setSelections([]);
+          notify(`兩件已全部提交，各自獨立生成；合共 ${2 * creditsPerGeneration} credits`);
+        } else {
+          applyBatchPlan({ ...currentPlan, paused: true });
+        }
+      })
+      .finally(() => {
+        if (autoBatchInFlightRef.current === plan.idempotencyKey) autoBatchInFlightRef.current = null;
+      });
+  }, [access, applyBatchPlan, batchPlan, createMutation.isPending, creditsPerGeneration, generateFor, job, notify, products, userId]);
+
+  const resumeBatch = async () => {
+    const plan = batchPlan;
+    if (!plan || batchActionPending || createMutation.isPending || autoBatchInFlightRef.current) return;
+    setBatchActionPending(true);
+    setActionError(null);
+    try {
+      // 暂停可能跨過額度重置或商品上下架；明確繼續時先刷新兩項，唔用舊 cache 即再暂停。
+      await Promise.all([
+        utils.tryon.getMyAccess.invalidate(),
+        utils.tryon.listProducts.invalidate(),
+      ]);
+      if (userIdRef.current !== plan.userId) return;
+      applyBatchPlan({ ...plan, paused: false });
+    } catch {
+      setActionError('未能更新額度或商品資料；第 2 件仍然暂停，請稍後再試。');
+    } finally {
+      setBatchActionPending(false);
+    }
+  };
+
+  const cancelPendingSecond = () => {
+    // create 已發出就唔可以假裝取消；等後台返回後會清楚顯示實際已提交状态。
+    if (createMutation.isPending || autoBatchInFlightRef.current || batchActionPending) return;
+    applyBatchPlan(null);
+    setSelections([]);
+    setActionError(null);
+    notify('已取消未提交嘅第 2 件；已提交或已完成嘅工作不受影響');
+  };
+
+  const submitAction = job?.status === 'completed'
+    ? '確認追加'
+    : job?.status === 'failed'
+      ? '確認重新提交'
+      : selectionCount === 2
+        ? '一次確認生成'
+        : '確認生成';
+  const submitLabel = selectionCount === 0
+    ? '請先揀商品'
+    : `${submitAction} ${selectionCount} 件（${selectionCount} 次生成 · 共 ${totalCredits} credits）`;
 
   const originalPreview = canEditRoot && modelImage
     ? modelImage
@@ -840,7 +1057,7 @@ export default function TryOn() {
                 <b>{String(step).padStart(2, '0')}</b>
                 <span>
                   {step === 1 ? '全身相' : step === 2 ? '真商品' : '對照分享'}
-                  <small>{step === 1 ? '前／後鏡頭／相簿' : step === 2 ? '逐件確認' : '24 小時私人保留'}</small>
+                  <small>{step === 1 ? '前／後鏡頭／相簿' : step === 2 ? '可即場揀齊兩件' : '24 小時私人保留'}</small>
                 </span>
                 <i aria-hidden="true">{flowStep > step ? <Check size={14} /> : null}</i>
               </li>
@@ -915,6 +1132,19 @@ export default function TryOn() {
             </div>
           )}
 
+          {savedJobPublicId && !currentPublicId && (
+            <section className="tryon-continue-look" aria-label="繼續舊造型">
+              <div>
+                <p className="tryon-kicker">NEW LOOK BY DEFAULT</p>
+                <h2>而家係新一套，唔會自動追加舊造型</h2>
+                <p>你可以重新影相及揀商品；如想查看或明確追加舊工作，先撳「繼續舊造型」。</p>
+              </div>
+              <button type="button" className="tryon-secondary-button" onClick={continueSavedLook}>
+                <RotateCcw size={17} />繼續舊造型
+              </button>
+            </section>
+          )}
+
           <div className="tryon-workbench">
             <section className="tryon-photo-panel" aria-labelledby="tryon-photo-title">
               <div className="tryon-panel-heading">
@@ -954,7 +1184,7 @@ export default function TryOn() {
                       <span><Check size={14} />光線平均</span>
                       <span><Check size={14} />冇遮擋</span>
                     </div>
-                    <p>前鏡自拍都得，將手機拎遠少少。系統只檢查格式及像素，唔會假稱能自動判斷全身。</p>
+                    <p>前鏡、後鏡或相簿相片都得，唔使專業打燈。生成前會做簡單人像及極暗檢查；需要換相時，未送 AI 生成，亦未預留或扣除 credits。</p>
                   </div>
                 ) : null}
                 {cameraState === 'opening' && <span className="tryon-stage-badge"><LoaderCircle className="tryon-spin" size={15} />開緊鏡頭…</span>}
@@ -1033,10 +1263,10 @@ export default function TryOn() {
 
             <section className="tryon-product-panel" aria-labelledby="tryon-product-title">
               <div className="tryon-panel-heading">
-                <div><p className="tryon-kicker">02 · REAL PRODUCTS</p><h2 id="tryon-product-title">揀一件，確認一件</h2></div>
+                <div><p className="tryon-kicker">02 · REAL PRODUCTS</p><h2 id="tryon-product-title">揀一件或兩件，一次確認</h2></div>
                 <span className="tryon-count">{products.length} 件合資格</span>
               </div>
-              <p className="tryon-product-intro">每套最多 {access?.maxMixSteps ?? 3} 件；相同穿著部位唔可以重複，戒指＋耳環可以。每次提交都係獨立生成、獨立扣 1 次額度，唔會自動追加。</p>
+              <p className="tryon-product-intro">第一次生成前可即場揀齊兩件不同穿著部位，各自揀商品相片及調換次序。兩件仍係兩次生成、各用 1 次額度及 {creditsPerGeneration} credits；只揀一件就只做一次。每套最多 {access?.maxMixSteps ?? 3} 件，未確認唔會自動追加。</p>
 
               <label className="tryon-search">
                 <Search size={18} aria-hidden="true" />
@@ -1059,7 +1289,8 @@ export default function TryOn() {
                 <div className="tryon-contact-sheet">
                   {filteredProducts.map((product) => {
                     const blockReason = lineageBlockReason(product, job);
-                    const selected = selectedProductId === product.id;
+                    const selectedIndex = selections.findIndex((item) => item.productId === product.id);
+                    const selected = selectedIndex >= 0;
                     const gallery = galleryOf(product);
                     return (
                       <button
@@ -1067,18 +1298,24 @@ export default function TryOn() {
                         key={product.id}
                         className="tryon-product-card"
                         data-selected={selected}
-                        disabled={Boolean(blockReason) || jobActive || hasLaterLineage}
+                        disabled={Boolean(blockReason) || selectionLocked || hasLaterLineage}
                         onClick={() => {
-                          setSelectedProductId(product.id);
-                          setPhotoIndex(0);
-                          setActionError(null);
+                          const result = addTryOnProductSelection({
+                            selections,
+                            products,
+                            product,
+                            kindLabel: kindLabel(product.tryOnKind),
+                            maxSelections: selectionLimit,
+                          });
+                          setSelections(result.selections);
+                          setActionError(result.ok ? null : result.reason);
                         }}
                         aria-pressed={selected}
                       >
                         <span className="tryon-product-image-wrap">
                           <img src={gallery[0]} alt={product.name} loading="lazy" />
                           <span>{kindLabel(product.tryOnKind)}</span>
-                          {selected && <i aria-hidden="true"><Check size={15} /></i>}
+                          {selected && <i aria-label={`第 ${selectedIndex + 1} 次生成`}>{selectedIndex + 1}</i>}
                         </span>
                         <strong>{product.name}</strong>
                         <small>{product.sku}</small>
@@ -1092,26 +1329,70 @@ export default function TryOn() {
                 <div className="tryon-empty-products"><Shirt size={32} /><p>{products.length ? '搵唔到符合篩選嘅商品' : '暫時冇合資格商品；生活用品、護膚品及不明飾品唔會出現喺度。'}</p></div>
               )}
 
-              {selectedProduct && (
-                <div className="tryon-selected-product">
-                  <div className="tryon-selected-heading">
-                    <div><p className="tryon-kicker">SELECTED · {kindLabel(selectedProduct.tryOnKind)}</p><h3>{selectedProduct.name}</h3><p>{selectedProduct.sku} · {money(selectedProduct.discountPrice ?? selectedProduct.price)}</p></div>
-                    <button type="button" onClick={() => setSelectedProductId(null)} aria-label="取消選擇商品"><X size={18} /></button>
+              {selectedItems.length > 0 && (
+                <div className="tryon-selection-list" aria-label="已確認前嘅商品及生成次序">
+                  {selectedItems.map(({ selection, product }, index) => {
+                    if (!product) return null;
+                    const gallery = galleryOf(product);
+                    return (
+                      <div className="tryon-selected-product" key={product.id}>
+                        <div className="tryon-selected-heading">
+                          <div>
+                            <p className="tryon-kicker">第 {index + 1} 次生成 · {kindLabel(product.tryOnKind)}</p>
+                            <h3>{product.name}</h3>
+                            <p>{product.sku} · {money(product.discountPrice ?? product.price)} · {creditsPerGeneration} credits</p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={selectionLocked}
+                            onClick={() => setSelections(selections.filter((item) => item.productId !== product.id))}
+                            aria-label={`移除第 ${index + 1} 件 ${product.name}`}
+                          ><X size={18} /></button>
+                        </div>
+                        {gallery.length > 1 && (
+                          <div className="tryon-photo-picker" aria-label={`選擇 ${product.name} 商品原圖`}>
+                            {gallery.map((src, photoIndex) => (
+                              <button
+                                type="button"
+                                key={`${src}-${photoIndex}`}
+                                data-active={selection.photoIndex === photoIndex}
+                                disabled={selectionLocked}
+                                onClick={() => setSelections(selections.map((item) => item.productId === product.id ? { ...item, photoIndex } : item))}
+                                aria-label={`${product.name} 用第 ${photoIndex + 1} 張商品原圖`}
+                                aria-pressed={selection.photoIndex === photoIndex}
+                              ><img src={src} alt="" /></button>
+                            ))}
+                          </div>
+                        )}
+                        {selectedItems.length === 2 && (
+                          <div className="tryon-order-controls">
+                            <button type="button" disabled={selectionLocked || index === 0} onClick={() => setSelections(moveTryOnProductSelection(selections, index, -1))}>前移</button>
+                            <span>第 {index + 1} 次生成</span>
+                            <button type="button" disabled={selectionLocked || index === selectedItems.length - 1} onClick={() => setSelections(moveTryOnProductSelection(selections, index, 1))}>後移</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <p className="tryon-selection-total">共 {selectionCount} 次生成 · 每次 {creditsPerGeneration} credits · 合共 {totalCredits} credits</p>
+                </div>
+              )}
+
+              {batchPlan && (
+                <div className="tryon-batch-plan" role="status">
+                  <div>
+                    <p className="tryon-kicker">AUTHORIZED TWO-STEP PLAN</p>
+                    <strong>第 2 件已喺第一次確認時授權，但只會喺第 1 件成功後提交</strong>
+                    <p>{batchPlan.paused ? '目前暂停，唔會自動提交。' : '計劃生效中；每次仍係獨立生成及獨立額度。'}</p>
                   </div>
-                  {selectedGallery.length > 1 && (
-                    <div className="tryon-photo-picker" aria-label="選擇商品原圖">
-                      {selectedGallery.map((src, index) => (
-                        <button
-                          type="button"
-                          key={`${src}-${index}`}
-                          data-active={photoIndex === index}
-                          onClick={() => setPhotoIndex(index)}
-                          aria-label={`用第 ${index + 1} 張商品原圖`}
-                          aria-pressed={photoIndex === index}
-                        ><img src={src} alt="" /></button>
-                      ))}
-                    </div>
-                  )}
+                  <div className="tryon-batch-actions">
+                    {batchPlan.paused && job?.publicId === batchPlan.rootPublicId && job.status === 'completed' && (
+                      <button type="button" className="tryon-primary-button" onClick={() => void resumeBatch()} disabled={batchActionPending || createMutation.isPending}>
+                        {batchActionPending ? '更新額度及商品中…' : '繼續已確認第 2 件'}
+                      </button>
+                    )}
+                    <button type="button" className="tryon-text-button" onClick={cancelPendingSecond} disabled={batchActionPending || createMutation.isPending}>取消未提交第 2 件</button>
+                  </div>
                 </div>
               )}
 
@@ -1120,17 +1401,12 @@ export default function TryOn() {
                   type="button"
                   className="tryon-generate-button"
                   disabled={!canSubmit}
-                  onClick={() => selectedProduct && void generateFor(selectedProduct, photoIndex)}
+                  onClick={() => void confirmGeneration()}
                 >
                   {createMutation.isPending ? <LoaderCircle className="tryon-spin" size={19} /> : <Sparkles size={19} />}
-                  {createMutation.isPending
-                    ? '正在建立工作…'
-                    : job?.status === 'failed'
-                      ? '確認重新提交生成呢件'
-                      : job?.status === 'completed'
-                        ? '確認追加呢件（再用 1 次額度）'
-                        : '確認生成呢件（用 1 次額度）'}
+                  {createMutation.isPending ? '正在建立工作…' : submitLabel}
                 </button>
+                <p>每件各用 1 次額度；兩件會順序生成，唔係兩件合併成一次供應商生成。</p>
                 {submitBlockedReason && <p role="status">{submitBlockedReason}</p>}
               </div>
             </section>
@@ -1150,7 +1426,12 @@ export default function TryOn() {
                     key={item.publicId}
                     data-active={item.publicId === job.publicId}
                     data-status={item.status}
-                    onClick={() => setCurrentPublicId(item.publicId)}
+                    onClick={() => {
+                      if (batchPlan && item.publicId !== batchPlan.rootPublicId) {
+                        applyBatchPlan({ ...batchPlan, paused: true });
+                      }
+                      setCurrentPublicId(item.publicId);
+                    }}
                   >
                     <span>{String(item.stepNumber).padStart(2, '0')}</span>
                     <strong>{item.productName}</strong>
@@ -1168,7 +1449,7 @@ export default function TryOn() {
                     <p className="tryon-kicker">ASYNC GENERATION</p>
                     <h3>{job.status === 'queued' ? '已收到工作，正在排隊' : 'AI 正在生成穿著效果'}</h3>
                     <p>畫面會自動更新，唔使一直開住鏡頭。冇可靠百分比，所以動畫只代表仍在處理，唔會假裝顯示完成進度；同一分頁重新整理亦會用工作編號恢復。</p>
-                    <small>本次預留 {job.credits} credits · 唔會自動生成下一件</small>
+                    <small>本次預留 {job.credits} credits · {batchPlan ? '第 2 件已獲確認，只會喺呢件成功後提交' : '唔會自動生成下一件'}</small>
                   </div>
                 </div>
               )}
@@ -1188,7 +1469,7 @@ export default function TryOn() {
                     )}
                     <p className="tryon-failed-note">失敗生成唔扣個人每日額度；如供應商結果不確定，估算成本會保留待核實，唔會當成免費。</p>
                   </div>
-                  <button type="button" className="tryon-primary-button" onClick={retryFailed} disabled={createMutation.isPending}>
+                  <button type="button" className="tryon-primary-button" onClick={() => void retryFailed()} disabled={createMutation.isPending}>
                     <RefreshCcw size={17} />{job.failureCode === 'PROVIDER_AUTH' ? '設定修正後重試' : '重試呢件'}
                   </button>
                 </div>
@@ -1196,8 +1477,7 @@ export default function TryOn() {
 
               {job.status === 'completed' && (
                 <>
-                  <p className="tryon-swipe-hint">左右滑動，對照原相、商品同 AI 效果 →</p>
-                  <div className="tryon-comparison">
+                  <div className="tryon-comparison tryon-source-comparison" aria-label="最初原相及商品原圖對照">
                     <figure>
                       <div>{job.lookOriginalUrl ? <img src={job.lookOriginalUrl} alt="最初全身原相" onError={refreshSignedImageUrls} /> : <span>原相已刪除或到期</span>}</div>
                       <figcaption><b>01</b>最初原相<small>只作私人對照</small></figcaption>
@@ -1206,11 +1486,24 @@ export default function TryOn() {
                       <div><img src={job.productImagePath} alt={`${job.productName} 商品原圖`} /></div>
                       <figcaption><b>02</b>商品原圖<small>{job.productName} · {job.productSku}</small></figcaption>
                     </figure>
-                    <figure className="tryon-result-figure">
-                      <div>{job.outputUrl && !job.mediaDeleted ? <img src={job.outputUrl} alt={`${job.productName} AI 試穿視覺預覽`} onError={refreshSignedImageUrls} /> : <span>結果已刪除或到期</span>}</div>
-                      <figcaption><b>03</b>AI 試穿預覽<small>第 {job.stepNumber} 件 · 生成時商品快照</small></figcaption>
-                    </figure>
                   </div>
+
+                  <figure className="tryon-result-figure" aria-label="獨立 AI 試穿成果">
+                    <div className="tryon-result-frame">
+                      {job.outputUrl && !job.mediaDeleted ? (
+                        <>
+                          <img src={job.outputUrl} alt={`${job.productName} AI 試穿視覺預覽，右上角有 RedCode 水印`} onError={refreshSignedImageUrls} />
+                          <i className="tryon-result-spark tryon-result-spark-one" aria-hidden="true" />
+                          <i className="tryon-result-spark tryon-result-spark-two" aria-hidden="true" />
+                        </>
+                      ) : <span>結果已刪除或到期</span>}
+                    </div>
+                    <figcaption>
+                      <b>03</b>
+                      <span>AI 試穿預覽<small>第 {job.stepNumber} 件 · 生成時商品快照 · 右上角 RedCode 透明水印</small></span>
+                      <strong>YOUR REDCODE LOOK</strong>
+                    </figcaption>
+                  </figure>
 
                   <div className="tryon-result-meta">
                     <div><Clock3 size={17} /><p>私人圖片保留至 <strong>{expiryLabel(job.expiresAt)}</strong>（香港時間），逾期或即時刪除後唔可以再下載。</p></div>
@@ -1218,7 +1511,7 @@ export default function TryOn() {
                   </div>
 
                   <div className="tryon-share-box">
-                    <div><p className="tryon-kicker">DOWNLOAD &amp; SHARE</p><h3>帶走效果，講清楚係 AI 試穿</h3><p>分享文案會列晒呢一步之前成功加入嘅商品：品名、貨號、生成時價錢及公開商品網址；兩件就兩組，三件就三組。</p></div>
+                    <div><p className="tryon-kicker">DOWNLOAD &amp; SHARE</p><h3>帶走效果，講清楚係 AI 試穿</h3><p>頁面、下載 PNG 及支援嘅 Web Share 圖片都帶右上角 RedCode 透明水印。分享文案會列晒成功加入嘅商品：品名、貨號、生成時價錢及公開商品網址；兩件就兩組，三件就三組。</p></div>
                     <div className="tryon-share-actions">
                       <button type="button" className="tryon-secondary-button" onClick={() => void downloadResult()} disabled={!job.outputUrl || job.mediaDeleted || busyAction !== null}>
                         {busyAction === 'download' ? <LoaderCircle className="tryon-spin" size={18} /> : <Download size={18} />}下載 PNG
@@ -1241,11 +1534,11 @@ export default function TryOn() {
 
               <div className="tryon-delete-zone">
                 <p><Images size={16} />要刪除較早步驟，可先喺上面造型紀錄揀返嗰一步。呢度只刪目前步驟，唔會假稱成套已刪。</p>
-                {job.canDelete && !deleteArmed && <button type="button" className="tryon-text-button" onClick={() => setDeleteArmed(true)}><Trash2 size={16} />即時刪除呢步私人圖片</button>}
+                {job.canDelete && !deleteArmed && <button type="button" className="tryon-text-button" onClick={() => setDeleteArmed(true)} disabled={deleteMutation.isPending || createMutation.isPending || batchActionPending}><Trash2 size={16} />即時刪除呢步私人圖片</button>}
                 {deleteArmed && (
                   <div className="tryon-delete-confirm" role="alert">
                     <span>確定刪除第 {job.stepNumber} 步嘅輸入及結果？呢個動作不能復原。</span>
-                    <button type="button" onClick={() => void deleteCurrentMedia()} disabled={deleteMutation.isPending}>{deleteMutation.isPending ? '刪除中…' : '確認刪除'}</button>
+                    <button type="button" onClick={() => void deleteCurrentMedia()} disabled={deleteMutation.isPending || createMutation.isPending || batchActionPending}>{deleteMutation.isPending ? '刪除中…' : createMutation.isPending || batchActionPending ? '工作建立中…' : '確認刪除'}</button>
                     <button type="button" onClick={() => setDeleteArmed(false)}>取消</button>
                   </div>
                 )}
@@ -1272,6 +1565,7 @@ const TRYON_CSS = /* css */ `
     --studio-muted: #5A5180;
     --studio-line: rgba(10, 6, 20, .16);
     --studio-pink: #D60047;
+    --studio-gold: #f5c036;
     min-height: 100vh;
     min-height: 100dvh;
     padding: 72px clamp(18px, 4vw, 56px) 96px;
@@ -1310,6 +1604,10 @@ const TRYON_CSS = /* css */ `
   .tryon-primary-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; margin-top: 18px; padding: 0 24px; background: var(--studio-ink); color: var(--studio-paper); text-decoration: none; font-weight: 700; }
   .tryon-account-strip { max-width: 1380px; margin: 38px auto 0; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
   .tryon-account-strip h2 { margin: 6px 0 0; font-family: 'Noto Serif TC', serif; font-size: 26px; }
+  .tryon-continue-look { max-width: 1380px; margin: 24px auto 0; padding: 22px 0; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-top: 1px solid var(--studio-ink); border-bottom: 1px solid var(--studio-line); }
+  .tryon-continue-look h2 { margin: 6px 0; font-family: 'Noto Serif TC', serif; font-size: 22px; }
+  .tryon-continue-look p:not(.tryon-kicker) { margin: 0; color: var(--studio-muted); font-size: 13px; line-height: 1.75; }
+  .tryon-continue-look > button { flex: 0 0 auto; }
   .tryon-quota-group { text-align: right; }
   .tryon-quota-group > p:last-child { margin: 2px 0 0; color: var(--studio-muted); font-size: 12px; }
   .tryon-quota { margin: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -1356,14 +1654,16 @@ const TRYON_CSS = /* css */ `
   .tryon-product-image-wrap { position: relative; display: block; aspect-ratio: 4 / 5; overflow: hidden; background: rgba(10,6,20,.06); }
   .tryon-product-image-wrap > img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .tryon-product-image-wrap > span { position: absolute; left: 7px; top: 7px; padding: 3px 6px; background: var(--studio-paper); color: var(--studio-ink); font-size: 10px; }
-  .tryon-product-image-wrap > i { position: absolute; right: 7px; top: 7px; width: 25px; height: 25px; display: grid; place-items: center; background: var(--studio-pink); color: var(--studio-paper); border-radius: 50%; }
+  .tryon-product-image-wrap > i { position: absolute; right: 7px; top: 7px; width: 25px; height: 25px; display: grid; place-items: center; background: var(--studio-pink); color: var(--studio-paper); border-radius: 50%; font-family: 'DM Mono', monospace; font-size: 12px; font-style: normal; font-weight: 700; }
   .tryon-product-card > strong { display: -webkit-box; margin-top: 9px; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 14px; line-height: 1.5; }
   .tryon-product-card > small { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-muted); font-family: 'DM Mono', monospace; font-size: 10px; }
   .tryon-product-price { display: block; margin-top: 4px; color: var(--studio-pink); font-family: 'DM Mono', monospace; font-size: 13px; }
   .tryon-product-card > em { display: block; margin-top: 4px; color: var(--studio-muted); font-size: 10px; font-style: normal; }
   .tryon-empty-products { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--studio-muted); text-align: center; }
   .tryon-empty-products p { max-width: 420px; margin: 0; font-size: 13px; line-height: 1.8; }
-  .tryon-selected-product { margin-top: 20px; padding: 16px 0; border-top: 1px solid var(--studio-ink); border-bottom: 1px solid var(--studio-line); }
+  .tryon-selection-list { margin-top: 20px; border-top: 1px solid var(--studio-ink); }
+  .tryon-selected-product { margin: 0; padding: 16px 0; border-bottom: 1px solid var(--studio-line); }
+  .tryon-selection-total { margin: 0; padding: 13px 0; color: var(--studio-ink); font-family: 'DM Mono', 'Noto Sans TC', monospace; font-size: 12px; line-height: 1.7; }
   .tryon-selected-heading { display: flex; justify-content: space-between; gap: 16px; }
   .tryon-selected-heading h3 { margin: 5px 0 0; font-family: 'Noto Serif TC', serif; font-size: 19px; }
   .tryon-selected-heading p:not(.tryon-kicker) { margin: 4px 0 0; color: var(--studio-muted); font-size: 12px; }
@@ -1372,6 +1672,13 @@ const TRYON_CSS = /* css */ `
   .tryon-photo-picker button { flex: 0 0 auto; width: 54px; height: 64px; padding: 0; border: 1px solid var(--studio-line); background: none; cursor: pointer; }
   .tryon-photo-picker button[data-active='true'] { border: 2px solid var(--studio-pink); }
   .tryon-photo-picker img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tryon-order-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+  .tryon-order-controls button { min-width: 64px; min-height: 44px; border: 1px solid var(--studio-line); background: transparent; color: var(--studio-ink); cursor: pointer; }
+  .tryon-order-controls span { color: var(--studio-muted); font-size: 11px; }
+  .tryon-batch-plan { margin-top: 20px; padding: 18px 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid var(--studio-gold); border-bottom: 1px solid var(--studio-gold); background: rgba(245, 192, 54, .07); }
+  .tryon-batch-plan strong { display: block; margin-top: 6px; font-size: 13px; line-height: 1.65; }
+  .tryon-batch-plan p:not(.tryon-kicker) { margin: 4px 0 0; color: var(--studio-muted); font-size: 12px; }
+  .tryon-batch-actions { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
   .tryon-submit-zone { margin-top: 18px; }
   .tryon-generate-button { width: 100%; min-height: 52px; border-color: var(--studio-pink); background: var(--studio-pink); color: var(--studio-paper); font-size: 14px; }
   .tryon-submit-zone > p { margin: 8px 0 0; color: var(--studio-muted); font-size: 11px; text-align: center; }
@@ -1395,15 +1702,28 @@ const TRYON_CSS = /* css */ `
   .tryon-failed > svg { flex: 0 0 auto; color: var(--studio-pink); }
   .tryon-failed > div { flex: 1; }
   .tryon-failed > button { flex: 0 0 auto; }
-  .tryon-comparison { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 30px; }
+  .tryon-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; max-width: 920px; margin-top: 30px; }
   .tryon-comparison figure { min-width: 0; margin: 0; }
   .tryon-comparison figure > div { aspect-ratio: 3 / 4; display: grid; place-items: center; overflow: hidden; background: rgba(10,6,20,.06); }
   .tryon-comparison figure > div > span { padding: 20px; color: var(--studio-muted); font-size: 13px; text-align: center; }
   .tryon-comparison img { display: block; width: 100%; height: 100%; object-fit: contain; }
-  .tryon-result-figure > div { outline: 2px solid var(--studio-pink); outline-offset: -2px; }
   .tryon-comparison figcaption { display: grid; grid-template-columns: 30px 1fr; padding: 13px 0; border-bottom: 1px solid var(--studio-line); font-size: 13px; font-weight: 700; }
   .tryon-comparison figcaption b { grid-row: 1 / 3; font-family: 'DM Mono', monospace; color: var(--studio-pink); font-size: 11px; }
   .tryon-comparison figcaption small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-muted); font-size: 10px; font-weight: 400; }
+  .tryon-result-figure { min-width: 0; margin: 44px 0 0; }
+  .tryon-result-frame { position: relative; isolation: isolate; height: min(82vh, 900px); min-height: 540px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--studio-gold); background: var(--studio-ink); box-shadow: 0 0 0 1px rgba(245,192,54,.16), 0 0 34px rgba(245,192,54,.22), 0 22px 60px rgba(10,6,20,.13); }
+  .tryon-result-frame::before { content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none; background: linear-gradient(108deg, transparent 34%, rgba(245,192,54,.03) 43%, rgba(255,247,232,.2) 50%, rgba(245,192,54,.03) 57%, transparent 66%); background-size: 260% 100%; animation: tryon-gold-sheen 8s linear infinite; }
+  .tryon-result-frame > img { position: relative; z-index: 1; display: block; width: 100%; height: 100%; object-fit: contain; }
+  .tryon-result-frame > span { padding: 24px; color: var(--studio-paper); font-size: 13px; }
+  .tryon-result-spark { position: absolute; z-index: 3; width: 13px; height: 13px; background: var(--studio-gold); clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%); opacity: 0; animation: tryon-gold-spark 5.4s ease-in-out infinite; pointer-events: none; }
+  .tryon-result-spark-one { left: 7%; top: 9%; }
+  .tryon-result-spark-two { right: 8%; bottom: 12%; width: 9px; height: 9px; animation-delay: -2.7s; }
+  .tryon-result-figure figcaption { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 17px 0; border-bottom: 1px solid rgba(245,192,54,.65); font-size: 15px; font-weight: 700; }
+  .tryon-result-figure figcaption > b { font-family: 'DM Mono', monospace; color: var(--studio-pink); font-size: 11px; }
+  .tryon-result-figure figcaption small { display: block; margin-top: 3px; color: var(--studio-muted); font-size: 11px; font-weight: 400; line-height: 1.6; }
+  .tryon-result-figure figcaption > strong { color: var(--studio-muted); font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .14em; font-weight: 500; }
+  @keyframes tryon-gold-sheen { from { background-position: 130% 0; } to { background-position: -130% 0; } }
+  @keyframes tryon-gold-spark { 0%, 72%, 100% { opacity: 0; transform: scale(.65); } 80% { opacity: .9; transform: scale(1); } 88% { opacity: .18; transform: scale(.8); } }
   .tryon-result-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--studio-line); }
   .tryon-result-meta > div { display: flex; gap: 9px; align-items: flex-start; }
   .tryon-result-meta svg { flex: 0 0 auto; margin-top: 2px; color: var(--studio-pink); }
@@ -1489,10 +1809,14 @@ const TRYON_CSS = /* css */ `
     .tryon-step-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .tryon-step-list li { display: block; }
     .tryon-step-list small { min-height: 34px; }
-    .tryon-swipe-hint { display: block; margin: 20px 0 -12px; color: var(--studio-muted); font-size: 12px; }
-    .tryon-comparison { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: min(78vw, 340px); gap: 12px; overflow-x: auto; padding: 4px 4px 16px; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; }
-    .tryon-comparison figure { scroll-snap-align: start; }
+    .tryon-comparison { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; overflow: visible; padding: 4px 0 0; }
     .tryon-comparison figure > div { aspect-ratio: 4 / 5; border-radius: 14px; }
+    .tryon-result-figure { margin-top: 34px; }
+    .tryon-result-frame { height: auto; min-height: 0; aspect-ratio: 4 / 5; }
+    .tryon-result-figure figcaption { grid-template-columns: 28px minmax(0, 1fr); }
+    .tryon-result-figure figcaption > strong { display: none; }
+    .tryon-continue-look, .tryon-batch-plan { align-items: flex-start; flex-direction: column; }
+    .tryon-batch-actions { align-items: flex-start; }
     .tryon-result-meta { grid-template-columns: 1fr; gap: 10px; }
     .tryon-delete-zone { flex-direction: column; }
     .tryon-delete-zone > .tryon-text-button { align-self: flex-start; white-space: normal; text-align: left; }
@@ -1526,6 +1850,8 @@ const TRYON_CSS = /* css */ `
     .tryon-contact-sheet { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 590px; }
     .tryon-product-card > strong { font-size: 14px; }
     .tryon-result-section { margin-top: 48px; }
+    .tryon-result-frame { aspect-ratio: 3 / 4; }
+    .tryon-continue-look > button, .tryon-batch-actions, .tryon-batch-actions > button { width: 100%; }
     .tryon-result-heading { flex-direction: column; gap: 8px; }
     .tryon-progress, .tryon-failed { flex-direction: column; align-items: flex-start; padding: 22px; }
     .tryon-progress-mark { width: 54px; height: 54px; }
@@ -1537,7 +1863,9 @@ const TRYON_CSS = /* css */ `
     .tryon-delete-confirm span { text-align: left; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .tryon-spin, .tryon-generation-bars i, .tryon-toast { animation: none; }
+    .tryon-spin, .tryon-generation-bars i, .tryon-toast, .tryon-result-frame::before, .tryon-result-spark { animation: none; }
+    .tryon-result-frame::before { display: none; }
+    .tryon-result-spark { opacity: .55; transform: none; }
     .tryon-generation-bars i { opacity: .75; transform: scaleY(.7); }
     .tryon-page * { scroll-behavior: auto !important; transition: none !important; }
   }

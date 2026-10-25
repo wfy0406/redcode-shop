@@ -130,7 +130,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     utils.tryon.getPublicConfig.reset();
     for (let index = window.sessionStorage.length - 1; index >= 0; index--) {
       const key = window.sessionStorage.key(index);
-      if (key?.startsWith('rc_tryon_current_')) window.sessionStorage.removeItem(key);
+      if (key?.startsWith('rc_tryon_current_') || key?.startsWith('rc_tryon_batch_')) {
+        window.sessionStorage.removeItem(key);
+      }
     }
   }, [utils]);
 

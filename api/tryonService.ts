@@ -46,6 +46,7 @@ import {
   tryOnProductImageInput,
   writeTryOnMedia,
 } from "./tryonMedia";
+import { inspectTryOnModelImage } from "./tryonPreflight";
 import type { AuthUser } from "./middleware";
 
 const USAGE_STATUS_LIST = [...TRYON_USAGE_STATUSES] as string[];
@@ -285,6 +286,9 @@ export async function createTryOnGeneration(args: {
     inputBytes = source
       ? await readTryOnMedia(source.publicId, "output")
       : await normalizeTryOnModelImage(args.modelImage ?? "");
+    // 首張客戶原相必須先通過本地亮度＋人像檢查，先至可以進入任何 DB reservation。
+    // Mix & Match 重用已通過首關嘅乾淨 output，唔會將展示水印或二次檢查帶入下一步。
+    if (!source) await inspectTryOnModelImage(inputBytes);
   } catch (error) {
     if (error instanceof TryOnMediaError) {
       throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
@@ -292,7 +296,10 @@ export async function createTryOnGeneration(args: {
     if (source) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "上一步私人結果已不可用，請由第一件衣服重新開始" });
     }
-    throw error;
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "相片檢查暫時未能完成；今次未建立工作或預留額度，請稍後再試",
+    });
   }
   const requestHash = requestDigest({
     userId: args.user.userId,
@@ -326,6 +333,16 @@ export async function createTryOnGeneration(args: {
         throw new TRPCError({ code: "CONFLICT", message: "同一操作編號已用於另一張相或另一件商品，請重新提交" });
       }
       return { job: existing, deduped: true };
+    }
+
+    // 設定列鎖令不同分頁都串行核對：同一帳號同一時間只跑一件，避免兩個新 key 雙重預留額度。
+    const [activeJob] = await tx
+      .select({ activePublicId: tryOnJobs.publicId })
+      .from(tryOnJobs)
+      .where(and(eq(tryOnJobs.userId, args.user.userId), inArray(tryOnJobs.status, ["queued", "processing"])))
+      .limit(1);
+    if (activeJob) {
+      throw new TRPCError({ code: "CONFLICT", message: "你有另一件試穿仲生成緊；完成或失敗後先可以再提交，今次未預留額度" });
     }
 
     const [identity] = await tx

@@ -16,6 +16,22 @@
  * 修法：要同時見到「透明像素」同「不透明像素」先算真 alpha——
  * 空白幀（全 0）同不透明片（全 255）一齊判 false，兩個方向都唔會誤判。
  */
+/**
+ * 純像素判別（抽晒出嚟俾單測直接驗，唔使 DOM canvas）：
+ * RGBA pixel 陣列入、布窩出。規則同上——要同時有透明（<250）同不透明（≥250）
+ * 像素先算真 alpha；全 0（空白幀）同全 255（不透明片）都判 false。
+ */
+export function pixelsHaveRealAlpha(data: ArrayLike<number>): boolean {
+  let sawClear = false;
+  let sawSolid = false;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] < 250) sawClear = true;
+    else sawSolid = true;
+    if (sawClear && sawSolid) return true;
+  }
+  return false;
+}
+
 export function videoHasRealAlpha(video: HTMLVideoElement): boolean {
   try {
     const c = document.createElement('canvas');
@@ -26,15 +42,7 @@ export function videoHasRealAlpha(video: HTMLVideoElement): boolean {
     const ctx = c.getContext('2d', { willReadFrequently: true });
     if (!ctx) return false;
     ctx.drawImage(video, 0, 0, w, h);
-    const data = ctx.getImageData(0, 0, w, h).data;
-    let sawClear = false;
-    let sawSolid = false;
-    for (let i = 3; i < data.length; i += 4) {
-      if (data[i] < 250) sawClear = true;
-      else sawSolid = true;
-      if (sawClear && sawSolid) return true;
-    }
-    return false;
+    return pixelsHaveRealAlpha(ctx.getImageData(0, 0, w, h).data);
   } catch {
     return false;
   }

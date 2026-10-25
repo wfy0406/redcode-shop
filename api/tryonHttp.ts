@@ -7,6 +7,7 @@ import {
   deleteTryOnMedia,
   detectTryOnImageMime,
   readTryOnMedia,
+  tryOnOutputForDisplay,
   verifyTryOnMediaSignature,
   type TryOnMediaKind,
 } from "./tryonMedia";
@@ -71,7 +72,9 @@ export async function tryOnPrivateMedia(c: Context): Promise<Response> {
   if (kind === "output" && (job.status !== "completed" || !job.outputImagePath)) return notFound(c);
 
   try {
-    const bytes = await readTryOnMedia(publicId, kind);
+    const storedBytes = await readTryOnMedia(publicId, kind);
+    // 原相保持原樣；成果只喺回應時加透明水印。乾淨 stored output 仍供下一步生成使用。
+    const bytes = kind === "output" ? await tryOnOutputForDisplay(storedBytes) : storedBytes;
     const contentType = detectTryOnImageMime(bytes);
     return c.body(new Uint8Array(bytes), 200, {
       "Content-Type": contentType,

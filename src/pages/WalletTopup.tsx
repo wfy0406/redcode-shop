@@ -199,7 +199,10 @@ export default function WalletTopup() {
   const gridRef = useReveal<HTMLDivElement>();
   const listRef = useReveal<HTMLDivElement>();
   const ledgerRef = useReveal<HTMLDivElement>();
-  // blur-to-sharp 入場（musepool 靈感）：hero 載入後由 8px blur 收斂
+  // 入場 reveal（musepool 靈感）：hero 載入後 opacity 淡入。
+  // v2.5.x 修復（老闆實測「公仔重影」）：舊版用 blur(10px)→blur(0) 收斂，
+  // 但 filter blur 會連入面嘅透明公仔一齊矇足 900ms，而且常設 filter 會令
+  // 公仔嘅 alpha 邊同金箔亮底反覆重疊成残影——移除 blur，只留 opacity 淡入。
   const [heroReady, setHeroReady] = useState(false);
   useEffect(() => {
     const t = window.setTimeout(() => setHeroReady(true), 60);
@@ -348,10 +351,10 @@ export default function WalletTopup() {
         className="relative overflow-hidden rounded-[28px] border"
         style={{
           borderColor: 'var(--glass-border)',
-          // blur-to-sharp reveal（musepool）：載入嗰刻 10px blur → 收斂清晰
-          filter: heroReady ? 'blur(0px)' : 'blur(10px)',
+          // 入場 reveal 只留 opacity 淡入（唔再 blur——blur 會連透明公仔一齊矇，
+          // 仲會喺亮底上焗出残影，老闆實測當咗做「重影」）
           opacity: heroReady ? 1 : 0.4,
-          transition: 'filter 900ms ease, opacity 900ms ease',
+          transition: 'opacity 900ms ease',
         }}
       >
         <img
@@ -408,7 +411,10 @@ export default function WalletTopup() {
               桌面版照舊 grid 右欄 w-64 唔郁 */}
           <div
             className="absolute right-3 top-4 w-24 md:relative md:right-auto md:top-auto md:mx-auto md:w-64"
-            style={{ filter: 'drop-shadow(0 6px 18px rgba(0,0,0,0.45))' }}
+            // 老闆實測「重影」根因之二：舊 drop-shadow 細 blur 高透明度，
+            // 喺金箔星雲亮底上投出一個清晰公仔形黑影＝似多咗個公仔。
+            // 調成大 blur 低透明度，化開做環境落地影，唔再係公仔形分身。
+            style={{ filter: 'drop-shadow(0 16px 36px rgba(0,0,0,0.25))' }}
           >
             <GloCutout
               videoSrc="/wallet/glo-wallet-alpha.webm"

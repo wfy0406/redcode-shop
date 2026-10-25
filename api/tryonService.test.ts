@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { products, siteSettings, tryOnJobs, users, type TryOnJob } from "@db/schema";
 import { TryOnProviderError, type TryOnProvider } from "./tryonProvider";
+import { TryOnMediaError } from "./tryonMedia";
 import { tryOnSettingsSchema, type TryOnSettings } from "./tryonConfig";
 import { env } from "./lib/env";
 
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   tryOnProductImageInput: vi.fn(),
   normalizeTryOnModelImage: vi.fn(),
   normalizeTryOnProviderOutput: vi.fn(),
+  inspectTryOnModelImage: vi.fn(),
   writeTryOnMedia: vi.fn(),
   deleteTryOnMedia: vi.fn(),
 }));
@@ -33,6 +35,7 @@ vi.mock("./tryonMedia", async (importOriginal) => {
     deleteTryOnMedia: mocks.deleteTryOnMedia,
   };
 });
+vi.mock("./tryonPreflight", () => ({ inspectTryOnModelImage: mocks.inspectTryOnModelImage }));
 
 import { TRYON_JOB_TIMEOUT_MS, createTryOnGeneration, getMyTryOnAccess, processTryOnJob } from "./tryonService";
 
@@ -138,6 +141,7 @@ beforeEach(() => {
   mocks.tryOnProductImageInput.mockResolvedValue("https://example.com/product.png");
   mocks.normalizeTryOnModelImage.mockResolvedValue(PNG);
   mocks.normalizeTryOnProviderOutput.mockResolvedValue(PNG);
+  mocks.inspectTryOnModelImage.mockResolvedValue({ width: 512, height: 512, meanLuma: 128, faceLuma: 140, faceCount: 1 });
   mocks.writeTryOnMedia.mockResolvedValue("123e4567-e89b-42d3-a456-426614174000/output.png");
   mocks.deleteTryOnMedia.mockResolvedValue(undefined);
 });
@@ -304,6 +308,7 @@ interface TryOnDbOptions {
   createdJob?: TryOnJob;
   sourceJob?: TryOnJob | null;
   lineageRows?: Array<Record<string, unknown>>;
+  activeJob?: TryOnJob | null;
 }
 
 function makeTryOnDb(options: TryOnDbOptions = {}) {
@@ -320,6 +325,7 @@ function makeTryOnDb(options: TryOnDbOptions = {}) {
     // tryOnJobs：db 無 selection 係 sourcePublicId 查找；tx 無 selection 係 idempotency 重複檢查
     if (!selection) return !fromTx && options.sourceJob ? [options.sourceJob] : [];
     if ("value" in selection) return [{ value: 0 }]; // usage count / sum
+    if ("activePublicId" in selection) return options.activeJob ? [options.activeJob] : [];
     if (fromTx) return options.lineageRows ?? [];
     return [project(createdJob as unknown as Record<string, unknown>, selection)];
   };
@@ -405,6 +411,39 @@ describe("getMyTryOnAccess APP_SECRET 閘口", () => {
   });
 });
 
+describe("createTryOnGeneration 生成前相片檢查", () => {
+  const savedKey = process.env.FASHN_API_KEY;
+  beforeEach(() => {
+    process.env.FASHN_API_KEY = "test-fashn-key";
+  });
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env.FASHN_API_KEY;
+    else process.env.FASHN_API_KEY = savedKey;
+  });
+
+  const baseInput = {
+    user: { userId: 7, role: "staff" as const },
+    productId: 101,
+    photoIndex: 0,
+    idempotencyKey: "operation-1",
+    modelImage: "data:image/png;base64,iVBORw0KGgo=",
+  };
+
+  it.each([
+    ["NO_HUMAN_FACE", "偵測唔到清楚人像；請重新拍攝或上載。今次未送 AI 生成，亦未預留或扣除 credits。"],
+    ["IMAGE_TOO_DARK", "相片光線太暗；請重新拍攝或上載。今次未送 AI 生成，亦未預留或扣除 credits。"],
+  ])("%s：建立工作、DB reservation 及私人暫存之前已即拒", async (code, message) => {
+    mocks.inspectTryOnModelImage.mockRejectedValue(new TryOnMediaError(code, message));
+    const { db, inserted } = makeTryOnDb({ product: makeProduct() });
+    const transaction = vi.spyOn(db, "transaction");
+    mocks.getDb.mockReturnValue(db);
+    await expect(createTryOnGeneration(baseInput)).rejects.toMatchObject({ code: "BAD_REQUEST", message });
+    expect(transaction).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(0);
+    expect(mocks.writeTryOnMedia).not.toHaveBeenCalled();
+  });
+});
+
 describe("createTryOnGeneration 商品下架閘口", () => {
   const savedKey = process.env.FASHN_API_KEY;
   beforeEach(() => {
@@ -451,6 +490,37 @@ describe("createTryOnGeneration 商品下架閘口", () => {
     expect(result).toMatchObject({ stepNumber: 1, status: "queued", tryOnKind: "top" });
     expect(inserted).toHaveLength(1);
     expect(inserted[0]).toMatchObject({ productId: 101, tryOnKind: "top", stepNumber: 1 });
+  });
+});
+
+describe("createTryOnGeneration 同帳號並發防重", () => {
+  const savedKey = process.env.FASHN_API_KEY;
+  beforeEach(() => {
+    process.env.FASHN_API_KEY = "test-fashn-key";
+  });
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env.FASHN_API_KEY;
+    else process.env.FASHN_API_KEY = savedKey;
+  });
+
+  it("另一件 queued／processing 未完成：新 idempotency key 都拒絕，唔會雙重預留", async () => {
+    const { db, inserted } = makeTryOnDb({
+      product: makeProduct(),
+      activeJob: makeJob({ id: 88, status: "processing" }),
+    });
+    mocks.getDb.mockReturnValue(db);
+    await expect(createTryOnGeneration({
+      user: { userId: 7, role: "staff" },
+      productId: 101,
+      photoIndex: 0,
+      idempotencyKey: "another-operation",
+      modelImage: "data:image/png;base64,iVBORw0KGgo=",
+    })).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "你有另一件試穿仲生成緊；完成或失敗後先可以再提交，今次未預留額度",
+    });
+    expect(inserted).toHaveLength(0);
+    expect(mocks.writeTryOnMedia).not.toHaveBeenCalled();
   });
 });
 

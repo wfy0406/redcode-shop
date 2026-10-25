@@ -143,13 +143,25 @@ const FAQ_ITEMS: FaqItem[] = [
     a: (
       <>
         成個流程好簡單：先<span className="faq-key">登入會員</span>，去
-        <Link to="/try-on" className="faq-link">AI 試穿</Link>頁，上載一張
-        <span className="faq-key">全身相</span>（可以即場用<span className="faq-key">後鏡頭</span>影）
+        <Link to="/try-on" className="faq-link">AI 試穿</Link>頁，準備一張
+        <span className="faq-key">全身相</span>（<span className="faq-mark">前鏡自拍、後鏡拍攝或相簿揀相都得</span>；
+        前鏡可以將手機拎遠少少，後鏡可以請家人幫手）
         → 揀想試嘅<span className="faq-key">商品</span> → 提交之後系統會
         <span className="faq-mark">異步生成</span>，唔使一直等，一陣返嚟就有得睇 →
         睇<span className="faq-key">前後對照</span>，鍾意可以<span className="faq-key">下載／分享</span>，
         唔鍾意可以<span className="faq-key">刪除</span>。
         結果會幫你保留 <span className="faq-mark">24 小時</span>，過咗就會自動清除。
+      </>
+    ),
+  },
+  {
+    q: '試穿相係咪一定要好光、用後鏡？',
+    a: (
+      <>
+        唔使。<span className="faq-mark">前鏡同後鏡都用得</span>，亦可以直接由相簿上載；
+        一般室內光線、唔算完美嘅相都可以先試，唔使專業打燈。
+        如果張相<span className="faq-key">完全非人像或者真係極暗</span>，系統會先請你換相，
+        避免浪費生成額度；呢種情況<span className="faq-mark">未送 AI 生成，亦未預留或扣除 credits</span>。
       </>
     ),
   },

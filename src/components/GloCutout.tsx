@@ -122,7 +122,11 @@ export default function GloCutout({
 
   return (
     <div ref={hostRef} className={`relative ${className ?? ''}`}>
-      {/* 靜態透底 poster：影片一播／動畫 WebP 一上就收（opacity transition） */}
+      {/* 靜態透底 poster：影片一播／動畫 WebP 一上就即時收。
+          老闆實測「公仔重影」根因：舊版用 300ms opacity crossfade，交接期間
+          兩層半透明疊加＝兩個公仔疊住（購物金頁金箔亮底最明顯）；poke poster
+          係黑底無 alpha 時仲會見到淡出黑盒。素材姿勢已核對同動畫層一致，
+          即時切換冇跳位，重影根除。transition 唔加返——半透明疊加先係重影之源。 */}
       <img
         src={poster}
         alt={alt}
@@ -130,7 +134,7 @@ export default function GloCutout({
         height={posterH}
         loading={eager ? 'eager' : 'lazy'}
         decoding="async"
-        className={`h-auto w-full transition-opacity duration-300 ${animClass ?? ''} ${
+        className={`h-auto w-full ${animClass ?? ''} ${
           mode === 'poster' || (mode === 'anim' && !animReady) ? 'opacity-100' : 'opacity-0'
         }`}
       />

@@ -133,6 +133,85 @@ export async function normalizeTryOnProviderOutput(dataUri: string): Promise<Buf
 }
 
 /**
+ * 只合成供顯示／下載／分享嘅版本；存入私人目錄嘅乾淨 output 絕不改寫，
+ * 所以下一步 Mix & Match 讀到嘅仍然係無水印生成結果。
+ */
+export async function compositeTryOnWatermark(output: Buffer, logo: Buffer): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  const source = sharp(output, { limitInputPixels: 40_000_000 });
+  const metadata = await source.metadata();
+  if (metadata.format !== "png" || !metadata.width || !metadata.height) {
+    throw new TryOnMediaError("BAD_PROVIDER_OUTPUT", "只有有效 PNG 生成結果可以加水印");
+  }
+  const margin = Math.max(8, Math.round(Math.min(metadata.width, metadata.height) * 0.025));
+  const targetWidth = Math.max(1, Math.min(360, Math.round(metadata.width * 0.24)));
+  const watermark = await sharp(logo, { limitInputPixels: 5_000_000 })
+    .ensureAlpha()
+    .resize({ width: targetWidth, withoutEnlargement: true })
+    .png()
+    .toBuffer();
+  const watermarkMetadata = await sharp(watermark).metadata();
+  const watermarkWidth = watermarkMetadata.width ?? 0;
+  const watermarkHeight = watermarkMetadata.height ?? 0;
+  if (!watermarkWidth || !watermarkHeight || watermarkWidth + margin * 2 > metadata.width || watermarkHeight + margin * 2 > metadata.height) {
+    throw new TryOnMediaError("WATERMARK_UNAVAILABLE", "水印尺寸未能配合生成結果");
+  }
+  return await source
+    .composite([
+      {
+        input: watermark,
+        left: metadata.width - watermarkWidth - margin,
+        top: margin,
+      },
+    ])
+    .png({ compressionLevel: 8 })
+    .toBuffer();
+}
+
+let cachedLogo: Promise<Buffer> | null = null;
+let watermarkWarningIssued = false;
+
+function watermarkCandidates(): string[] {
+  return [
+    process.env.TRYON_WATERMARK_PATH,
+    path.resolve(process.cwd(), "dist/public", "logo.png"),
+    path.resolve(process.cwd(), "dist", "logo.png"),
+    path.resolve(process.cwd(), "public", "logo.png"),
+    path.resolve(import.meta.dirname, "../dist/public", "logo.png"),
+    path.resolve(import.meta.dirname, "../../dist/public", "logo.png"),
+    path.resolve(import.meta.dirname, "../public", "logo.png"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+}
+
+async function loadWatermarkLogo(onlyPath?: string): Promise<Buffer> {
+  const candidates = onlyPath ? [onlyPath] : [...new Set(watermarkCandidates())];
+  for (const candidate of candidates) {
+    try {
+      const bytes = await readFile(candidate);
+      if (bytes.length) return bytes;
+    } catch {
+      // 逐個已知靜態位置嘗試；唔將伺服器路徑寫入瀏覽器回應。
+    }
+  }
+  throw new TryOnMediaError("WATERMARK_UNAVAILABLE", "RedCode 水印素材暫時不可用");
+}
+
+/** logo 缺失或讀取失敗時安全回退原圖，唔令已授權嘅私人結果變成 404。 */
+export async function tryOnOutputForDisplay(output: Buffer, onlyLogoPath?: string): Promise<Buffer> {
+  try {
+    const logoPromise = onlyLogoPath ? loadWatermarkLogo(onlyLogoPath) : (cachedLogo ??= loadWatermarkLogo());
+    return await compositeTryOnWatermark(output, await logoPromise);
+  } catch {
+    if (!onlyLogoPath) cachedLogo = null;
+    if (!watermarkWarningIssued) {
+      watermarkWarningIssued = true;
+      console.warn("[tryon] watermark unavailable; returning the clean output without changing the stored image");
+    }
+    return output;
+  }
+}
+
+/**
  * 商品 URL 只由 DB snapshot 傳入，絕不接前端自由 URL。
  * 私有上传商品圖直接讀 disk 轉 base64；其他公开 https 圖由供應商讀，本站唔做任意 URL fetch。
  */

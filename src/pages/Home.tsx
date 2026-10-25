@@ -840,7 +840,7 @@ export default function Home() {
           {/* 四步流程（純文字說明，唔放假效果圖） */}
           <ol className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {[
-              { icon: ScanLine, step: 'STEP 1', title: '影一張全身相', desc: '企直、正面、光線充足就得，即場影或者上載舊相都可以。' },
+              { icon: ScanLine, step: 'STEP 1', title: '影一張全身相', desc: '企直、正面、頭到腳入鏡；前鏡、後鏡或舊相都得，一般室內光線可以先試。' },
               { icon: ShoppingBag, step: 'STEP 2', title: '揀真商品', desc: '喺商品頁撳「AI 試穿呢件」，或者喺試穿頁揀返支援試穿嘅款。' },
               { icon: Sparkles, step: 'STEP 3', title: '提交等生成', desc: '確認之後 AI 就開始生成，通常一陣就有結果，唔使離開個頁。' },
               { icon: Download, step: 'STEP 4', title: '下載／分享', desc: '滿意就下載留念，或者分享連同款資料俾朋友一齊睇。' },

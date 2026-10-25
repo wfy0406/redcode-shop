@@ -5,11 +5,13 @@ import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertTryOnMediaSecret,
+  compositeTryOnWatermark,
   detectTryOnImageMime,
   normalizeTryOnModelImage,
   readTryOnMedia,
   signTryOnMediaUrl,
   tryOnMediaAbsolutePath,
+  tryOnOutputForDisplay,
   tryOnProductImageInput,
   verifyTryOnMediaSignature,
   writeTryOnMedia,
@@ -77,6 +79,61 @@ describe("私人圖片格式及存取", () => {
     );
     await expect(tryOnProductImageInput("/uploads/../secret.png")).rejects.toThrow();
     await expect(tryOnProductImageInput("https://user:pass@example.com/product.png")).rejects.toThrow();
+  });
+});
+
+describe("RedCode 透明水印", () => {
+  async function fixtures() {
+    const base = await sharp({
+      create: { width: 400, height: 500, channels: 4, background: { r: 180, g: 40, b: 60, alpha: 1 } },
+    }).png().toBuffer();
+    const green = await sharp({
+      create: { width: 60, height: 60, channels: 4, background: { r: 0, g: 255, b: 0, alpha: 1 } },
+    }).png().toBuffer();
+    const logo = await sharp({
+      create: { width: 120, height: 60, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    }).composite([{ input: green, left: 60, top: 0 }]).png().toBuffer();
+    return { base, logo };
+  }
+
+  it("右上角有 logo pixel、尺寸不變、透明位無白底，其他區域及 stored output 不變", async () => {
+    const { base, logo } = await fixtures();
+    await writeTryOnMedia(PUBLIC_ID, "output", base);
+    const marked = await compositeTryOnWatermark(base, logo);
+    expect(detectTryOnImageMime(marked)).toBe("image/png");
+    expect(await sharp(marked).metadata()).toMatchObject({ width: 400, height: 500, format: "png" });
+
+    const before = await sharp(base).ensureAlpha().raw().toBuffer();
+    const after = await sharp(marked).ensureAlpha().raw().toBuffer();
+    expect(after.length).toBe(before.length);
+    const pixel = (bytes: Buffer, x: number, y: number) => {
+      const offset = (y * 400 + x) * 4;
+      return [...bytes.subarray(offset, offset + 4)];
+    };
+    // 400px 圖嘅水印寬 96px、margin 10px；左半透明，右半綠色。
+    expect(pixel(after, 350, 20).slice(0, 3)).toEqual([0, 255, 0]);
+    expect(pixel(after, 300, 20)).toEqual(pixel(before, 300, 20));
+
+    let changed = 0;
+    for (let y = 0; y < 500; y += 1) {
+      for (let x = 0; x < 400; x += 1) {
+        const offset = (y * 400 + x) * 4;
+        if (before.subarray(offset, offset + 4).equals(after.subarray(offset, offset + 4))) continue;
+        changed += 1;
+        expect(x).toBeGreaterThanOrEqual(294);
+        expect(x).toBeLessThan(390);
+        expect(y).toBeGreaterThanOrEqual(10);
+        expect(y).toBeLessThan(58);
+      }
+    }
+    expect(changed).toBeGreaterThan(1000);
+    await expect(readTryOnMedia(PUBLIC_ID, "output")).resolves.toEqual(base);
+  });
+
+  it("logo 缺失時安全回退原 PNG，唔將私人結果變成讀取失敗", async () => {
+    const { base } = await fixtures();
+    const fallback = await tryOnOutputForDisplay(base, path.join(tempDir, "missing-logo.png"));
+    expect(fallback.equals(base)).toBe(true);
   });
 });
 
