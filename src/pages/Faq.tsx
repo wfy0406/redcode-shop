@@ -6,7 +6,9 @@ import { Link, useLocation } from 'react-router';
  * 兩大區塊：
  *   1) 接收通知教學（id="notify-tutorial" 錨點）——裝置偵測預設 iPhone/Android tab，
  *      兩條教學片 /faq/notify-iphone.mp4、/faq/notify-android.mp4（public/faq/）。
- *   2) Q&A 手風琴——十條常見問題，禮賓清單式 hairline 分隔，同時只開一條。
+ *   2) Q&A 手風琴——常見問題，禮賓清單式 hairline 分隔，同時只開一條。
+ *      除購物／通知問題外，亦包括 PWA 安裝、AI 試穿流程、Mix & Match、
+ *      尺碼免責、鏡頭權限、上載故障、WhatsApp 分享私隱。
  * Design brief：深紫底 #0A0614、金 #F5C518、香檳 #F7D774；重點標記兩級 .key / .mark；
  * 動畝只有 transform/opacity；prefers-reduced-motion 全部即時完成。
  * 獨有 CSS 全部內聯喺下面 <style>，class 名加 faq- prefix 避免撞全站樣式。
@@ -118,6 +120,95 @@ const FAQ_ITEMS: FaqItem[] = [
       <>
         到<Link to="/account" className="faq-link">我嘅帳戶</Link>頁，撳熄
         <span className="faq-key">「開播通知」</span>開關就得，隨時開返都得。
+      </>
+    ),
+  },
+  {
+    q: '網站可以裝落手機主畫面嗎？',
+    a: (
+      <>
+        可以！我哋係 <span className="faq-key">PWA 網頁應用</span>，直接用瀏覽器安裝就得，
+        <span className="faq-mark">唔係 App Store／Google Play 上架嘅 app</span>，唔使去商店搵。
+        iPhone 用 Safari 開我哋網站 → 撳<span className="faq-key">「分享」</span>掣 →
+        揀<span className="faq-key">「加入主畫面」</span>；Android 用 Chrome 開 →
+        撳右上角<span className="faq-key">選單（⋮）</span>→
+        揀<span className="faq-key">「安裝應用程式」／「加到主畫面」</span>。
+        如果你喺其他 app 內置瀏覽器（WebView）睇緊、搵唔到安裝選項，
+        請先用<span className="faq-mark">系統瀏覽器（Safari／Chrome）開返個網站</span>再裝。
+      </>
+    ),
+  },
+  {
+    q: 'AI 試穿點玩？',
+    a: (
+      <>
+        成個流程好簡單：先<span className="faq-key">登入會員</span>，去
+        <Link to="/try-on" className="faq-link">AI 試穿</Link>頁，上載一張
+        <span className="faq-key">全身相</span>（可以即場用<span className="faq-key">後鏡頭</span>影）
+        → 揀想試嘅<span className="faq-key">商品</span> → 提交之後系統會
+        <span className="faq-mark">異步生成</span>，唔使一直等，一陣返嚟就有得睇 →
+        睇<span className="faq-key">前後對照</span>，鍾意可以<span className="faq-key">下載／分享</span>，
+        唔鍾意可以<span className="faq-key">刪除</span>。
+        結果會幫你保留 <span className="faq-mark">24 小時</span>，過咗就會自動清除。
+      </>
+    ),
+  },
+  {
+    q: 'Mix & Match 混搭係點計？',
+    a: (
+      <>
+        Mix &amp; Match 每件衫都係<span className="faq-key">獨立生成、獨立扣額</span>：
+        每套最多 <span className="faq-key">3 件</span>，每件都要你<span className="faq-key">確認咗先追加</span>下一件；
+        <span className="faq-mark">相同穿著部位唔可以重複</span>（例如唔可以一套兩件上身）。
+        如果中途生成失敗，<span className="faq-mark">唔會扣你個人每日額度</span>，放心試。
+      </>
+    ),
+  },
+  {
+    q: 'AI 預覽可以當尺碼參考嗎？',
+    a: (
+      <>
+        唔可以。AI 試穿只係<span className="faq-key">視覺效果預覽</span>，
+        <span className="faq-mark">唔代表尺碼、鬆緊、合身程度或者著上身嘅舒適度</span>。
+        揀碼請以<span className="faq-key">尺寸表</span>同<span className="faq-key">實物</span>為準，
+        有疑問隨時問我哋。
+      </>
+    ),
+  },
+  {
+    q: '鏡頭權限被拒絕咗點算？',
+    a: (
+      <>
+        有兩條路：一、喺試穿頁撳<span className="faq-key">「重新檢查鏡頭權限」</span>再試；
+        二、唔使鏡頭，直接用<span className="faq-key">相簿揀相</span>上載。
+        留意網頁<span className="faq-mark">冇辦法直接幫你開系統設定</span>——如果之前拒絕過，
+        要你自己去<span className="faq-key">瀏覽器嘅網站設定</span>或者<span className="faq-key">系統設定</span>度，
+        將相機權限開返俾我哋個網站。如果你係喺其他 app 嘅內置瀏覽器（WebView）入面用，
+        權限係由<span className="faq-mark">嗰個 app 同系統控制</span>，我哋網頁改唔到，
+        建議用系統瀏覽器開返。
+      </>
+    ),
+  },
+  {
+    q: '上載相／生成失敗點算？',
+    a: (
+      <>
+        常見原因有幾個：<span className="faq-key">HEIC 格式</span>（iPhone 預設）未必支援，
+        可以先轉做 <span className="faq-key">JPG／PNG</span>；<span className="faq-key">格式</span>唔啱或者
+        <span className="faq-key">檔案太大</span>都會食唔到，縮細啲再試；<span className="faq-key">權限</span>未開就開返相簿／鏡頭；
+        <span className="faq-key">網絡</span>唔穩就換個好啲嘅訊號再提交。
+        搞唔掂就 cap 圖搵我哋跟進。
+      </>
+    ),
+  },
+  {
+    q: '用 WhatsApp 分享試穿結果安全嗎？',
+    a: (
+      <>
+        安全。WhatsApp 分享 fallback 只會帶<span className="faq-key">公開商品資料同網址</span>，
+        <span className="faq-mark">你嘅私人試穿結果唔會自動附加</span>。
+        如果想俾朋友睇效果，可以先<span className="faq-key">下載 PNG</span>，
+        再喺 WhatsApp 自己揀相附加，話事權完全喺你手。
       </>
     ),
   },

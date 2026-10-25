@@ -656,6 +656,56 @@ CREATE TABLE IF NOT EXISTS "walletLedger" (
   "createdAt" timestamp NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS walletledger_user ON "walletLedger" ("userId", "createdAt");
+
+-- ===== AI 試穿／Mix & Match（2026-10-25）=====
+-- 一件商品一次生成一列；queued/processing 會預留額度及預算，failed 會釋放。
+CREATE TABLE IF NOT EXISTS "tryOnJobs" (
+  id serial PRIMARY KEY,
+  "publicId" varchar(36) NOT NULL,
+  "userId" bigint NOT NULL REFERENCES users(id),
+  "productId" bigint NOT NULL REFERENCES products(id),
+  "lookId" varchar(36) NOT NULL,
+  "stepNumber" integer NOT NULL DEFAULT 1,
+  "sourceJobId" integer,
+  "productName" varchar(255) NOT NULL,
+  "productSku" varchar(64) NOT NULL,
+  "productCategory" varchar(32) NOT NULL,
+  "tryOnKind" varchar(32) NOT NULL,
+  "productImagePath" varchar(1024) NOT NULL,
+  "productPrice" integer NOT NULL,
+  "productDiscountPrice" integer,
+  "inputImagePath" varchar(512) NOT NULL,
+  "outputImagePath" varchar(512),
+  status varchar(16) NOT NULL DEFAULT 'queued',
+  provider varchar(32) NOT NULL DEFAULT 'fashn',
+  "providerJobId" varchar(160),
+  "generationMode" varchar(16) NOT NULL DEFAULT 'quality',
+  resolution varchar(8) NOT NULL DEFAULT '1k',
+  "creditsReserved" integer NOT NULL DEFAULT 3,
+  "creditsUsed" integer NOT NULL DEFAULT 0,
+  "unitCreditCostCents" integer,
+  "estimatedCostCents" integer,
+  "costUncertain" boolean NOT NULL DEFAULT false,
+  "idempotencyKey" varchar(64) NOT NULL,
+  "requestHash" varchar(64) NOT NULL,
+  "requestDate" varchar(10) NOT NULL,
+  "requestMonth" varchar(7) NOT NULL,
+  "requestYear" varchar(4) NOT NULL,
+  "failureCode" varchar(64),
+  "failureMessage" varchar(255),
+  "expiresAt" timestamp NOT NULL,
+  "mediaDeletedAt" timestamp,
+  "startedAt" timestamp,
+  "completedAt" timestamp,
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "updatedAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS tryonjobs_publicid ON "tryOnJobs" ("publicId");
+CREATE UNIQUE INDEX IF NOT EXISTS tryonjobs_user_idempotency ON "tryOnJobs" ("userId", "idempotencyKey");
+CREATE INDEX IF NOT EXISTS tryonjobs_user_date ON "tryOnJobs" ("userId", "requestDate");
+CREATE INDEX IF NOT EXISTS tryonjobs_date_status ON "tryOnJobs" ("requestDate", status);
+CREATE INDEX IF NOT EXISTS tryonjobs_month_status ON "tryOnJobs" ("requestMonth", status);
+CREATE INDEX IF NOT EXISTS tryonjobs_look_step ON "tryOnJobs" ("lookId", "stepNumber");
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：

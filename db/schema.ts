@@ -736,7 +736,69 @@ export const luckyDrawEventEntries = pgTable(
   (t) => [uniqueIndex("luckydrawevententries_event_name").on(t.eventId, t.normalizedName)],
 );
 
+// ===== AI 試穿／Mix & Match（2026-10-25）=====
+// 每次「追加一件」係獨立 job：逐件計 3 credits、逐件驗收；lookId 將同一套造型串埋。
+// 個人原相／結果只存私有 disk path，唔會經公開 /uploads/:file 暴露。
+export const tryOnJobs = pgTable(
+  "tryOnJobs",
+  {
+    id: serial("id").primaryKey(),
+    publicId: varchar("publicId", { length: 36 }).notNull(),
+    userId: bigint("userId", { mode: "number" })
+      .notNull()
+      .references(() => users.id),
+    productId: bigint("productId", { mode: "number" })
+      .notNull()
+      .references(() => products.id),
+    lookId: varchar("lookId", { length: 36 }).notNull(),
+    stepNumber: integer("stepNumber").notNull().default(1),
+    sourceJobId: integer("sourceJobId"),
+    productName: varchar("productName", { length: 255 }).notNull(),
+    productSku: varchar("productSku", { length: 64 }).notNull(),
+    productCategory: varchar("productCategory", { length: 32 }).notNull(),
+    tryOnKind: varchar("tryOnKind", { length: 32 }).notNull(),
+    productImagePath: varchar("productImagePath", { length: 1024 }).notNull(),
+    productPrice: integer("productPrice").notNull(),
+    productDiscountPrice: integer("productDiscountPrice"),
+    inputImagePath: varchar("inputImagePath", { length: 512 }).notNull(),
+    outputImagePath: varchar("outputImagePath", { length: 512 }),
+    status: varchar("status", { length: 16 }).notNull().default("queued"),
+    provider: varchar("provider", { length: 32 }).notNull().default("fashn"),
+    providerJobId: varchar("providerJobId", { length: 160 }),
+    generationMode: varchar("generationMode", { length: 16 }).notNull().default("quality"),
+    resolution: varchar("resolution", { length: 8 }).notNull().default("1k"),
+    creditsReserved: integer("creditsReserved").notNull().default(3),
+    creditsUsed: integer("creditsUsed").notNull().default(0),
+    unitCreditCostCents: integer("unitCreditCostCents"),
+    // queued/processing＝預留估算；completed＝成功估算；failed 可係 0（已釋放）或保留（已收費／待核實）。
+    estimatedCostCents: integer("estimatedCostCents"),
+    costUncertain: boolean("costUncertain").notNull().default(false),
+    idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
+    requestHash: varchar("requestHash", { length: 64 }).notNull(),
+    requestDate: varchar("requestDate", { length: 10 }).notNull(),
+    requestMonth: varchar("requestMonth", { length: 7 }).notNull(),
+    requestYear: varchar("requestYear", { length: 4 }).notNull(),
+    failureCode: varchar("failureCode", { length: 64 }),
+    failureMessage: varchar("failureMessage", { length: 255 }),
+    expiresAt: timestamp("expiresAt").notNull(),
+    mediaDeletedAt: timestamp("mediaDeletedAt"),
+    startedAt: timestamp("startedAt"),
+    completedAt: timestamp("completedAt"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("tryonjobs_publicid").on(t.publicId),
+    uniqueIndex("tryonjobs_user_idempotency").on(t.userId, t.idempotencyKey),
+    index("tryonjobs_user_date").on(t.userId, t.requestDate),
+    index("tryonjobs_date_status").on(t.requestDate, t.status),
+    index("tryonjobs_month_status").on(t.requestMonth, t.status),
+    index("tryonjobs_look_step").on(t.lookId, t.stepNumber),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
+export type TryOnJob = typeof tryOnJobs.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type CartItem = typeof cartItems.$inferSelect;

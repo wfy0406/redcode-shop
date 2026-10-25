@@ -33,6 +33,8 @@ import { isTopupNo } from "./wallet";
 import { logAudit } from "./audit";
 import { RateLimiter } from "./guestUtils";
 import { recheckUserRole } from "./middleware";
+import { tryOnPrivateMedia } from "./tryonHttp";
+import { startTryOnMediaSweeper } from "./tryonService";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -91,13 +93,16 @@ app.use("*", async (c, next) => {
   c.res.headers.set("X-Content-Type-Options", "nosniff");
   c.res.headers.set("X-Frame-Options", "DENY");
   c.res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  // geolocation=(self)：順豐站「搵最近」要用瀏覽器定位；相機／mic 全關
-  c.res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)");
+  // geolocation=(self)：順豐站「搵最近」要用瀏覽器定位；同源 AI 試穿可用相機，mic 仍然全關
+  c.res.headers.set("Permissions-Policy", "camera=(self), microphone=(), geolocation=(self)");
   c.res.headers.set("Strict-Transport-Security", "max-age=31536000");
 });
 
 // 每日營運數據導出（xlsx 下載）——註冊喺 tRPC mount 前，確保唔會跌入 SPA fallback
 app.get("/api/export/daily", exportDaily);
+
+// AI 試穿私人原相／結果：HMAC＋DB owner＋到期逐次核對；必须喺 /api/* 404 前註冊
+app.get("/api/tryon/media/:publicId/:kind", tryOnPrivateMedia);
 
 // WMS → 官網審批回調（shared secret 驗證；同樣喺 tRPC mount 前註冊）
 app.post("/api/wms/review-callback", wmsReviewCallback);
@@ -858,8 +863,11 @@ if (env.isProduction) {
     console.log(`Server running on http://localhost:${port}/`);
   });
 
-  // 開機自動建表 + 種子數據（失敗唔會冧 server，淨係 log）
-  ensureDatabase().catch((e) => console.error("[boot-migrate] failed:", e));
+  // 開機自動建表 + 種子數據（失敗唔會冧 server，淨係 log）；
+  // 試穿表準備好先啟動私人圖片清理及卡住工作恢復，避免 fresh DB 開機誤報表不存在。
+  ensureDatabase()
+    .then(() => startTryOnMediaSweeper())
+    .catch((e) => console.error("[boot-migrate] failed:", e));
 
   // B-2 初次接駁（2026-08-06 WMS 建議）：一次性回填現有會員落 WMS；
   // siteSettings 旗標記低做過，之後開機自動 skip（lazy import 同其他模組一致）

@@ -16,6 +16,7 @@ import { vipRouter } from "./vipRouter";
 import { pushRouter } from "./pushRouter";
 import { luckyDrawRouter } from "./luckyDrawRouter";
 import { walletRouter } from "./walletRouter";
+import { tryonRouter } from "./tryonRouter";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -40,6 +41,8 @@ export const appRouter = createRouter({
   luckyDraw: luckyDrawRouter,
   // v2.5.0（會員購物金，老闆 2026-10-09 指令）：套票／充值／餘額／流水／後台批核
   wallet: walletRouter,
+  // AI 相片試穿／Mix & Match：同事內測先行；會員開放由後台品質及成本閘口控制
+  tryon: tryonRouter,
 });
 
 export type AppRouter = typeof appRouter;

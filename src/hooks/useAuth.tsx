@@ -121,6 +121,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     utils.cart.list.reset();
     // v2.2.13（老闆指令 bug fix）：VIP 快取都要清——唔係上個帳號嘅級別會留低，下一個帳號可能撞見
     utils.vip.getMyVip.reset();
+    // AI 試穿私人工作、權限及商品查詢唔可以跨帳號殘留；公開開關都一併重新讀取。
+    utils.tryon.getMyAccess.reset();
+    utils.tryon.listProducts.reset();
+    utils.tryon.getJob.reset();
+    utils.tryon.getAdminConfig.reset();
+    utils.tryon.getAdminStats.reset();
+    utils.tryon.getPublicConfig.reset();
+    for (let index = window.sessionStorage.length - 1; index >= 0; index--) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith('rc_tryon_current_')) window.sessionStorage.removeItem(key);
+    }
   }, [utils]);
 
   const value = useMemo<AuthContextValue>(() => {

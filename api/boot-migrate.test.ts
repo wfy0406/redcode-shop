@@ -297,6 +297,14 @@ describe("migration 語句順序（靜態斷言）", () => {
     expect(fnBody).toContain("buildMigrationStatements()");
     expect(fnBody).not.toMatch(/await pool\.query\(`ALTER TYPE/);
   });
+
+  it("tryOnJobs 保留價錢快照及精細部位；look step 係普通索引，唔會阻失敗重試", () => {
+    expect(DDL).toContain('"tryOnKind" varchar(32) NOT NULL');
+    expect(DDL).toContain('"productPrice" integer NOT NULL');
+    expect(DDL).toContain('"productDiscountPrice" integer');
+    expect(DDL).toMatch(/CREATE INDEX IF NOT EXISTS tryonjobs_look_step ON "tryOnJobs" \("lookId", "stepNumber"\)/);
+    expect(DDL).not.toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS tryonjobs_look_step/);
+  });
 });
 
 describe("mock executor：fresh／existing／repeat", () => {
@@ -305,6 +313,9 @@ describe("mock executor：fresh／existing／repeat", () => {
     expect(() => runMigration(st)).not.toThrow();
     expect([...st.types.get("role") ?? []].sort()).toEqual(["admin", "member", "staff", "supervisor"]);
     expect(st.tables.get("luckyDraws")?.has("notifiedAt")).toBe(true);
+    for (const column of ["tryOnKind", "productPrice", "productDiscountPrice"]) {
+      expect(st.tables.get("tryOnJobs")?.has(column)).toBe(true);
+    }
     // fresh 表空，backfill UPDATE 照跑（no-op）——標記有執行過
     expect(st.applied.filter((a) => a === "backfill:luckyDraws.notifiedAt")).toHaveLength(1);
   });

@@ -11,10 +11,16 @@ import {
   BadgeCheck,
   Bell,
   Clapperboard,
+  Download,
   Facebook,
+  Layers,
+  Lock,
   MessageCircle,
   Play,
+  Ruler,
+  ScanLine,
   ShoppingBag,
+  Sparkles,
 } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
 import DuotoneImage from '@/components/DuotoneImage';
@@ -499,7 +505,17 @@ export default function Home() {
           alt: p.alt,
           caption: undefined as string | undefined,
         }));
+  // AI 試穿公開開關（v2.5 tryon）：memberEnabled === true 先出「開始 AI 試穿」CTA；
+  // 未開放／查詢失敗一律當未開放——只標「同事內測／會員即將開放」，唔宣稱會員已開放。
+  const { data: tryonConfig } = trpc.tryon.getPublicConfig.useQuery(undefined, {
+    retry: 1,
+    staleTime: 60_000,
+  });
+  const tryonOpen = tryonConfig?.memberEnabled === true;
+  const tryonMaxMix = tryonConfig?.maxMixSteps ?? 3;
+
   const newRef = useReveal<HTMLDivElement>();
+  const tryonRef = useReveal<HTMLDivElement>();
   const liveRef = useReveal<HTMLDivElement>();
   const promoRef = useReveal<HTMLDivElement>();
   const storyRef = useReveal<HTMLDivElement>();
@@ -790,6 +806,118 @@ export default function Home() {
                 <ProductCard product={product} demo={showDemoNotice} />
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      <HairlineDivider />
+
+      {/* ============ 3.5 AI 試穿功能介紹（v2.5 tryon）============
+          只講真流程同規則，唔放假生成結果／假 before-after 圖。
+          CTA 跟真後台開關（tryon.getPublicConfig）：開放中先去 /try-on；
+          未開放（包括查詢失敗）只標「同事內測／會員即將開放」＋去 /products 揀款。 */}
+      <section className="mx-auto mt-10 max-w-[1280px] px-5 md:mt-14 md:px-8 xl:px-12">
+        <div ref={tryonRef} className="reveal">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <SectionHeading en="AI Try-On" zh="AI 試穿 · 上身效果預覽" />
+            {tryonOpen ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[12px] text-gold" style={{ borderColor: 'var(--gold)' }}>
+                <Sparkles size={12} aria-hidden="true" />
+                會員開放中
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[12px] text-txt-2" style={{ borderColor: 'var(--glass-border)' }}>
+                <Sparkles size={12} aria-hidden="true" />
+                同事內測／會員即將開放
+              </span>
+            )}
+          </div>
+          <p className="mt-3 max-w-xl text-[15px] leading-[1.75] text-txt-2">
+            唔使靠估著上身係咩效果——上載一張全身相，揀返網站入面嘅真商品，
+            AI 就會幫你預覽著上身嘅樣。全程喺網站搞掂，生成完可以下載或者分享俾閨蜜睇。
+          </p>
+
+          {/* 四步流程（純文字說明，唔放假效果圖） */}
+          <ol className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              { icon: ScanLine, step: 'STEP 1', title: '影一張全身相', desc: '企直、正面、光線充足就得，即場影或者上載舊相都可以。' },
+              { icon: ShoppingBag, step: 'STEP 2', title: '揀真商品', desc: '喺商品頁撳「AI 試穿呢件」，或者喺試穿頁揀返支援試穿嘅款。' },
+              { icon: Sparkles, step: 'STEP 3', title: '提交等生成', desc: '確認之後 AI 就開始生成，通常一陣就有結果，唔使離開個頁。' },
+              { icon: Download, step: 'STEP 4', title: '下載／分享', desc: '滿意就下載留念，或者分享連同款資料俾朋友一齊睇。' },
+            ].map((s) => (
+              <li
+                key={s.step}
+                className="rounded-2xl border bg-space-2 p-5"
+                style={{ borderColor: 'var(--glass-border)' }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <s.icon size={20} aria-hidden="true" className="shrink-0 text-pink-soft" />
+                  <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-gold">{s.step}</span>
+                </div>
+                <p className="mt-3 text-[15px] font-bold text-txt-1">{s.title}</p>
+                <p className="mt-1.5 text-[13px] leading-[1.7] text-txt-3">{s.desc}</p>
+              </li>
+            ))}
+          </ol>
+
+          {/* 規則三點：Mix & Match、私隱保留、尺寸免責 */}
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="rounded-2xl border bg-space-2 p-5" style={{ borderColor: 'var(--glass-border)' }}>
+              <p className="flex items-center gap-2 text-[14px] font-bold text-txt-1">
+                <Layers size={16} aria-hidden="true" className="shrink-0 text-lavender" />
+                Mix &amp; Match 逐件襯
+              </p>
+              <p className="mt-2 text-[13px] leading-[1.7] text-txt-3">
+                可以喺上一次結果之上再疊加下一件，每次最多 {tryonMaxMix} 件；
+                每一件都要你先確認效果先加落去，唔會一次過亂咁疊。
+              </p>
+            </div>
+            <div className="rounded-2xl border bg-space-2 p-5" style={{ borderColor: 'var(--glass-border)' }}>
+              <p className="flex items-center gap-2 text-[14px] font-bold text-txt-1">
+                <Lock size={16} aria-hidden="true" className="shrink-0 text-lavender" />
+                24 小時私人保留
+              </p>
+              <p className="mt-2 text-[13px] leading-[1.7] text-txt-3">
+                你嘅全身相同生成結果只係私人保留 24 小時，得你先睇到，
+                之後自動刪除，我哋唔會攞嚟做宣傳。
+              </p>
+            </div>
+            <div className="rounded-2xl border bg-space-2 p-5" style={{ borderColor: 'var(--glass-border)' }}>
+              <p className="flex items-center gap-2 text-[14px] font-bold text-txt-1">
+                <Ruler size={16} aria-hidden="true" className="shrink-0 text-lavender" />
+                視覺預覽 · 尺寸免責
+              </p>
+              <p className="mt-2 text-[13px] leading-[1.7] text-txt-3">
+                AI 試穿只係視覺效果預覽，唔代表實際尺碼、鬆緊或合身程度；
+                尺寸一律以商品尺寸表同實物為準。
+              </p>
+            </div>
+          </div>
+
+          {/* CTA：開放中 → /try-on；未開放 → /products（唔宣稱會員已開放） */}
+          <div className="mt-8 flex flex-wrap items-center gap-4">
+            {tryonOpen ? (
+              <Link
+                to="/try-on"
+                className="btn btn-primary !px-8 !py-3.5 text-[15px] font-bold"
+              >
+                <Sparkles size={17} aria-hidden="true" />
+                開始 AI 試穿
+              </Link>
+            ) : (
+              <Link
+                to="/products"
+                className="btn btn-secondary !px-8 !py-3.5 text-[15px] font-bold"
+              >
+                <ShoppingBag size={17} aria-hidden="true" />
+                先去揀心水款
+              </Link>
+            )}
+            <p className="text-[13px] text-txt-3">
+              {tryonOpen
+                ? '合資格級別會員登入後就可以即刻試。'
+                : '功能仲喺內測階段，會員開放時間請留意直播同群組公佈。'}
+            </p>
           </div>
         </div>
       </section>

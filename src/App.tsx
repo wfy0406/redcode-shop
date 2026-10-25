@@ -29,6 +29,7 @@ const Returns = lazy(() => import('@/pages/Returns')); // 2026-10-06：退換貨
 const GuestCheckout = lazy(() => import('@/pages/GuestCheckout')); // 2026-10-09：訪客快速結帳（唔使開帳號）
 const GuestPayment = lazy(() => import('@/pages/GuestPayment')); // 2026-10-09：訪客付款／狀態頁（倒數＋Airwallex 回跳）
 const WalletTopup = lazy(() => import('@/pages/WalletTopup')); // v2.5.0：會員購物金充值（套票＋批核入帳）
+const TryOn = lazy(() => import('@/pages/TryOn')); // AI 試穿／Mix & Match 私人工作枱
 
 /**
  * Lazy 頁載入中嘅全屏 fallback：品牌色底 #0A0614＋粉紅 #FE017E「載入中…」，
@@ -97,6 +98,7 @@ export default function App() {
             <Route path="orders" element={<MyOrders />} />
             <Route path="payment" element={<Payment />} />
             <Route path="wallet-topup" element={<WalletTopup />} />
+            <Route path="try-on" element={<TryOn />} />
             <Route path="receipt/:orderId" element={<Receipt />} />
             <Route path="privacy" element={<Privacy />} />
             <Route path="terms" element={<Terms />} />

@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, Radio, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users, Wallet } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, Radio, ScanLine, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users, Wallet } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -27,6 +27,7 @@ import StationManager from '@/components/admin/StationManager';
 import ApprovalCenter from '@/components/admin/ApprovalCenter';
 import AuditLog from '@/components/admin/AuditLog';
 import WalletPanel from '@/components/admin/WalletPanel';
+import TryOnPanel from '@/components/admin/TryOnPanel';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
 
@@ -45,6 +46,7 @@ type ViewKey =
   | 'orders'
   | 'purchase'
   | 'products'
+  | 'tryon'
   | 'praise'
   | 'promo'
   | 'marketing'
@@ -217,6 +219,10 @@ function AdminConsole() {
     { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
     { key: 'purchase', label: '訂貨統計', icon: <ClipboardList size={17} aria-hidden="true" /> },
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
+    // AI 試穿開放閘口、成本及統計只限最高管理員；同事仍可由前台 /try-on 內測
+    ...(isAdmin
+      ? [{ key: 'tryon' as ViewKey, label: 'AI 試穿', icon: <ScanLine size={17} aria-hidden="true" /> }]
+      : []),
     { key: 'praise', label: '客戶打卡牆', icon: <Images size={17} aria-hidden="true" /> },
     { key: 'promo', label: '優惠碼', icon: <TicketPercent size={17} aria-hidden="true" /> },
     // 促銷電郵（2026-08-05 Glo 要求）：寫推廣 email 寄畀已同意接收嘅會員
@@ -289,6 +295,7 @@ function AdminConsole() {
         <ListingBatchesCard />
       </div>
     ),
+    tryon: isAdmin ? <TryOnPanel toast={pushToast} /> : ADMIN_ONLY_HINT,
     praise: <PraiseManager toast={pushToast} />,
     promo: <PromoManager toast={pushToast} />,
     marketing: <MarketingEmailCard toast={pushToast} />,

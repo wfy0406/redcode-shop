@@ -1,0 +1,136 @@
+RedCode 官網 v2026.10.25.1
+AI 試穿／整套混搭（Mix & Match）上版包
+日期：2026-10-25
+
+一、呢個包係咩
+
+呢個係 overlay 上版包，以 v2026.10.25 官網版本做基準；只包含今輪 28 個新增／修改檔案、呢份部署說明及 SHA256SUMS。
+呢個包唔係獨立完整 repo，唔可以解壓後當全新項目直接 build。請冚過現有官網 Website repo 根目錄（即有 package.json 嗰層），唔好整出 Website/Website 雙層目錄。
+
+舊 v2026.10.25 總包冇被改寫；package.json、package-lock.json、全站 index.css、FairyFly、logo、批准影片及公開素材冇放入今輪差異。
+
+二、最重要：而家只係同事／管理員內測
+
+未做真人＋真商品品質驗收前：
+1. memberEnabled 必須保持 false。
+2. qualityApproved 必須保持 false。
+3. 唔好宣稱已正式開放會員，亦唔好將 QA mock 圖當真生成效果。
+
+生成係提交後異步工作，唔係即時布料 AR；畫面只顯示真實 queued／processing／completed／failed 狀態，唔顯示假百分比。
+固定 adapter 係 tryon-max、generation_mode=quality、resolution=1k、一張 PNG；供應商計費係每次生成 3 credits。混搭每件都係另一次生成、另一次額度及成本預留，每套最多 3 件，每次都要用戶確認，唔會自動連續收費。
+
+AI 試穿只係視覺預覽，唔代表實際尺碼、鬆緊、合身程度或舒適度；尺寸以商品尺寸表及實物為準。商品原圖係唯一衣服依據，但生成式 AI 仍可能改錯細節，所以真人驗收係開放前必要條件。
+
+三、今輪完成內容
+
+1. 新增 /try-on 響應式工作枱：後鏡優先、前後鏡切換、相簿上傳、拍攝後提交、進度狀態、原相／商品原圖／結果對照。
+2. 商品頁用真 DB 商品及 activePhoto 帶入正確 photoIndex；demo fallback、生活用品、護膚品、other、不明或混合飾品唔會出試穿入口。
+3. 整套混搭：兩件必須唔同穿著部位；戒指、頸鏈、耳環、手鏈係不同子部位；相同部位不可追加，每套最多 3 件。失敗步可用新操作編號重試；刪除最新後續步後可由上一步再追加。
+4. 下載真 PNG；支援 Web Share 嘅裝置可分享 PNG＋美化文字。WhatsApp fallback 用 wa.me 分享文字及公開商品網址，唔會假稱自動附加私人結果圖。
+5. 分享文案按生成時商品快照列出每件品名、貨號、價錢及 /products/:id 公開網址；兩件就兩組，並註明係 AI 試穿。私人原相、結果 signed URL 唔會寫入文案。
+6. 私人媒體唔使用公開 /uploads/:file：私有目錄、owner 綁定、短期 HMAC signed URL、private/no-store、預設 24 小時到期，可即時刪除目前步驟。
+7. 會員按級別每日限額、員工／全站每日上限、全站每月預算；queued／processing 會預留額度及成本。失敗唔扣個人每日額度，但供應商已提交或結果不確定時，估算成本會保留待核實。
+8. Admin 有品質批准、會員開關、最低會員級別、各級額度、員工／全站上限、成本單價、每月預算、provider 狀態及日／月／年統計。
+9. Home、Vip、FAQ 已接入；未開放時只講內測／即將開放。Vip 低於 minimumTier 嘅級別會顯示「暫未包括」，唔會誤顯示可用次數。
+10. 相機權限被拒時有「重新檢查鏡頭權限」及「用相簿揀相」；logout、換帳號、背景分頁及關閉工作枱會停止相機 tracks。網頁唔會假稱可以直接開系統設定。
+
+四、部署步驟（由你執行）
+
+1. 先備份而家 repo，並按你平常流程備份資料庫。建議先 commit 手上乾淨版本，方便對照及 rollback。
+2. 解壓本 ZIP，將內容冚過官網 Website repo 根目錄。只係覆蓋同名檔及加入新檔；唔需要刪除其他現有檔案。
+3. 喺解壓後嘅 repo 根目錄，可用 Linux／macOS／Git Bash 執行：
+   sha256sum -c SHA256SUMS
+   全部顯示 OK 先代表逐檔同交付版本一致。呢步只係完整性檢查，唔係連資料庫嘅驗證。
+4. 喺 Render／你嘅秘密管理設定以下項目；唔好將真值寫入 repo 或回本畀任何人：
+   - FASHN_API_KEY：由供應商取得，只放 server-only 環境變數；唔好加 VITE_ 前綴。
+   - APP_SECRET：沿用現有強隨機秘密；私人媒體 signed URL 會用到，唔可以空白。今輪冇亦唔會替你 rotate。
+   - PUBLIC_BASE_URL：正式站用 https://redcode.red。
+   - UPLOADS_DIR：沿用現有 persistent disk／上傳設定。
+   - TRYON_PRIVATE_DIR：可選；如覆寫，必須係私人持久目錄，唔可以被公開靜態路由直接讀取。
+5. 今輪冇新 npm dependency，package.json／lockfile 均不變。按你正常流程 commit、push；Render 會按現有設定 auto-deploy。我冇替你 push、merge 或部署。
+6. 開機後現有 ensureDatabase() 會自動執行 CREATE TABLE IF NOT EXISTS，建立 tryOnJobs 同 indexes；成功後先啟動試穿媒體清理及卡住工作恢復。請睇 Render logs 確認冇 [boot-migrate] failed；唔需要亦唔好跑會連 production DB 嘅 check-db／fix-db／verify 腳本。
+7. 到 Admin「AI 試穿」檢查 provider 狀態，設定員工／全站上限、每 credit 成本及每月預算。會員開放前，成本單價、每月預算、最低級別及各級每日額度都要明確設定。
+8. 保持會員開關及品質批准關閉，先用同事／管理員帳號做第五節驗收。
+
+五、真人＋真商品驗收清單
+
+每次真生成都可能產生供應商費用；混搭每件獨立計費。請用小額、可追蹤嘅內測額度。
+
+1. 用真 DB 商品詳情頁入 /try-on，換商品相片後確認帶入嘅係你而家睇嗰張。
+2. 分別試後鏡、前後鏡切換、相簿 JPEG／PNG／WebP；拒絕權限後試重新檢查及相簿 fallback。HEIC／HEIF 應按 FAQ 先轉 JPEG。
+3. 觀察 queued／processing／completed／failed，確認冇假百分比、冇自動追加下一件。
+4. 逐件對照真人同商品：樣貌、五官、髮色、身形、姿勢唔應為遷就衣服而改；商品款色、印花、細節及材質觀感唔應憑空改變。「著得靚」只接受自然貼合、合理垂墜、褶皺、比例及冇穿模，唔係美顏或改身形。
+5. 上衣＋褲、上衣＋戒指等不同部位各試一次；相同部位應被拒。飾品要逐類驗證位置；server placement prompt 只係降低風險，唔係品質保證。
+6. 完成後下載 PNG，檢查可正常開啟。手機支援時試 Web Share files＋text；WhatsApp fallback 應有每件品名、貨號、生成時價錢及公開商品網址。私人結果圖要先下載再自行附加到 WhatsApp。
+7. 試失敗重試、刪除第二步再追加、刪除根步、重新整理恢復，以及已刪工作唔再永久報錯。
+8. 核對 Admin 日／月／年統計：成功、失敗、處理中、預留點數、已用點數、估算成本及成本待核實應分開；再同供應商實際 credits／帳單對數。
+9. 檢查私人原相及結果唔能透過公開 /uploads/:file 讀取；owner 以外帳號唔能讀；signed URL 到期後可由頁面有限刷新；即時刪除及 24 小時清理要實測。
+10. 用真 iPhone／Android、桌面、平板及 App WebView 各跑一次。真機相機權限、原生分享及 WebView 行為唔係桌面 Chromium mock 可以代替。
+11. 只有品質、私隱、額度、成本及每月預算全部通過後，先由你決定是否開品質批准，再開會員或指定最低級別。
+
+六、今輪已做嘅隔離驗證
+
+最終 TryOn.tsx：
+- 1426 行，單一合法檔尾，冇 trailing junk。
+- MD5：0da75d5dcfc7299cfeb7f6a5fa1c7184
+- SHA256：7281c4772aeaac9f6c805339e3876c8ddf82f49c12a8b34f39a77d3fda618b7c
+
+同一最終源碼喺隔離環境、相同本地工具鏈（TypeScript 5.9.3／Vitest 4.1.12／Vite 7.3.7／esbuild 0.27.2）真跑：
+1. node node_modules/typescript/bin/tsc -b：PASS，0 errors。
+2. node node_modules/vitest/vitest.mjs run：PASS，14 test files／267 tests。
+3. npm build 同等本地命令：PASS，2287 modules transformed，dist/boot.js 成功產出。
+4. Baseline 即場重建重跑：0 errors、8 files／183 tests、2284 modules。
+5. 對照結果：zero NEW errors vs baseline；新增 6 個測試檔／84 項測試，build +3 modules。兩邊只有同類 guestUtils 隔離 env 提示及既有 chunk-size 警告。
+
+Chromium／Playwright 以 mock tRPC、QA 測試圖及模擬相機跑：
+- 59／59 checks PASS，0 failed。
+- 包括兩件混搭、idempotency、queued／processing／completed、失敗重試、刪後再追加、兩件商品 WhatsApp 文案、真 PNG File／magic bytes、下載、quota 用完仍可睇結果、signed URL 有限刷新、NOT_FOUND 及 transient 網絡恢復。
+- 包括相機拒絕後重試、前後鏡 constraints、舊 tracks 停止、logout／背景分頁及 pending getUserMedia 競態。
+- 包括 ProductDetail activePhoto、skincare／不明飾品／demo 無入口、Home／Vip／Admin／FAQ。
+- 375／768／1024／1440 全無頁面級水平溢出；主要按鈕實量全部 ≥44px；已保存四尺寸截圖及 reduced-motion 檢查。
+
+QA 圖全部只係明確標示嘅測試素材，唔係 AI 真生成結果，亦冇放入網站公開素材或呢個 ZIP。今輪冇連 production DB、冇调用真 FASHN、冇產生供應商費用、冇 GitHub push。
+
+七、仍然未驗證，唔可以當已合格
+
+1. 真人＋真商品樣貌、身形、商品細節、材質及不同飾品位置嘅實際生成品質。
+2. 真 FASHN API 回應、實際 credits／帳單、供應商故障及超時行為。
+3. 真 PostgreSQL migration、並發建立、多 instance、重開恢復及 persistent disk 清理。
+4. 真機相機、App WebView 權限、原生分享，以及實際 24 小時到期清理。
+5. 正式部署環境嘅 APP_SECRET、FASHN_API_KEY、PRIVATE disk 路徑及供應商配置。
+
+八、逐檔變更（28 個 payload 檔）
+
+1. .env.example：加入 FASHN、PUBLIC_BASE_URL 及私人媒體目錄空白示例；冇真秘密。
+2. api/boot-migrate.test.ts：加 boot DDL regression，覆蓋試穿表及可重試所需 indexes。
+3. api/boot-migrate.ts：新增 tryOnJobs 開機建表及 indexes；(lookId, stepNumber) 保持普通 index，唔阻失敗重試。
+4. api/boot.ts：加入 camera Permissions-Policy、私人媒體 route，以及 ensureDatabase 成功後先啟動試穿 sweeper。
+5. api/router.ts：掛載 tryon tRPC router。
+6. api/tryonConfig.test.ts：設定閘口、額度、預算、成本及混搭 lineage 純函數 regression。
+7. api/tryonConfig.ts：安全預設、會員開放條件、每日／每月用量及成本預留、不同部位／防分叉判斷。
+8. api/tryonContract.test.ts：商品資格、兩件商品分享、快照價、公開 URL 及排除私人 signed URL regression。
+9. api/tryonHttp.ts：私人媒體 Hono response；驗證 owner／HMAC／到期，回 private、no-store。
+10. api/tryonMedia.test.ts：圖片格式、私人路徑、HMAC 及媒體安全 regression。
+11. api/tryonMedia.ts：私人 disk 讀寫刪、圖片 magic bytes／normalize、短期 signed URL 簽發及驗證。
+12. api/tryonProvider.test.ts：FASHN submit／status／錯誤及輸出契約 regression。
+13. api/tryonProvider.ts：tryon-max 高質 adapter；quality、1k、一張 PNG、3 credits。
+14. api/tryonRouter.test.ts：FASHN_API_KEY／APP_SECRET 對 public／admin 開放狀態閘口 regression。
+15. api/tryonRouter.ts：權限、商品清單、建立工作、owner 查詢／刪除、Admin 設定及統計 endpoints。
+16. api/tryonService.test.ts：建立、idempotency、額度、失敗、恢復、刪除 lineage、自動下架及成本流程 regression。
+17. api/tryonService.ts：試穿主服務、transaction／鎖、供應商處理、成本、預算、owner 媒體、統計及清理。
+18. contracts/tryon.ts：共用穿著部位、商品名分類、最新 attempt、分享文案及 wa.me URL。
+19. db/schema.ts：Drizzle tryOnJobs table 定義。
+20. src/App.tsx：加入 /try-on route。
+21. src/components/admin/TryOnPanel.tsx：Admin 開放閘口、額度、成本、預算、provider 狀態及日／月／年統計面板。
+22. src/hooks/useAuth.tsx：logout 清私人試穿 query cache 及 user-bound session 狀態。
+23. src/pages/Admin.tsx：接入 AI 試穿 Admin 導覽及面板。
+24. src/pages/Faq.tsx：保留原通知教學，加入 PWA、試穿、混搭計費、尺寸、分享及鏡頭／相簿權限故障處理。
+25. src/pages/Home.tsx：加入功能狀態及合資格會員文案；未開放只顯示內測，冇放假生成圖。
+26. src/pages/ProductDetail.tsx：真 DB 商品入口、activePhoto photoIndex；demo 及非合資格商品唔顯示。
+27. src/pages/TryOn.tsx：完整響應式工作枱、相機、上傳、混搭、對照、下載／分享／刪除、權限及恢復；包括審查修正及 NOT_FOUND 訊息 race 修正。
+28. src/pages/Vip.tsx：真正開放時先顯示福利；按 minimumTier 顯示各級可用次數或「暫未包括」。
+
+九、完整性及 rollback
+
+SHA256SUMS 覆蓋 28 個 payload 檔及呢份部署說明；SHA256SUMS 本身唔會自簽。
+如需 rollback，用你部署前嘅 Git commit／備份還原今輪 28 檔，再按正常流程 push；資料庫有新建 tryOnJobs 表，rollback 程式前請先保留統計及私人媒體處理紀錄，唔好未評估就刪表。

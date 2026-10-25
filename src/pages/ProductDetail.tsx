@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TouchEvent } from 'react';
 import { Link, useParams } from 'react-router';
-import { CalendarDays, Check, Heart, Minus, Plus, Share2, ShoppingBag, Tag } from 'lucide-react';
+import { CalendarDays, Check, Heart, Minus, Plus, ScanLine, Share2, ShoppingBag, Tag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { productCategoryLabel } from '@contracts/types';
+import { resolveTryOnProductKind } from '@contracts/tryon';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/admin/WishingStar';
 import {
@@ -48,6 +49,15 @@ export default function ProductDetail() {
     return undefined; // loading
   }, [productQuery.data, productQuery.isError, productId]);
   const isDemo = productQuery.isError && product !== null;
+
+  // AI 試穿入口資格：只限真 DB 商品（productQuery.data 先算；demo fallback / 載入中一律冇），
+  // 並且 resolveTryOnProductKind 辨到明確穿戴部位——非穿著（lifestyle/skincare/other）、
+  // 不明飾品（套裝、多子類、收納保養用品、泛稱飾物）一律唔顯示。
+  const tryOnKind = useMemo(() => {
+    const db = productQuery.data;
+    if (!db) return null;
+    return resolveTryOnProductKind(db.category, db.name);
+  }, [productQuery.data]);
 
   const sizes = useMemo(() => parseSizes(product?.sizes), [product?.sizes]);
   // 尺寸開關閂咗（冇尺寸嘅貨，例如袋/飾物）→ 唔顯示尺寸、落單唔使揀
@@ -472,6 +482,23 @@ export default function ProductDetail() {
               <Share2 size={20} aria-hidden="true" />
             </button>
           </div>
+
+          {/* AI 試穿入口（只限真 DB、可明確辨識穿戴部位嘅商品；demo fallback 永遠唔出現）。
+              photoIndex 跟實 activePhoto——換相後網址即時更新，試穿頁會用緊客人而家睇嗰張商品相。 */}
+          {tryOnKind && (
+            <div className="mt-4">
+              <Link
+                to={`/try-on?productId=${product.id}&photoIndex=${activePhoto}`}
+                className="btn btn-secondary flex w-full items-center justify-center gap-2 !py-3.5 text-[15px] font-bold"
+              >
+                <ScanLine size={17} aria-hidden="true" />
+                AI 試穿呢件
+              </Link>
+              <p className="mt-2 text-center text-[12px] leading-[1.6] text-txt-3">
+                視覺預覽，唔代表尺碼或合身程度
+              </p>
+            </div>
+          )}
 
           {/* 描述 */}
           {product.description && (

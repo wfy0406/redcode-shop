@@ -197,6 +197,18 @@ function SectionHeading({ en, zh, center }: { en: string; zh: string; center?: b
   );
 }
 
+/** AI 試穿入場門檻等級 → 中文名（NONE＝普通會員起都用得） */
+function tryOnTierLabel(tier: 'NONE' | 'SILVER' | 'GOLD'): string {
+  if (tier === 'GOLD') return 'VIP金會員';
+  if (tier === 'SILVER') return 'VIP銀會員';
+  return '會員';
+}
+
+/** 每日次數顯示：0 次唔好寫「0 次」，要講明「暫未包括」 */
+function tryOnDailyLimitLabel(limit: number): string {
+  return limit > 0 ? `每日 ${limit} 次` : '暫未包括';
+}
+
 export default function Vip() {
   const tiersRef = useReveal<HTMLDivElement>();
   const shipRef = useReveal<HTMLDivElement>();
@@ -210,6 +222,16 @@ export default function Vip() {
     retry: 1,
   });
   const cfg = configQuery.data ?? null;
+
+  // AI 試穿會員福利（publicQuery）：只有後台明確開放（memberEnabled === true）先顯示；
+  // 載入中／關閉／錯誤一律唔渲染福利區，唔會寫死「已開放」誤導會員。
+  const tryOnConfigQuery = trpc.tryon.getPublicConfig.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const tryOnCfg =
+    tryOnConfigQuery.data?.memberEnabled === true ? tryOnConfigQuery.data : null;
+  const tryOnRef = useReveal<HTMLDivElement>();
   // 衍生顯示字（cfg 未返就 null → skeleton）
   const silverThresholdLabel = cfg ? centsToDollarLabel(cfg.silverThresholdCents) : null;
   const goldThresholdLabel = cfg ? centsToDollarLabel(cfg.goldThresholdCents) : null;
@@ -538,6 +560,80 @@ export default function Vip() {
           </div>
         </div>
       </section>
+
+      {/* ============ 2.5 AI 試穿會員福利（後台 memberEnabled === true 先渲染） ============ */}
+      {tryOnCfg && (
+        <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
+          <div ref={tryOnRef} className="reveal">
+            <SectionHeading en="AI Try-On" zh="AI 試穿 · 會員專享" />
+            <p className="mt-3 max-w-2xl text-[15px] leading-[1.75] text-txt-2">
+              著上身先知啱唔啱 —— 上載全身相，揀件衫，AI 幫你試。依家開放俾合資格會員使用（最低級別：{' '}
+              <span className="text-gold-soft">{tryOnTierLabel(tryOnCfg.minimumTier)}</span>
+              ）。
+            </p>
+
+            <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+              {/* 三級每日試穿次數（0 次顯示「暫未包括」） */}
+              {(
+                [
+                  { tier: 'NONE' as const, label: '會員', limit: tryOnCfg.dailyLimitNone, eligible: tryOnCfg.minimumTier === 'NONE' },
+                  { tier: 'SILVER' as const, label: 'VIP銀會員', limit: tryOnCfg.dailyLimitSilver, eligible: tryOnCfg.minimumTier !== 'GOLD' },
+                  { tier: 'GOLD' as const, label: 'VIP金會員', limit: tryOnCfg.dailyLimitGold, eligible: true },
+                ]
+              ).map((row, i) => (
+                <div
+                  key={row.tier}
+                  className="reveal rounded-[20px] border bg-space-2 p-6 md:p-7"
+                  style={{ borderColor: 'var(--glass-border)', transitionDelay: `${i * 100}ms` }}
+                >
+                  <p className="font-mono text-xs tracking-[0.28em] text-txt-3">{row.tier}</p>
+                  <h3 className="mt-3 font-serif-tc text-xl font-semibold text-txt-1">{row.label}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-txt-2">
+                    {row.eligible && row.limit > 0 ? (
+                      <>
+                        每日{' '}
+                        <span className="font-display-en text-2xl font-semibold text-gold-soft">
+                          {row.limit}
+                        </span>{' '}
+                        次免費試穿
+                      </>
+                    ) : (
+                      <span className="text-txt-3">{tryOnDailyLimitLabel(row.eligible ? row.limit : 0)}</span>
+                    )}
+                  </p>
+                </div>
+              ))}
+
+              {/* Mix & Match 規則格 */}
+              <div
+                className="reveal rounded-[20px] border bg-space-2 p-6 md:p-7"
+                style={{ borderColor: 'var(--glass-border)', transitionDelay: '300ms' }}
+              >
+                <p className="font-mono text-xs tracking-[0.28em] text-txt-3">MIX &amp; MATCH</p>
+                <h3 className="mt-3 font-serif-tc text-xl font-semibold text-txt-1">混搭試穿</h3>
+                <p className="mt-2 text-sm leading-relaxed text-txt-2">
+                  每套最多{' '}
+                  <span className="font-display-en text-2xl font-semibold text-gold-soft">
+                    {tryOnCfg.maxMixSteps}
+                  </span>{' '}
+                  件，每件<span className="text-gold-soft">獨立生成、獨立扣額</span>，
+                  確認咗先追加下一件。
+                </p>
+              </div>
+            </div>
+
+            <div className="reveal mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center" style={{ transitionDelay: '200ms' }}>
+              <Link to="/try-on" className="btn btn-primary">
+                立即去 AI 試穿
+              </Link>
+              <p className="max-w-xl text-[13px] leading-relaxed text-txt-3">
+                AI 預覽只係視覺效果，唔代表尺碼、鬆緊、合身程度或舒適度，揀碼請以尺寸表同實物為準。
+                試穿結果保留 24 小時，可隨時下載或刪除。
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ============ 3. 免運・運費制度（4 格圖標分塊） ============ */}
       <section className="mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
