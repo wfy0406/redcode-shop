@@ -70,6 +70,16 @@ function statusLabel(status: string): string {
   return '等待生成';
 }
 
+function getFailureHelp(code: string | null | undefined, isStaff: boolean): { title: string; detail: string } | null {
+  if (code !== 'PROVIDER_AUTH') return null;
+  return {
+    title: '唔關你張相事，係試穿服務授權未接通',
+    detail: isStaff
+      ? '請管理員喺 FASHN API Dashboard 核對 key，再用複製掣更新官網 Render 服務嘅 FASHN_API_KEY；確認新部署完成後先重試。唔使改 APP_SECRET，亦唔使重拍或改商品相。'
+      : '請通知管理員檢查試穿服務設定；你唔使重拍或改商品相。修正設定前再按重試都只會得到同一個授權結果。',
+  };
+}
+
 function operationKey(): string {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '');
   const random = Math.random().toString(36).slice(2, 14);
@@ -205,7 +215,7 @@ export default function TryOn() {
   const [kindFilter, setKindFilter] = useState<'all' | TryOnProductKind>('all');
   const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [cameraMessage, setCameraMessage] = useState<string | null>(null);
-  const [facingMode, setFacingMode] = useState<FacingMode>('environment');
+  const [facingMode, setFacingMode] = useState<FacingMode>('user');
   const [readingPhoto, setReadingPhoto] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -791,6 +801,8 @@ export default function TryOn() {
     ? modelImage
     : job?.lookOriginalUrl ?? (job?.stepNumber === 1 ? job.inputUrl : null) ?? modelImage;
   const isStaff = Boolean(user && user.role !== 'member');
+  const flowStep = job ? 3 : originalPreview ? 2 : 1;
+  const failureHelp = job?.status === 'failed' ? getFailureHelp(job.failureCode, isStaff) : null;
 
   return (
     <main className="tryon-page">
@@ -800,8 +812,8 @@ export default function TryOn() {
           <p className="tryon-kicker">REDCODE · AI FITTING STUDIO</p>
           <h1>你嘅全身相，<br /><span>襯返真商品。</span></h1>
           <p className="tryon-hero-copy">
-            拍一張頭到腳清晰入鏡嘅全身相，揀商品後提交生成。呢度係異步 AI 視覺預覽，
-            唔係實時布料 AR，亦唔會為遷就衣服而改你嘅樣貌或身形。
+            前鏡自拍、後鏡拍攝或相簿揀相都得。拍一張頭到腳清晰入鏡嘅全身相，揀商品後提交；
+            系統會異步生成 AI 視覺預覽，唔係實時布料 AR，亦唔會為遷就衣服而改你嘅樣貌或身形。
           </p>
         </div>
         <div className="tryon-hero-side">
@@ -817,10 +829,22 @@ export default function TryOn() {
                     ? '會員暫未開放'
                     : '確認開放資格中…'}
           </span>
-          <ol className="tryon-step-list">
-            <li><b>01</b><span>全身相<small>後鏡頭／相簿</small></span></li>
-            <li><b>02</b><span>真商品<small>逐件確認</small></span></li>
-            <li><b>03</b><span>對照分享<small>24 小時私人保留</small></span></li>
+          <ol className="tryon-step-list" aria-label="試穿流程">
+            {[1, 2, 3].map((step) => (
+              <li
+                key={step}
+                data-current={flowStep === step}
+                data-complete={flowStep > step}
+                aria-current={flowStep === step ? 'step' : undefined}
+              >
+                <b>{String(step).padStart(2, '0')}</b>
+                <span>
+                  {step === 1 ? '全身相' : step === 2 ? '真商品' : '對照分享'}
+                  <small>{step === 1 ? '前／後鏡頭／相簿' : step === 2 ? '逐件確認' : '24 小時私人保留'}</small>
+                </span>
+                <i aria-hidden="true">{flowStep > step ? <Check size={14} /> : null}</i>
+              </li>
+            ))}
           </ol>
         </div>
       </header>
@@ -925,7 +949,12 @@ export default function TryOn() {
                   <div className="tryon-photo-placeholder">
                     <ScanLine size={46} strokeWidth={1.2} aria-hidden="true" />
                     <h3>頭到腳，企直少少</h3>
-                    <p>光線平均、背景簡單、冇遮擋會較易看得清衣服輪廓。系統只檢查格式及像素，唔會假稱能自動判斷全身。</p>
+                    <div className="tryon-photo-tips" aria-label="拍攝貼士">
+                      <span><Check size={14} />全身入鏡</span>
+                      <span><Check size={14} />光線平均</span>
+                      <span><Check size={14} />冇遮擋</span>
+                    </div>
+                    <p>前鏡自拍都得，將手機拎遠少少。系統只檢查格式及像素，唔會假稱能自動判斷全身。</p>
                   </div>
                 ) : null}
                 {cameraState === 'opening' && <span className="tryon-stage-badge"><LoaderCircle className="tryon-spin" size={15} />開緊鏡頭…</span>}
@@ -955,10 +984,24 @@ export default function TryOn() {
                       <button
                         type="button"
                         className="tryon-primary-button"
-                        onClick={() => void startCamera()}
+                        onClick={() => {
+                          setFacingMode('user');
+                          void startCamera('user');
+                        }}
                         disabled={!access?.allowed || cameraState === 'opening' || readingPhoto}
                       >
-                        <Camera size={18} />{cameraState === 'denied' || cameraState === 'error' ? '重新檢查鏡頭權限' : '用後鏡頭拍攝'}
+                        <Camera size={18} />{cameraState === 'denied' || cameraState === 'error' ? '重新檢查鏡頭權限' : '前鏡自拍全身相'}
+                      </button>
+                      <button
+                        type="button"
+                        className="tryon-secondary-button"
+                        onClick={() => {
+                          setFacingMode('environment');
+                          void startCamera('environment');
+                        }}
+                        disabled={!access?.allowed || cameraState === 'opening' || readingPhoto}
+                      >
+                        <Camera size={18} />後鏡拍攝
                       </button>
                       <button type="button" className="tryon-secondary-button" onClick={chooseUpload} disabled={!access?.allowed || readingPhoto}>
                         <ImagePlus size={18} />用相簿揀相
@@ -981,6 +1024,9 @@ export default function TryOn() {
                 <p className="tryon-panel-note"><LockKeyhole size={15} />呢套造型嘅原始相片已鎖定；追加商品只會用上一步成功結果。</p>
               )}
 
+              {canEditRoot && cameraState !== 'open' && (
+                <p className="tryon-camera-hint"><Sparkles size={15} />唔使急，影完會先見到預覽；唔啱可以移除再影，未按「確認生成」唔會用額度。</p>
+              )}
               {cameraMessage && <p className="tryon-camera-message" role="alert">{cameraMessage} 網頁不能直接開系統設定；如需改權限，請自行到瀏覽器網站設定或系統設定允許。</p>}
               <p className="tryon-panel-note"><LockKeyhole size={15} />私人原相及結果預設保留 24 小時；唔會公開喺商品圖庫，亦可以喺結果區即時刪除。</p>
             </section>
@@ -1115,26 +1161,42 @@ export default function TryOn() {
 
               {jobActive && (
                 <div className="tryon-progress" role="status" aria-live="polite">
-                  <div className="tryon-progress-mark"><LoaderCircle className="tryon-spin" size={30} /></div>
+                  <div className="tryon-progress-mark" aria-hidden="true">
+                    <div className="tryon-generation-bars">{Array.from({ length: 7 }, (_, index) => <i key={index} />)}</div>
+                  </div>
                   <div>
                     <p className="tryon-kicker">ASYNC GENERATION</p>
-                    <h3>{job.status === 'queued' ? '已排隊，正在預留今次額度' : '正在生成穿著效果'}</h3>
-                    <p>呢個係提交後異步生成，冇可靠百分比所以唔會顯示假進度。你可以保持呢頁開啟；同一分頁重新整理會用工作編號恢復。</p>
+                    <h3>{job.status === 'queued' ? '已收到工作，正在排隊' : 'AI 正在生成穿著效果'}</h3>
+                    <p>畫面會自動更新，唔使一直開住鏡頭。冇可靠百分比，所以動畫只代表仍在處理，唔會假裝顯示完成進度；同一分頁重新整理亦會用工作編號恢復。</p>
                     <small>本次預留 {job.credits} credits · 唔會自動生成下一件</small>
                   </div>
                 </div>
               )}
 
               {job.status === 'failed' && (
-                <div className="tryon-failed" role="alert">
+                <div className="tryon-failed" role="alert" data-code={job.failureCode ?? undefined}>
                   <AlertTriangle size={28} />
-                  <div><h3>今次未完成</h3><p>{job.failureMessage ?? '供應商暫時未能生成，請稍後重試。'}</p>{job.failureCode && <small>紀錄代碼：{job.failureCode}</small>}<p>失敗生成唔扣個人每日額度；如供應商結果不確定，估算成本會保留待核實，唔會當成免費。</p></div>
-                  <button type="button" className="tryon-primary-button" onClick={retryFailed} disabled={createMutation.isPending}><RefreshCcw size={17} />重試呢件</button>
+                  <div className="tryon-failed-copy">
+                    <h3>今次未完成</h3>
+                    {failureHelp && <strong className="tryon-failure-lead">{failureHelp.title}</strong>}
+                    <p>{failureHelp?.detail ?? job.failureMessage ?? '供應商暫時未能生成，請稍後重試。'}</p>
+                    {job.failureCode && (
+                      <details className="tryon-tech-details">
+                        <summary>技術紀錄</summary>
+                        <code>{job.failureCode}</code>
+                      </details>
+                    )}
+                    <p className="tryon-failed-note">失敗生成唔扣個人每日額度；如供應商結果不確定，估算成本會保留待核實，唔會當成免費。</p>
+                  </div>
+                  <button type="button" className="tryon-primary-button" onClick={retryFailed} disabled={createMutation.isPending}>
+                    <RefreshCcw size={17} />{job.failureCode === 'PROVIDER_AUTH' ? '設定修正後重試' : '重試呢件'}
+                  </button>
                 </div>
               )}
 
               {job.status === 'completed' && (
                 <>
+                  <p className="tryon-swipe-hint">左右滑動，對照原相、商品同 AI 效果 →</p>
                   <div className="tryon-comparison">
                     <figure>
                       <div>{job.lookOriginalUrl ? <img src={job.lookOriginalUrl} alt="最初全身原相" onError={refreshSignedImageUrls} /> : <span>原相已刪除或到期</span>}</div>
@@ -1209,8 +1271,9 @@ const TRYON_CSS = /* css */ `
     --studio-ink: #0A0614;
     --studio-muted: #5A5180;
     --studio-line: rgba(10, 6, 20, .16);
-    --studio-pink: #FF0054;
+    --studio-pink: #D60047;
     min-height: 100vh;
+    min-height: 100dvh;
     padding: 72px clamp(18px, 4vw, 56px) 96px;
     background: var(--studio-paper);
     color: var(--studio-ink);
@@ -1238,7 +1301,7 @@ const TRYON_CSS = /* css */ `
   .tryon-step-list small { display: block; margin-top: 2px; font-family: 'Noto Sans TC', sans-serif; font-size: 12px; font-weight: 400; color: var(--studio-muted); }
   .tryon-disclaimer { max-width: 1380px; margin: 42px auto 0; display: flex; gap: 12px; align-items: flex-start; padding: 16px 0; border-top: 1px solid var(--studio-line); border-bottom: 1px solid var(--studio-line); color: var(--studio-muted); }
   .tryon-disclaimer svg { flex: 0 0 auto; color: var(--studio-pink); margin-top: 3px; }
-  .tryon-disclaimer p { margin: 0; font-size: 13px; line-height: 1.8; }
+  .tryon-disclaimer p { margin: 0; font-size: 14px; line-height: 1.8; }
   .tryon-disclaimer strong { color: var(--studio-ink); }
   .tryon-access-card { max-width: 760px; margin: 64px auto 0; padding: clamp(28px, 5vw, 56px); border: 1px solid var(--studio-line); text-align: center; }
   .tryon-access-card > svg { color: var(--studio-pink); margin-bottom: 16px; }
@@ -1268,7 +1331,7 @@ const TRYON_CSS = /* css */ `
   .tryon-photo-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; background: var(--studio-paper); border: 1px solid var(--studio-line); text-align: center; }
   .tryon-photo-placeholder svg { color: var(--studio-pink); }
   .tryon-photo-placeholder h3 { margin: 18px 0 8px; font-family: 'Noto Serif TC', serif; font-size: 25px; }
-  .tryon-photo-placeholder p { max-width: 390px; margin: 0; color: var(--studio-muted); font-size: 13px; line-height: 1.8; }
+  .tryon-photo-placeholder p { max-width: 390px; margin: 0; color: var(--studio-muted); font-size: 14px; line-height: 1.8; }
   .tryon-stage-badge { position: absolute; left: 14px; bottom: 14px; display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; background: var(--studio-paper); color: var(--studio-ink); font-size: 12px; }
   .tryon-camera-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
   .tryon-primary-button, .tryon-secondary-button, .tryon-generate-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 0 18px; border: 1px solid var(--studio-ink); border-radius: 0; font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer; }
@@ -1279,7 +1342,7 @@ const TRYON_CSS = /* css */ `
   .tryon-panel-note svg { flex: 0 0 auto; margin-top: 2px; }
   .tryon-camera-message { margin: 14px 0 0; padding-left: 12px; border-left: 2px solid var(--studio-pink); color: var(--studio-muted); font-size: 12px; line-height: 1.75; }
   .tryon-count { flex: 0 0 auto; font-family: 'DM Mono', 'Noto Sans TC', monospace; color: var(--studio-muted); font-size: 11px; }
-  .tryon-product-intro { margin: 12px 0 18px; max-width: 690px; color: var(--studio-muted); font-size: 12px; line-height: 1.75; }
+  .tryon-product-intro { margin: 12px 0 18px; max-width: 690px; color: var(--studio-muted); font-size: 14px; line-height: 1.75; }
   .tryon-search { display: flex; align-items: center; gap: 9px; min-height: 46px; border-bottom: 1px solid var(--studio-ink); }
   .tryon-search input { min-width: 0; flex: 1; height: 44px; border: 0; background: transparent; color: var(--studio-ink); outline: 0; }
   .tryon-search input::placeholder { color: var(--studio-muted); }
@@ -1294,9 +1357,9 @@ const TRYON_CSS = /* css */ `
   .tryon-product-image-wrap > img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .tryon-product-image-wrap > span { position: absolute; left: 7px; top: 7px; padding: 3px 6px; background: var(--studio-paper); color: var(--studio-ink); font-size: 10px; }
   .tryon-product-image-wrap > i { position: absolute; right: 7px; top: 7px; width: 25px; height: 25px; display: grid; place-items: center; background: var(--studio-pink); color: var(--studio-paper); border-radius: 50%; }
-  .tryon-product-card > strong { display: -webkit-box; margin-top: 9px; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 12px; line-height: 1.5; }
-  .tryon-product-card > small { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-muted); font-family: 'DM Mono', monospace; font-size: 9px; }
-  .tryon-product-price { display: block; margin-top: 4px; color: var(--studio-pink); font-family: 'DM Mono', monospace; font-size: 12px; }
+  .tryon-product-card > strong { display: -webkit-box; margin-top: 9px; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 14px; line-height: 1.5; }
+  .tryon-product-card > small { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-muted); font-family: 'DM Mono', monospace; font-size: 10px; }
+  .tryon-product-price { display: block; margin-top: 4px; color: var(--studio-pink); font-family: 'DM Mono', monospace; font-size: 13px; }
   .tryon-product-card > em { display: block; margin-top: 4px; color: var(--studio-muted); font-size: 10px; font-style: normal; }
   .tryon-empty-products { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--studio-muted); text-align: center; }
   .tryon-empty-products p { max-width: 420px; margin: 0; font-size: 13px; line-height: 1.8; }
@@ -1348,24 +1411,69 @@ const TRYON_CSS = /* css */ `
   .tryon-result-meta strong { color: var(--studio-ink); }
   .tryon-share-box { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px 50px; align-items: center; padding: 28px 0; border-bottom: 1px solid var(--studio-ink); }
   .tryon-share-box h3 { margin: 6px 0; font-family: 'Noto Serif TC', serif; font-size: 24px; }
-  .tryon-share-box > div:first-child > p:not(.tryon-kicker) { max-width: 680px; margin: 0; color: var(--studio-muted); font-size: 12px; line-height: 1.75; }
+  .tryon-share-box > div:first-child > p:not(.tryon-kicker) { max-width: 680px; margin: 0; color: var(--studio-muted); font-size: 14px; line-height: 1.75; }
   .tryon-share-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
-  .tryon-share-note { grid-column: 1 / -1; margin: 0; color: var(--studio-muted); font-size: 11px; line-height: 1.8; }
+  .tryon-share-note { grid-column: 1 / -1; margin: 0; color: var(--studio-muted); font-size: 12px; line-height: 1.8; }
   .tryon-share-note strong { color: var(--studio-ink); }
   .tryon-delete-zone { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding-top: 16px; }
-  .tryon-delete-zone > p { display: flex; gap: 8px; align-items: flex-start; max-width: 680px; margin: 0; color: var(--studio-muted); font-size: 11px; line-height: 1.7; }
+  .tryon-delete-zone > p { display: flex; gap: 8px; align-items: flex-start; max-width: 680px; margin: 0; color: var(--studio-muted); font-size: 12px; line-height: 1.7; }
   .tryon-delete-zone > p svg { flex: 0 0 auto; }
   .tryon-delete-confirm { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 560px; color: var(--studio-pink); font-size: 12px; }
   .tryon-delete-confirm span { flex: 1 1 100%; text-align: right; }
   .tryon-delete-confirm button { min-height: 44px; padding: 0 14px; border: 1px solid var(--studio-pink); background: transparent; color: var(--studio-pink); cursor: pointer; }
   .tryon-delete-confirm button:first-of-type { background: var(--studio-pink); color: var(--studio-paper); }
   .tryon-footer-note { max-width: 1380px; margin: 54px auto 0; display: flex; justify-content: space-between; gap: 30px; padding-top: 18px; border-top: 1px solid var(--studio-line); }
-  .tryon-footer-note p { max-width: 820px; margin: 0; color: var(--studio-muted); font-size: 11px; line-height: 1.8; }
+  .tryon-footer-note p { max-width: 820px; margin: 0; color: var(--studio-muted); font-size: 12px; line-height: 1.8; }
   .tryon-footer-note strong { color: var(--studio-ink); }
   .tryon-footer-note a { flex: 0 0 auto; color: var(--studio-pink); font-size: 12px; font-weight: 700; text-underline-offset: 4px; }
   .tryon-toast { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); z-index: 80; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 8px; padding: 13px 18px; background: var(--studio-ink); color: var(--studio-paper); font-size: 13px; box-shadow: 0 12px 36px rgba(10,6,20,.18); }
   .tryon-spin { animation: tryon-spin 1s linear infinite; }
   @keyframes tryon-spin { to { transform: rotate(360deg); } }
+  /* 2026-10-25 friendly workflow：動態只表達目前步驟、選擇及真實處理狀態。 */
+  .tryon-page { --studio-soft: rgba(255, 0, 84, .055); --studio-shadow: 0 18px 48px rgba(10, 6, 20, .09); }
+  .tryon-hero-copy { font-size: 16px; line-height: 1.8; }
+  .tryon-step-list li { position: relative; padding-right: 34px; border-radius: 10px; transition: background-color .2s ease-out, color .2s ease-out; }
+  .tryon-step-list li[data-current='true'] { padding-left: 12px; background: var(--studio-soft); }
+  .tryon-step-list li[data-complete='true'] b { color: var(--studio-ink); }
+  .tryon-step-list li > i { position: absolute; top: 16px; right: 10px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--studio-ink); color: var(--studio-paper); opacity: 0; transform: scale(.85); transition: transform .18s ease-out, opacity .18s ease-out; }
+  .tryon-step-list li[data-complete='true'] > i { opacity: 1; transform: scale(1); }
+  .tryon-account-strip { padding: 18px 20px; border-radius: 16px; background: var(--studio-soft); }
+  .tryon-photo-stage { border-radius: 20px; box-shadow: var(--studio-shadow); }
+  .tryon-photo-placeholder { border: 0; }
+  .tryon-photo-tips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 14px; margin: 2px 0 16px; color: var(--studio-ink); font-size: 13px; font-weight: 700; }
+  .tryon-photo-tips span { display: inline-flex; align-items: center; gap: 4px; }
+  .tryon-photo-tips svg { color: var(--studio-pink); }
+  .tryon-camera-hint { display: flex; align-items: flex-start; gap: 7px; margin: 12px 0 0; color: var(--studio-muted); font-size: 13px; line-height: 1.7; }
+  .tryon-camera-hint svg { flex: 0 0 auto; margin-top: 3px; color: var(--studio-pink); }
+  .tryon-primary-button, .tryon-secondary-button, .tryon-generate-button, .tryon-primary-link { border-radius: 12px; transition: transform .18s ease-out, background-color .18s ease-out, color .18s ease-out, border-color .18s ease-out; }
+  .tryon-primary-button:hover:not(:disabled), .tryon-secondary-button:hover:not(:disabled), .tryon-generate-button:hover:not(:disabled), .tryon-primary-link:hover { transform: translateY(-2px); }
+  .tryon-primary-button:active:not(:disabled), .tryon-secondary-button:active:not(:disabled), .tryon-generate-button:active:not(:disabled), .tryon-primary-link:active { transform: translateY(0); }
+  .tryon-kind-filters button { min-height: 44px; padding-inline: 14px; border-radius: 999px; font-size: 12px; transition: background-color .18s ease-out, color .18s ease-out, border-color .18s ease-out; }
+  .tryon-product-image-wrap { border-radius: 12px; }
+  .tryon-product-card { transition: border-color .18s ease-out; }
+  .tryon-product-card[data-selected='true'] .tryon-product-image-wrap { outline: 2px solid var(--studio-pink); outline-offset: 3px; }
+  .tryon-product-image-wrap > i { transition: transform .18s ease-out; }
+  .tryon-generate-button { min-height: 56px; font-size: 15px; box-shadow: 0 10px 24px rgba(255, 0, 84, .14); }
+  .tryon-progress, .tryon-failed { border-radius: 18px; }
+  .tryon-progress { background: var(--studio-soft); }
+  .tryon-progress-mark { width: 76px; height: 76px; border: 0; border-radius: 20px; background: var(--studio-paper); box-shadow: 0 8px 24px rgba(10, 6, 20, .07); }
+  .tryon-generation-bars { height: 36px; display: flex; align-items: center; justify-content: center; gap: 4px; }
+  .tryon-generation-bars i { display: block; width: 3px; height: 32px; border-radius: 1.5px; background: var(--studio-pink); opacity: .4; transform: scaleY(.25); animation: tryon-generation-bar .72s ease-in-out infinite alternate; }
+  .tryon-generation-bars i:nth-child(1), .tryon-generation-bars i:nth-child(7) { animation-duration: .5s; animation-delay: -.28s; }
+  .tryon-generation-bars i:nth-child(2), .tryon-generation-bars i:nth-child(6) { animation-duration: .65s; animation-delay: -.16s; }
+  .tryon-generation-bars i:nth-child(3), .tryon-generation-bars i:nth-child(5) { animation-duration: .8s; animation-delay: -.36s; }
+  .tryon-generation-bars i:nth-child(4) { animation-duration: .9s; animation-delay: -.1s; }
+  .tryon-progress p:not(.tryon-kicker), .tryon-failed p { font-size: 16px; line-height: 1.75; }
+  .tryon-failure-lead { display: block; margin: 8px 0 4px; color: var(--studio-ink); font-size: 16px; line-height: 1.65; }
+  .tryon-tech-details { width: fit-content; margin: 10px 0; color: var(--studio-muted); font-size: 12px; }
+  .tryon-tech-details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .tryon-tech-details code { display: block; padding: 8px 10px; border-radius: 8px; background: rgba(10, 6, 20, .06); color: var(--studio-ink); }
+  .tryon-failed .tryon-failed-note { margin-top: 12px; font-size: 12px; }
+  .tryon-swipe-hint { display: none; }
+  .tryon-delete-zone > .tryon-text-button { flex: 0 0 auto; max-width: 100%; white-space: nowrap; }
+  .tryon-toast { border-radius: 12px; animation: tryon-toast-in .2s ease-out; }
+  @keyframes tryon-generation-bar { from { opacity: .35; transform: scaleY(.25); } to { opacity: 1; transform: scaleY(1); } }
+  @keyframes tryon-toast-in { from { opacity: 0; transform: translate(-50%, 8px) scale(.95); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
   @media (max-width: 1100px) {
     .tryon-workbench { grid-template-columns: 1fr; }
     .tryon-photo-panel { padding: 28px 0 32px; border-right: 0; border-bottom: 1px solid var(--studio-ink); }
@@ -1381,9 +1489,15 @@ const TRYON_CSS = /* css */ `
     .tryon-step-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .tryon-step-list li { display: block; }
     .tryon-step-list small { min-height: 34px; }
-    .tryon-comparison { grid-template-columns: 1fr; gap: 26px; }
-    .tryon-comparison figure > div { aspect-ratio: 4 / 5; }
+    .tryon-swipe-hint { display: block; margin: 20px 0 -12px; color: var(--studio-muted); font-size: 12px; }
+    .tryon-comparison { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: min(78vw, 340px); gap: 12px; overflow-x: auto; padding: 4px 4px 16px; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; }
+    .tryon-comparison figure { scroll-snap-align: start; }
+    .tryon-comparison figure > div { aspect-ratio: 4 / 5; border-radius: 14px; }
     .tryon-result-meta { grid-template-columns: 1fr; gap: 10px; }
+    .tryon-delete-zone { flex-direction: column; }
+    .tryon-delete-zone > .tryon-text-button { align-self: flex-start; white-space: normal; text-align: left; }
+    .tryon-failed { flex-direction: column; }
+    .tryon-failed > button { width: 100%; }
     .tryon-share-box { grid-template-columns: 1fr; gap: 18px; }
     .tryon-share-actions { justify-content: flex-start; }
     .tryon-footer-note { flex-direction: column; }
@@ -1392,22 +1506,25 @@ const TRYON_CSS = /* css */ `
   @media (max-width: 560px) {
     .tryon-page { padding: 34px 16px 72px; }
     .tryon-hero h1 { font-size: 43px; letter-spacing: -.04em; }
-    .tryon-hero-copy { margin-top: 20px; font-size: 13px; }
+    .tryon-hero-copy { margin-top: 20px; font-size: 16px; }
     .tryon-step-list { gap: 6px; }
-    .tryon-step-list li { padding: 12px 4px 0 0; }
+    .tryon-step-list li { padding: 12px 26px 8px 4px; }
+    .tryon-step-list li[data-current='true'] { padding-left: 8px; }
     .tryon-step-list span { font-size: 14px; }
-    .tryon-step-list small { font-size: 10px; }
+    .tryon-step-list small { font-size: 11px; }
     .tryon-disclaimer { margin-top: 28px; }
-    .tryon-account-strip { align-items: flex-start; flex-direction: column; }
+    .tryon-account-strip { align-items: flex-start; flex-direction: column; padding: 16px; }
+    .tryon-account-strip h2 { font-size: 23px; }
     .tryon-quota-group { text-align: left; }
     .tryon-quota { justify-content: flex-start; }
     .tryon-inline-alert { flex-wrap: wrap; }
     .tryon-panel-heading h2, .tryon-result-heading h2 { font-size: 23px; }
     .tryon-photo-stage { aspect-ratio: 3 / 4; }
     .tryon-camera-controls > button { flex: 1 1 calc(50% - 8px); padding: 0 12px; }
+    .tryon-camera-controls > .tryon-primary-button { flex-basis: 100%; }
     .tryon-camera-controls > .tryon-text-button { flex: 0 0 auto; }
     .tryon-contact-sheet { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 590px; }
-    .tryon-product-card > strong { font-size: 12px; }
+    .tryon-product-card > strong { font-size: 14px; }
     .tryon-result-section { margin-top: 48px; }
     .tryon-result-heading { flex-direction: column; gap: 8px; }
     .tryon-progress, .tryon-failed { flex-direction: column; align-items: flex-start; padding: 22px; }
@@ -1420,7 +1537,8 @@ const TRYON_CSS = /* css */ `
     .tryon-delete-confirm span { text-align: left; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .tryon-spin { animation: none; }
+    .tryon-spin, .tryon-generation-bars i, .tryon-toast { animation: none; }
+    .tryon-generation-bars i { opacity: .75; transform: scaleY(.7); }
     .tryon-page * { scroll-behavior: auto !important; transition: none !important; }
   }
 `;
