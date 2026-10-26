@@ -38,8 +38,8 @@ export function latestTryOnAttemptsByStep<T extends { id: number; stepNumber: nu
 }
 
 const ACCESSORY_PATTERNS: ReadonlyArray<{ kind: TryOnProductKind; pattern: RegExp }> = [
-  { kind: "ring", pattern: /戒指|介指|指環|\brings?\b/i },
-  { kind: "necklace", pattern: /頸鏈|頸鍊|項鏈|項鍊|\bnecklaces?\b/i },
+  { kind: "ring", pattern: /戒指|介指|指介|指環|\brings?\b/i },
+  { kind: "necklace", pattern: /頸鏈|頸鍊|項鏈|項鍊|套鏈|套鍊|\bnecklaces?\b/i },
   { kind: "earrings", pattern: /耳環|耳釘|耳飾|\bearrings?\b/i },
   { kind: "bracelet", pattern: /手鏈|手鍊|手鐲|手環|\bbracelets?\b|\bbangles?\b/i },
 ];

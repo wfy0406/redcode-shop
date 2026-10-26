@@ -28,6 +28,7 @@ import ApprovalCenter from '@/components/admin/ApprovalCenter';
 import AuditLog from '@/components/admin/AuditLog';
 import WalletPanel from '@/components/admin/WalletPanel';
 import TryOnPanel from '@/components/admin/TryOnPanel';
+import TryOnRecordsPanel from '@/components/admin/TryOnRecordsPanel';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
 
@@ -219,8 +220,8 @@ function AdminConsole() {
     { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
     { key: 'purchase', label: '訂貨統計', icon: <ClipboardList size={17} aria-hidden="true" /> },
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
-    // AI 試穿開放閘口、成本及統計只限最高管理員；同事仍可由前台 /try-on 內測
-    ...(isAdmin
+    // AI 試穿紀錄俾主管／管理員查閱；開放閘口、成本及統計配置仍然只限最高管理員
+    ...(isSupervisorOrAdmin
       ? [{ key: 'tryon' as ViewKey, label: 'AI 試穿', icon: <ScanLine size={17} aria-hidden="true" /> }]
       : []),
     { key: 'praise', label: '客戶打卡牆', icon: <Images size={17} aria-hidden="true" /> },
@@ -261,6 +262,9 @@ function AdminConsole() {
   const ADMIN_ONLY_HINT = (
     <p className="py-14 text-center text-[14px] text-txt-3">需要最高管理員權限。</p>
   );
+  const SUPERVISOR_OR_ADMIN_HINT = (
+    <p className="py-14 text-center text-[14px] text-txt-3">需要主管或管理員權限。</p>
+  );
 
   // F-D2：Record map 取代 if-else 鏈 —— 新 view 落 map 先會 render，
   // 唔會再靜默跌入 trailing else（舊坑：新 view 會 render 咗 PraiseManager）
@@ -295,7 +299,14 @@ function AdminConsole() {
         <ListingBatchesCard />
       </div>
     ),
-    tryon: isAdmin ? <TryOnPanel toast={pushToast} /> : ADMIN_ONLY_HINT,
+    tryon: isSupervisorOrAdmin ? (
+      <div className="space-y-6">
+        {isAdmin ? <TryOnPanel toast={pushToast} /> : null}
+        <TryOnRecordsPanel />
+      </div>
+    ) : (
+      SUPERVISOR_OR_ADMIN_HINT
+    ),
     praise: <PraiseManager toast={pushToast} />,
     promo: <PromoManager toast={pushToast} />,
     marketing: <MarketingEmailCard toast={pushToast} />,
@@ -306,7 +317,7 @@ function AdminConsole() {
     lucky: isSupervisorOrAdmin ? (
       <LuckyDrawPanel toast={pushToast} />
     ) : (
-      <p className="py-14 text-center text-[14px] text-txt-3">需要主管或管理員權限。</p>
+      SUPERVISOR_OR_ADMIN_HINT
     ),
     members: <MemberList toast={pushToast} />,
     wallet: <WalletPanel toast={pushToast} />,

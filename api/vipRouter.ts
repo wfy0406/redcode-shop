@@ -19,6 +19,8 @@ import { computeWalletSplit } from "./wallet";
 import { SF_STATIONS } from "./data/sfStations";
 import { SF_STATIONS_FULL } from "./data/sfStationsFull"; // v2.1.0：reseed 用全量官方清單（HK 1654／MO 51）；樣例清單留作 fallback
 import { RateLimiter, clientIpFromRequest } from "./guestUtils";
+import { tryOnPurchaseItemsSchema } from "@contracts/purchase";
+import { loadTryOnPurchaseItems } from "./purchase";
 
 // P3-6（2026-10 安全修復）：geocodeAddress 公開代理外部服務，加 per-IP 限流
 // （同 IP 每分鐘 10 次）——防被當免費 geocode proxy 用到我哋 server IP 被上游封
@@ -436,11 +438,16 @@ export const vipRouter = createRouter({
         couponCode: z.string().trim().max(32).optional(),
         // v2.5.0（購物金）：結帳頁撳咗「用購物金」就傳 true，quote 順便預覽扣幾多／尾數幾多
         useWallet: z.boolean().optional(),
+        // AI 試穿即買：只傳商品 ID／尺寸／固定數量 1；server 重讀目前商品，唔讀原購物車。
+        items: tryOnPurchaseItemsSchema.optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
       try {
-        const q = await computeCheckoutQuote(ctx.user.userId, input);
+        const resolvedItems = input.items !== undefined
+          ? await loadTryOnPurchaseItems(input.items)
+          : undefined;
+        const q = await computeCheckoutQuote(ctx.user.userId, input, resolvedItems);
         // v2.5.0（購物金）：預覽拆賬——quote 內部用仙，購物金係整數港元（同 orders.total 一個單位）
         const db = getDb();
         const me = await db.query.users.findFirst({

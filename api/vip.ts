@@ -29,6 +29,7 @@ import { resolvePromoDiscount } from "./promoRouter";
 import { sendVipUpgradeEmail, siteUrl } from "./email";
 import { buildVipVerifyUrl } from "./vipCert";
 import { forwardMemberToWms } from "./wmsMemberSync";
+import type { ResolvedPurchaseItem } from "./purchase";
 
 // ───────────────────────────── 地區／取貨方式正規化 ─────────────────────────────
 
@@ -385,20 +386,23 @@ export interface CheckoutQuote {
 export async function computeCheckoutQuote(
   userId: number,
   input: CheckoutQuoteInput,
+  resolvedItems?: readonly ResolvedPurchaseItem[],
 ): Promise<CheckoutQuote> {
   const db = getDb();
   const region = normalizeRegion(input.region);
   const method = normalizeDeliveryMethod(input.deliveryMethod);
   const contractMethod = toContractMethod(method);
 
-  const cart = await db.query.cartItems.findMany({
+  // 試穿即買會傳入同一份已核實商品行；冇傳先讀會員購物車。
+  // 咁樣 direct quote／落單嘅小計、VIP、優惠碼同免運門檻都唔會誤用原購物車。
+  const lines = resolvedItems ?? (await db.query.cartItems.findMany({
     where: eq(cartItems.userId, userId),
     with: { product: true },
-  });
-  if (cart.length === 0) {
+  }));
+  if (lines.length === 0) {
     throw new Error("CART_EMPTY"); // caller 轉做 TRPCError BAD_REQUEST「購物車係空嘅」
   }
-  const subtotalDollars = cart.reduce(
+  const subtotalDollars = lines.reduce(
     (sum, item) => sum + (item.product.discountPrice ?? item.product.price) * item.quantity,
     0,
   );

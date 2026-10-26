@@ -43,6 +43,9 @@ import {
   type TryOnBatchPlan,
   type TryOnProductSelection,
 } from './tryonSelection';
+import { getTryOnCoverCrop, tryOnCameraVideoConstraints } from './tryonCamera';
+import { emitTryOnGuideAction } from '@/components/globalFairyGuide';
+import TryOnPurchase from './TryOnPurchase';
 
 type RouterOutputs = inferRouterOutputs<AppRouter>;
 type TryOnProduct = RouterOutputs['tryon']['listProducts'][number];
@@ -449,11 +452,7 @@ export default function TryOn() {
       setCameraState('opening');
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: requestedFacing },
-            width: { ideal: 1280 },
-            height: { ideal: 1920 },
-          },
+          video: tryOnCameraVideoConstraints(requestedFacing),
           audio: false,
         });
         // 等待期間可能已 logout、鎖定原相、開始新一套、轉鏡或 unmount：
@@ -501,13 +500,28 @@ export default function TryOn() {
       return;
     }
     try {
-      const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
+      // 舊機可能仍然回傳橫向 sensor 串流；拍攝必須沿用即時預覽嘅 cover 裁切，
+      // 唔可以預覽直向、輸出卻用返整條橫向片。尺寸每次按目前畫框計，旋轉後亦啱用。
+      const frameWidth = video.clientWidth || video.videoWidth;
+      const frameHeight = video.clientHeight || video.videoHeight;
+      const crop = getTryOnCoverCrop(video.videoWidth, video.videoHeight, frameWidth, frameHeight);
+      const scale = Math.min(1, 1600 / Math.max(crop.sourceWidth, crop.sourceHeight));
       const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      canvas.width = Math.max(1, Math.round(crop.sourceWidth * scale));
+      canvas.height = Math.max(1, Math.round(crop.sourceHeight * scale));
       const context = canvas.getContext('2d');
       if (!context) throw new Error('未能處理相片');
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      context.drawImage(
+        video,
+        crop.sourceX,
+        crop.sourceY,
+        crop.sourceWidth,
+        crop.sourceHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
       if (!blob) throw new Error('未能儲存拍攝相片');
       const dataUri = await blobToDataUri(blob);
@@ -832,6 +846,8 @@ export default function TryOn() {
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1500);
       notify('PNG 已開始下載');
+      // 小精靈導覽：下載真係開始咗先記「已分享」（失敗會行 catch，唔會假進度）
+      emitTryOnGuideAction('share');
     } catch (error) {
       setActionError(error instanceof Error ? error.message : '下載失敗，請再試');
     } finally {
@@ -855,6 +871,8 @@ export default function TryOn() {
       }
       await navigator.share({ title: 'RedCode AI 試穿預覽', text, files: [file] });
       notify('已分享 AI 試穿效果圖同商品資料');
+      // 小精靈導覽：await share 成功先記；用戶取消（AbortError）／失敗會行 catch，唔記
+      emitTryOnGuideAction('share');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       setActionError(error instanceof Error ? error.message : '分享失敗，請再試');
@@ -1192,7 +1210,7 @@ export default function TryOn() {
               </div>
 
               {canEditRoot ? (
-                <div className="tryon-camera-controls">
+                <div className="tryon-camera-controls" data-fairy-target="photo">
                   {cameraState === 'open' ? (
                     <>
                       <button type="button" className="tryon-primary-button" onClick={() => void capturePhoto()}>
@@ -1286,7 +1304,7 @@ export default function TryOn() {
               {productsQuery.isLoading ? (
                 <div className="tryon-empty-products"><LoaderCircle className="tryon-spin" size={24} /><p>整理商品原圖中…</p></div>
               ) : filteredProducts.length ? (
-                <div className="tryon-contact-sheet">
+                <div className="tryon-contact-sheet" data-fairy-target="product">
                   {filteredProducts.map((product) => {
                     const blockReason = lineageBlockReason(product, job);
                     const selectedIndex = selections.findIndex((item) => item.productId === product.id);
@@ -1400,6 +1418,7 @@ export default function TryOn() {
                 <button
                   type="button"
                   className="tryon-generate-button"
+                  data-fairy-target="generate"
                   disabled={!canSubmit}
                   onClick={() => void confirmGeneration()}
                 >
@@ -1510,9 +1529,11 @@ export default function TryOn() {
                     <div><Shirt size={17} /><p>今次商品：<strong>{job.productName}</strong> · {job.productSku} · {money(job.productDiscountPrice ?? job.productPrice)}（生成時快照）</p></div>
                   </div>
 
+                  <TryOnPurchase key={`${job.lookId}:${job.stepNumber}`} job={job} />
+
                   <div className="tryon-share-box">
                     <div><p className="tryon-kicker">DOWNLOAD &amp; SHARE</p><h3>帶走效果，講清楚係 AI 試穿</h3><p>頁面、下載 PNG 及支援嘅 Web Share 圖片都帶右上角 RedCode 透明水印。分享文案會列晒成功加入嘅商品：品名、貨號、生成時價錢及公開商品網址；兩件就兩組，三件就三組。</p></div>
-                    <div className="tryon-share-actions">
+                    <div className="tryon-share-actions" data-fairy-target="share">
                       <button type="button" className="tryon-secondary-button" onClick={() => void downloadResult()} disabled={!job.outputUrl || job.mediaDeleted || busyAction !== null}>
                         {busyAction === 'download' ? <LoaderCircle className="tryon-spin" size={18} /> : <Download size={18} />}下載 PNG
                       </button>
@@ -1521,15 +1542,31 @@ export default function TryOn() {
                           {busyAction === 'share' ? <LoaderCircle className="tryon-spin" size={18} /> : <Share2 size={18} />}分享效果圖＋商品資料
                         </button>
                       ) : whatsAppUrl ? (
-                        <a className="tryon-primary-button" href={whatsAppUrl} target="_blank" rel="noopener noreferrer"><MessageCircle size={18} />WhatsApp 分享商品資料</a>
+                        <a
+                          className="tryon-primary-button"
+                          href={whatsAppUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => emitTryOnGuideAction('share')}
+                        ><MessageCircle size={18} />WhatsApp 分享商品資料</a>
                       ) : null}
                       {nativeShareAvailable && whatsAppUrl && (
-                        <a className="tryon-text-button" href={whatsAppUrl} target="_blank" rel="noopener noreferrer"><MessageCircle size={16} />只用 WhatsApp 文字</a>
+                        <a
+                          className="tryon-text-button"
+                          href={whatsAppUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => emitTryOnGuideAction('share')}
+                        ><MessageCircle size={16} />只用 WhatsApp 文字</a>
                       )}
                     </div>
                     <p className="tryon-share-note">Web Share 支援時會分享 PNG＋文字；WhatsApp／wa.me 只帶公開商品資料及網址，<strong>唔會自動附加私人結果圖</strong>。你可以先下載 PNG，再喺 WhatsApp 自行附加。私人 signed URL 不會寫入分享文案。</p>
                   </div>
                 </>
+              )}
+
+              {job.status === 'failed' && (
+                <TryOnPurchase key={`${job.lookId}:${job.stepNumber}:failed`} job={job} />
               )}
 
               <div className="tryon-delete-zone">
@@ -1624,7 +1661,9 @@ const TRYON_CSS = /* css */ `
   .tryon-panel-heading h2, .tryon-result-heading h2 { margin: 5px 0 0; font-family: 'Noto Serif TC', serif; font-size: 26px; line-height: 1.3; }
   .tryon-text-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0; border: 0; background: none; color: var(--studio-ink); font-size: 13px; font-weight: 700; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
   .tryon-photo-stage { position: relative; margin-top: 20px; aspect-ratio: 4 / 5; overflow: hidden; background: #0A0614; }
-  .tryon-photo-preview, .tryon-live-video { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .tryon-photo-preview, .tryon-live-video { display: block; width: 100%; height: 100%; }
+  .tryon-photo-preview { object-fit: contain; }
+  .tryon-live-video { object-fit: cover; object-position: center; }
   .tryon-hidden-video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .tryon-photo-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; background: var(--studio-paper); border: 1px solid var(--studio-line); text-align: center; }
   .tryon-photo-placeholder svg { color: var(--studio-pink); }
@@ -1794,6 +1833,79 @@ const TRYON_CSS = /* css */ `
   .tryon-toast { border-radius: 12px; animation: tryon-toast-in .2s ease-out; }
   @keyframes tryon-generation-bar { from { opacity: .35; transform: scaleY(.25); } to { opacity: 1; transform: scaleY(1); } }
   @keyframes tryon-toast-in { from { opacity: 0; transform: translate(-50%, 8px) scale(.95); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+  /* ===== 2026-10-26 華麗動態美化（presentation only）=====
+     規矩：持續動畫只用 transform／opacity／background-position（GPU compositor 友好），
+     唔郁 layout、唔改任何互動邏輯；overflow-x: clip 保證 375/390 都冇橫向 overflow；
+     全部動效喺檔尾 prefers-reduced-motion 一律停用。 */
+  .tryon-page { overflow-x: clip; }
+  @keyframes tryon-rise-in { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: translateY(0); } }
+  .tryon-hero > div, .tryon-disclaimer, .tryon-account-strip, .tryon-continue-look, .tryon-workbench, .tryon-result-section { animation: tryon-rise-in .7s cubic-bezier(.16,.8,.3,1) both; }
+  .tryon-hero-side { animation-delay: .12s; }
+  .tryon-disclaimer { animation-delay: .2s; }
+  .tryon-workbench, .tryon-result-section { animation-delay: .1s; }
+  /* Hero 標題粉紅字：金粉漸變流光（background-position 動畫，唔觸發 layout） */
+  .tryon-hero h1 span {
+    background: linear-gradient(92deg, var(--studio-pink) 15%, var(--studio-gold) 50%, var(--studio-pink) 85%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: tryon-title-sheen 7s linear infinite;
+  }
+  @keyframes tryon-title-sheen { from { background-position: 0% 0; } to { background-position: 220% 0; } }
+  /* 開放資格膠囊：呼吸點 */
+  .tryon-status-pill > span { animation: tryon-dot-pulse 2.2s ease-in-out infinite; }
+  @keyframes tryon-dot-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.35); opacity: .55; } }
+  /* 步驟列表：而家嗰步左邊金粉呼吸線 */
+  .tryon-step-list li[data-current='true']::before {
+    content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px;
+    background: linear-gradient(180deg, var(--studio-gold), var(--studio-pink));
+    animation: tryon-step-glow 2.4s ease-in-out infinite;
+  }
+  @keyframes tryon-step-glow { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+  /* 未影相嘅 placeholder：柔和掃描光帶由上落（call 返個 ScanLine 圖示） */
+  .tryon-photo-placeholder > * { position: relative; z-index: 1; }
+  .tryon-photo-placeholder::after {
+    content: ''; position: absolute; left: 0; right: 0; top: 0; height: 22%;
+    background: linear-gradient(180deg, transparent, rgba(214, 0, 71, .07) 45%, rgba(245, 192, 54, .14));
+    transform: translateY(-110%);
+    animation: tryon-scan-sweep 3.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes tryon-scan-sweep {
+    0% { transform: translateY(-110%); opacity: 0; }
+    15% { opacity: 1; }
+    70% { opacity: 1; }
+    100% { transform: translateY(560%); opacity: 0; }
+  }
+  /* 商品卡：hover 浮起＋相片緩慢放大（transform only；disabled 唔郁） */
+  .tryon-product-card { transition: transform .22s cubic-bezier(.2,.7,.3,1), border-color .18s ease-out; }
+  .tryon-product-card:hover:not(:disabled) { transform: translateY(-4px); }
+  .tryon-product-image-wrap > img { transition: transform .6s cubic-bezier(.16,.8,.3,1); }
+  .tryon-product-card:hover:not(:disabled) .tryon-product-image-wrap > img { transform: scale(1.06); }
+  .tryon-product-card[data-selected='true'] .tryon-product-image-wrap { animation: tryon-selected-pop .3s cubic-bezier(.2,.7,.3,1); }
+  @keyframes tryon-selected-pop { 0% { transform: scale(.96); } 60% { transform: scale(1.02); } 100% { transform: scale(1); } }
+  /* 生成主掣：流光掃過（disabled 即停，唔會誤導以為撳得） */
+  .tryon-generate-button { position: relative; overflow: hidden; }
+  .tryon-generate-button::after {
+    content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 38%;
+    background: linear-gradient(100deg, transparent, rgba(255, 247, 232, .5), transparent);
+    transform: translateX(-160%) skewX(-12deg);
+    animation: tryon-cta-sheen 3.2s ease-in-out infinite;
+    pointer-events: none;
+  }
+  .tryon-generate-button:disabled::after { animation: none; opacity: 0; }
+  @keyframes tryon-cta-sheen {
+    0%, 55% { transform: translateX(-160%) skewX(-12deg); }
+    85%, 100% { transform: translateX(320%) skewX(-12deg); }
+  }
+  /* 生成中標記：輕輕浮動（同入面嘅節奏 bar 一齊表達「真・處理中」） */
+  .tryon-progress-mark { animation: tryon-mark-float 3s ease-in-out infinite; }
+  @keyframes tryon-mark-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  /* 已揀商品行＋批核計劃條：入場浮上 */
+  .tryon-selected-product, .tryon-batch-plan { animation: tryon-rise-in .45s cubic-bezier(.16,.8,.3,1) both; }
+  /* 造型紀錄步驟切換：背景淡入淡出 */
+  .tryon-look-line button { transition: background-color .2s ease-out; }
   @media (max-width: 1100px) {
     .tryon-workbench { grid-template-columns: 1fr; }
     .tryon-photo-panel { padding: 28px 0 32px; border-right: 0; border-bottom: 1px solid var(--studio-ink); }
@@ -1868,5 +1980,12 @@ const TRYON_CSS = /* css */ `
     .tryon-result-spark { opacity: .55; transform: none; }
     .tryon-generation-bars i { opacity: .75; transform: scaleY(.7); }
     .tryon-page * { scroll-behavior: auto !important; transition: none !important; }
+    /* 2026-10-26 華麗動效一齊降級：入場/流光/掃描/浮動全停，靜態畫面完整可讀 */
+    .tryon-hero > div, .tryon-disclaimer, .tryon-account-strip, .tryon-continue-look,
+    .tryon-workbench, .tryon-result-section, .tryon-selected-product, .tryon-batch-plan,
+    .tryon-hero h1 span, .tryon-status-pill > span, .tryon-step-list li[data-current='true']::before,
+    .tryon-progress-mark, .tryon-product-card[data-selected='true'] .tryon-product-image-wrap { animation: none !important; }
+    .tryon-generate-button::after, .tryon-photo-placeholder::after { display: none; }
+    .tryon-hero h1 span { background: none; color: var(--studio-pink); }
   }
 `;

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
-import { randomInt, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { getDb } from "./queries/connection";
 import { cartItems, luckyDraws, luckyPrizes, orders, orderItems, orderShipments, paymentProofs, products, promoCodes, sfStations, users, walletLedger, wmsSyncLog } from "@db/schema";
 import { createRouter, authedProcedure, publicProcedure, staffProcedure } from "./middleware";
@@ -32,6 +32,8 @@ import {
   memberPhoneMatches,
   normalizeGuestPhone,
 } from "./guestUtils";
+import { tryOnPurchaseItemsSchema, tryOnPurchaseRequestIdSchema, type TryOnPurchaseItem } from "@contracts/purchase";
+import { loadTryOnPurchaseItems, resolveTryOnPurchaseItems } from "./purchase";
 
 const orderStatusEnum = z.enum([
   "pending_payment",
@@ -127,6 +129,34 @@ async function guestOrderPayload(
     // guestToken 只喺電話核實通過後（guestLookup）先返；guestByToken 唔返（契約 §4）
     ...(opts.includeToken ? { guestToken: order.guestToken } : {}),
   };
+}
+
+function generateTryOnOrderNo(userId: number, requestId: string): string {
+  // 穩定、不可預測兼不受 server 日期／重啟影響；RC + 30 hex = 現有 varchar(32) 上限。
+  // 唔另加 DB 欄位或 migration；現有 orderNo unique constraint 就係跨 process 冪等鎖。
+  const digest = createHash("sha256")
+    .update(`redcode-tryon-checkout:${userId}:${requestId.toLowerCase()}`)
+    .digest("hex")
+    .toUpperCase();
+  return `RC${digest.slice(0, 30)}`;
+}
+
+function sameTryOnOrderItems(
+  existing: readonly { productId: number; size: string | null; quantity: number }[],
+  requested: readonly TryOnPurchaseItem[],
+): boolean {
+  const normalize = (lines: readonly { productId: number; size?: string | null; quantity: number }[]) =>
+    lines.map((line) => ({
+      productId: line.productId,
+      size: line.size?.trim() || null,
+      quantity: line.quantity,
+    })).sort((a, b) => a.productId - b.productId);
+  const a = normalize(existing);
+  const b = normalize(requested);
+  return a.length === b.length && a.every((line, index) =>
+    line.productId === b[index]?.productId &&
+    line.size === b[index]?.size &&
+    line.quantity === b[index]?.quantity);
 }
 
 function generateOrderNo(): string {
@@ -258,15 +288,161 @@ export const ordersRouter = createRouter({
           // v2.5.0（購物金）：true＝用購物金抵銷（server 重算，唔信前端金額）；
           // 唔夠俾全單 → 尾數照舊即時付款／上傳截圖；訂單取消購物金自動返還
           useWallet: z.boolean().optional(),
+          // AI 試穿即買：呢組商品同原購物車完全分流；品名、貨號、價錢全部 server 重讀。
+          items: tryOnPurchaseItemsSchema.optional(),
+          // 同一份草稿重試必帶同一 UUID；只對 direct items 有效，唔會改變普通購物車落單。
+          requestId: tryOnPurchaseRequestIdSchema.optional(),
         })
         .optional(),
     )
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
-      const cart = await db.query.cartItems.findMany({
+      const isTryOnDirect = input?.items !== undefined;
+      if (isTryOnDirect && !input?.requestId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "即買請求編號缺失，請返回試穿頁重新確認" });
+      }
+      if (!isTryOnDirect && input?.requestId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "普通購物車落單唔可以帶即買請求編號" });
+      }
+      let orderNo = isTryOnDirect
+        ? generateTryOnOrderNo(ctx.user.userId, input!.requestId!)
+        : generateOrderNo();
+
+      // 同一草稿如已 commit，即使回應喺網絡遺失，重試都只返原單；唔再讀商品、扣庫存或寄新通知。
+      const loadExistingTryOnOrder = async () => {
+        if (!isTryOnDirect) return null;
+        const existing = await db.query.orders.findFirst({
+          where: eq(orders.orderNo, orderNo),
+          with: { items: true, proofs: true },
+        });
+        if (!existing) return null;
+        if (existing.userId !== ctx.user.userId || !sameTryOnOrderItems(existing.items, input!.items!)) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "呢個即買請求編號已對應另一張訂單，請返回試穿頁重新建立購買清單",
+          });
+        }
+        return existing;
+      };
+
+      type OrderForWalletClaim = NonNullable<Awaited<ReturnType<typeof loadExistingTryOnOrder>>>;
+      // 全購物金單嘅 stateful 補償：fresh path 同 requestId recovery 共用。
+      // conditional update 保證並發只有一個 request claim 到，通知亦只會由贏家寄一次。
+      const claimFullWalletOrder = async (
+        created: OrderForWalletClaim,
+        walletBalanceAfter?: number,
+      ): Promise<number> => {
+        const applied = created.walletUsed ?? 0;
+        const cashDue = created.total - applied;
+        if (created.status !== "pending_payment" || applied <= 0 || cashDue > 0) return cashDue;
+
+        const [claimedWallet] = await db
+          .update(orders)
+          .set({ status: "payment_review", paymentChannel: "wallet", paidAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(orders.id, created.id), eq(orders.status, "pending_payment")))
+          .returning({ id: orders.id });
+        if (!claimedWallet) {
+          // 另一個同 key request 可能啱啱 claim 咗；讀返最新狀態，唔好返 stale pending_payment 畀前端。
+          const current = await db.query.orders.findFirst({
+            where: eq(orders.id, created.id),
+            with: { items: true, proofs: true },
+          });
+          if (current) {
+            created.status = current.status;
+            created.paymentChannel = current.paymentChannel;
+            created.paidAt = current.paidAt;
+          }
+          return cashDue;
+        }
+
+        void logAudit({
+          actorId: ctx.user.userId,
+          actorRole: ctx.user.role,
+          action: "order.paidWallet",
+          targetType: "order",
+          targetId: created.orderNo,
+          detail: `訂單 ${created.orderNo} 全數以購物金支付（HK$${applied}），轉待審批`,
+        });
+        void forwardOrderToWms(created.id).catch((e) =>
+          console.error(`[wallet] ${created.orderNo} 轉 WMS 出錯:`, e),
+        );
+        void (async () => {
+          try {
+            const member = await db.query.users.findFirst({
+              where: eq(users.id, ctx.user.userId),
+              columns: { name: true, email: true, phone: true },
+            });
+            if (!member) return;
+            const items = created.items.map((it) => ({
+              productName: it.productName,
+              size: it.size,
+              price: it.price,
+              originalPrice: it.originalPrice,
+              quantity: it.quantity,
+            }));
+            const delivery = {
+              method: created.deliveryMethod,
+              pickupPoint: created.pickupPoint,
+              address: created.address,
+            };
+            if (member.email) {
+              const r = await sendOrderPaidOnlineEmail({
+                to: member.email,
+                orderNo: created.orderNo,
+                items,
+                total: created.total,
+                delivery,
+                paidAt: new Date(),
+                vip: orderVipEmailInfo(created),
+                walletUsed: applied,
+                // Recovery 未必有舊餘額快照；冇就省略，唔好捏造。
+                walletBalance: walletBalanceAfter !== undefined
+                  ? { balanceAfter: walletBalanceAfter, at: new Date() }
+                  : undefined,
+              });
+              if (!r.ok) console.error(`[email] 購物金支付通知寄唔出（${created.orderNo}）：`, r.error);
+            }
+            const r2 = await sendOrderReviewAlertEmail({
+              orderNo: created.orderNo,
+              createdAt: created.createdAt,
+              customerName: member.name,
+              customerPhone: member.phone,
+              customerEmail: member.email,
+              delivery,
+              note: created.note,
+              promoCode: created.promoCode,
+              items,
+              total: created.total,
+              discountAmount: created.discountAmount,
+            });
+            if (!r2.ok) console.error(`[email] 購物金單待審批通知寄唔出（${created.orderNo}）：`, r2.error);
+          } catch (e) {
+            console.error("[wallet] 全購物金單寄信出錯:", e);
+          }
+        })();
+        created.status = "payment_review";
+        created.paymentChannel = "wallet";
+        created.paidAt = new Date();
+        return cashDue;
+      };
+
+      const existingTryOnOrder = await loadExistingTryOnOrder();
+      if (existingTryOnOrder) {
+        await claimFullWalletOrder(existingTryOnOrder);
+        // 客人重試前可能改過優惠／購物金／收貨資料；原單內容唔會被靜默改寫，
+        // 必須話畀前端知道今次係 recovery，由畫面明示以原訂單為準。
+        return Object.assign(existingTryOnOrder, { recovered: true as const });
+      }
+
+      // 有 items 就係 AI 試穿即買：絕不可以再讀原購物車，即使原購物車係空或有其他貨。
+      // resolved direct lines 會交畀 quote 同下面落單；transaction 內會再鎖行重驗。
+      const directItems = isTryOnDirect
+        ? await loadTryOnPurchaseItems(input!.items!)
+        : null;
+      const cart = directItems ?? (await db.query.cartItems.findMany({
         where: eq(cartItems.userId, ctx.user.userId),
         with: { product: true },
-      });
+      }));
       if (cart.length === 0) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "購物車係空嘅" });
       }
@@ -275,7 +451,9 @@ export const ordersRouter = createRouter({
       if (delisted) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: `《${delisted.product.name}》已經下架，請由購物車移除後再結帳`,
+          message: isTryOnDirect
+            ? `《${delisted.product.name}》已經下架，請返回試穿頁更新購買清單`
+            : `《${delisted.product.name}》已經下架，請由購物車移除後再結帳`,
         });
       }
       const subtotal = cart.reduce(
@@ -300,7 +478,7 @@ export const ordersRouter = createRouter({
           deliveryMethod: input?.deliveryMethod,
           stationId: input?.stationId,
           // 優惠碼喺下面 transaction 入面先真正驗證＋扣配額；呢度唔傳，避免重複解析
-        });
+        }, directItems ?? undefined);
       } catch (e) {
         const msg = e instanceof Error ? e.message : "";
         if (msg === "STATION_INVALID") {
@@ -312,14 +490,15 @@ export const ordersRouter = createRouter({
         throw e;
       }
 
-      // Generate a unique order number (RC + date + random 4 digits)
-      let orderNo = generateOrderNo();
-      for (let i = 0; i < 10; i++) {
-        const dup = await db.query.orders.findFirst({
-          where: eq(orders.orderNo, orderNo),
-        });
-        if (!dup) break;
-        orderNo = generateOrderNo();
+      // 普通購物車保留舊 RC＋日期＋隨機編號；direct 已用 requestId 得出穩定編號，唔可以重 roll。
+      if (!isTryOnDirect) {
+        for (let i = 0; i < 10; i++) {
+          const dup = await db.query.orders.findFirst({
+            where: eq(orders.orderNo, orderNo),
+          });
+          if (!dup) break;
+          orderNo = generateOrderNo();
+        }
       }
 
       const deliveryMethod = quote.deliveryMethod;
@@ -330,10 +509,39 @@ export const ordersRouter = createRouter({
           ? null
           : (quote.stationName ?? input?.pickupPoint?.trim() ?? null) || null;
 
-      // PostgreSQL 支援真 transaction：扣庫存 + 優惠碼 + 購物金 + insert order + items + clear cart 一齊 atomic
-      const { orderId, walletApplied, walletBalanceAfter } = await db.transaction(async (tx) => {
+      // PostgreSQL 支援真 transaction：扣庫存 + 優惠碼 + 購物金 + insert order + items 一齊 atomic；
+      // 普通購物車單先會同事務清車，AI 試穿即買單絕不會清空原購物車。
+      let orderCreation: { orderId: number; walletApplied: number; walletBalanceAfter: number };
+      try {
+        orderCreation = await db.transaction(async (tx) => {
+        let orderCart = cart;
+        if (directItems) {
+          // Quote 之後至落單之前嘅極短窗口都要封住：鎖目前商品行，再驗上架／尺寸。
+          // 品名、貨號或價錢有變即整批 rollback，請客人刷新，唔會用舊快照成交。
+          const lockedProducts = await tx.select().from(products)
+            .where(inArray(products.id, directItems.map((item) => item.productId)))
+            .orderBy(products.id)
+            .for("update");
+          const freshDirectItems = resolveTryOnPurchaseItems(input!.items!, lockedProducts);
+          const changed = freshDirectItems.some((fresh, index) => {
+            const before = directItems[index];
+            return !before || before.size !== fresh.size ||
+              before.product.name !== fresh.product.name ||
+              before.product.sku !== fresh.product.sku ||
+              before.product.price !== fresh.product.price ||
+              before.product.discountPrice !== fresh.product.discountPrice;
+          });
+          if (changed) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "商品品名、貨號或價錢啱啱更新，請刷新結帳頁再確認",
+            });
+          }
+          orderCart = freshDirectItems;
+        }
+
         // 每件貨驗庫存 + 扣庫存（conditional update 防超賣）
-        for (const item of cart) {
+        for (const item of orderCart) {
           const deducted = await tx
             .update(products)
             .set({ stock: sql`${products.stock} - ${item.quantity}` })
@@ -463,7 +671,7 @@ export const ordersRouter = createRouter({
         }
 
         await tx.insert(orderItems).values(
-          cart.map((item) => ({
+          orderCart.map((item) => ({
             orderId: id,
             productId: item.productId,
             productName: item.product.name,
@@ -475,92 +683,37 @@ export const ordersRouter = createRouter({
             quantity: item.quantity,
           })),
         );
-        await tx.delete(cartItems).where(eq(cartItems.userId, ctx.user.userId));
-        return { orderId: id, walletApplied, walletBalanceAfter };
-      });
+        if (!isTryOnDirect) {
+          await tx.delete(cartItems).where(eq(cartItems.userId, ctx.user.userId));
+        }
+          return { orderId: id, walletApplied, walletBalanceAfter };
+        });
+      } catch (cause) {
+        // unique 競爭，或 commit 成功但回應遺失：同一 requestId 只恢復原單。
+        // recovery 查詢本身都失敗時保留原始 cause，唔好用第二次 DB 錯誤冚走庫存／價錢錯誤。
+        let existing: OrderForWalletClaim | null = null;
+        try {
+          existing = await loadExistingTryOnOrder();
+        } catch {
+          throw cause;
+        }
+        if (existing) {
+          await claimFullWalletOrder(existing);
+          return Object.assign(existing, { recovered: true as const });
+        }
+        throw cause;
+      }
 
+      const { orderId, walletApplied, walletBalanceAfter } = orderCreation;
       const created = await db.query.orders.findFirst({
         where: eq(orders.id, orderId),
         with: { items: true, proofs: true },
       });
-      // v2.5.0（購物金）：購物金全數支付（cashDue=0）→ 唔使再俾錢，直接轉待審批（同已收款一樣），
-      // 背景轉 WMS＋寄「已收款」信＋內部待審批通知。冪等：conditional update 淨郁 pending_payment。
-      const cashDue = (created?.total ?? 0) - walletApplied;
-      if (created && walletApplied > 0 && cashDue <= 0) {
-        const [claimedWallet] = await db
-          .update(orders)
-          .set({ status: "payment_review", paymentChannel: "wallet", paidAt: new Date(), updatedAt: new Date() })
-          .where(and(eq(orders.id, created.id), eq(orders.status, "pending_payment")))
-          .returning({ id: orders.id });
-        if (claimedWallet) {
-          void logAudit({
-            actorId: ctx.user.userId,
-            actorRole: ctx.user.role,
-            action: "order.paidWallet",
-            targetType: "order",
-            targetId: orderNo,
-            detail: `訂單 ${orderNo} 全數以購物金支付（HK$${walletApplied}），轉待審批`,
-          });
-          void forwardOrderToWms(created.id).catch((e) =>
-            console.error(`[wallet] ${orderNo} 轉 WMS 出錯:`, e),
-          );
-          void (async () => {
-            try {
-              const member = await db.query.users.findFirst({
-                where: eq(users.id, ctx.user.userId),
-                columns: { name: true, email: true, phone: true },
-              });
-              if (!member) return;
-              const items = created.items.map((it) => ({
-                productName: it.productName,
-                size: it.size,
-                price: it.price,
-                originalPrice: it.originalPrice,
-                quantity: it.quantity,
-              }));
-              const delivery = {
-                method: created.deliveryMethod,
-                pickupPoint: created.pickupPoint,
-                address: created.address,
-              };
-              if (member.email) {
-                const r = await sendOrderPaidOnlineEmail({
-                  to: member.email,
-                  orderNo: created.orderNo,
-                  items,
-                  total: created.total,
-                  delivery,
-                  paidAt: new Date(),
-                  vip: orderVipEmailInfo(created),
-                  walletUsed: walletApplied,
-                  // v2.5.5 第8版（購物金）：單據要寫埋扣完嗰刻嘅餘額＋時間（「截至」口徑）
-                  walletBalance: { balanceAfter: walletBalanceAfter, at: new Date() },
-                });
-                if (!r.ok) console.error(`[email] 購物金支付通知寄唔出（${orderNo}）：`, r.error);
-              }
-              const r2 = await sendOrderReviewAlertEmail({
-                orderNo: created.orderNo,
-                createdAt: created.createdAt,
-                customerName: member.name,
-                customerPhone: member.phone,
-                customerEmail: member.email,
-                delivery,
-                note: created.note,
-                promoCode: created.promoCode,
-                items,
-                total: created.total,
-                discountAmount: created.discountAmount,
-              });
-              if (!r2.ok) console.error(`[email] 購物金單待審批通知寄唔出（${orderNo}）：`, r2.error);
-            } catch (e) {
-              console.error("[wallet] 全購物金單寄信出錯:", e);
-            }
-          })();
-          // 回傳俾前端嘅物件同步最新狀態（前端直接跳「已收款待審批」畫面）
-          created.status = "payment_review";
-          created.paymentChannel = "wallet";
-        }
-      }
+      // 全購物金單無論 fresh commit 或 requestId recovery，都行同一個可重入補償：
+      // 只有 conditional update 嘅贏家會轉 WMS／審計／寄通知；待付款信仍然只喺 fresh path 處理。
+      const cashDue = created
+        ? await claimFullWalletOrder(created, walletBalanceAfter)
+        : 0;
       // 待付款通知 email（2026-08-04）：會員有綁 email 先寄；結果寫埋入日誌 detail，方便後台排查
       // v2.5.0（購物金）：全購物金單已轉待審批（上面寄咗「已收款」信），唔好再寄待付款信
       let emailNote = "";

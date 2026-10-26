@@ -1,8 +1,10 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { Link } from 'react-router';
@@ -31,6 +33,14 @@ import { PRODUCTS } from '@/data/products';
 import type { Product } from '@/data/products';
 import { useReveal } from '@/hooks/useReveal';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageVisible } from '@/hooks/usePageVisible';
+import {
+  TRIO_TAP_MS,
+  emitHomeFairy,
+  isTapKey,
+  trioContainerClass,
+  type TrioMember,
+} from '@/lib/homeFairy';
 import { trpc } from '@/providers/trpc';
 import LiveNowSection from '@/components/push/LiveNowSection';
 import LiveTopBanner from '@/components/push/LiveTopBanner';
@@ -87,6 +97,94 @@ function trackCtaSpotlight(e: ReactPointerEvent<HTMLElement>) {
   const rect = el.getBoundingClientRect();
   el.style.setProperty('--mx', `${e.clientX - rect.left}px`);
   el.style.setProperty('--my', `${e.clientY - rect.top}px`);
+}
+
+/* ---------- v2.2.59：品牌故事 trio 點按煙花 ----------
+   單爆版（唔係 useFireworks 嘅三連爆慶典）：點邊度爆邊度，連點連爆。
+   粒子語言照搬 src/components/shop/useFireworks.ts（金/粉紅/白/紫拖尾火星
+   ＋金色衝擊波環），爆完即停唔循環；reduced-motion 由 caller 把關唔叫。
+   每塊 canvas 一份共享 state——連點嗰陣舊火星未熄新火星照爆，唔會互相清場。 */
+interface FwParticle {
+  x: number; y: number; px: number; py: number;
+  vx: number; vy: number; life: number; max: number;
+  color: string; size: number;
+}
+interface FwRing { x: number; y: number; r: number; vr: number; alpha: number; }
+interface FwState { parts: FwParticle[]; rings: FwRing[]; raf: number; }
+
+const FW_COLORS = ['#F5C518', '#F5C518', '#F7D774', '#FF8FBF', '#FFFFFF', '#C4B5FD'];
+
+function burstTrioFireworks(canvas: HTMLCanvasElement, state: FwState, nx: number, ny: number) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const W = (canvas.width = Math.max(1, canvas.offsetWidth * 2));
+  const H = (canvas.height = Math.max(1, canvas.offsetHeight * 2));
+  const bx = W * nx;
+  const by = H * ny;
+  state.rings.push({ x: bx, y: by, r: 10, vr: 6, alpha: 0.8 });
+  for (let i = 0; i < 70; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 2 + Math.random() * 6;
+    state.parts.push({
+      x: bx, y: by, px: bx, py: by,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1.5,
+      life: 0, max: 50 + Math.random() * 40,
+      color: FW_COLORS[Math.floor(Math.random() * FW_COLORS.length)],
+      size: 1.6 + Math.random() * 3,
+    });
+  }
+  if (state.raf) return; // 渲染 loop 已經行緊
+  const tick = () => {
+    ctx.clearRect(0, 0, W, H);
+    let any = false;
+    for (const rg of state.rings) {
+      if (rg.alpha <= 0.02) continue;
+      any = true;
+      rg.r += rg.vr;
+      rg.vr *= 0.965;
+      rg.alpha *= 0.94;
+      ctx.globalAlpha = rg.alpha;
+      ctx.beginPath();
+      ctx.arc(rg.x, rg.y, rg.r, 0, Math.PI * 2);
+      ctx.strokeStyle = '#F7D774';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+    state.rings = state.rings.filter((rg) => rg.alpha > 0.02);
+    for (const p of state.parts) {
+      if (p.life >= p.max) continue;
+      any = true;
+      p.life++;
+      p.px = p.x;
+      p.py = p.y;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.09;
+      p.vx *= 0.985;
+      const fade = 1 - p.life / p.max;
+      ctx.globalAlpha = fade * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(p.px, p.py);
+      ctx.lineTo(p.x, p.y);
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = Math.max(0.8, p.size * 0.55);
+      ctx.stroke();
+      ctx.globalAlpha = fade;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (0.4 + fade * 0.6), 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+    }
+    state.parts = state.parts.filter((p) => p.life < p.max);
+    ctx.globalAlpha = 1;
+    if (any) {
+      state.raf = requestAnimationFrame(tick);
+    } else {
+      state.raf = 0;
+      ctx.clearRect(0, 0, W, H); // 爆完清場，唔留殘影
+    }
+  };
+  state.raf = requestAnimationFrame(tick);
 }
 
 /* ---------- §4.3 Hero 浮卡（拍立得樣式 + scroll 視差） ---------- */
@@ -279,6 +377,7 @@ function LivePushEntry() {
       >
         <Link
           to="/login"
+          data-home-cta="notify"
           onPointerMove={trackCtaSpotlight}
           onPointerDown={trackCtaSpotlight}
           className="hero-cta hero-cta-ghost h-full w-full sm:w-auto"
@@ -312,7 +411,7 @@ function LivePushEntry() {
         className="hero-enter col-span-2 h-full sm:col-span-1"
         style={{ animationDelay: '0.89s' }}
       >
-        <span role="status" className="cta-status-pill w-full sm:w-auto">
+        <span role="status" data-home-cta="notify" data-home-cta-state="subscribed" className="cta-status-pill w-full sm:w-auto">
           <span aria-hidden="true" className="cta-status-dot" />
           <BadgeCheck size={15} aria-hidden="true" className="shrink-0 text-gold" />
           <span className="cta-label">
@@ -332,6 +431,7 @@ function LivePushEntry() {
     >
       <button
         type="button"
+        data-home-cta="notify"
         onClick={() => setShowGuide(true)}
         onPointerMove={trackCtaSpotlight}
         onPointerDown={trackCtaSpotlight}
@@ -522,6 +622,116 @@ export default function Home() {
   const wallRef = useReveal<HTMLDivElement>();
   const waRef = useReveal<HTMLDivElement>();
 
+  /* ===== v2.2.60 trio 互動（雙真人 pointer/tap/keyboard＋煙花＋怕羞＋redcode:home-fairy 聯動） =====
+     state 齋三粒：shy（邊個怕羞緊）／tapping（0.9s 慶祝中）／inView（離屏暫停 idle）。
+     動畫全部交俾 index.css class（glo-look idle＋glo-delight one-shot），
+     JS 淨係加除 class＋喺點按位爆煙花，唔逐幀郁 DOM。
+     小精靈唔再喺呢度 render——全站一隻，喺 Layout 嘅 GlobalFairyGuide；
+     呢度每次互動 dispatch redcode:home-fairy（帶 viewport x/y）同佢聯動。 */
+  const trioRef = useRef<HTMLDivElement | null>(null);
+  const fwCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fwStateRef = useRef<FwState>({ parts: [], rings: [], raf: 0 });
+  const tapTimerRef = useRef(0);
+  const [trioShy, setTrioShy] = useState<TrioMember | null>(null);
+  const [trioTapping, setTrioTapping] = useState(false);
+  const [trioInView, setTrioInView] = useState(true);
+  const pageVisible = usePageVisible();
+
+  // 離屏暫停 idle 雙層（.trio-paused）；冇 IntersectionObserver 嘅舊瀏覽器當常駐可見
+  useEffect(() => {
+    const el = trioRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (es) => setTrioInView(es.some((e) => e.isIntersecting)),
+      { threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  // unmount 收尾：停 tap timer＋煙花 rAF，唔留「冰封火星」
+  useEffect(() => {
+    const fw = fwStateRef.current;
+    return () => {
+      window.clearTimeout(tapTimerRef.current);
+      if (fw.raf) cancelAnimationFrame(fw.raf);
+      fw.raf = 0;
+    };
+  }, []);
+
+  /** 點按慶祝：trio-tap 停 idle 0.9s＋喺點按位爆煙花（reduced-motion 唔爆）。
+      one-shot class（glo-delight）用 imperative classList＋reflow 重觸發——
+      連點都會重新爆，而且唔使 React re-mount（保護入面嘅 cutout 影片唔會 reload）。
+      聯動廣播喺 handler 層做（tap/shy-start/shy-end → redcode:home-fairy，
+      全域小精靈 GlobalFairyGuide 收到會飛埋嚟／怕醜閃開）。 */
+  const applyTrioTap = useCallback((nx?: number, ny?: number) => {
+    setTrioTapping(true);
+    window.clearTimeout(tapTimerRef.current);
+    tapTimerRef.current = window.setTimeout(() => setTrioTapping(false), TRIO_TAP_MS);
+    const host = trioRef.current;
+    if (host) {
+      for (const el of host.querySelectorAll('.glo-delight-host')) {
+        el.classList.remove('glo-delight');
+        void (el as HTMLElement).offsetWidth; // 強制 reflow，動畫先會由頭再爆
+        el.classList.add('glo-delight');
+      }
+    }
+    const canvas = fwCanvasRef.current;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (canvas && !reduced && nx !== undefined && ny !== undefined) {
+      burstTrioFireworks(canvas, fwStateRef.current, nx, ny);
+    }
+  }, []);
+
+  /** pointer tap（手機＋mouse 都係 pointerdown）：煙花喺容器內落點爆；
+      廣播俾全域小精靈嘅 x/y 係 viewport 座標（佢飛行落腳點用） */
+  const onTrioPointerDown = (member: TrioMember) => (e: ReactPointerEvent<HTMLElement>) => {
+    const host = trioRef.current;
+    let nx: number | undefined;
+    let ny: number | undefined;
+    if (host) {
+      const rect = host.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        nx = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        ny = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+      }
+    }
+    applyTrioTap(nx, ny);
+    emitHomeFairy({ action: 'tap', source: member, x: e.clientX, y: e.clientY });
+  };
+
+  /** keyboard（Enter／Space）：煙花同廣播座標都取被撩成員嘅中心 */
+  const onTrioKeyDown = (member: TrioMember) => (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (!isTapKey(e.key)) return;
+    e.preventDefault();
+    const host = trioRef.current;
+    const r = e.currentTarget.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    let nx: number | undefined;
+    let ny: number | undefined;
+    if (host) {
+      const hr = host.getBoundingClientRect();
+      if (hr.width > 0 && hr.height > 0) {
+        nx = Math.min(1, Math.max(0, (cx - hr.left) / hr.width));
+        ny = Math.min(1, Math.max(0, (cy - hr.top) / hr.height));
+      }
+    }
+    applyTrioTap(nx, ny);
+    emitHomeFairy({ action: 'tap', source: member, x: cx, y: cy });
+  };
+
+  /** 怕羞：mouse hover／keyboard focus 開始，離開完結（touch 冇 hover，唔會阻住 tap）。
+      hover 帶指針 viewport 座標；focus 用成員中心。 */
+  const onTrioShyStart = (member: TrioMember) => (point?: { x: number; y: number }) => {
+    setTrioShy(member);
+    emitHomeFairy({ action: 'shy-start', source: member, x: point?.x, y: point?.y });
+  };
+  const onTrioShyEnd = (member: TrioMember) => () => {
+    setTrioShy((cur) => (cur === member ? null : cur));
+    emitHomeFairy({ action: 'shy-end', source: member });
+  };
+
   return (
     <div style={TIER_HOME_VARS[homeTier]}>
       {/* ============ 0. 直播頂部 Banner（v2.2.2）：有直播先入嚟即見，撳咗落 #live-now ============ */}
@@ -634,6 +844,7 @@ export default function Home() {
                 <div className="hero-enter col-span-2 h-full sm:col-span-1" style={{ animationDelay: '0.65s' }}>
                   <Link
                     to="/products"
+                    data-home-cta="shop"
                     onPointerMove={trackCtaSpotlight}
                     onPointerDown={trackCtaSpotlight}
                     className="hero-cta hero-cta-primary h-full w-full sm:w-auto"
@@ -663,6 +874,7 @@ export default function Home() {
                     href={FACEBOOK_URL}
                     target="_blank"
                     rel="noopener noreferrer"
+                    data-home-cta="facebook"
                     onPointerMove={trackCtaSpotlight}
                     onPointerDown={trackCtaSpotlight}
                     className="hero-cta hero-cta-outline h-full w-full sm:w-auto"
@@ -691,6 +903,7 @@ export default function Home() {
                   <Link
                     to="/live"
                     state={{ scrollTo: 'live-history' }}
+                    data-home-cta="live-replay"
                     onPointerMove={trackCtaSpotlight}
                     onPointerDown={trackCtaSpotlight}
                     className="hero-cta hero-cta-outline h-full w-full sm:w-auto"
@@ -899,6 +1112,8 @@ export default function Home() {
             {tryonOpen ? (
               <Link
                 to="/try-on"
+                data-home-cta="tryon"
+                data-fairy-target="home-cta"
                 className="btn btn-primary !px-8 !py-3.5 text-[15px] font-bold"
               >
                 <Sparkles size={17} aria-hidden="true" />
@@ -907,6 +1122,8 @@ export default function Home() {
             ) : (
               <Link
                 to="/products"
+                data-home-cta="tryon-browse"
+                data-fairy-target="home-cta"
                 className="btn btn-secondary !px-8 !py-3.5 text-[15px] font-bold"
               >
                 <ShoppingBag size={17} aria-hidden="true" />
@@ -1044,7 +1261,12 @@ export default function Home() {
             Glo Glo
           </span>
 
-          <div className="relative grid grid-cols-2 items-end gap-x-2 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-0">
+          {/* v2.2.59 trio 互動容器：ref 俾煙花定位＋IO 離屏暫停；
+              class 由 trioContainerClass 合成（shy／tap／paused 修飾，見 src/lib/homeFairy.ts） */}
+          <div
+            ref={trioRef}
+            className={`relative grid grid-cols-2 items-end gap-x-2 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center lg:gap-0 ${trioContainerClass({ shy: trioShy, tapping: trioTapping, paused: !trioInView || !pageVisible })}`}
+          >
             {/* 中：花體大字 + 3 行故事 + 連結 + 即影即有拼貼（手機先出，lg 居中欄） */}
             <div className="col-span-2 min-w-0 text-center lg:col-span-1 lg:col-start-2 lg:row-start-1 lg:px-6">
               <p className="script text-[28px] leading-[1.3] md:text-[36px]">
@@ -1104,20 +1326,45 @@ export default function Home() {
             </div>
 
             {/* 左：會郁嘅 Glo Glo 篤住 RedCode logo（v2.2.35 老闆指令：logo 換霓虹動態版＝
-                靚啲生動啲；位置落低啲貼近指尖；logo-poke 彈跳節奏 0.63s＝手指篤嘅頻率） */}
-            <div className="relative col-start-1 row-start-2 lg:col-start-1 lg:row-start-1 lg:-mr-10 lg:w-60 xl:-mr-14 xl:w-72">
-              <div className="relative mx-auto w-32 sm:w-36 lg:w-full">
-                <GloCutout
-                  videoSrc="/home/glo-poke-alpha.webm"
-                  animSrc="/home/glo-poke-anim.webp"
-                  poster="/home/glo-poke-poster.webp"
-                  alt="Glo Glo 伸手指篤住 RedCode logo"
-                  animClass="glo-sway"
-                />
+                靚啲生動啲；位置落低啲貼近指尖；logo-poke 彈跳節奏 0.63s＝手指篤嘅頻率）
+                v2.2.59：升級做真互動目標（role=button）——mouse hover／keyboard focus 怕羞，
+                tap／Enter／Space 觸發全組慶祝＋點按位煙花＋redcode:home-fairy 聯動廣播 */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="同左邊嘅 Glo Glo 打招呼：佢會怕羞，撳落去會放煙花"
+              data-trio-member="left"
+              className="trio-person trio-person-left relative col-start-1 row-start-2 lg:col-start-1 lg:row-start-1 lg:-mr-10 lg:w-60 xl:-mr-14 xl:w-72"
+              onPointerEnter={(e) => {
+                // 淨係 mouse hover 先怕羞；touch 冇 hover，交俾 pointerdown 直接慶祝
+                if (e.pointerType === 'mouse') onTrioShyStart('left')({ x: e.clientX, y: e.clientY });
+              }}
+              onPointerLeave={onTrioShyEnd('left')}
+              onPointerDown={onTrioPointerDown('left')}
+              onFocus={(e) => {
+                // mouse／touch 撳落去都會觸發 focus；只係 keyboard focus-visible 先怕羞，
+                // 否則 shy-start 會喺 tap 慶祝之後補一腳，覆蓋小精靈嘅慶祝面板。
+                if (!e.currentTarget.matches(':focus-visible')) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                onTrioShyStart('left')({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+              }}
+              onBlur={onTrioShyEnd('left')}
+              onKeyDown={onTrioKeyDown('left')}
+            >
+              {/* glo-delight-host：點按開心一跳（one-shot 由 applyTrioTap imperative 重觸發） */}
+              <div className="glo-delight-host relative mx-auto w-32 sm:w-36 lg:w-full">
+                {/* glo-look：idle timeline 入面精靈埋嚟嗰段（38–62%）人物側頭回應 */}
+                <div className="glo-look">
+                  <GloCutout
+                    videoSrc="/home/glo-poke-alpha.webm"
+                    animSrc="/home/glo-poke-anim.webp"
+                    poster="/home/glo-poke-poster.webp"
+                    alt="Glo Glo 伸手指篤住 RedCode logo"
+                    animClass="glo-sway"
+                  />
+                </div>
                 {/* v2.2.36 老闆指令：logo 換返正版清晰靜態版（AI 畫嘅霓虹版溶咗一團，落架）；
-                    logo 繼續跟主播篤郁（logo-poke 0.63s）；小精靈唔跟篤——獨立透明層自己飛舞，
-                    放喺 logo 前面（DOM 後出自然壓頂），身形喺素材放大咗 5%（再大翼尖會俾
-                    畫框裁到，5% 係唔穿崩嘅上限）。兩層同位同大，精靈飛舞軌道先對得返 logo。 */}
+                    logo 繼續跟主播篤郁（logo-poke 0.63s）。 */}
                 <div className="logo-poke absolute -left-[26%] top-[2%] w-[62%]">
                   <img
                     src="/logo-crisp.webp"
@@ -1129,16 +1376,10 @@ export default function Home() {
                     className="h-auto w-full"
                   />
                 </div>
-                <div className="pointer-events-none absolute -left-[26%] top-[2%] w-[62%]">
-                  <GloCutout
-                    videoSrc="/fairy-fly-alpha.webm"
-                    animSrc="/fairy-fly-anim.webp"
-                    poster="/fairy-fly-poster.webp"
-                    alt="飛舞小精靈 Glo Glo"
-                    posterW={512}
-                    posterH={256}
-                  />
-                </div>
+                {/* v2.2.60：小精靈局部實例已移除——全站得返一隻，喺 Layout 嘅
+                    GlobalFairyGuide（／fairy-fly-* 素材經佢 GloCutout 三層切換）。
+                    呢度唔准再加返局部 FairyFly／fairy-orbit；互動聯動行
+                    redcode:home-fairy event（見 applyTrioTap／onTrioShyStart）。 */}
               </div>
               <svg
                 aria-hidden="true"
@@ -1150,9 +1391,29 @@ export default function Home() {
               </svg>
             </div>
 
-            {/* 右：會郁嘅 Glo Glo 比心單腳跳（v2.2.34 真 alpha 影片） */}
-            <div className="relative col-start-2 row-start-2 lg:col-start-3 lg:row-start-1 lg:-ml-10 lg:w-56 xl:-ml-14 xl:w-64">
-              <div className="relative mx-auto w-32 sm:w-36 lg:w-full">
+            {/* 右：會郁嘅 Glo Glo 比心單腳跳（v2.2.34 真 alpha 影片）
+                v2.2.59：同左人一樣係真互動目標——hover/focus 怕羞，tap/Enter/Space 慶祝＋煙花 */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="同右邊嘅 Glo Glo 打招呼：佢會怕羞，撳落去會放煙花"
+              data-trio-member="right"
+              className="trio-person trio-person-right relative col-start-2 row-start-2 lg:col-start-3 lg:row-start-1 lg:-ml-10 lg:w-56 xl:-ml-14 xl:w-64"
+              onPointerEnter={(e) => {
+                if (e.pointerType === 'mouse') onTrioShyStart('right')({ x: e.clientX, y: e.clientY });
+              }}
+              onPointerLeave={onTrioShyEnd('right')}
+              onPointerDown={onTrioPointerDown('right')}
+              onFocus={(e) => {
+                // 同上：pointer click-focus 唔當 keyboard 怕羞，保留 Enter／Space 互動。
+                if (!e.currentTarget.matches(':focus-visible')) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                onTrioShyStart('right')({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+              }}
+              onBlur={onTrioShyEnd('right')}
+              onKeyDown={onTrioKeyDown('right')}
+            >
+              <div className="glo-delight-host relative mx-auto w-32 sm:w-36 lg:w-full">
                 <GloCutout
                   videoSrc="/home/glo-heart-alpha.webm"
                   animSrc="/home/glo-heart-anim.webp"
@@ -1170,6 +1431,14 @@ export default function Home() {
                 <path d="M12 0l2.6 9.4L24 12l-9.4 2.6L12 24l-2.6-9.4L0 12l9.4-2.6z" />
               </svg>
             </div>
+
+            {/* v2.2.59 煙花層：DOM 最後出自然壓頂（唔用 z-index，同全站層次手法一致），
+                pointer-events-none 唔阻撳人；applyTrioTap 喺點按位單爆，爆完自清 */}
+            <canvas
+              ref={fwCanvasRef}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 h-full w-full"
+            />
           </div>
         </div>
       </section>
@@ -1227,6 +1496,7 @@ export default function Home() {
             href={WHATSAPP_URL}
             target="_blank"
             rel="noopener noreferrer"
+            data-home-cta="whatsapp"
             className="mt-8 inline-flex items-center gap-2 border-b pb-1 font-serif-tc text-base font-semibold text-gold-soft transition-opacity hover:opacity-70"
             style={{ borderColor: 'var(--gold)' }}
           >

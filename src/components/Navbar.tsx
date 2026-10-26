@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, NavLink, useLocation } from 'react-router';
-import { ChevronDown, Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
+import { ChevronDown, Heart, Menu, MessageCircle, ShoppingBag, Sparkles, Trophy, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
@@ -210,6 +210,8 @@ export default function Navbar() {
   const vipTier = user ? normalizeVipTier(user.vipTier) : null;
   // v2.2.0 級別格調：chip／色一律由 vipTheme.ts 出（NONE 低調——Navbar 唔出 chip）
   const vipTheme = vipTierTheme(vipTier);
+  // 2026-10-26：AI 試穿係全站主打功能，當前頁高亮（頂欄 CTA＋手機 drawer 共用）
+  const tryOnActive = pathname.startsWith('/try-on');
 
   // 手機選單主組連結（購物核心＋會員中心）；更多資訊三項跟老闆順序擺會員中心下面（見 INFO_LINKS）
   const mobileMainLinks = [
@@ -375,7 +377,7 @@ export default function Navbar() {
               aria-haspopup="true"
               className={cn(
                 'nav-link inline-flex items-center gap-1',
-                INFO_LINKS.some((l) => l.to === pathname) && 'active',
+                (INFO_LINKS.some((l) => l.to === pathname) || pathname.startsWith('/lucky-results')) && 'active',
               )}
             >
               更多
@@ -396,6 +398,20 @@ export default function Navbar() {
                   boxShadow: '0 14px 36px rgba(0, 0, 0, 0.35)',
                 }}
               >
+                {/* 中獎公告（2026-10-26 navbar-overflow 修正）：lg–xl 窄帶頂欄擺唔落 lucky icon，
+                    入口收喺「更多」呢度；xl 起頂欄 icon 返嚟，呢個即隱藏。
+                    獨立 NavLink，唔加入 INFO_LINKS——手機 drawer 已有專屬 row，唔好重複。 */}
+                <NavLink
+                  to="/lucky-results"
+                  className={({ isActive }) =>
+                    cn(
+                      'block rounded-xl px-3.5 py-2 text-[13px] font-bold tracking-wide transition-colors hover:bg-space-3 xl:hidden',
+                      isActive ? 'text-pink-soft' : 'text-txt-2',
+                    )
+                  }
+                >
+                  中獎公告
+                </NavLink>
                 {INFO_LINKS.map((l) => (
                   <NavLink
                     key={l.to}
@@ -415,8 +431,42 @@ export default function Navbar() {
           </div>
         </nav>
 
-        {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員 */}
-        <div className="flex items-center gap-2 xl:gap-3">
+        {/* 右：AI 試穿 CTA → Messenger → WhatsApp → 願望清單 → 購物車 → 會員；
+            min-w-0：右 cluster 喺 flex 入面可縮，長會員名唔會再頂爆頂欄（2026-10-26 overflow 修正） */}
+        <div className="flex min-w-0 items-center gap-2 xl:gap-3">
+          {/* v2.5.8（老闆指令）：公開「中獎公告」入口（LUCKY-DRAW-SLOT）——金邊玻璃鈕，
+              擺 AI 試穿 CTA 左邊；xl 起先出 icon（lg–xl 窄帶收喺「更多」dropdown，
+              見上面 xl:hidden 專用 NavLink），2xl 起連字。當前頁金框標記。 */}
+          <NavLink
+            to="/lucky-results"
+            className="btn hidden min-h-11 items-center !px-3 !py-2 text-sm xl:inline-flex 2xl:!px-4"
+            style={{
+              border: '1px solid rgba(245,197,24,0.55)',
+              color: 'var(--gold-soft)',
+              background: 'var(--glass-bg)',
+              ...(pathname.startsWith('/lucky-results')
+                ? { boxShadow: '0 0 0 2px var(--gold), 0 8px 24px rgba(245,197,24,0.25)' }
+                : undefined),
+            }}
+            aria-label="中獎公告：直播抽獎真實中獎名單"
+            aria-current={pathname.startsWith('/lucky-results') ? 'page' : undefined}
+          >
+            <Trophy size={20} aria-hidden="true" />
+            <span className="hidden 2xl:inline">中獎公告</span>
+          </NavLink>
+          {/* AI 試穿入口（2026-10-26 主打功能）：lg 起常駐頂欄 icon（lg 窄帶唯一保留嘅
+              功能 CTA），2xl 起連字。當前頁加金框標記。 */}
+          <NavLink
+            to="/try-on"
+            className="btn btn-primary hidden min-h-11 !px-3 !py-2 text-sm lg:inline-flex 2xl:!px-4"
+            style={tryOnActive ? { boxShadow: '0 0 0 2px var(--gold), 0 8px 24px rgba(255, 0, 84, 0.35)' } : undefined}
+            aria-label="AI 試穿：小精靈 Glo Glo 逐步帶路"
+            aria-current={tryOnActive ? 'page' : undefined}
+          >
+            <Sparkles size={20} aria-hidden="true" />
+            <span className="hidden 2xl:inline">AI 試穿</span>
+          </NavLink>
+
           {/* Messenger 鈕（2026-08-06 Glo 要求）：icon-only，一撳直開專頁對話。
               2026-10 batch1 UX：min-h-11（44px 觸控）＋icon 20px（年長客群） */}
           <a
@@ -429,16 +479,17 @@ export default function Navbar() {
             <MessengerIcon size={20} />
           </a>
 
-          {/* WhatsApp 玻璃鈕（品牌命脈，手機都唔收埋）；min-h-11＝44px 觸控目標 */}
+          {/* WhatsApp 玻璃鈕（品牌命脈，手機都唔收埋）；min-h-11＝44px 觸控目標；
+              2xl 起先連字（1280/1440 icon-only 防頂欄溢出） */}
           <a
             href={WHATSAPP_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-whatsapp min-h-11 !px-3 !py-2 text-sm xl:!px-4"
+            className="btn btn-whatsapp min-h-11 !px-3 !py-2 text-sm 2xl:!px-4"
             aria-label="WhatsApp 聯絡我們"
           >
             <MessageCircle size={20} aria-hidden="true" />
-            <span className="hidden xl:inline">WhatsApp</span>
+            <span className="hidden 2xl:inline">WhatsApp</span>
           </a>
 
           {/* 願望清單心心 */}
@@ -468,13 +519,15 @@ export default function Navbar() {
 
           {/* AUTH-SLOT: 已接 useAuth（自訂電話+密碼登入） */}
           {user ? (
-            <span className="hidden items-center gap-2.5 lg:flex">
+            <span className="hidden min-w-0 items-center gap-2.5 lg:flex">
               {isStaff && (
-                <Link to="/admin" className="nav-link" style={{ color: 'var(--gold)' }}>
+                <Link to="/admin" className="nav-link shrink-0" style={{ color: 'var(--gold)' }}>
                   後台管理
                 </Link>
               )}
-              <Link to="/account" className="nav-link">
+              {/* 長會員名 truncate（2026-10-26 overflow 修正）：min-w-0 先縮到，
+                  全名喺 aria-label 同 /account 頁照舊完整 */}
+              <Link to="/account" className="nav-link min-w-0 max-w-40 truncate" aria-label={`會員中心：${user.name}`}>
                 {user.name}
               </Link>
               {/* VIP 級別 chip（v2.2.0 統一 vipTheme chipClass；NONE 低調唔出）：撳落去 /vip 會員制度介紹頁。
@@ -489,7 +542,7 @@ export default function Navbar() {
               <button
                 type="button"
                 onClick={logout}
-                className="text-[13px] text-txt-3 transition-colors hover:text-pink-soft"
+                className="shrink-0 text-[13px] text-txt-3 transition-colors hover:text-pink-soft"
               >
                 登出
               </button>
@@ -572,6 +625,72 @@ export default function Navbar() {
               </Link>
             </div>
           )}
+          {/* AI 試穿入口（2026-10-26 主打功能）：金粉漸變特色 row，擺主連結之上最搶眼位；
+              小精靈 Glo Glo 會喺 /try-on 逐步帶路。 */}
+          <NavLink
+            to="/try-on"
+            onClick={() => setMenuOpen(false)}
+            aria-current={tryOnActive ? 'page' : undefined}
+            className="group flex items-center gap-4 rounded-2xl border px-4 py-4"
+            style={{
+              borderColor: tryOnActive ? 'var(--pink)' : 'rgba(245,197,24,0.45)',
+              background: 'linear-gradient(120deg, rgba(255,0,84,0.18), rgba(245,197,24,0.12))',
+              animation: 'mobile-nav-in 400ms var(--ease-expo) 40ms both',
+            }}
+          >
+            <Sparkles size={22} aria-hidden="true" color="var(--gold)" />
+            <span className="min-w-0 flex-1">
+              <span
+                className={cn(
+                  'block font-serif-tc text-2xl font-semibold',
+                  tryOnActive ? 'text-pink-soft' : 'text-txt-1 group-hover:text-pink-soft',
+                )}
+              >
+                AI 試穿
+              </span>
+              <span className="mt-0.5 block text-[12px] text-txt-3">
+                小精靈 Glo Glo 逐步帶路：影相 → 揀款 → 生成 → 帶走
+              </span>
+            </span>
+            {tryOnActive && (
+              <span aria-hidden="true" className="text-sm text-pink-soft">
+                ✦
+              </span>
+            )}
+          </NavLink>
+          {/* v2.5.8（老闆指令）：手機選單「中獎公告」公開入口（LUCKY-DRAW-SLOT）——
+              擺 AI 試穿 row 下面，同款式特色 row；當前頁 ✦ 標記。 */}
+          <NavLink
+            to="/lucky-results"
+            onClick={() => setMenuOpen(false)}
+            aria-current={pathname.startsWith('/lucky-results') ? 'page' : undefined}
+            className="group flex items-center gap-4 rounded-2xl border px-4 py-4"
+            style={{
+              borderColor: pathname.startsWith('/lucky-results') ? 'var(--gold)' : 'rgba(245,197,24,0.45)',
+              background: 'linear-gradient(120deg, rgba(245,197,24,0.16), rgba(255,0,84,0.10))',
+              animation: 'mobile-nav-in 400ms var(--ease-expo) 60ms both',
+            }}
+          >
+            <Trophy size={22} aria-hidden="true" color="var(--gold)" />
+            <span className="min-w-0 flex-1">
+              <span
+                className={cn(
+                  'block font-serif-tc text-2xl font-semibold',
+                  pathname.startsWith('/lucky-results') ? 'text-pink-soft' : 'text-txt-1 group-hover:text-pink-soft',
+                )}
+              >
+                中獎公告
+              </span>
+              <span className="mt-0.5 block text-[12px] text-txt-3">
+                直播即場抽出嘅真實幸運兒名單，下一個可能係你 ✦
+              </span>
+            </span>
+            {pathname.startsWith('/lucky-results') && (
+              <span aria-hidden="true" className="text-sm text-pink-soft">
+                ✦
+              </span>
+            )}
+          </NavLink>
           {/* v2.2.13（老闆指令）：drawer 重新排順序＋高度美化——
               購物核心（商品/直播/我的訂單/購物車）→ 會員中心 → 更多資訊（順豐→VIP→關於）→ 後台管理。
               每行金色 mono 序號；當前頁 ✦ 標記；分組之間用金線小標隔開。 */}

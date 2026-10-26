@@ -9,6 +9,7 @@ import MessengerIcon from '@/components/MessengerIcon';
 import MarketingConsentModal from '@/components/MarketingConsentModal';
 import PrizeWinModal from '@/components/PrizeWinModal';
 import InstallBanner from '@/components/InstallBanner';
+import GlobalFairyGuide from '@/components/GlobalFairyGuide';
 
 /**
  * 全站 Layout —— Nested-route pattern（react-dev.md Pattern B）：
@@ -109,6 +110,11 @@ export default function Layout() {
       {/* v2.2.46（直播抽獎）：中獎賀卡全域彈窗——首次登入／已登入一見有 pending 中獎就彈
           （煙花＋小精靈 Glo Glo 飛入；揀「請寄送」揀順豐站點 → 0 元訂單飛 WMS） */}
       <PrizeWinModal />
+
+      {/* 全域小精靈導覽（2026-10-26）：全站唯一實例，唔准再喺其他頁各自掛。
+          組件內部用 useLocation 判路由：/admin* 自動回避（跟全站動效慣例），
+          /try-on 五步帶路、/ 首頁帶去 AI 試穿 CTA、其他頁通用幫助。 */}
+      <GlobalFairyGuide />
     </div>
   );
 }

@@ -992,6 +992,18 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
     }
   };
 
+  /** v2.5.8（老闆指令）：名單改名——只改名，唔郁入面嘅人／限中／已抽紀錄 */
+  const renameListMut = trpc.luckyDraw.adminRenameList.useMutation();
+  const renameList = async (listId: number, name: string) => {
+    try {
+      const r = await renameListMut.mutateAsync({ listId, name });
+      toast(`名單已改名做《${r.name}》`, 'success');
+      void utils.luckyDraw.adminListLists.invalidate();
+    } catch (e) {
+      toast(fmtErr(e), 'error');
+    }
+  };
+
   /** 刪除抽獎紀錄（admin only；supervisor 會被 server FORBIDDEN 擋，錯誤 toast 照舊） */
   const deleteDraw = async (drawId: number, orderNo: string | null) => {
     if (
@@ -1826,11 +1838,12 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                 loadingError={listsQuery.isError ? fmtErr(listsQuery.error) : null}
                 onRetryLists={() => void listsQuery.refetch()}
                 selectedListId={selectedListId}
-                busy={createListMut.isPending || deleteListMut.isPending}
+                busy={createListMut.isPending || deleteListMut.isPending || renameListMut.isPending}
                 toast={toast}
                 onSelect={(id) => setSelectedListId(id)}
                 onCreate={createList}
                 onDelete={(id) => void deleteList(id)}
+                onRename={(id, name) => void renameList(id, name)}
               />
               {/* v2.5.6：名單 Excel 匯入（範本下載／預覽／確認；成功自動揀新名單） */}
               <div className="mt-3">
@@ -2020,6 +2033,7 @@ function NameListPicker({
   onSelect,
   onCreate,
   onDelete,
+  onRename,
 }: {
   lists: NameList[];
   loading: boolean;
@@ -2032,11 +2046,16 @@ function NameListPicker({
   onSelect: (id: number) => void;
   onCreate: (name: string, names: string[], memberIds: number[], maxWinsPerPerson: number) => Promise<number | null>;
   onDelete: (listId: number) => void;
+  /** v2.5.8（老闆指令）：名單改名（只改名，唔郁人／限中／已抽紀錄） */
+  onRename: (listId: number, name: string) => void;
 }) {
   const [listName, setListName] = useState('');
   const [rawNames, setRawNames] = useState('');
   // v2.5.6（老闆指令）：每人每個香港抽獎日限中 N 次（1–100，預設 1）
   const [maxWins, setMaxWins] = useState('1');
+  // v2.5.8：邊份名單改名緊（inline，原位展開唔用彈窗）
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   // 「由官網會員加入」：搜尋（300ms debounce，跟 MemberList 做法）＋已揀 chips
   const [memberQ, setMemberQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -2100,6 +2119,7 @@ function NameListPicker({
         <div className="flex flex-wrap gap-2">
           {lists.map((l) => {
             const active = l.id === selectedListId;
+            const renaming = renamingId === l.id;
             return (
               <span
                 key={l.id}
@@ -2109,16 +2129,57 @@ function NameListPicker({
                   background: active ? 'rgba(245,197,24,0.12)' : 'transparent',
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() => onSelect(l.id)}
-                  className={active ? 'text-txt-1' : 'text-txt-2 hover:text-txt-1'}
-                >
-                  {l.name}
-                  <span className="ml-1 font-mono text-[11px] text-txt-3">
-                    （{l.names.length + l.members.length} 人・限中 {l.maxWinsPerPerson ?? 1}/日）
-                  </span>
-                </button>
+                {renaming ? (
+                  /* v2.5.8：inline 改名（Enter 確定／Esc 取消） */
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const name = renameValue.trim();
+                        if (!name) {
+                          toast('名單名唔准空', 'error');
+                          return;
+                        }
+                        if (name !== l.name) onRename(l.id, name);
+                        setRenamingId(null);
+                      }
+                      if (e.key === 'Escape') setRenamingId(null);
+                    }}
+                    onBlur={() => setRenamingId(null)}
+                    maxLength={64}
+                    aria-label={`名單 ${l.name} 改名`}
+                    className="w-40 rounded-md border bg-transparent px-1.5 py-0.5 text-[12px] text-txt-1 outline-none focus:border-lavender"
+                    style={{ borderColor: GOLD }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onSelect(l.id)}
+                    className={active ? 'text-txt-1' : 'text-txt-2 hover:text-txt-1'}
+                  >
+                    {l.name}
+                    <span className="ml-1 font-mono text-[11px] text-txt-3">
+                      （{l.names.length + l.members.length} 人・限中 {l.maxWinsPerPerson ?? 1}/日）
+                    </span>
+                  </button>
+                )}
+                {/* v2.5.8（老闆指令）：名單改名掣 */}
+                {!renaming && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    aria-label={`名單 ${l.name} 改名`}
+                    onClick={() => {
+                      setRenamingId(l.id);
+                      setRenameValue(l.name);
+                    }}
+                    className="text-[11px] text-txt-3 underline-offset-2 transition-colors hover:text-gold hover:underline disabled:opacity-40"
+                  >
+                    改名
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={busy}

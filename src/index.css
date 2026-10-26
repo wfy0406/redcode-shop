@@ -554,6 +554,95 @@
   will-change: transform;
 }
 
+/* ===== v2.2.58（老闆指令）：雙真人待機互動 timeline =====
+   v2.2.60 更新：小精靈已全域化（Layout GlobalFairyGuide 全站一隻），
+   fairy-orbit／fairy-burst 兩層已連同 Home 局部實例一併移除；
+   呢度淨返人物側嘅待機／點按反應。
+   左人物 glo-look 7.6s＝glo-sway 3.8s 嘅兩倍，係「間中側頭」嘅待機節拍；
+   全域小精靈飛近時嘅互動改由 redcode:home-fairy event 驅動（見 Home.tsx）。
+   鐵律不變：齋 transform（translate/scale/rotate），GPU composited。 */
+@keyframes glo-look {
+  0%,
+  30%,
+  100% {
+    transform: rotate(0deg) translateY(0);
+  }
+  42% {
+    transform: rotate(1.6deg) translateY(-2px);
+  }
+  56% {
+    transform: rotate(2.1deg) translateY(-3px);
+  }
+  68% {
+    transform: rotate(0.8deg) translateY(-1px);
+  }
+}
+
+.glo-look {
+  animation: glo-look 7.6s ease-in-out infinite;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+
+/* 點按額外反應（one-shot 0.9s）：點按嗰刻 idle timeline 暫停（.trio-tap），
+   人物開心一跳；除 class 後 idle 由暫停位恢復，唔會跳返開頭。
+   delight 落喺內層 wrapper（.glo-delight-host），同外層 glo-look 分開，唔會互相冚。 */
+@keyframes glo-delight {
+  0% {
+    transform: translateY(0) rotate(0deg);
+  }
+  35% {
+    transform: translateY(-7px) rotate(-2deg);
+  }
+  70% {
+    transform: translateY(-3px) rotate(1deg);
+  }
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+}
+
+.glo-delight {
+  animation: glo-delight 0.9s var(--ease-expo, ease-out) 1 both;
+  will-change: transform;
+}
+
+/* 打斷/恢復：點按期間（.trio-tap）或離屏/背景（.trio-paused）暫停 idle；
+   除 class 即由暫停幀繼續，唔會跳返開頭 */
+.trio-tap .glo-look,
+.trio-paused .glo-look {
+  animation-play-state: paused;
+}
+
+/* v2.2.59（老闆指令）：雙真人 pointer/tap/keyboard 互動補完——
+   兩個人物係真互動目標（role=button）：hover/focus 會「怕羞」，
+   tap／Enter／Space 觸發慶祝（glo-delight＋煙花＋redcode:home-fairy 廣播俾全域小精靈）。
+   怕羞用 transition（持續態），唔用 keyframes——hover 幾耐就羞幾耐；
+   齋 transform/opacity，唔郁 layout；shy transform 落外層 wrapper，
+   同內層 glo-sway／glo-look／glo-delight 分層疊加，互不干擾。 */
+.trio-person {
+  cursor: pointer;
+  transition: transform 350ms var(--ease-expo, ease-out);
+  will-change: transform;
+  border-radius: 18px;
+}
+
+/* 鍵盤用家 focus 要見到框（同全站 focus-visible 語言一致：金 hairline） */
+.trio-person:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
+}
+
+/* 怕羞：俾人撩嗰邊微微縮身＋向外側轉開（左人轉左、右人轉右），
+   精靈唔使避——佢係撩人嗰個 */
+.trio-shy-left .trio-person-left {
+  transform: translate(-4px, 3px) rotate(-2.5deg) scale(0.97);
+}
+
+.trio-shy-right .trio-person-right {
+  transform: translate(4px, 3px) rotate(2.5deg) scale(0.97);
+}
+
 /* v2.5.0（購物金充值頁）：揀中套票卡嘅金色 shimmer 掃光——
    純 transform 位移一道斜光（老闆鐵律：動畫只用 opacity/transform） */
 @keyframes wallet-shimmer-sweep {
@@ -601,8 +690,20 @@
   .glo-hop,
   .spark-twinkle,
   .logo-poke,
+  .glo-look,
+  .glo-delight,
   .wallet-shimmer {
     animation: none;
+  }
+
+  /* v2.2.59：怕羞 transition 都停埋——靜態頁唔准有任何残動 */
+  .trio-person {
+    transition: none;
+  }
+
+  .trio-shy-left .trio-person-left,
+  .trio-shy-right .trio-person-right {
+    transform: none;
   }
 
   /* btn-pulse 呼吸改咗喺 ::after 光暈層（perf-fix P1-4），reduced-motion 照停 */

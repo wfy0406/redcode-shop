@@ -95,12 +95,22 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     title: '訂單收據｜RedCode Fashion Design',
     description: 'RedCode 訂單收據——訂單詳情同付款紀錄。',
   },
+  '/lucky-results': {
+    title: '中獎公告｜RedCode Fashion Design',
+    description: 'RedCode 直播抽獎中獎公告——即場抽出嘅真實幸運兒名單，下一個可能係你。',
+  },
+  // v2.5.8：公開中獎公告（動態段 /lucky-results/:eventId）
+  '/lucky-results/:eventId': {
+    title: '中獎公告｜RedCode Fashion Design',
+    description: 'RedCode 直播抽獎中獎公告——即場抽出嘅真實幸運兒名單，下一個可能係你。',
+  },
 };
 
 /** 按 pathname 攞 SEO；未知路由 fallback 首頁 */
 function resolveSeo(pathname: string): { title: string; description: string } {
   if (/^\/products\/\d+/.test(pathname)) return PAGE_SEO['/products/:id'];
   if (/^\/receipt\//.test(pathname)) return PAGE_SEO['/receipt/:orderId'];
+  if (/^\/lucky-results\/\d+/.test(pathname)) return PAGE_SEO['/lucky-results/:eventId'];
   return PAGE_SEO[pathname] ?? PAGE_SEO['/'];
 }
 

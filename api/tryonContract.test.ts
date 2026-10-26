@@ -14,11 +14,23 @@ describe("試穿商品資格及精細穿著部位", () => {
     ["dress", "連身裙", "dress"],
     ["shoes", "皮鞋", "shoes"],
     ["accessory", "925 銀介指", "ring"],
+    ["accessory", "寶石指介（Blue）", "ring"],
+    ["accessory", "B1特別款限量泰迪比熊造型套鍊", "necklace"],
     ["accessory", "頸鍊", "necklace"],
     ["accessory", "珍珠耳釘", "earrings"],
     ["accessory", "手鐲", "bracelet"],
+    ["accessory", "BIGSALE02 手鍊", "bracelet"],
   ] as const)("%s／%s → %s", (category, name, expected) => {
     expect(resolveTryOnProductKind(category, name)).toBe(expected);
+  });
+
+  it.each([
+    ["top", "LU8"],
+    ["pants", "P-2026"],
+    ["dress", "D-01"],
+    ["shoes", "S-99"],
+  ] as const)("衣著按 category 通過，唔靠品名關鍵字：%s／%s", (category, name) => {
+    expect(resolveTryOnProductKind(category, name)).toBe(category);
   });
 
   it.each(["lifestyle", "skincare", "other"])("非穿著類別 %s 完全不可試穿", (category) => {
@@ -27,6 +39,7 @@ describe("試穿商品資格及精細穿著部位", () => {
 
   it.each([
     "時尚飾品",
+    "寶石高貴風手錶（Red）",
     "戒指耳環套裝",
     "頸鏈及手鏈兩件裝",
     "戒指收納盒",

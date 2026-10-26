@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { adminProcedure, authedProcedure, createRouter, publicQuery } from "./middleware";
+import { adminProcedure, authedProcedure, createRouter, publicQuery, supervisorProcedure } from "./middleware";
 import { env } from "./lib/env";
 import { logAudit } from "./audit";
+import { listTryOnAdminRecords, TRYON_ADMIN_RECORD_STATUSES } from "./tryonAdminRecords";
 import {
   TRYON_CREDITS_PER_GENERATION,
   TRYON_MAX_MIX_STEPS,
@@ -121,4 +122,19 @@ export const tryonRouter = createRouter({
   }),
 
   getAdminStats: adminProcedure.query(() => getTryOnAdminStats()),
+
+  // 後台試穿紀錄（2026-10-26）：supervisor／admin 專用——逐件列出邊個會員試咗邊件商品。
+  // 只回會員識別＋商品 snapshot＋狀態＋時間；私人原相／結果圖 URL、storage key、
+  // provider／model、成本、prompt 等一律唔會出（見 api/tryonAdminRecords.ts 紅線註解）。
+  listAdminRecords: supervisorProcedure
+    .input(
+      z.object({
+        page: z.number().int().min(1).default(1),
+        pageSize: z.number().int().min(1).max(50).default(20),
+        status: z.enum(TRYON_ADMIN_RECORD_STATUSES).optional(),
+        member: z.string().trim().max(100).optional(),
+        product: z.string().trim().max(100).optional(),
+      }),
+    )
+    .query(({ input }) => listTryOnAdminRecords(input)),
 });

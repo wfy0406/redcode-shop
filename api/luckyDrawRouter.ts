@@ -34,6 +34,14 @@
  *     （preview 預設零 DB 寫；commit 有逐行錯誤全部唔寫；list 開新名單、ticket 寫入未歸檔活動，
  *     duplicatePolicy=skip|merge；2MB／500 行／PK magic／只支援本系統範本格式）。
  *
+ * v2.5.8（老闆指令：活動改名／刪除＋每場中獎名單＋公開中獎公告）：
+ *   adminRenameEvent／adminRenameList——改名（主管＋管理員），唔郁劵數、限中、已抽紀錄。
+ *   adminDeleteEvent——刪成個活動（主管＋管理員）：中獎紀錄解綁留底（eventId/eventEntryId SET NULL），
+ *     訂單同其他業務資料唔受影響；同抽獎／匯入／歸檔行同一把 event 雙 key 鎖。
+ *   adminEventWinners——每場活動內部中獎名單（真實抽獎結果＋跟進資料：狀態／通知／單號）。
+ *   publicEventResults——公開中獎公告（唔使登入）：只放活動名＋抽獎日期時間＋winner 對外顯示名＋
+ *     獎品名；唔放電話／email／會員編號／地址／內部備註。沿用現行 pending+confirmed「已抽出」口径。
+ *
  * 客人（authedProcedure）：
  *   myPendingWin——全域彈窗用：最新一筆 pending 中獎（＋獎品資料）
  *   respondWin——「多謝，請寄送」（preset 用會員預設順豐站／地址；station 揀新站點）
@@ -56,8 +64,8 @@
 import { createHash, randomInt } from "node:crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gte, inArray, isNull, like, lt, sql } from "drizzle-orm";
-import { createRouter, authedProcedure, supervisorProcedure, adminProcedure } from "./middleware";
+import { and, asc, desc, eq, gte, inArray, isNull, like, lt, sql } from "drizzle-orm";
+import { createRouter, authedProcedure, publicProcedure, supervisorProcedure, adminProcedure } from "./middleware";
 import { getDb } from "./queries/connection";
 import {
   luckyDrawEventEntries,
@@ -1552,6 +1560,31 @@ export const luckyDrawRouter = createRouter({
       return { ok: true };
     }),
 
+  /** v2.5.8（老闆指令）：幫名單改名——只改名單名本身，唔郁入面嘅人、限中次數、
+   *  亦唔郁任何已抽中獎紀錄（紀錄嘅 winnerName 係快照，名單改名唔影響歷史顯示） */
+  adminRenameList: supervisorProcedure
+    .input(
+      z.object({
+        listId: z.number().int().positive(),
+        name: z.string().trim().min(1, "名單名唔准空").max(64),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [row] = await db
+        .update(luckyDrawLists)
+        .set({ name: input.name })
+        .where(eq(luckyDrawLists.id, input.listId))
+        .returning();
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "名單唔存在" });
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.renameList",
+        targetType: "luckyDrawList", targetId: String(input.listId),
+        detail: `名單改名 → 《${row.name}》`,
+      });
+      return { ok: true as const, id: row.id, name: row.name };
+    }),
+
   /** 自訂名單抽獎：混合池（手打名＋官網會員）；
    *  抽中會員 → 照常彈窗＋email＋推送，由佢自己揀地址寄送（respondWin 現有流程）；
    *  抽中手打名 → 影子帳號，唔彈窗唔通知——admin 睇結果撳「確定」先起單 */
@@ -1867,6 +1900,77 @@ export const luckyDrawRouter = createRouter({
       return { ok: true as const };
     }),
 
+  /** v2.5.8（老闆指令）：幫活動改名——只改活動名，唔郁劵名單、限中次數、歸檔狀態，
+   *  亦唔郁任何已抽中獎紀錄（adminHistory 嘅 eventName 係 join 即時名，會跟新名顯示） */
+  adminRenameEvent: supervisorProcedure
+    .input(
+      z.object({
+        eventId: z.number().int().positive(),
+        name: z.string().trim().min(1, "活動名唔准空").max(128),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      // 同歸檔／抽獎／匯入互鎖：event 雙 key 鎖內重讀先改（並發刪除 → NOT_FOUND）
+      await db.transaction(async (tx) => {
+        await lockEventTx(tx, input.eventId);
+        const [evNow] = await tx
+          .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name })
+          .from(luckyDrawEvents)
+          .where(eq(luckyDrawEvents.id, input.eventId))
+          .limit(1);
+        if (!evNow) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
+        await tx
+          .update(luckyDrawEvents)
+          .set({ name: input.name })
+          .where(eq(luckyDrawEvents.id, input.eventId));
+      });
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.renameEvent",
+        targetType: "luckyDrawEvent", targetId: String(input.eventId),
+        detail: `活動改名 → 《${input.name}》`,
+      });
+      return { ok: true as const, id: input.eventId, name: input.name };
+    }),
+
+  /** v2.5.8（老闆指令）：刪除成個活動——確認後先郁手。
+   *  鐵律：唔波及訂單或其他業務資料——呢個活動抽出嚟嘅 luckyDraws 中獎紀錄全部留底
+   *  （eventId/eventEntryId 解綁 SET NULL，winnerName 快照、orderId、狀態全部唔郁），
+   *  劵持有人 entries 跟活動 cascade；公開公告頁隨即顯示「活動已刪除」。
+   *  同抽獎／匯入／歸檔互鎖（event 雙 key），鎖內重讀先刪。 */
+  adminDeleteEvent: supervisorProcedure
+    .input(z.object({ eventId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      let eventName = "";
+      let detached = 0;
+      await db.transaction(async (tx) => {
+        await lockEventTx(tx, input.eventId);
+        const [evNow] = await tx
+          .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name })
+          .from(luckyDrawEvents)
+          .where(eq(luckyDrawEvents.id, input.eventId))
+          .limit(1);
+        if (!evNow) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
+        eventName = evNow.name;
+        // 中獎紀錄留底：解綁活動＋券參照（唔刪紀錄、唔郁訂單）
+        const unbound = await tx
+          .update(luckyDraws)
+          .set({ eventId: null, eventEntryId: null })
+          .where(eq(luckyDraws.eventId, input.eventId))
+          .returning({ id: luckyDraws.id });
+        detached = unbound.length;
+        // 劵持有人 cascade 跟活動刪（佢哋只係活動參加資料，唔係業務紀錄）
+        await tx.delete(luckyDrawEvents).where(eq(luckyDrawEvents.id, input.eventId));
+      });
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.deleteEvent",
+        targetType: "luckyDrawEvent", targetId: String(input.eventId),
+        detail: `刪除活動《${eventName}》（${detached} 筆中獎紀錄解綁留底，訂單唔受影響）`,
+      });
+      return { ok: true as const, detachedDraws: detached };
+    }),
+
   /** 活動劵名單：每人幾多張劵＋全活動已中次數（pending+confirmed） */
   adminListEventEntries: supervisorProcedure
     .input(z.object({ eventId: z.number().int().positive() }))
@@ -1905,6 +2009,48 @@ export const luckyDrawRouter = createRouter({
         detail: `刪劵持有人：${row.holderName}（${row.ticketCount} 張，活動 #${row.eventId}）`,
       });
       return { ok: true };
+    }),
+
+  /** v2.5.8（老闆指令「每場活動有位置睇中獎人」）：單個活動嘅內部中獎名單——
+   *  全部係真實抽獎結果（luckyDraws），連埋現有跟進資料（狀態／通知／訂單單號），
+   *  唔會為展示而重抽或虛構。按抽出次序（舊→新）。 */
+  adminEventWinners: supervisorProcedure
+    .input(z.object({ eventId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const [event] = await db
+        .select()
+        .from(luckyDrawEvents)
+        .where(eq(luckyDrawEvents.id, input.eventId))
+        .limit(1);
+      if (!event) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
+      const rows = await db
+        .select({
+          id: luckyDraws.id,
+          status: luckyDraws.status,
+          drawDate: luckyDraws.drawDate,
+          createdAt: luckyDraws.createdAt,
+          winnerNameSnap: luckyDraws.winnerName,
+          notifiedAt: luckyDraws.notifiedAt,
+          redrawOfId: luckyDraws.redrawOfId,
+          cancelNote: luckyDraws.cancelNote,
+          drawnByName: luckyDraws.drawnByName,
+          eventEntryId: luckyDraws.eventEntryId,
+          winnerName: users.name,
+          orderId: luckyDraws.orderId,
+          orderNo: orders.orderNo,
+          orderStatus: orders.status,
+          prizeName: luckyPrizes.name,
+          prizeSku: luckyPrizes.sku,
+          prizePrice: luckyPrizes.price,
+        })
+        .from(luckyDraws)
+        .innerJoin(luckyPrizes, eq(luckyDraws.prizeId, luckyPrizes.id))
+        .innerJoin(users, eq(luckyDraws.winnerUserId, users.id))
+        .leftJoin(orders, eq(luckyDraws.orderId, orders.id))
+        .where(eq(luckyDraws.eventId, input.eventId))
+        .orderBy(asc(luckyDraws.id));
+      return { event, winners: rows };
     }),
 
   /** 劵活動抽獎：每張劵等權（人用 ticketCount 加權，randomInt(0,total)＋累計權重，唔展開巨型 array）。
@@ -2204,6 +2350,73 @@ export const luckyDrawRouter = createRouter({
         detail: `Excel 匯入劵活動《${event!.name}》：新增 ${plan.inserts.length} 人、加劵 ${plan.merges.length} 人（skip/merge 重複 ${plan.duplicates.length} 行）`,
       });
       return { committed: true as const, rows, errors, duplicates: plan.duplicates, summary };
+    }),
+
+  // ───────────────────────── 公開：中獎公告（v2.5.8）─────────────────────────
+
+  /** 公開公告總頁（唔使登入）：全部未刪除活動一覽（新→舊），
+   *  連「企得硬」中獎數（pending+confirmed，同 adminListEvents drawnCount 同一口径）。
+   *  只放活動名＋建立時間＋中獎數；唔放任何參加者／中獎人資料（名單去逐場公告頁睇）。 */
+  publicEvents: publicProcedure.query(async () => {
+    const db = getDb();
+    const events = await db
+      .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name, createdAt: luckyDrawEvents.createdAt })
+      .from(luckyDrawEvents)
+      .orderBy(desc(luckyDrawEvents.id))
+      .limit(50);
+    if (events.length === 0) return [];
+    const drawStats = await db
+      .select({ eventId: luckyDraws.eventId, n: sql<number>`count(*)::int` })
+      .from(luckyDraws)
+      .where(inArray(luckyDraws.status, ["pending", "confirmed"]))
+      .groupBy(luckyDraws.eventId);
+    const drawBy = new Map(drawStats.map((r) => [r.eventId, Number(r.n)]));
+    return events.map((e) => ({ ...e, winnerCount: drawBy.get(e.id) ?? 0 }));
+  }),
+
+  /** 公開中獎公告（唔使登入）：活動名＋抽獎日期時間＋winner 對外顯示名。
+   *  私隱鐵律：唔放電話／email／會員編號／地址／內部備註——淨係回傳
+   *  winnerName 快照（冇快照嘅舊紀錄先用會員顯示名頂上）＋獎品名＋抽出時間。
+   *  名單全部係真實抽獎結果；沿用現行「已抽出」口径＝pending＋confirmed（企得硬嘅中獎），
+   *  cancelled（後台取消，客人唔會再見到）同 declined（客人唔要、獎品已返池）唔當有效中獎——
+   *  呢個係現有 adminListEvents drawnCount／限中計數嘅同一口径，唔係新加嘅展示過濾。
+   *  活動唔存在／已刪除 → NOT_FOUND（公開頁顯示「活動唔存在或已刪除」）；
+   *  仲未抽獎 → winners 空陣列（公開頁顯示「中獎名單即將公佈」）。 */
+  publicEventResults: publicProcedure
+    .input(z.object({ eventId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const [event] = await db
+        .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name, createdAt: luckyDrawEvents.createdAt })
+        .from(luckyDrawEvents)
+        .where(eq(luckyDrawEvents.id, input.eventId))
+        .limit(1);
+      if (!event) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在或已刪除" });
+      const rows = await db
+        .select({
+          id: luckyDraws.id,
+          drawDate: luckyDraws.drawDate,
+          createdAt: luckyDraws.createdAt,
+          winnerNameSnap: luckyDraws.winnerName,
+          winnerName: users.name,
+          prizeName: luckyPrizes.name,
+        })
+        .from(luckyDraws)
+        .innerJoin(luckyPrizes, eq(luckyDraws.prizeId, luckyPrizes.id))
+        .innerJoin(users, eq(luckyDraws.winnerUserId, users.id))
+        .where(and(eq(luckyDraws.eventId, input.eventId), inArray(luckyDraws.status, ["pending", "confirmed"])))
+        .orderBy(asc(luckyDraws.id));
+      return {
+        event: { id: event.id, name: event.name, createdAt: event.createdAt },
+        winners: rows.map((r) => ({
+          id: r.id,
+          // 對外顯示名：快照優先（唔受會員改名影響）；舊紀錄冇快照先用會員顯示名
+          name: r.winnerNameSnap ?? r.winnerName,
+          prizeName: r.prizeName,
+          drawDate: r.drawDate,
+          drawnAt: r.createdAt,
+        })),
+      };
     }),
 
   // ───────────────────────── 客人：中獎彈窗 ─────────────────────────

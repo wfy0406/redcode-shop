@@ -28,6 +28,8 @@ export interface CreatedOrder {
   walletUsed?: number;
   /** v2.5.0（購物金）：全額購物金單一落單即 'payment_review'（唔使再付尾數） */
   status?: string;
+  /** AI 試穿同 requestId 重試時恢復咗舊單；畫面要提示唔會套用重試前嘅新修改。 */
+  recovered?: boolean;
 }
 
 /** 單價：有折用折後價（discountPrice ?? price） */

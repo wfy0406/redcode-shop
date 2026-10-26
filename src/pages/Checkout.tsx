@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData } from '@tanstack/react-query';
 import { CreditCard, MapPin, MessageCircle, TicketPercent, Truck, Wallet, X } from 'lucide-react';
@@ -18,6 +18,13 @@ import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
 import { normalizeVipTier } from '@/components/VipBadge';
 import VipTierBand from '@/components/VipTierBand';
 import { PAYMENT_METHODS_SETTING_KEY, parsePaymentMethods } from '@contracts/paymentMethods';
+import type { TryOnPurchaseItem } from '@contracts/purchase';
+import { parseSizes } from '@/components/shop/shop-utils';
+import {
+  buildTryOnCheckoutLines,
+  clearTryOnCheckoutDraft,
+  readTryOnCheckoutDraft,
+} from './tryonPurchase';
 
 /**
  * RedCode 結帳（design-system.md §P7，含付款截圖上傳）
@@ -114,6 +121,13 @@ function StepBar({ step }: { step: number }) {
 interface ConfirmStepProps {
   items: CartLine[];
   onCreated: (order: CreatedOrder) => void;
+  /** 有值即係 AI 試穿即買；同一組 ID 會交畀 quote 同 orders.create，唔會讀原購物車。 */
+  purchaseItems?: TryOnPurchaseItem[];
+  /** 同一份即買草稿重試沿用，server 可恢復已建立但回應遺失嘅訂單。 */
+  purchaseRequestId?: string;
+  /** 試穿頁已揀嘅優惠碼／購物金開關；金額仍然由呢頁同 server 重新報價。 */
+  initialPromoCode?: string;
+  initialUseWallet?: boolean;
 }
 
 type Region = 'HK' | 'MO' | 'OVERSEAS';
@@ -124,7 +138,14 @@ const REGION_OPTIONS: readonly [Region, string][] = [
   ['OVERSEAS', '國外'],
 ];
 
-function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
+function ConfirmStep({
+  items,
+  onCreated,
+  purchaseItems,
+  purchaseRequestId,
+  initialPromoCode,
+  initialUseWallet = false,
+}: ConfirmStepProps) {
   const { user } = useAuth();
   const utils = trpc.useUtils();
   const createOrder = trpc.orders.create.useMutation();
@@ -148,7 +169,7 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   const [error, setError] = useState<string | null>(null);
   // v2.5.0（購物金）：結帳用購物金扣數開關——server 報價會預覽扣幾多／尾數幾多，
   // 落單時 server 同事務實扣（conditional update 防超扣）；餘額 0 唔會出開關
-  const [useWallet, setUseWallet] = useState(false);
+  const [useWallet, setUseWallet] = useState(initialUseWallet);
 
   // 國外單只支援送貨上門——任何計數／落單都用呢個正規化後嘅方式
   const effectiveMethod = region === 'OVERSEAS' ? 'address' : deliveryMethod;
@@ -160,9 +181,9 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   const [promoSuccess, setPromoSuccess] = useState(false); // 剔號緊（morph 做 chip 前嘅確認幀）
   const [appliedPromo, setAppliedPromo] = useState<{
     code: string;
-    discountAmount: number;
-    finalTotal: number;
-  } | null>(null);
+    discountAmount?: number;
+    finalTotal?: number;
+  } | null>(() => initialPromoCode ? { code: initialPromoCode } : null);
 
   // 預填會員地址（唔覆蓋用戶已改嘅內容）
   useEffect(() => {
@@ -287,6 +308,8 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
       couponCode: appliedPromo?.code,
       // v2.5.0（購物金）：開關一撳 server 就重算預覽（walletApplied／cashDue）
       useWallet,
+      // AI 試穿即買：quote 同下面 orders.create 用同一份 ID／尺寸清單。
+      items: purchaseItems,
     },
     {
       enabled: !!user && items.length > 0,
@@ -324,16 +347,17 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
   // 客戶端折扣只係顯示用途；落單時 server 會用 promoCode 重算，以 server 為準
   const displayTotal = quote
     ? quote.totalCents / 100
-    : appliedPromo
-      ? appliedPromo.finalTotal
-      : subtotal;
+    : (appliedPromo?.finalTotal ?? subtotal);
 
   const onApplyPromo = async () => {
     const code = promoInput.trim().toUpperCase();
     if (!code || promoValidate.isPending || promoSuccess) return;
     setPromoError(null);
     try {
-      const res = await promoValidate.mutateAsync({ code, subtotal });
+      // promo.validate 同 checkoutQuote／orders.create 一樣以 VIP 折後價做基數；
+      // 唔好用未扣 VIP 嘅小計驗證，否則 minSpend／百分比預覽會同真正落單唔一致。
+      const couponBase = Math.max(1, Math.round(subtotal - vipDiscount));
+      const res = await promoValidate.mutateAsync({ code, subtotal: couponBase });
       // choreography：剔號（0.3s 畫完 + 停一停）→ 輸入區 morph 做 chip
       setPromoSuccess(true);
       window.setTimeout(() => {
@@ -379,9 +403,16 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
         stationId: effectiveMethod !== 'address' ? stationId : undefined,
         // v2.5.0（購物金）：有剔先用嘅開關先傳；server 同事務實扣，唔信前端金額
         useWallet: useWallet || undefined,
+        items: purchaseItems,
+        requestId: purchaseRequestId,
       });
-      // 後端已清車，invalidate 令購物車頁 / badge 同步
-      void utils.cart.list.invalidate();
+      if (purchaseItems && user) {
+        // 即買訂單成功先清今次暫存；原購物車完全冇被修改。
+        clearTryOnCheckoutDraft(window.sessionStorage, user.id);
+      } else {
+        // 普通購物車單後端已清車，invalidate 令購物車頁 / badge 同步。
+        void utils.cart.list.invalidate();
+      }
       // v2.5.0：購物金有郁過 → 會員中心購物金卡／充值頁餘額即時更新
       if ((created as CreatedOrder).walletUsed) void utils.wallet.myWallet.invalidate();
       onCreated(created as CreatedOrder);
@@ -450,7 +481,11 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
             >
               <TicketPercent size={15} aria-hidden="true" />
               {appliedPromo.code}
-              <span className="text-gold-soft">−{formatHKD(couponDiscount)}</span>
+              <span className="text-gold-soft">
+                {quote || appliedPromo.discountAmount !== undefined
+                  ? `−${formatHKD(couponDiscount)}`
+                  : quoteQuery.isFetching ? '重算中' : '待核實'}
+              </span>
               <button
                 type="button"
                 onClick={onRemovePromo}
@@ -557,7 +592,9 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                 <span className="font-mono uppercase tracking-wider">{appliedPromo.code}</span>
               </span>
               <span className="font-mono text-base tabular-nums text-gold">
-                −{formatHKD(couponDiscount)}
+                {quote || appliedPromo.discountAmount !== undefined
+                  ? `−${formatHKD(couponDiscount)}`
+                  : quoteQuery.isFetching ? '重算中' : '待核實'}
               </span>
             </div>
           )}
@@ -672,6 +709,11 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
                 {formatHKD(quote.cashDue)}
               </span>
             </div>
+          )}
+          {quoteQuery.isError && (
+            <p role="alert" className="mt-2.5 text-sm leading-relaxed text-pink-soft">
+              目前報價未能更新：{quoteQuery.error.message}。落單時 server 會再核實商品、優惠及購物金。
+            </p>
           )}
           {/* server 備註（澳門單・不包郵・順豐到付／VIP金會員全年免運…）：細字提示 */}
           {quote && quote.remarks.length > 0 && (
@@ -896,7 +938,9 @@ function ConfirmStep({ items, onCreated }: ConfirmStepProps) {
           {createOrder.isPending ? <WishStarSpinner /> : '建立訂單，去付款'}
         </button>
         <p className="mt-3 text-center text-sm text-txt-3">
-          建立訂單後先好過數，購物車會即時清空
+          {purchaseItems
+            ? '建立訂單後先好過數；你原有嘅購物車會完整保留'
+            : '建立訂單後先好過數，購物車會即時清空'}
         </p>
       </div>
     </div>
@@ -1016,6 +1060,11 @@ function PaymentStep({ order, onDone }: PaymentStepProps) {
 
   return (
     <>
+      {order.recovered && (
+        <div role="status" className="mx-auto mt-8 max-w-2xl rounded-2xl border border-gold bg-space-2 px-5 py-4 text-center text-sm leading-relaxed text-gold">
+          已恢復你之前建立嘅同一張訂單，冇重複開單。請以原訂單嘅金額、優惠、購物金及收貨資料為準；重試前如有新修改，未會套用到呢張原單。
+        </div>
+      )}
       {/* 網上即時付款（主角，喺手動過數之前；Airwallex 未配置 → 成區唔 render） */}
       {!airwallexUnavailable && (
         <div
@@ -1227,6 +1276,12 @@ function SuccessStep({ order }: { order: CreatedOrder }) {
       <WishStarBurst />
       <p className="script mt-8 text-4xl md:text-5xl">Thank you, wish granted!</p>
 
+      {order.recovered && (
+        <p role="status" className="mt-6 max-w-lg rounded-2xl border border-gold bg-space-2 px-5 py-4 text-sm leading-relaxed text-gold">
+          已恢復你之前建立嘅同一張訂單。金額、優惠、購物金及收貨資料以原訂單為準；重試前如有新修改，未會套用。
+        </p>
+      )}
+
       <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
         <span className="text-sm text-txt-3">訂單編號</span>
         <span className="font-mono text-xl text-txt-1 md:text-2xl">{order.orderNo}</span>
@@ -1269,11 +1324,57 @@ function SuccessStep({ order }: { order: CreatedOrder }) {
 /* ---------- 頁面 ---------- */
 export default function Checkout() {
   const { user, isLoading: authLoading } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const directMode = searchParams.get('source') === 'try-on';
+
+  // sessionStorage 只存 userId／lookId／請求編號／商品 ID／尺寸／固定數量 1；唔存品名或價錢。
+  // 錯帳號、壞 JSON 或空清單都會明示錯誤，絕不會 fallback 去普通購物車。
+  const tryOnDraft = useMemo(() => {
+    if (!directMode || !user) return null;
+    return readTryOnCheckoutDraft(window.sessionStorage, user.id);
+  }, [directMode, user]);
+  const directPurchaseItems = useMemo<TryOnPurchaseItem[] | undefined>(() => {
+    if (!directMode || !tryOnDraft) return undefined;
+    return tryOnDraft.items.map((item) => ({
+      productId: item.productId,
+      size: item.size ?? undefined,
+      quantity: 1,
+    }));
+  }, [directMode, tryOnDraft]);
 
   const cartQuery = trpc.cart.list.useQuery(undefined, {
-    enabled: !!user,
+    enabled: !!user && !directMode,
     retry: false,
   });
+  const productsQuery = trpc.products.list.useQuery(undefined, {
+    enabled: !!user && directMode && !!tryOnDraft,
+    retry: false,
+  });
+  const directCheckout = useMemo(() => {
+    if (!directMode || !tryOnDraft) {
+      return { lines: [] as CartLine[], missingProductIds: [] as number[] };
+    }
+    return buildTryOnCheckoutLines(tryOnDraft.items, productsQuery.data ?? []);
+  }, [directMode, tryOnDraft, productsQuery.data]);
+  const directProductError = useMemo(() => {
+    if (!directMode || !tryOnDraft || !productsQuery.data) return null;
+    const byId = new Map(productsQuery.data.map((product) => [product.id, product]));
+    for (const item of tryOnDraft.items) {
+      const product = byId.get(item.productId);
+      if (!product) return `商品 #${item.productId} 已下架或唔存在，請返回 AI 試穿重新選擇`;
+      if (product.stock < 1) return `《${product.name}》暫時售罄，請返回 AI 試穿更新購買清單`;
+      const sizes = parseSizes(product.sizes);
+      if (
+        product.sizeEnabled &&
+        sizes.length > 0 &&
+        (!item.size || !sizes.includes(item.size))
+      ) {
+        return `《${product.name}》嘅尺寸已更新，請返回 AI 試穿重新選擇有效尺寸`;
+      }
+    }
+    return null;
+  }, [directMode, tryOnDraft, productsQuery.data]);
 
   // v2.2.0 級別格調帶：同 Navbar 同一來源 vip.getMyVip；載入緊唔顯示
   const myVipQuery = trpc.vip.getMyVip.useQuery(undefined, {
@@ -1289,8 +1390,6 @@ export default function Checkout() {
   // refresh 還原（2026-09-29 hotfix）：建立訂單後 orderId 會寫落 URL query；
   // 如果客人喺付款步驟 refresh，頁面 state 冇咗、購物車又已清空——與其顯示
   // 「購物車係空嘅」令客人迷失，直接送佢去付款頁（/#/payment?orderId=）繼續畀錢
-  const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
   const resumeOrderId = Number(searchParams.get('orderId') || 0);
 
   useEffect(() => {
@@ -1298,14 +1397,35 @@ export default function Checkout() {
     navigate(`/payment?orderId=${resumeOrderId}`, { replace: true });
   }, [authLoading, user, order, resumeOrderId, navigate]);
 
-  const items = (cartQuery.data ?? []) as CartLine[];
+  const items = directMode
+    ? directCheckout.lines
+    : ((cartQuery.data ?? []) as CartLine[]);
 
   const renderStep = () => {
     if (step === 2 && order) return <SuccessStep order={order} />;
     if (step === 1 && order) {
       return <PaymentStep order={order} onDone={() => setStep(2)} />;
     }
-    if (cartQuery.isLoading) {
+    const directBlockingError = directMode
+      ? (!tryOnDraft
+          ? '搵唔到今次 AI 試穿購買清單，可能已過期、被清除或屬於另一個帳號。請返回試穿頁重新選擇；唔會自動改用你原有購物車。'
+          : directProductError)
+      : null;
+    if (directBlockingError) {
+      return (
+        <div
+          className="mx-auto mt-12 max-w-[520px] rounded-3xl border p-8 text-center"
+          style={{ background: 'var(--glass-bg-strong)', borderColor: 'var(--glass-border)' }}
+        >
+          <p role="alert" className="text-[15px] leading-relaxed text-pink-soft">
+            {directBlockingError}
+          </p>
+          <Link to="/try-on" className="btn btn-secondary mt-6">返回 AI 試穿</Link>
+        </div>
+      );
+    }
+    const itemsLoading = directMode ? productsQuery.isLoading : cartQuery.isLoading;
+    if (itemsLoading) {
       return (
         <div className="mt-10 space-y-4" aria-label="訂單載入中">
           {[0, 1].map((i) => (
@@ -1314,19 +1434,21 @@ export default function Checkout() {
         </div>
       );
     }
-    if (cartQuery.isError) {
+    const itemsError = directMode ? productsQuery.isError : cartQuery.isError;
+    if (itemsError) {
+      const loadError = directMode ? productsQuery.error : cartQuery.error;
       return (
         <div
           className="mx-auto mt-12 max-w-[420px] rounded-3xl border p-8 text-center"
           style={{ background: 'var(--glass-bg-strong)', borderColor: 'var(--glass-border)' }}
         >
           <p role="alert" className="text-[15px] text-pink-soft">
-            購物車載入失敗：{cartQuery.error.message}
+            {directMode ? '目前商品資料載入失敗' : '購物車載入失敗'}：{loadError?.message ?? '請稍後再試'}
           </p>
           <button
             type="button"
             className="btn btn-secondary mt-6"
-            onClick={() => void cartQuery.refetch()}
+            onClick={() => void (directMode ? productsQuery.refetch() : cartQuery.refetch())}
           >
             再試一次
           </button>
@@ -1336,6 +1458,10 @@ export default function Checkout() {
     return (
       <ConfirmStep
         items={items}
+        purchaseItems={directPurchaseItems}
+        purchaseRequestId={tryOnDraft?.requestId}
+        initialPromoCode={tryOnDraft?.promoCode}
+        initialUseWallet={tryOnDraft?.useWallet}
         onCreated={(created) => {
           setOrder(created);
           // v2.5.0（購物金）：全額購物金單一落單即轉待審批（server 已將 status 轉
@@ -1368,6 +1494,11 @@ export default function Checkout() {
       ) : (
         <>
           <StepBar step={step} />
+          {directMode && step === 0 && (
+            <p className="mt-5 border-l-2 pl-4 text-sm leading-relaxed text-txt-2" style={{ borderColor: 'var(--gold)' }}>
+              AI 試穿即買：呢頁只會顯示及結帳今次所揀商品，品名、貨號同價錢以目前商品資料為準；原有購物車會完整保留。
+            </p>
+          )}
           {renderStep()}
         </>
       )}
