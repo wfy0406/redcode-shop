@@ -25,9 +25,11 @@
   pointer-events: auto;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  /* 定位即時落到已驗證安全位，唔用 transform 動畫穿過商品或控制。 */
+  /* transform 由時間制飛行 loop 逐幀寫入；唔用 CSS transition 同 JS 兩邊爭控制。 */
   transition: opacity 160ms ease;
   will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .fairy-guide-button:focus-visible {

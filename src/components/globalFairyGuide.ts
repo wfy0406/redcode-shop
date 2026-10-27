@@ -222,12 +222,6 @@ export function getFairyRouteGuide(
           title: '用類別快速篩款',
           body: '撳一個類別，就睇到相關商品；再撳商品卡入詳情。',
         },
-        {
-          id: 'products-card',
-          selectors: ['main article a[href^="/products/"]'],
-          title: '撳商品卡睇詳情',
-          body: '入去可以睇相片、尺寸同價錢；合資格商品亦有 AI 試穿入口。',
-        },
       ],
     };
   }
@@ -514,8 +508,11 @@ export function intersectRect(a: FairyRect, b: FairyRect): FairyRect | null {
 }
 
 /** 目標至少要有足夠真實可見面積；完全離屏或只露少少都唔會被當可指。 */
-export function visibleActionRect(rect: FairyRect, viewport: FairySize): FairyRect | null {
-  const visible = intersectRect(rect, { left: 0, top: 0, width: viewport.w, height: viewport.h });
+export function visibleActionRect(rect: FairyRect, viewport: FairySize, bounds?: FairyRect): FairyRect | null {
+  const visible = intersectRect(
+    rect,
+    bounds ?? { left: 0, top: 0, width: viewport.w, height: viewport.h },
+  );
   if (!visible) return null;
   const minW = Math.min(32, rect.width);
   const minH = Math.min(28, rect.height);
@@ -530,7 +527,225 @@ function gapBetweenRects(a: FairyRect, b: FairyRect): number {
 }
 
 function freeAt(point: FairyPoint, fairy: FairySize, obstacles: readonly FairyRect[]): boolean {
-  return obstacles.every((obstacle) => !fairyOverlapsRect(point, fairy, obstacle));
+  const right = point.x + fairy.w;
+  const bottom = point.y + fairy.h;
+  // 呢個函數喺飛行及掃位內層會行幾千次；共用外框、唔逐個障礙物建物件。
+  for (const obstacle of obstacles) {
+    if (
+      point.x < obstacle.left + obstacle.width && right > obstacle.left &&
+      point.y < obstacle.top + obstacle.height && bottom > obstacle.top
+    ) return false;
+  }
+  return true;
+}
+
+/**
+ * 細步飛行都要檢查成段路徑，唔可以只驗終點就穿過商品或文字。
+ * 如果舊位置啱啱被滾動中嘅內容撞上，可以穿過「起點已碰撞」嘅障礙物連續脫困；
+ * 但唔准因此撞入新障礙物。完全脫離後，同一段路徑亦唔可以再撞返入去。
+ */
+function clearFlightStep(
+  from: FairyPoint,
+  to: FairyPoint,
+  fairy: FairySize,
+  obstacles: readonly FairyRect[],
+): boolean {
+  // Broadphase：只保留呢段線嘅 swept bounds 真係可能碰到嘅障礙物。
+  // 規則本身不變，但密集商品頁唔再每個候選細步都掃全頁所有文字及圖片。
+  const sweepLeft = Math.min(from.x, to.x);
+  const sweepTop = Math.min(from.y, to.y);
+  const sweepRight = Math.max(from.x, to.x);
+  const sweepBottom = Math.max(from.y, to.y);
+  const relevant = obstacles.filter((obstacle) => {
+    const config = flightConfigRect(obstacle, fairy);
+    return config.left < sweepRight && config.left + config.width > sweepLeft &&
+      config.top < sweepBottom && config.top + config.height > sweepTop;
+  });
+  // 唔好再用局部碰撞面積升降決定方向，否則多段文字或部分包圍時，
+  // 會揀一條永遠出唔到去嘅向左細步。未碰撞障礙物用精確線段測試，
+  // 連少於 6px 嘅角位擦撞都唔會漏；起點已碰撞嘅凸矩形則准許沿直線離開。
+  for (const obstacle of relevant) {
+    if (fairyOverlapsRect(from, fairy, obstacle)) continue;
+    if (segmentRectEntry(from, to, flightConfigRect(obstacle, fairy)) !== null) return false;
+  }
+  return true;
+}
+
+function flightConfigRect(obstacle: FairyRect, fairy: FairySize, padding = 0): FairyRect {
+  return {
+    left: obstacle.left - fairy.w - padding,
+    top: obstacle.top - fairy.h - padding,
+    width: obstacle.width + fairy.w + padding * 2,
+    height: obstacle.height + fairy.h + padding * 2,
+  };
+}
+
+/** 回傳線段真正穿過矩形嘅進入比例；只擦到起點／角位唔當阻擋。 */
+function segmentRectEntry(from: FairyPoint, to: FairyPoint, rect: FairyRect): number | null {
+  let enter = 0;
+  let exit = 1;
+  const axes = [
+    { origin: from.x, delta: to.x - from.x, min: rect.left, max: rect.left + rect.width },
+    { origin: from.y, delta: to.y - from.y, min: rect.top, max: rect.top + rect.height },
+  ];
+  for (const axis of axes) {
+    if (Math.abs(axis.delta) < 0.0000001) {
+      if (axis.origin < axis.min || axis.origin > axis.max) return null;
+      continue;
+    }
+    const a = (axis.min - axis.origin) / axis.delta;
+    const b = (axis.max - axis.origin) / axis.delta;
+    enter = Math.max(enter, Math.min(a, b));
+    exit = Math.min(exit, Math.max(a, b));
+    if (enter > exit) return null;
+  }
+  const start = Math.max(0, enter);
+  const end = Math.min(1, exit);
+  return end - start > 0.0001 ? start : null;
+}
+
+function flightSegmentClear(
+  from: FairyPoint,
+  to: FairyPoint,
+  fairy: FairySize,
+  obstacles: readonly FairyRect[],
+): boolean {
+  const left = Math.min(from.x, to.x);
+  const top = Math.min(from.y, to.y);
+  const right = Math.max(from.x, to.x);
+  const bottom = Math.max(from.y, to.y);
+  for (const obstacle of obstacles) {
+    const config = flightConfigRect(obstacle, fairy);
+    if (
+      config.left >= right || config.left + config.width <= left ||
+      config.top >= bottom || config.top + config.height <= top
+    ) continue;
+    if (segmentRectEntry(from, to, config) !== null) return false;
+  }
+  return true;
+}
+
+/**
+ * 直線穿過商品／文字時，搵第一個阻擋矩形嘅可見角位做臨時 waypoint。
+ * 每次只處理最近阻擋物，唔會喺每幀為全頁幾百個障礙物建大型 path graph。
+ */
+function flightDetourWaypoint(
+  current: FairyPoint,
+  target: FairyPoint,
+  viewport: FairySize,
+  fairy: FairySize,
+  obstacles: readonly FairyRect[],
+): FairyPoint | null {
+  if (!freeAt(current, fairy, obstacles)) return null;
+  let blocker: FairyRect | null = null;
+  let blockerEntry = Infinity;
+  for (const obstacle of obstacles) {
+    const entry = segmentRectEntry(current, target, flightConfigRect(obstacle, fairy));
+    if (entry !== null && entry < blockerEntry) {
+      blocker = obstacle;
+      blockerEntry = entry;
+    }
+  }
+  if (!blocker) return null;
+  const bounds = flightConfigRect(blocker, fairy, 2);
+  const right = bounds.left + bounds.width;
+  const bottom = bounds.top + bounds.height;
+  const corners: FairyPoint[] = [
+    { x: bounds.left, y: bounds.top },
+    { x: right, y: bounds.top },
+    { x: bounds.left, y: bottom },
+    { x: right, y: bottom },
+  ];
+  const viableCorners = corners
+    .map((raw) => clampFairyPosition(raw, viewport, fairy))
+    .filter((point) => freeAt(point, fairy, obstacles));
+  let best: { point: FairyPoint; score: number } | null = null;
+  for (const point of viableCorners) {
+    const approach = Math.hypot(point.x - current.x, point.y - current.y);
+    if (approach <= 1 || !clearFlightStep(current, point, fairy, obstacles)) continue;
+    let remaining = flightSegmentClear(point, target, fairy, obstacles)
+      ? Math.hypot(target.x - point.x, target.y - point.y)
+      : Infinity;
+    if (!Number.isFinite(remaining)) {
+      // 近側角位之後通常仲要沿底邊／頂邊去遠側角位；將呢段計入成本，
+      // 否則會喺近側角位附近前後拉鋸，永遠行唔過件商品。
+      for (const next of viableCorners) {
+        const leg = Math.hypot(next.x - point.x, next.y - point.y);
+        if (leg <= 1) continue;
+        if (!flightSegmentClear(point, next, fairy, obstacles)) continue;
+        if (!flightSegmentClear(next, target, fairy, obstacles)) continue;
+        remaining = Math.min(remaining, leg + Math.hypot(target.x - next.x, target.y - next.y));
+      }
+    }
+    if (!Number.isFinite(remaining)) continue;
+    const score = approach + remaining;
+    if (!best || score < best.score) best = { point, score };
+  }
+  return best?.point ?? null;
+}
+
+export interface FairyFlightInput {
+  current: FairyPoint;
+  target: FairyPoint;
+  viewport: FairySize;
+  fairy: FairySize;
+  obstacles?: readonly FairyRect[];
+  deltaMs: number;
+  maxSpeed?: number;
+}
+
+/**
+ * 時間制連續飛行：高刷新率電話會行更多細步，唔再用整點瞬移。
+ * 直線受阻時試細角度繞行／沿邊滑動；完全無安全細步就停留等下一次幾何更新。
+ */
+export function advanceFairyFlight(input: FairyFlightInput): FairyPoint {
+  const { current, target, viewport, fairy } = input;
+  const obstacles = input.obstacles ?? [];
+  const distance = Math.hypot(target.x - current.x, target.y - current.y);
+  if (distance < 0.25) return { ...current };
+  const deltaMs = Math.max(0, Math.min(40, input.deltaMs));
+  if (deltaMs === 0) return { ...current };
+  const maxSpeed = input.maxSpeed ?? 1080;
+  const speed = Math.min(maxSpeed, Math.max(220, distance * 7.5));
+  const destination = flightDetourWaypoint(current, target, viewport, fairy, obstacles) ?? target;
+  const destinationDistance = Math.hypot(destination.x - current.x, destination.y - current.y);
+  if (destinationDistance < 0.05) return { ...current };
+  const step = Math.min(destinationDistance, speed * deltaMs / 1000);
+  const baseAngle = Math.atan2(destination.y - current.y, destination.x - current.x);
+  const angleOffsets = [0, 12, -12, 24, -24, 40, -40, 60, -60, 82, -82, 105, -105, 140, -140, 180];
+  let best: { point: FairyPoint; score: number } | null = null;
+  for (const stepScale of [1, 0.5, 0.25]) {
+    for (const offset of angleOffsets) {
+      const angle = baseAngle + offset * Math.PI / 180;
+      const intendedStep = step * stepScale;
+      const clamped = clampFairyPosition(
+        {
+          x: current.x + Math.cos(angle) * intendedStep,
+          y: current.y + Math.sin(angle) * intendedStep,
+        },
+        viewport,
+        fairy,
+      );
+      // 精靈尺寸恢復或 viewport 改變時，clamp 可能額外加入安全邊距修正。
+      // 將修正後向量按比例縮回本帧步幅，唔好令 margin correction 同飛行距離叠加成超步。
+      const clampedDistance = Math.hypot(clamped.x - current.x, clamped.y - current.y);
+      const candidate = clampedDistance > intendedStep && clampedDistance > 0
+        ? {
+            x: current.x + (clamped.x - current.x) * intendedStep / clampedDistance,
+            y: current.y + (clamped.y - current.y) * intendedStep / clampedDistance,
+          }
+        : clamped;
+      if (Math.hypot(candidate.x - current.x, candidate.y - current.y) < 0.05) continue;
+      if (!clearFlightStep(current, candidate, fairy, obstacles)) continue;
+      // 直線安全時立即行；受阻時唔再取「第一個唔撞」嘅後退步，
+      // 而係取最能縮短目標距離嘅細步，避免喺障礙物前左右／上下來回震盪。
+      if (offset === 0 && stepScale === 1) return candidate;
+      const remaining = Math.hypot(destination.x - candidate.x, destination.y - candidate.y);
+      const score = remaining + (1 - stepScale) * 0.001 + Math.abs(offset) * 0.000001;
+      if (!best || score < best.score - 0.000000001) best = { point: candidate, score };
+    }
+  }
+  return best?.point ?? { ...current };
 }
 
 export interface FairyPlacementInput {
@@ -561,11 +776,14 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
   const target = input.target ?? null;
   const collisions = target ? [...obstacles, expandRect(target, 5)] : obstacles;
 
-  // scroll 逐幀重算時，舊位置仍然安全就唔搬；目標離屏唔應無故彈去另一個 dock。
-  // 一旦真正相撞，仍然行完整安全掃位，絕不為咗視覺平滑而穿过內容。
-  if (!target && current) {
+  // 舊位置仍然安全就唔搬，即使導覽目標改變都一樣；ring 可以更新，精靈唔需要跟住每粒掣閃位。
+  // 一旦真正相撞，先揀最近安全出口，再由時間制飛行 loop 連續移過去。
+  if (current) {
     const point = clampFairyPosition(current, viewport, fairy, margin);
-    if (freeAt(point, fairy, collisions)) return { point, nearTarget: false };
+    if (freeAt(point, fairy, collisions)) {
+      const nearTarget = !!target && gapBetweenRects(rectFromPoint(point, fairy), target) <= gap + 32;
+      return { point, nearTarget };
+    }
   }
 
   if (target) {
@@ -584,8 +802,8 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
       .filter(({ point }) => freeAt(point, fairy, collisions))
       .filter(({ point }) => gapBetweenRects(rectFromPoint(point, fairy), target) <= gap + 32)
       .sort((a, b) => {
-        const da = gapBetweenRects(rectFromPoint(a.point, fairy), target) + (current ? Math.hypot(a.point.x - current.x, a.point.y - current.y) * 0.015 : 0);
-        const db = gapBetweenRects(rectFromPoint(b.point, fairy), target) + (current ? Math.hypot(b.point.x - current.x, b.point.y - current.y) * 0.015 : 0);
+        const da = gapBetweenRects(rectFromPoint(a.point, fairy), target) + (current ? Math.hypot(a.point.x - current.x, a.point.y - current.y) * 0.25 : 0);
+        const db = gapBetweenRects(rectFromPoint(b.point, fairy), target) + (current ? Math.hypot(b.point.x - current.x, b.point.y - current.y) * 0.25 : 0);
         return da - db || a.index - b.index;
       });
     if (viable[0]) return { point: viable[0].point, nearTarget: true };
@@ -595,17 +813,26 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
     restPosition(viewport, fairy, 16),
     { x: 16, y: viewport.h * 0.56 - fairy.h / 2 },
     { x: viewport.w - fairy.w - 16, y: viewport.h * 0.48 - fairy.h / 2 },
-    { x: viewport.w / 2 - fairy.w / 2, y: viewport.h - fairy.h - 88 },
     { x: 16, y: 96 },
     { x: viewport.w - fairy.w - 16, y: 96 },
   ];
-  for (const candidate of docks) {
-    const point = clampFairyPosition(candidate, viewport, fairy, margin);
-    if (freeAt(point, fairy, collisions)) return { point, nearTarget: false };
-  }
+  const viableDocks = docks
+    .map((candidate, index) => ({
+      point: clampFairyPosition(candidate, viewport, fairy, margin),
+      index,
+    }))
+    .filter(({ point }) => freeAt(point, fairy, collisions))
+    .sort((a, b) => {
+      if (!current) return a.index - b.index;
+      const da = Math.hypot(a.point.x - current.x, a.point.y - current.y);
+      const db = Math.hypot(b.point.x - current.x, b.point.y - current.y);
+      return da - db || a.index - b.index;
+    });
+  // 初次進場先用常用 dock；已有位置被撞時，dock 只係候選之一，
+  // 仲會同附近細格一同比較距離，唔會因為「有個遠 dock 可用」就即刻閃去另一邊。
+  if (!current && viableDocks[0]) return { point: viableDocks[0].point, nearTarget: false };
 
-  // 密集商品頁唔靠「放寬碰撞」硬冚內容：最後掃一次完整 viewport 嘅細格安全位。
-  // 只有六個常用 dock 全部相撞先會行呢段；真係冇位仍然回 null。
+  // 密集商品頁唔靠「放寬碰撞」硬冚內容；真係冇位仍然回 null。
   const min = clampFairyPosition({ x: margin, y: margin }, viewport, fairy, margin);
   const max = clampFairyPosition(
     { x: viewport.w - fairy.w - margin, y: viewport.h - fairy.h - margin },
@@ -620,7 +847,10 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
     return [...new Set(values)];
   };
   const anchor = current ?? restPosition(viewport, fairy, 16);
-  const grid: Array<{ point: FairyPoint; distance: number }> = [];
+  const grid: Array<{ point: FairyPoint; distance: number }> = viableDocks.map(({ point }) => ({
+    point,
+    distance: Math.hypot(point.x - anchor.x, point.y - anchor.y),
+  }));
   for (const y of axis(min.y, max.y)) {
     for (const x of axis(min.x, max.x)) {
       const point = { x, y };

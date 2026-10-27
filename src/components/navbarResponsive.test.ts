@@ -164,10 +164,10 @@ describe('Navbar responsive 合約（溢出防退化）', () => {
     expect(source).toContain('<span className="hidden 2xl:inline">WhatsApp</span>');
   });
 
-  it('右 cluster／auth min-w-0，桌面會員名 truncate', () => {
+  it('右 cluster／auth min-w-0，桌面會員名 truncate 且唔被 flex 壓縮', () => {
     expect(source).toContain('flex min-w-0 items-center gap-2 xl:gap-3');
     expect(source).toContain('hidden min-w-0 items-center gap-2.5 lg:flex');
-    expect(source).toMatch(/nav-link min-w-0 max-w-40 truncate/);
+    expect(source).toContain('nav-link min-w-0 max-w-40 shrink-0 truncate xl:max-w-48');
   });
 
   it('手機 DrawerRow label truncate（長會員名唔頂爆 drawer）', () => {
@@ -175,6 +175,6 @@ describe('Navbar responsive 合約（溢出防退化）', () => {
   });
 
   it('桌面主導航 lg 起、間距 lg→xl 漸進（唔撞 logo／右 cluster）', () => {
-    expect(source).toContain('hidden items-center gap-4 lg:flex xl:gap-6');
+    expect(source).toContain('hidden items-center gap-3 lg:flex xl:gap-4');
   });
 });

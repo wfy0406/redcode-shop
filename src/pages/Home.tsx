@@ -835,13 +835,12 @@ export default function Home() {
             </p>
             {/* Hero CTA 掣組（musepool 方向）：pill cluster，手機 2×2 grid（primary 全闊做主角），
                 sm 以上 flex wrap 橫排；hero-enter 0.65s 起逐粒 +80ms stagger。
-                380px 以下短而密嘅首屏保留一段真空隙，等 44px 闊導覽精靈都唔使冚文字或 CTA；
                 兩張真人 FloatCard、煙花及互動完全唔郁。
                 光暈/掃光/hover 全部淨係 transform + opacity（GPU-only，唔整慢客人電話）。 */}
             {/* 星光裝飾層包住成個 cluster：absolute 漂移星塵圖喺掣底下，純 transform loop */}
             <div className="relative">
               <div aria-hidden="true" className="cta-sparkle-layer" />
-              <div className="relative z-10 mt-10 grid grid-cols-2 items-stretch gap-3 max-[380px]:mt-24 sm:flex sm:flex-wrap sm:items-center sm:gap-4">
+              <div className="relative z-10 mt-10 grid grid-cols-2 items-stretch gap-3 sm:flex sm:flex-wrap sm:items-center sm:gap-4">
                 {/* 1. 即睇商品（primary 最搶眼）：實心品牌粉紅 + 獨有 skew 掃光 loop */}
                 <div className="hero-enter col-span-2 h-full sm:col-span-1" style={{ animationDelay: '0.65s' }}>
                   <Link
@@ -1011,7 +1010,7 @@ export default function Home() {
               </button>
             </div>
           )}
-          <div className="mt-8 grid grid-cols-2 gap-x-20 gap-y-4 md:grid-cols-3 md:gap-6 xl:grid-cols-4">
+          <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6 xl:grid-cols-4">
             {newArrivals.map((product, i) => (
               <div
                 key={product.id}
@@ -1455,9 +1454,9 @@ export default function Home() {
             多謝每一位寶寶嘅著身分享，你哋先係夜空入面最閃嘅星。
           </p>
         </div>
-        <div className="mt-8 flex gap-4 overflow-x-auto px-5 pb-4 md:px-8 xl:px-12 [scrollbar-width:thin]">
+        <div className="mt-8 flex gap-4 overflow-x-auto px-5 pb-4 [scrollbar-width:thin] md:mx-auto md:grid md:max-w-[1280px] md:grid-cols-3 md:overflow-visible md:px-8 lg:grid-cols-6 xl:px-12">
           {wallPhotos.map((photo) => (
-            <div key={photo.key} className="w-56 shrink-0 md:w-64">
+            <div key={photo.key} className="w-56 shrink-0 md:w-auto md:shrink">
               <DuotoneImage
                 off
                 src={photo.src}

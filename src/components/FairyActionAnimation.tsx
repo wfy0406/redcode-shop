@@ -94,8 +94,8 @@ export default function FairyActionAnimation({
           className="fairy-action-animation"
           src={spec.animation}
           alt=""
-          width={384}
-          height={576}
+          width={256}
+          height={384}
           draggable={false}
           data-fairy-animation={action}
           data-fairy-frame-mode={showAnimation ? 'animated' : 'loading'}

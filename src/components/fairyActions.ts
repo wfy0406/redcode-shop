@@ -12,41 +12,42 @@ export interface FairyActionSpec {
 }
 
 /**
- * 每套動作都係真正六幀透明動畫 WebP；holdMs 係完整循環嘅整數倍，
- * 切動作時唔會專登截斷半個揮手／舞步。數值同 public/fairy/actions 實際 ANMF 一致。
+ * 每套動作都係 30 幀透明動畫 WebP，以 25fps 播放並補上尾接頭循環；
+ * holdMs 係完整循環嘅整數倍，切動作時唔會專登截斷半個揮手／舞步。
+ * 數值同 public/fairy/actions 實際 ANMF 一致。
  */
 export const FAIRY_ACTIONS: Record<FairyAction, FairyActionSpec> = {
   wave: {
     animation: '/fairy/actions/wave.webp',
     poster: '/fairy/actions/wave-poster.webp',
-    frames: 6,
-    frameDurationMs: 160,
-    cycleMs: 960,
-    holdMs: 2880,
+    frames: 30,
+    frameDurationMs: 40,
+    cycleMs: 1200,
+    holdMs: 3600,
   },
   dance: {
     animation: '/fairy/actions/dance.webp',
     poster: '/fairy/actions/dance-poster.webp',
-    frames: 6,
-    frameDurationMs: 140,
-    cycleMs: 840,
-    holdMs: 3360,
+    frames: 30,
+    frameDurationMs: 40,
+    cycleMs: 1200,
+    holdMs: 3600,
   },
   shy: {
     animation: '/fairy/actions/shy.webp',
     poster: '/fairy/actions/shy-poster.webp',
-    frames: 6,
-    frameDurationMs: 220,
-    cycleMs: 1320,
-    holdMs: 2640,
+    frames: 30,
+    frameDurationMs: 40,
+    cycleMs: 1200,
+    holdMs: 2400,
   },
   play: {
     animation: '/fairy/actions/play.webp',
     poster: '/fairy/actions/play-poster.webp',
-    frames: 6,
-    frameDurationMs: 160,
-    cycleMs: 960,
-    holdMs: 2880,
+    frames: 30,
+    frameDurationMs: 40,
+    cycleMs: 1200,
+    holdMs: 3600,
   },
 };
 

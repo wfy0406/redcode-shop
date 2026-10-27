@@ -5,6 +5,7 @@ import {
   FAIRY_STEP_ORDER,
   FAIRY_STEP_TARGET_SELECTORS,
   TRYON_GUIDE_EVENT,
+  advanceFairyFlight,
   chooseFairyPlacement,
   clampFairyPosition,
   computeBubbleLayout,
@@ -118,10 +119,11 @@ describe('真控制 selector 同 route-aware 目錄', () => {
     expect(guide.candidates[0].selectors).toContain('main [data-fairy-target="home-cta"]');
   });
 
-  it('商品列表有搜尋、分類及商品卡真控制', () => {
+  it('商品列表只指搜尋及分類；普通商品卡唔再被導覽圈圈住', () => {
     const selectors = getFairyRouteGuide('/products').candidates.flatMap((item) => item.selectors);
     expect(selectors).toContain('main input[aria-label="搜尋商品"]');
-    expect(selectors).toContain('main article a[href^="/products/"]');
+    expect(selectors).toContain('main [role="group"][aria-label="商品類別篩選"] button');
+    expect(selectors).not.toContain('main article a[href^="/products/"]');
   });
 
   it('商品詳情優先現有 AI 試穿入口', () => {
@@ -202,6 +204,20 @@ describe('可見面積同 viewport 夾取', () => {
     });
   });
 
+  it('導覽目標只計 header 以下可見區，唔會穿越 sticky 導覽列', () => {
+    const contentBounds = { left: 0, top: 80, width: 390, height: 764 };
+    expect(visibleActionRect(
+      { left: 20, top: 60, width: 200, height: 100 },
+      viewport,
+      contentBounds,
+    )).toEqual({ left: 20, top: 80, width: 200, height: 80 });
+    expect(visibleActionRect(
+      { left: 20, top: 20, width: 200, height: 44 },
+      viewport,
+      contentBounds,
+    )).toBeNull();
+  });
+
   it('休息位完整喺 viewport', () => {
     expectInside(restPosition(viewport, fairy), fairy, viewport);
   });
@@ -257,6 +273,16 @@ describe('碰撞安全：目標、header、浮鈕及 dock', () => {
     expect(fairyOverlapsRect(moved!.point, fairy, collision)).toBe(false);
   });
 
+  it('右側被撞時揀最近安全出口，唔會無故閃去最左 dock', () => {
+    const current = { x: 308, y: 400 };
+    const collision = { left: 300, top: 390, width: 90, height: 140 };
+    const placement = chooseFairyPlacement({ viewport, fairy, current, obstacles: [collision] });
+    expect(placement).not.toBeNull();
+    expect(placement!.point.x).toBeGreaterThan(200);
+    expect(Math.hypot(placement!.point.x - current.x, placement!.point.y - current.y)).toBeLessThan(130);
+    expect(fairyOverlapsRect(placement!.point, fairy, collision)).toBe(false);
+  });
+
   it('全部位置被冚就回 null，唔硬放喺控制上面', () => {
     const full = { left: 0, top: 0, width: 390, height: 844 };
     expect(chooseFairyPlacement({ viewport, fairy, obstacles: [full] })).toBeNull();
@@ -277,6 +303,159 @@ describe('碰撞安全：目標、header、浮鈕及 dock', () => {
     for (const obstacle of obstacles) {
       expect(fairyOverlapsRect(placement!.point, denseFairy, obstacle)).toBe(false);
     }
+  });
+});
+
+describe('時間制連續飛行', () => {
+  const viewport = { w: 390, h: 844 };
+  const fairy = { w: 66, h: 111 };
+
+  it('相同時間拆成高刷新率細步，距離一致而且唔會瞬移', () => {
+    const current = { x: 12, y: 400 };
+    const target = { x: 312, y: 400 };
+    const one = advanceFairyFlight({ current, target, viewport, fairy, deltaMs: 32, maxSpeed: 600 });
+    let two = current;
+    for (let index = 0; index < 2; index += 1) {
+      two = advanceFairyFlight({ current: two, target, viewport, fairy, deltaMs: 16, maxSpeed: 600 });
+    }
+    expect(two.x).toBeCloseTo(one.x, 8);
+    expect(two.y).toBeCloseTo(one.y, 8);
+    expect(Math.hypot(one.x - current.x, one.y - current.y)).toBeLessThanOrEqual(19.2 + 0.0001);
+
+    const capped = advanceFairyFlight({ current, target, viewport, fairy, deltaMs: 1000, maxSpeed: 600 });
+    expect(Math.hypot(capped.x - current.x, capped.y - current.y)).toBeLessThanOrEqual(24 + 0.0001);
+    expect(advanceFairyFlight({ current, target, viewport, fairy, deltaMs: 0 })).toEqual(current);
+  });
+
+  it('尺寸恢復時安全邊距修正唔會疊加成超步', () => {
+    const current = { x: 322, y: 467.67 };
+    const next = advanceFairyFlight({
+      current,
+      target: { x: 312, y: 120 },
+      viewport,
+      fairy,
+      deltaMs: 40,
+      maxSpeed: 960,
+    });
+    expect(Math.hypot(next.x - current.x, next.y - current.y)).toBeLessThanOrEqual(38.4 + 0.0001);
+    expectInside(next, fairy, viewport);
+  });
+
+  it('跨屏長距離都係一串有限細步，最後連續到達目標', () => {
+    const target = { x: 312, y: 120 };
+    let current = { x: 12, y: 700 };
+    let frames = 0;
+    for (; frames < 240 && Math.hypot(target.x - current.x, target.y - current.y) > 0.5; frames += 1) {
+      const next = advanceFairyFlight({ current, target, viewport, fairy, deltaMs: 16.67, maxSpeed: 720 });
+      expect(Math.hypot(next.x - current.x, next.y - current.y)).toBeLessThanOrEqual(720 * 16.67 / 1000 + 0.001);
+      expectInside(next, fairy, viewport);
+      current = next;
+    }
+    expect(frames).toBeGreaterThan(20);
+    expect(frames).toBeLessThan(240);
+    expect(Math.hypot(target.x - current.x, target.y - current.y)).toBeLessThanOrEqual(0.5);
+  });
+
+  it('直線受阻會繞行，每一段都唔穿過商品障礙物', () => {
+    const obstacle = { left: 150, top: 300, width: 90, height: 200 };
+    const target = { x: 312, y: 400 };
+    let current = { x: 12, y: 400 };
+    let frames = 0;
+    for (; frames < 360 && Math.hypot(target.x - current.x, target.y - current.y) > 0.5; frames += 1) {
+      const next = advanceFairyFlight({
+        current, target, viewport, fairy, obstacles: [obstacle], deltaMs: 16.67, maxSpeed: 720,
+      });
+      expect(fairyOverlapsRect(next, fairy, obstacle)).toBe(false);
+      expect(Math.hypot(next.x - current.x, next.y - current.y)).toBeLessThanOrEqual(720 * 16.67 / 1000 + 0.001);
+      current = next;
+    }
+    expect(frames).toBeLessThan(360);
+    expect(Math.hypot(target.x - current.x, target.y - current.y)).toBeLessThanOrEqual(0.5);
+  });
+
+  it('滾動內容被動撞上時，可向安全目標連續脫離', () => {
+    const obstacle = { left: 0, top: 0, width: 120, height: 120 };
+    const current = { x: 40, y: 40 };
+    const target = { x: 250, y: 250 };
+    const next = advanceFairyFlight({
+      current,
+      target,
+      viewport,
+      fairy,
+      obstacles: [obstacle],
+      deltaMs: 16.67,
+      maxSpeed: 720,
+    });
+    expect(next).not.toEqual(current);
+    expect(next.x).toBeGreaterThan(current.x);
+    expect(next.y).toBeGreaterThan(current.y);
+    expect(Math.hypot(target.x - next.x, target.y - next.y)).toBeLessThan(Math.hypot(target.x - current.x, target.y - current.y));
+  });
+
+  it('桌面多段文字部分包圍時，會向右上安全位脫困而唔係向左卡住', () => {
+    const desktopViewport = { w: 1280, h: 800 };
+    const desktopFairy = { w: 80, h: 80 * 768 / 458 };
+    // 1280×800 真 Chromium 內層滑動個案嘅精簡幾何；舊規則會由 x≈35 向左卡住。
+    const obstacles: FairyRect[] = [
+      { left: 43, top: 545.3125, width: 163.015625, height: 74.25 },
+      { left: 43, top: 625.5625, width: 183.015625, height: 67.546875 },
+      { left: 43, top: 698.109375, width: 82.015625, height: 27 },
+      { left: 23.265625, top: 716.984375, width: 106.015625, height: 34 },
+      { left: 23.265625, top: 736.984375, width: 106.015625, height: 34 },
+    ];
+    const target = { x: 236, y: 620 };
+    let current = { x: 34.91890005787396, y: 653.8515283842795 };
+    let frames = 0;
+    for (; frames < 120 && Math.hypot(target.x - current.x, target.y - current.y) > 0.5; frames += 1) {
+      const next = advanceFairyFlight({
+        current, target, viewport: desktopViewport, fairy: desktopFairy, obstacles, deltaMs: 16.67, maxSpeed: 1200,
+      });
+      expect(Math.hypot(next.x - current.x, next.y - current.y)).toBeLessThanOrEqual(1200 * 16.67 / 1000 + 0.001);
+      expect(fairyOverlapsRect(next, desktopFairy, obstacles[0])).toBe(false);
+      current = next;
+    }
+    expect(frames).toBeLessThan(120);
+    expect(Math.hypot(target.x - current.x, target.y - current.y)).toBeLessThanOrEqual(0.5);
+    for (const obstacle of obstacles) expect(fairyOverlapsRect(current, desktopFairy, obstacle)).toBe(false);
+  });
+
+  it('脫困只豁免起點已碰撞障礙，唔會撞入新障礙', () => {
+    const initial = { left: 0, top: 0, width: 120, height: 120 };
+    const incoming = { left: 150, top: 140, width: 70, height: 180 };
+    const target = { x: 312, y: 400 };
+    let current = { x: 40, y: 40 };
+    let frames = 0;
+    for (; frames < 360 && Math.hypot(target.x - current.x, target.y - current.y) > 0.5; frames += 1) {
+      const next = advanceFairyFlight({
+        current, target, viewport, fairy, obstacles: [initial, incoming], deltaMs: 16.67, maxSpeed: 720,
+      });
+      expect(fairyOverlapsRect(next, fairy, incoming)).toBe(false);
+      expect(Math.hypot(next.x - current.x, next.y - current.y)).toBeLessThanOrEqual(720 * 16.67 / 1000 + 0.001);
+      current = next;
+    }
+    expect(frames).toBeLessThan(360);
+    expect(Math.hypot(target.x - current.x, target.y - current.y)).toBeLessThanOrEqual(0.5);
+  });
+
+  it('完全藏喺大圖入面都會連續向邊緣脫困，唔會原地卡死', () => {
+    const obstacle = { left: 0, top: 0, width: 300, height: 300 };
+    const target = { x: 312, y: 40 };
+    let current = { x: 40, y: 40 };
+    let frames = 0;
+    const overlapArea = (point: { x: number; y: number }) => {
+      const overlap = intersectRect({ left: point.x, top: point.y, width: fairy.w, height: fairy.h }, obstacle);
+      return overlap ? overlap.width * overlap.height : 0;
+    };
+    for (; frames < 60 && fairyOverlapsRect(current, fairy, obstacle); frames += 1) {
+      const next = advanceFairyFlight({
+        current, target, viewport, fairy, obstacles: [obstacle], deltaMs: 16.67, maxSpeed: 720,
+      });
+      expect(next).not.toEqual(current);
+      expect(overlapArea(next)).toBeLessThanOrEqual(overlapArea(current) + 0.01);
+      current = next;
+    }
+    expect(frames).toBeLessThan(60);
+    expect(fairyOverlapsRect(current, fairy, obstacle)).toBe(false);
   });
 });
 
@@ -425,6 +604,7 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
   const home = readFileSync(new URL('../pages/Home.tsx', import.meta.url), 'utf8');
   const products = readFileSync(new URL('../pages/Products.tsx', import.meta.url), 'utf8');
   const productDetail = readFileSync(new URL('../pages/ProductDetail.tsx', import.meta.url), 'utf8');
+  const navbar = readFileSync(new URL('./Navbar.tsx', import.meta.url), 'utf8');
 
   it('只用真透明多幀動作播放器，唔再載舊單圖、飛行媒體或 GloCutout', () => {
     expect(source).toContain('FairyActionAnimation');
@@ -491,7 +671,8 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
     expect(source).toContain('if ((blocked || !placement) && openRef.current) setOpen(false);');
     expect(source).toContain('samePoint(a.point, b.point)');
     expect(source).toContain('a.obstacleKey === b.obstacleKey');
-    expect(source).toContain('obstacleKey: makeObstacleKey(obstacles.all)');
+    expect(source).toContain('const obstacleKey = makeObstacleKey(obstacles.all)');
+    expect(source).toContain('obstacleKey,');
     expect(source).toContain('useLayoutEffect(() => {');
     expect(source).toContain('point: placement ?');
     expect(source).toContain('className="fairy-guide-denied"');
@@ -514,23 +695,31 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
     expect(source).toContain('setBubblePos(null);\n      setOpen(false);\n      setDenied(true);');
   });
 
-  it('手機商品雙欄保留中央安全通道；md 以上間距不變', () => {
+  it('手機商品雙欄回復正常寬度，唔再為精靈留中央通道', () => {
     for (const page of [home, products, productDetail]) {
-      expect(page).toContain('grid-cols-2 gap-x-20 gap-y-4');
+      expect(page).toContain('grid-cols-2 gap-4');
       expect(page).toContain('md:gap-6');
+      expect(page).not.toContain('gap-x-20');
     }
   });
 
-  it('380px 以下 Hero 保留真安全空隙；唔靠隱藏精靈或放寬碰撞', () => {
-    expect(home).toContain('mt-10 grid grid-cols-2 items-stretch gap-3 max-[380px]:mt-24');
+  it('窄屏 Hero 唔再額外留白；精靈仍只揀真安全位', () => {
+    expect(home).toContain('mt-10 grid grid-cols-2 items-stretch gap-3 sm:flex');
+    expect(home).not.toContain('max-[380px]:mt-24');
     expect(source).toContain('const widths = [...new Set([naturalSize.w, 66, 56, 48, 44]');
     expect(source).not.toContain('hidePlacementForRelayout');
   });
 
-  it('文件滾動每個 rAF 保持顯示並追位；進場位移亦唔再閃藏', () => {
+  it('文件滾動由時間制 flight loop 連續追位；幾何重讀唔再綁死每個 rAF', () => {
     expect(source).toContain('scrollingRef.current = true');
     expect(source).toContain('const trackScrollFrame = () =>');
     expect(source).toContain('requestAnimationFrame(trackScrollFrame)');
+    expect(source).toContain('now - lastScrollRefreshRef.current >= 80');
+    expect(source).toContain('const startFlight = useCallback(');
+    expect(source).toContain('advanceFairyFlight({');
+    expect(source).toContain('renderedPositionRef.current = next');
+    expect(source).toContain('point.x.toFixed(2)');
+    expect(source).toContain('point.y.toFixed(2)');
     expect(source).toContain('if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)');
     expect(source).toContain('if (document.hidden || dismissed || isAdmin) return;');
     expect(source).not.toContain('document.hidden || dismissed || isAdmin || scrollingRef.current');
@@ -552,11 +741,43 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
     expect(css).not.toMatch(/\.fairy-guide-ring\s*\{[\s\S]*?transition:\s*transform/);
   });
 
+  it('resize 即時夾返可見位置並重讀幾何，唔等 timer 令精靈離屏', () => {
+    expect(source).toContain('const onResize = () => {');
+    expect(source).toContain('const visible = clampFairyPosition(current, viewport, baseFairySize(viewport));');
+    expect(source).toContain('renderedPositionRef.current = { ...visible };');
+    expect(source).toContain("window.addEventListener('resize', onResize)");
+    expect(source).toContain("window.removeEventListener('resize', onResize)");
+    expect(source).not.toContain("window.addEventListener('resize', scheduleRefresh)");
+  });
+
+  it('滾動中暫時無新安全位都唔拆走精靈合成層；真正阻塞層先暫停', () => {
+    expect(source).toContain('const hasRenderedPosition = !!(positionedRef.current && renderedPositionRef.current);');
+    expect(source).toContain('const showGuide = !resolution.blocked && (resolution.placed || hasRenderedPosition);');
+    expect(source).toContain('a.blocked === b.blocked');
+    expect(source).toContain('blocked,');
+    expect(source).not.toContain('const showGuide = resolution.placed &&');
+  });
+
+  it('目標及 ring 共用 header 以下安全區；reduced-motion 直接落安全位', () => {
+    expect(source).toContain('const contentViewport: FairyRect = {');
+    expect(source).toContain('visibleActionRect(rect, viewportSize, contentViewport)');
+    expect(source).toContain('roundedRect(intersectRect(expandRect(active.visibleRect, 5), contentViewport))');
+    expect(source).toContain('if (!renderedPositionRef.current || reducedMotion || !positionedRef.current)');
+    expect(source).toContain('{showGuide && sameRoute && !isScrolling && resolution.ring && (');
+    expect(source).toContain('setIsScrolling(true);');
+    expect(source).toContain('setIsScrolling(false);');
+    expect(source).toContain('if (stalledFrames >= 12)');
+    expect(source).toContain('flightStallKeyRef.current === flightKey');
+    expect(css).not.toMatch(/transition:\s*transform/);
+  });
+
   it('內層商品滾動逐幀更新；無關 carousel 唔追，相交先追且唔隐藏', () => {
     expect(source).toContain('const guideIntersectsScroller = (event: Event): boolean =>');
     expect(source).toContain('const beginScrollSettle = (event: Event)');
     expect(source).toContain('if (documentScroll || sameChannel || guideIntersectsScroller(event)) beginScrollSettle(event);');
     expect(source).toContain('scrollTargetRef.current = event.target');
+    expect(source).toContain('if (beginsScrollChannel) {');
+    expect(source).toContain('lastScrollRefreshRef.current = performance.now();\n        refresh();');
     expect(source).toContain('scrollRafRef.current = 0');
     expect(source).not.toContain('scrollHideRef');
     expect(source).toContain("window.removeEventListener('scrollend', onScrollEnd, true)");
@@ -580,10 +801,20 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
     );
   });
 
+  it('桌面會員名有完整提示及寬屏空間；打卡牆同標題共用置中容器', () => {
+    expect(navbar).toContain('title={user.name}');
+    expect(navbar).toContain('nav-link min-w-0 max-w-40 shrink-0 truncate xl:max-w-48');
+    expect(home).toContain('md:mx-auto md:grid md:max-w-[1280px] md:grid-cols-3');
+    expect(home).toContain('lg:grid-cols-6');
+    expect(home).toContain('w-56 shrink-0 md:w-auto md:shrink');
+  });
+
   it('精靈有四套真動作，只向真實可見目標轉向；reduced-motion 用靜態幀', () => {
-    expect(source).toContain('const pointingDirection = showGuide && resolution.ring && resolution.point');
-    expect(source).toContain("resolution.ring.left + resolution.ring.width / 2 < resolution.point.x + sizeRef.current.w / 2");
-    expect(source).toContain('data-pointing={pointingDirection ?? undefined}');
+    expect(source).toContain('const syncPointing = useCallback((point: FairyPoint | null)');
+    expect(source).toContain("ring.left + ring.width / 2 < point.x + sizeRef.current.w / 2");
+    expect(source).toContain('syncPointing(point);');
+    expect(source).toContain('pointingRingRef.current = scrollingRef.current ? null : ring;');
+    expect(source).not.toContain('data-pointing={pointingDirection');
     expect(source).toContain("useState<FairyAction>('wave')");
     expect(source).toContain('setFairyAction((current) => current === completed ? nextFairyAction(current) : current)');
     expect(source).toContain('setFairyAction(\'wave\')');

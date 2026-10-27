@@ -269,7 +269,7 @@ export default function Navbar() {
         <AnimatedLogo />
 
         {/* 中：連結（desktop）——v2.2.13 老闆指令：主連結瘦身成四條＋「更多」dropdown，唔再摺行 */}
-        <nav className="hidden items-center gap-4 lg:flex xl:gap-6" aria-label="主導航">
+        <nav className="hidden items-center gap-3 lg:flex xl:gap-4" aria-label="主導航">
           {MAIN_LINKS.map((link) =>
             link.to === '/products' ? (
               // 2026-08-07 Glo 要求：「商品」hover／鍵盤 focus 展開分類 dropdown
@@ -517,10 +517,11 @@ export default function Navbar() {
             <span className="hidden 2xl:inline">WhatsApp</span>
           </a>
 
-          {/* 願望清單心心 */}
+          {/* 願望清單心心：1024 窄桌面優先留位完整顯示會員名；
+              呢個入口同會員名一樣去 /account，xl 起有足夠空位先並排顯示。 */}
           <Link
             to="/account"
-            className="hidden min-h-11 min-w-11 items-center justify-center rounded-full text-txt-2 transition-colors hover:text-pink-soft lg:flex"
+            className="hidden min-h-11 min-w-11 items-center justify-center rounded-full text-txt-2 transition-colors hover:text-pink-soft xl:flex"
             aria-label="願望清單"
           >
             <Heart size={20} aria-hidden="true" />
@@ -552,7 +553,12 @@ export default function Navbar() {
               )}
               {/* 長會員名 truncate（2026-10-26 overflow 修正）：min-w-0 先縮到，
                   全名喺 aria-label 同 /account 頁照舊完整 */}
-              <Link to="/account" className="nav-link min-w-0 max-w-40 truncate" aria-label={`會員中心：${user.name}`}>
+              <Link
+                to="/account"
+                className="nav-link min-w-0 max-w-40 shrink-0 truncate xl:max-w-48"
+                aria-label={`會員中心：${user.name}`}
+                title={user.name}
+              >
                 {user.name}
               </Link>
               {/* VIP 級別 chip（v2.2.0 統一 vipTheme chipClass；NONE 低調唔出）：撳落去 /vip 會員制度介紹頁。
