@@ -561,6 +561,13 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
   const target = input.target ?? null;
   const collisions = target ? [...obstacles, expandRect(target, 5)] : obstacles;
 
+  // scroll 逐幀重算時，舊位置仍然安全就唔搬；目標離屏唔應無故彈去另一個 dock。
+  // 一旦真正相撞，仍然行完整安全掃位，絕不為咗視覺平滑而穿过內容。
+  if (!target && current) {
+    const point = clampFairyPosition(current, viewport, fairy, margin);
+    if (freeAt(point, fairy, collisions)) return { point, nearTarget: false };
+  }
+
   if (target) {
     const midX = target.left + target.width / 2 - fairy.w / 2;
     const midY = target.top + target.height / 2 - fairy.h / 2;

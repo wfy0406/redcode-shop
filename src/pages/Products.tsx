@@ -474,7 +474,7 @@ export default function Products() {
           <div ref={gridRef} className="mt-6">
             <div
               className={cn(
-                'grid grid-cols-2 gap-4 transition-opacity duration-300 md:grid-cols-3 md:gap-6 xl:grid-cols-4',
+                'grid grid-cols-2 gap-x-20 gap-y-4 transition-opacity duration-300 md:grid-cols-3 md:gap-6 xl:grid-cols-4',
                 listQuery.isFetching && 'opacity-40',
               )}
             >

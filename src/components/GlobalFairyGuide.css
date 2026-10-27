@@ -1,4 +1,4 @@
-/* 全站 Glo Glo：單層透明 PNG、細金目標環、非 modal 短氣泡。 */
+/* 全站 Glo Glo：真透明六幀動作 WebP、細金目標環、非 modal 短氣泡。 */
 .fairy-guide-root {
   position: fixed;
   inset: 0;
@@ -36,16 +36,17 @@
 }
 
 .fairy-guide-float {
+  position: relative;
   display: block;
   width: 100%;
   height: 100%;
   transform-origin: 50% 78%;
-  animation: fairy-guide-hover 3.8s ease-in-out infinite;
-  filter: drop-shadow(0 8px 12px rgb(0 0 0 / 28%));
   pointer-events: none;
 }
 
 .fairy-guide-float img {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
@@ -53,6 +54,8 @@
   transform-origin: 50% 50%;
   user-select: none;
   pointer-events: none;
+  /* poster／動作層即時 0/1 切換；唔准 crossfade 造成兩隻精靈重影。 */
+  transition: none;
 }
 
 /* 原圖手勢向右；目標喺左就先水平轉向，圖片框及安全座標不變。 */
@@ -197,17 +200,6 @@
   transition: none;
 }
 
-.fairy-guide-root.is-paused .fairy-guide-float {
-  animation-play-state: paused;
-}
-
-@keyframes fairy-guide-hover {
-  0%, 100% { transform: translate3d(0, 0, 0) rotate(-0.6deg); }
-  25% { transform: translate3d(1.5px, -2px, 0) rotate(0.4deg); }
-  50% { transform: translate3d(0, -4px, 0) rotate(0.6deg); }
-  75% { transform: translate3d(-1.5px, -2px, 0) rotate(-0.4deg); }
-}
-
 @media (max-width: 480px) {
   .fairy-guide-button { width: 66px; }
   .fairy-guide-ring { border-radius: 11px; }
@@ -249,7 +241,6 @@
   }
 
   .fairy-guide-float {
-    animation: none;
     transform: none;
   }
 }

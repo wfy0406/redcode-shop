@@ -247,6 +247,16 @@ describe('碰撞安全：目標、header、浮鈕及 dock', () => {
     for (const obstacle of obstacles) expect(fairyOverlapsRect(placement!.point, fairy, obstacle)).toBe(false);
   });
 
+  it('scroll 新幀舊位仍安全就保持；真相撞先重新掃位', () => {
+    const current = { x: 173, y: 411 };
+    expect(chooseFairyPlacement({ viewport, fairy, current, obstacles: [] })?.point).toEqual(current);
+    const collision = { left: current.x - 2, top: current.y - 2, width: fairy.w + 4, height: fairy.h + 4 };
+    const moved = chooseFairyPlacement({ viewport, fairy, current, obstacles: [collision] });
+    expect(moved).not.toBeNull();
+    expect(moved!.point).not.toEqual(current);
+    expect(fairyOverlapsRect(moved!.point, fairy, collision)).toBe(false);
+  });
+
   it('全部位置被冚就回 null，唔硬放喺控制上面', () => {
     const full = { left: 0, top: 0, width: 390, height: 844 };
     expect(chooseFairyPlacement({ viewport, fairy, obstacles: [full] })).toBeNull();
@@ -412,9 +422,15 @@ describe('TryOn 明確成功事件', () => {
 describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
   const source = readFileSync(new URL('./GlobalFairyGuide.tsx', import.meta.url), 'utf8');
   const css = readFileSync(new URL('./GlobalFairyGuide.css', import.meta.url), 'utf8');
+  const home = readFileSync(new URL('../pages/Home.tsx', import.meta.url), 'utf8');
+  const products = readFileSync(new URL('../pages/Products.tsx', import.meta.url), 'utf8');
+  const productDetail = readFileSync(new URL('../pages/ProductDetail.tsx', import.meta.url), 'utf8');
 
-  it('只用新單層透明 PNG，唔再載舊飛行媒體或 GloCutout', () => {
-    expect(source).toContain('/fairy/glo-guide.png');
+  it('只用真透明多幀動作播放器，唔再載舊單圖、飛行媒體或 GloCutout', () => {
+    expect(source).toContain('FairyActionAnimation');
+    expect(source).toContain('onHoldComplete={completeFairyAction}');
+    expect(source).toContain('nextFairyAction');
+    expect(source).not.toContain('/fairy/glo-guide.png');
     expect(source).not.toContain('GloCutout');
     expect(source).not.toContain('fairy-fly-alpha');
     expect(source).not.toContain('fairy-fly-anim');
@@ -498,27 +514,51 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
     expect(source).toContain('setBubblePos(null);\n      setOpen(false);\n      setDenied(true);');
   });
 
-  it('文件滾動及進場位移未完成先收起精靈同目標環，穩定後先重算安全位', () => {
+  it('手機商品雙欄保留中央安全通道；md 以上間距不變', () => {
+    for (const page of [home, products, productDetail]) {
+      expect(page).toContain('grid-cols-2 gap-x-20 gap-y-4');
+      expect(page).toContain('md:gap-6');
+    }
+  });
+
+  it('380px 以下 Hero 保留真安全空隙；唔靠隱藏精靈或放寬碰撞', () => {
+    expect(home).toContain('mt-10 grid grid-cols-2 items-stretch gap-3 max-[380px]:mt-24');
+    expect(source).toContain('const widths = [...new Set([naturalSize.w, 66, 56, 48, 44]');
+    expect(source).not.toContain('hidePlacementForRelayout');
+  });
+
+  it('文件滾動每個 rAF 保持顯示並追位；進場位移亦唔再閃藏', () => {
     expect(source).toContain('scrollingRef.current = true');
-    expect(source).toContain('setResolution(hidePlacementForRelayout)');
-    expect(source).toContain('placed: false, ring: null, point: null, canScroll: false');
-    expect(source).toContain('document.hidden || dismissed || isAdmin || scrollingRef.current');
+    expect(source).toContain('const trackScrollFrame = () =>');
+    expect(source).toContain('requestAnimationFrame(trackScrollFrame)');
+    expect(source).toContain('if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)');
+    expect(source).toContain('if (document.hidden || dismissed || isAdmin) return;');
+    expect(source).not.toContain('document.hidden || dismissed || isAdmin || scrollingRef.current');
+    expect(source).not.toContain('hidePlacementForRelayout');
+    const begin = source.slice(source.indexOf('const beginScrollSettle'), source.indexOf('const onScroll ='));
+    expect(begin).not.toContain('setResolution');
+    expect(begin).not.toContain('placed: false');
+    const entrance = source.slice(source.indexOf('const onEntranceMotionStart'), source.indexOf('const onEntranceMotionEnd'));
+    expect(entrance).not.toContain('setResolution');
     expect(source).toContain('if (isGuideScroll(event)) return;');
     expect(source).toContain('hasUnsettledEntranceMotion()');
     expect(source).toContain("window.addEventListener('scrollend', onScrollEnd, true)");
     expect(source).toContain('window.setTimeout(settleScroll, 180)');
+    expect(source).toContain('const widths = [...new Set([naturalSize.w, 66, 56, 48, 44]');
+    expect(source).toContain('h: width * 768 / 458');
     expect(source).toContain("document.addEventListener('transitionrun', onEntranceMotionStart, true)");
     expect(source).toContain("document.addEventListener('transitionend', onEntranceMotionEnd, true)");
     expect(css).not.toMatch(/transition:\s*transform\s+520ms/);
     expect(css).not.toMatch(/\.fairy-guide-ring\s*\{[\s\S]*?transition:\s*transform/);
   });
 
-  it('內層商品滾動停滾後更新；無關 carousel 唔盲 hide，相交先收起', () => {
+  it('內層商品滾動逐幀更新；無關 carousel 唔追，相交先追且唔隐藏', () => {
     expect(source).toContain('const guideIntersectsScroller = (event: Event): boolean =>');
-    expect(source).toContain('const beginScrollSettle = (event: Event, hide: boolean)');
-    expect(source).toContain('documentScroll || guideIntersectsScroller(event) || (sameChannel && scrollHideRef.current)');
+    expect(source).toContain('const beginScrollSettle = (event: Event)');
+    expect(source).toContain('if (documentScroll || sameChannel || guideIntersectsScroller(event)) beginScrollSettle(event);');
     expect(source).toContain('scrollTargetRef.current = event.target');
-    expect(source).toContain('scrollHideRef.current = false');
+    expect(source).toContain('scrollRafRef.current = 0');
+    expect(source).not.toContain('scrollHideRef');
     expect(source).toContain("window.removeEventListener('scrollend', onScrollEnd, true)");
     expect(source).not.toContain('if (!isDocumentScroll(event)) return;');
   });
@@ -540,14 +580,18 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
     );
   });
 
-  it('精靈輕快浮飛，只向真實可見目標轉向；reduced-motion 照停', () => {
+  it('精靈有四套真動作，只向真實可見目標轉向；reduced-motion 用靜態幀', () => {
     expect(source).toContain('const pointingDirection = showGuide && resolution.ring && resolution.point');
     expect(source).toContain("resolution.ring.left + resolution.ring.width / 2 < resolution.point.x + sizeRef.current.w / 2");
     expect(source).toContain('data-pointing={pointingDirection ?? undefined}');
+    expect(source).toContain("useState<FairyAction>('wave')");
+    expect(source).toContain('setFairyAction((current) => current === completed ? nextFairyAction(current) : current)');
+    expect(source).toContain('setFairyAction(\'wave\')');
+    expect(source).toContain('animate={pageVisible && !reducedMotion}');
     expect(css).toContain('.fairy-guide-button[data-pointing="left"] .fairy-guide-float img');
     expect(css).toContain('.fairy-guide-button[data-pointing="right"] .fairy-guide-float img');
-    expect(css).toMatch(/@keyframes fairy-guide-hover\s*\{[\s\S]*?translate3d\(1\.5px, -2px, 0\)[\s\S]*?translate3d\(-1\.5px, -2px, 0\)/);
+    expect(css).not.toContain('@keyframes fairy-guide-hover');
     expect(css).toContain('@media (max-height: 560px) {\n  .fairy-guide-button { width: 60px; }\n}');
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.fairy-guide-float\s*\{[\s\S]*?animation:\s*none/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.fairy-guide-float\s*\{[\s\S]*?transform:\s*none/);
   });
 });

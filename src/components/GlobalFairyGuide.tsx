@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useLocation } from 'react-router';
 import { X } from 'lucide-react';
 import { usePageVisible } from '@/hooks/usePageVisible';
+import FairyActionAnimation from '@/components/FairyActionAnimation';
+import { nextFairyAction, type FairyAction } from '@/components/fairyActions';
 import {
   EMPTY_TRYON_SIGNALS,
   FAIRY_DISMISS_KEY,
@@ -78,6 +80,12 @@ function makeObstacleKey(rects: readonly FairyRect[]): string {
   return rects.map((rect) => [rect.left, rect.top, rect.width, rect.height].map(round).join(',')).join('|');
 }
 
+function baseFairySize(viewport: FairySize): FairySize {
+  // 同 CSS 嘅 responsive 寬度一致；統一用 458:768 等比例縮放，唔會拉扁造型。
+  const w = viewport.h <= 560 ? 60 : viewport.w <= 480 ? 66 : Math.min(86, Math.max(66, viewport.w * 0.0625));
+  return { w, h: w * 768 / 458 };
+}
+
 function sameResolution(a: Resolution, b: Resolution): boolean {
   return (
     a.pathname === b.pathname &&
@@ -92,12 +100,6 @@ function sameResolution(a: Resolution, b: Resolution): boolean {
     samePoint(a.point, b.point) &&
     sameRect(a.ring, b.ring)
   );
-}
-
-function hidePlacementForRelayout(previous: Resolution): Resolution {
-  return previous.placed || previous.ring || previous.point || previous.canScroll
-    ? { ...previous, placed: false, ring: null, point: null, canScroll: false }
-    : previous;
 }
 
 /** 只等真正進場元素嘅有限位移；直播燈等 infinite 動畫及卡片 hover 唔會阻住導覽。 */
@@ -286,6 +288,8 @@ export default function GlobalFairyGuide() {
   const [signals, setSignals] = useState<TryOnSignals>(EMPTY_TRYON_SIGNALS);
   const [bubblePos, setBubblePos] = useState<FairyPoint | null>(null);
   const [bubbleMode, setBubbleMode] = useState<'full' | 'short' | 'compact' | 'micro'>('full');
+  const [fairyAction, setFairyAction] = useState<FairyAction>('wave');
+  const [actionReplay, setActionReplay] = useState(0);
   const [resolution, setResolution] = useState<Resolution>(() => ({
     pathname,
     candidateId: null,
@@ -319,7 +323,7 @@ export default function GlobalFairyGuide() {
   const deniedTimerRef = useRef(0);
   const scrollingRef = useRef(false);
   const scrollTargetRef = useRef<EventTarget | null>(null);
-  const scrollHideRef = useRef(false);
+  const scrollRafRef = useRef(0);
   const scrollEndCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -331,6 +335,11 @@ export default function GlobalFairyGuide() {
     const onChange = () => setReducedMotion(media.matches);
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
+  }, []);
+
+  // 動作播放器會喺目前動畫真正可顯示後先起計完整循環；scroll 唔會暫停動作。
+  const completeFairyAction = useCallback((completed: FairyAction) => {
+    setFairyAction((current) => current === completed ? nextFairyAction(current) : current);
   }, []);
 
   useEffect(() => {
@@ -362,6 +371,7 @@ export default function GlobalFairyGuide() {
     if (revealRafRef.current) cancelAnimationFrame(revealRafRef.current);
     if (focusTimerRef.current) window.clearTimeout(focusTimerRef.current);
     if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
+    if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
     if (motionRetryTimerRef.current) window.clearTimeout(motionRetryTimerRef.current);
     if (deniedTimerRef.current) window.clearTimeout(deniedTimerRef.current);
     refreshTimerRef.current = 0;
@@ -369,35 +379,35 @@ export default function GlobalFairyGuide() {
     revealRafRef.current = 0;
     focusTimerRef.current = 0;
     scrollSettleTimerRef.current = 0;
+    scrollRafRef.current = 0;
     motionRetryTimerRef.current = 0;
     deniedTimerRef.current = 0;
     scrollingRef.current = false;
     scrollTargetRef.current = null;
-    scrollHideRef.current = false;
   }, []);
 
-  /** 唯一 layout 讀取入口；只由 route／observer／scroll 停止／resize／真實成功事件觸發。 */
+  /** 唯一 layout 讀取入口；scroll 中每個 rAF 都量真位置，停滾只做最後复核。 */
   const refresh = useCallback((): void => {
-    if (document.hidden || dismissed || isAdmin || scrollingRef.current) return;
+    if (document.hidden || dismissed || isAdmin) return;
     if (hasUnsettledEntranceMotion()) {
       if (openRef.current) setOpen(false);
       setDenied(false);
-      setResolution(hidePlacementForRelayout);
-      // DOM event 以外嘅取消／WAAPI 情況都有自癒重試，唔會因動畫狀態永久收起導覽。
-      if (!motionRetryTimerRef.current) {
+      // 進場位移期間照樣用當下幾何放精靈；唔再先藏起。非 scroll 時以短 retry 跟到動畫完。
+      if (!scrollingRef.current && !motionRetryTimerRef.current) {
         motionRetryTimerRef.current = window.setTimeout(() => {
           motionRetryTimerRef.current = 0;
           refresh();
-        }, 200);
+        }, 50);
       }
-      return;
+    } else {
+      if (motionRetryTimerRef.current) window.clearTimeout(motionRetryTimerRef.current);
+      motionRetryTimerRef.current = 0;
     }
-    if (motionRetryTimerRef.current) window.clearTimeout(motionRetryTimerRef.current);
-    motionRetryTimerRef.current = 0;
     const viewportSize = { w: window.innerWidth, h: window.innerHeight };
     const viewportRect: FairyRect = { left: 0, top: 0, width: viewportSize.w, height: viewportSize.h };
     const fairy = fairyRef.current;
-    if (fairy && fairy.offsetWidth > 0) sizeRef.current = { w: fairy.offsetWidth, h: fairy.offsetHeight };
+    const naturalSize = baseFairySize(viewportSize);
+    sizeRef.current = naturalSize;
 
     if (pathname === '/try-on') {
       const dom = readTryOnSignals();
@@ -455,15 +465,30 @@ export default function GlobalFairyGuide() {
     const obstacles = collectObstacles();
     // 使用者撳開都唔係豁免：氣泡同精靈一樣避開商品、TryOn 媒體、真控制、公告及實際文字。
     bubbleObstaclesRef.current = obstacles.all;
-    const placement = blocked
-      ? null
-      : chooseFairyPlacement({
+    let placement: ReturnType<typeof chooseFairyPlacement> = null;
+    if (!blocked) {
+      // 原尺寸真係完全無安全位時，先逐級等比例縮細再重掃；所有商品、文字及控制碰撞照舊。
+      // 44px 係最細互動寬度，唔會為咗硬塞而變成難以點擊嘅裝飾點。
+      const widths = [...new Set([naturalSize.w, 66, 56, 48, 44].filter((width) => width <= naturalSize.w))];
+      for (const width of widths) {
+        const size = { w: width, h: width * 768 / 458 };
+        const candidate = chooseFairyPlacement({
           viewport: viewportSize,
-          fairy: sizeRef.current,
+          fairy: size,
           target: active?.visibleRect ?? null,
           obstacles: obstacles.all,
           current: positionRef.current,
         });
+        if (!candidate) continue;
+        placement = candidate;
+        sizeRef.current = size;
+        if (fairy) {
+          const nextWidth = width === naturalSize.w ? '' : `${width}px`;
+          if (fairy.style.width !== nextWidth) fairy.style.width = nextWidth;
+        }
+        break;
+      }
+    }
 
     if (placement && fairy) {
       positionRef.current = placement.point;
@@ -494,7 +519,11 @@ export default function GlobalFairyGuide() {
       placed: !!placement,
       viewport: viewportSize,
     };
-    setResolution((previous) => (sameResolution(previous, next) ? previous : next));
+    setResolution((previous) => {
+      // 氣泡收起時，純障礙物座標變化唔需要令 React 每幀重繪；真正位置／ring 改變仍即時更新。
+      const comparable = openRef.current ? next : { ...next, obstacleKey: previous.obstacleKey };
+      return sameResolution(previous, comparable) ? previous : next;
+    });
   }, [dismissed, isAdmin, pathname]);
 
   const scheduleRefresh = useCallback(() => {
@@ -514,7 +543,9 @@ export default function GlobalFairyGuide() {
     if (!scrollingRef.current) return;
     scrollingRef.current = false;
     scrollTargetRef.current = null;
-    scrollHideRef.current = false;
+    if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = 0;
+    // 停滾前每幀已經更新；呢下只係最後全量复核，唔係先消失再喺新位置出現。
     refresh();
   }, [refresh]);
 
@@ -526,6 +557,8 @@ export default function GlobalFairyGuide() {
     }
     refresh();
     const observer = new MutationObserver((mutations) => {
+      // scroll rAF 已經逐幀量度；呢段時間唔再額外排 120ms observer refresh。
+      if (scrollingRef.current) return;
       if (mutations.some((mutation) => !(mutation.target instanceof Element && mutation.target.closest('[data-fairy-guide-root]')))) {
         scheduleRefresh();
       }
@@ -557,31 +590,34 @@ export default function GlobalFairyGuide() {
         return !!intersectRect(toRect(element.getBoundingClientRect()), scrollerRect);
       });
     };
-    const beginScrollSettle = (event: Event, hide: boolean) => {
+    const trackScrollFrame = () => {
+      scrollRafRef.current = 0;
+      if (!scrollingRef.current || document.hidden) return;
+      // 每個瀏覽器繪圖幀都更新精靈、真目標 ring 同安全位；scroll 期間唔設 placed=false。
+      refresh();
+      if (scrollingRef.current) scrollRafRef.current = requestAnimationFrame(trackScrollFrame);
+    };
+    const beginScrollSettle = (event: Event) => {
       scrollingRef.current = true;
       scrollTargetRef.current = event.target;
-      scrollHideRef.current = hide;
-      if (hide) {
-        if (openRef.current) setOpen(false);
-        setDenied(false);
-        // 舊位置唔可以喺新滾動畫面繼續展示；精靈同目標環先即時收起，停滾後再量真安全位。
-        setResolution(hidePlacementForRelayout);
-      }
+      // 氣泡內容會隨流程改變，滚动時先收起；精靈本體及動作一直保持可見。
+      if (openRef.current) setOpen(false);
+      setDenied(false);
+      if (!scrollRafRef.current) scrollRafRef.current = requestAnimationFrame(trackScrollFrame);
       if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
       // scrollend 係主路徑；計時器涵蓋未支援 scrollend 嘅瀏覽器及連續滾動。
       scrollSettleTimerRef.current = window.setTimeout(settleScroll, 180);
     };
     const onScroll = (event: Event) => {
-      // 氣泡自己嘅內層閱讀滾動唔可以令氣泡卸載；其他內層滾動都要停滾後更新真目標。
+      // 氣泡自己嘅內層閱讀滾動唔可以令氣泡卸載；其他相關滾動即時逐幀追位。
       if (isGuideScroll(event)) return;
       const documentScroll = isDocumentScroll(event);
       const sameChannel = scrollingRef.current && (
         scrollTargetRef.current === event.target ||
         (documentScroll && isDocumentScrollTarget(scrollTargetRef.current))
       );
-      // 無關 carousel 保持精靈原樣；真係同精靈、ring 或氣泡相交先收起，唔再持久指舊位。
-      const hide = documentScroll || guideIntersectsScroller(event) || (sameChannel && scrollHideRef.current);
-      beginScrollSettle(event, hide);
+      // 無關 carousel 保持精靈原樣；文件滾動或相交內層滾動都唔再主動 hide。
+      if (documentScroll || sameChannel || guideIntersectsScroller(event)) beginScrollSettle(event);
     };
     const onScrollEnd = (event: Event) => {
       if (isGuideScroll(event) || !scrollingRef.current) return;
@@ -604,7 +640,7 @@ export default function GlobalFairyGuide() {
       if (!isEntranceMotion(event)) return;
       if (openRef.current) setOpen(false);
       setDenied(false);
-      setResolution(hidePlacementForRelayout);
+      // reveal 常常由 scroll 觸發；呢度只排更新，唔再制造另一條閃退路徑。
       scheduleRefresh();
     };
     const onEntranceMotionEnd = (event: Event) => {
@@ -790,6 +826,8 @@ export default function GlobalFairyGuide() {
           if (deniedTimerRef.current) window.clearTimeout(deniedTimerRef.current);
           deniedTimerRef.current = 0;
           setDenied(false);
+          setFairyAction('wave');
+          setActionReplay((value) => value + 1);
           if (!open) setBubbleMode('full');
           setOpen((value) => !value);
         }}
@@ -799,7 +837,12 @@ export default function GlobalFairyGuide() {
         }}
       >
         <span className="fairy-guide-float" aria-hidden="true">
-          <img src="/fairy/glo-guide.png" alt="" width={458} height={768} draggable={false} />
+          <FairyActionAnimation
+            action={fairyAction}
+            animate={pageVisible && !reducedMotion}
+            replay={actionReplay}
+            onHoldComplete={completeFairyAction}
+          />
         </span>
       </button>
 

@@ -515,7 +515,7 @@ export default function ProductDetail() {
       {/* 相關商品 */}
       <div className="mt-20">
         <h2 className="font-serif-tc text-[24px] font-bold text-txt-1">你可能都鍾意</h2>
-        <div ref={gridRef} className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4 md:gap-6">
+        <div ref={gridRef} className="mt-6 grid grid-cols-2 gap-x-20 gap-y-4 md:grid-cols-4 md:gap-6">
           {related.map((p) => (
             <ProductCard key={p.id} product={p} />
           ))}
