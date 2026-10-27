@@ -16,10 +16,27 @@ export type AnnouncementWinner = { name: string; prizeName: string };
 
 export type AnnouncementData = {
   eventName: string;
-  /** 顯示用抽獎日期時間（已格式化，例如「2026-11-11 21:30」）；冇中獎時可 null */
+  /** 活動級預定抽獎日（已格式化，例如「2026-11-11」）；舊活動未定日期 → null（如實寫「抽獎日待公佈」，唔好用 createdAt 冒充） */
+  scheduledDrawDateLabel: string | null;
+  /** 顯示用實際抽獎日期時間（已格式化，例如「2026-11-11 21:30」）；冇中獎時可 null。
+   *  嚟自真實 winner 紀錄，係「實際抽出」——同 scheduledDrawDateLabel（預定）分開標示，唔會混淆 */
   drawnAtLabel: string | null;
   winners: AnnouncementWinner[];
 };
+
+/**
+ * v2026.10.26.2：公告日期行（純函數，可單元測試）。
+ * - 有預定抽獎日 → 「預定抽獎日：…」（未開獎都照寫呢個 label）
+ * - 有真實 winner 抽出時間 → 「抽獎時間：…」（實際抽出，同預定日分開）
+ * - 兩樣都冇（舊活動 null＋未開獎）→ 「抽獎日待公佈」
+ */
+export function announcementDateLines(data: AnnouncementData): string[] {
+  const lines: string[] = [];
+  if (data.scheduledDrawDateLabel) lines.push(`預定抽獎日：${data.scheduledDrawDateLabel}`);
+  if (data.drawnAtLabel) lines.push(`抽獎時間：${data.drawnAtLabel}`);
+  if (lines.length === 0) lines.push("抽獎日待公佈");
+  return lines;
+}
 
 /** 注入嘅量度器：俾文字＋字號＋粗幼，回像素寬（真渲染用 ctx.measureText；測試用 stub） */
 export type MeasureFn = (text: string, fontSizePx: number, bold: boolean) => number;
@@ -206,12 +223,13 @@ export async function renderAnnouncementPng(data: AnnouncementData): Promise<Blo
   ctx.font = `700 ${layout.eventName.fontSize}px ${CJK_SERIF}`;
   ctx.fillText(layout.eventName.text, centerX, 400);
 
-  // ── 抽獎日期時間 ──
-  if (data.drawnAtLabel) {
-    ctx.fillStyle = "rgba(232,238,252,0.75)";
-    ctx.font = `400 26px ${CJK_SANS}`;
-    ctx.fillText(`抽獎時間：${data.drawnAtLabel}`, centerX, 452);
-  }
+  // ── 抽獎日期行（預定抽獎日／實際抽獎時間分開標示；兩樣都冇 → 如實寫待公佈） ──
+  const dateLines = announcementDateLines(data);
+  ctx.fillStyle = "rgba(232,238,252,0.75)";
+  ctx.font = `400 26px ${CJK_SANS}`;
+  dateLines.forEach((line, i) => {
+    ctx.fillText(line, centerX, 452 + i * 36);
+  });
 
   // ── 名單區 ──
   if (layout.empty) {

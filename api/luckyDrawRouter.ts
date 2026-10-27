@@ -24,7 +24,8 @@
  *   名單模式——luckyDrawLists.maxWinsPerPerson（1–100，預設 1）：「每人每個香港抽獎日限中 N 次」，
  *     winnerNameCountsOfDate／winnerIdCountsOfDate 用 count >= N 踢人；N=1 ≡ 舊 Set 全日全域 guard，
  *     adminDrawManual／名單重抽都行呢度，唔會靜默放寬舊行為。member pool adminDraw 維持一日一次。
- *   劵活動——adminCreateEvent／adminListEvents／adminSetEventArchived（歸檔/取消歸檔都喺 transaction 內
+ *   劵活動——adminCreateEvent（v2026.10.26.2 起必填預定抽獎日 scheduledDrawDate，YYYYMMDD 真實曆日）／
+ *     adminListEvents／adminSetEventScheduledDrawDate（改預定抽獎日）／adminSetEventArchived（歸檔/取消歸檔都喺 transaction 內
  *     攞 EVENT_LOCK_NS event 雙 key 鎖＋鎖內重讀，同抽獎/匯入互斥）／adminListEventEntries（睇每人劵數＋已中次數）／
  *     adminDeleteEventEntry（有紀錄 FK 擋）；adminDrawEvent 每張劵等權（ticketCount 加權，
  *     randomInt(0,totalTickets)＋累計權重，唔展開巨型 array）；全活動累計限中（pending+confirmed），
@@ -127,6 +128,24 @@ function hktMonthStart(): Date {
 function fmtDrawDate(d: string): string {
   return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
 }
+
+/** v2026.10.26.2：YYYYMMDD 係咪真實曆日（月份 01–12、該月真實日數、閏年都計）——
+ *  「20260230」「20261301」呢類假日期唔准入庫（預定抽獎日對外公佈，唔可以係唔存在嘅日子） */
+function isRealCalendarYmd(ymd: string): boolean {
+  if (!/^\d{8}$/.test(ymd)) return false;
+  const y = Number(ymd.slice(0, 4));
+  const m = Number(ymd.slice(4, 6));
+  const d = Number(ymd.slice(6, 8));
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/** 活動預定抽獎日 input：YYYYMMDD＋真實曆日（建立必填；更新 endpoint 重用） */
+const scheduledDrawDateSchema = z
+  .string()
+  .regex(/^\d{8}$/, "預定抽獎日格式要係 YYYYMMDD")
+  .refine(isRealCalendarYmd, "預定抽獎日唔係真實曆日");
 
 /** 中獎訂單單號（同 ordersRouter 同款 RC<ymd><4位隨機>；呢度唔 export 嗰個，自己砌） */
 async function genOrderNo(): Promise<string> {
@@ -1816,12 +1835,14 @@ export const luckyDrawRouter = createRouter({
 
   // ───────────────────────── 後台：抽獎劵活動（v2.5.6）─────────────────────────
 
-  /** 開活動：名＋每人全活動限中次數（1–100）。活動只歸檔唔硬刪（中獎紀錄追溯） */
+  /** 開活動：名＋每人全活動限中次數（1–100）＋預定抽獎日（v2026.10.26.2 起必填真實曆日 YYYYMMDD）。
+   *  活動只歸檔唔硬刪（中獎紀錄追溯） */
   adminCreateEvent: supervisorProcedure
     .input(
       z.object({
         name: z.string().trim().min(1, "活動名唔准空").max(128),
         maxWinsPerPerson: z.number().int().min(1).max(100).default(1),
+        scheduledDrawDate: scheduledDrawDateSchema,
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -1829,17 +1850,23 @@ export const luckyDrawRouter = createRouter({
       const operator = await actorName(ctx.user.userId);
       const [event] = await db
         .insert(luckyDrawEvents)
-        .values({ name: input.name, maxWinsPerPerson: input.maxWinsPerPerson, createdBy: ctx.user.userId, createdByName: operator })
+        .values({
+          name: input.name,
+          maxWinsPerPerson: input.maxWinsPerPerson,
+          scheduledDrawDate: input.scheduledDrawDate,
+          createdBy: ctx.user.userId,
+          createdByName: operator,
+        })
         .returning();
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.createEvent",
         targetType: "luckyDrawEvent", targetId: String(event.id),
-        detail: `開抽獎劵活動《${event.name}》（每人限中 ${input.maxWinsPerPerson} 次）`,
+        detail: `開抽獎劵活動《${event.name}》（每人限中 ${input.maxWinsPerPerson} 次，預定抽獎日 ${fmtDrawDate(input.scheduledDrawDate)}）`,
       });
       return event;
     }),
 
-  /** 活動一覽（新→舊）：連 entry 數／總劵數／已抽出件數（pending+confirmed） */
+  /** 活動一覽（新→舊）：連 entry 數／總劵數／已抽出件數（pending+confirmed）＋預定抽獎日 scheduledDrawDate */
   adminListEvents: supervisorProcedure.query(async () => {
     const db = getDb();
     const events = await db.select().from(luckyDrawEvents).orderBy(desc(luckyDrawEvents.id));
@@ -1931,6 +1958,40 @@ export const luckyDrawRouter = createRouter({
         detail: `活動改名 → 《${input.name}》`,
       });
       return { ok: true as const, id: input.eventId, name: input.name };
+    }),
+
+  /** v2026.10.26.2（老闆指令）：改活動預定抽獎日——只改 scheduledDrawDate（YYYYMMDD 真實曆日），
+   *  唔郁限中次數、歸檔狀態、劵名單，更唔郁任何已抽中獎紀錄（winner 嘅 luckyDraws.drawDate
+   *  係實際抽出日，同預定日係兩回事，呢度永遠唔會改佢）。
+   *  同歸檔／改名／抽獎／匯入互鎖：event 雙 key 鎖內重讀先改（並發刪除 → NOT_FOUND）。 */
+  adminSetEventScheduledDrawDate: supervisorProcedure
+    .input(
+      z.object({
+        eventId: z.number().int().positive(),
+        scheduledDrawDate: scheduledDrawDateSchema,
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      await db.transaction(async (tx) => {
+        await lockEventTx(tx, input.eventId);
+        const [evNow] = await tx
+          .select({ id: luckyDrawEvents.id })
+          .from(luckyDrawEvents)
+          .where(eq(luckyDrawEvents.id, input.eventId))
+          .limit(1);
+        if (!evNow) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
+        await tx
+          .update(luckyDrawEvents)
+          .set({ scheduledDrawDate: input.scheduledDrawDate })
+          .where(eq(luckyDrawEvents.id, input.eventId));
+      });
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.setEventScheduledDrawDate",
+        targetType: "luckyDrawEvent", targetId: String(input.eventId),
+        detail: `活動預定抽獎日 → ${fmtDrawDate(input.scheduledDrawDate)}`,
+      });
+      return { ok: true as const, id: input.eventId, scheduledDrawDate: input.scheduledDrawDate };
     }),
 
   /** v2.5.8（老闆指令）：刪除成個活動——確認後先郁手。
@@ -2356,11 +2417,17 @@ export const luckyDrawRouter = createRouter({
 
   /** 公開公告總頁（唔使登入）：全部未刪除活動一覽（新→舊），
    *  連「企得硬」中獎數（pending+confirmed，同 adminListEvents drawnCount 同一口径）。
-   *  只放活動名＋建立時間＋中獎數；唔放任何參加者／中獎人資料（名單去逐場公告頁睇）。 */
+   *  只放活動名＋預定抽獎日（scheduledDrawDate，null＝待公佈）＋建立時間＋中獎數；
+   *  唔放任何參加者／中獎人資料（名單去逐場公告頁睇）。 */
   publicEvents: publicProcedure.query(async () => {
     const db = getDb();
     const events = await db
-      .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name, createdAt: luckyDrawEvents.createdAt })
+      .select({
+        id: luckyDrawEvents.id,
+        name: luckyDrawEvents.name,
+        createdAt: luckyDrawEvents.createdAt,
+        scheduledDrawDate: luckyDrawEvents.scheduledDrawDate,
+      })
       .from(luckyDrawEvents)
       .orderBy(desc(luckyDrawEvents.id))
       .limit(50);
@@ -2374,7 +2441,7 @@ export const luckyDrawRouter = createRouter({
     return events.map((e) => ({ ...e, winnerCount: drawBy.get(e.id) ?? 0 }));
   }),
 
-  /** 公開中獎公告（唔使登入）：活動名＋抽獎日期時間＋winner 對外顯示名。
+  /** 公開中獎公告（唔使登入）：活動名＋預定抽獎日（scheduledDrawDate）＋抽獎日期時間＋winner 對外顯示名。
    *  私隱鐵律：唔放電話／email／會員編號／地址／內部備註——淨係回傳
    *  winnerName 快照（冇快照嘅舊紀錄先用會員顯示名頂上）＋獎品名＋抽出時間。
    *  名單全部係真實抽獎結果；沿用現行「已抽出」口径＝pending＋confirmed（企得硬嘅中獎），
@@ -2387,7 +2454,12 @@ export const luckyDrawRouter = createRouter({
     .query(async ({ input }) => {
       const db = getDb();
       const [event] = await db
-        .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name, createdAt: luckyDrawEvents.createdAt })
+        .select({
+          id: luckyDrawEvents.id,
+          name: luckyDrawEvents.name,
+          createdAt: luckyDrawEvents.createdAt,
+          scheduledDrawDate: luckyDrawEvents.scheduledDrawDate,
+        })
         .from(luckyDrawEvents)
         .where(eq(luckyDrawEvents.id, input.eventId))
         .limit(1);
@@ -2407,7 +2479,7 @@ export const luckyDrawRouter = createRouter({
         .where(and(eq(luckyDraws.eventId, input.eventId), inArray(luckyDraws.status, ["pending", "confirmed"])))
         .orderBy(asc(luckyDraws.id));
       return {
-        event: { id: event.id, name: event.name, createdAt: event.createdAt },
+        event: { id: event.id, name: event.name, createdAt: event.createdAt, scheduledDrawDate: event.scheduledDrawDate },
         winners: rows.map((r) => ({
           id: r.id,
           // 對外顯示名：快照優先（唔受會員改名影響）；舊紀錄冇快照先用會員顯示名

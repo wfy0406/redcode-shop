@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, NavLink, useLocation } from 'react-router';
-import { ChevronDown, Heart, Menu, MessageCircle, ShoppingBag, Sparkles, Trophy, X } from 'lucide-react';
+import { ChevronDown, Heart, Menu, MessageCircle, ShoppingBag, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
@@ -63,6 +63,15 @@ const INFO_LINKS = [
   { to: '/about', label: '關於我們' },
   // 常見問題 FAQ（接收通知教學＋Q&A），加喺最尾，唔郁老闆指定嘅順豐→VIP→關於順序
   { to: '/faq', label: '常見問題' },
+];
+
+// 2026-10-26.2「更多」共用資料：AI 試穿＋中獎公告收埋入 More，同其他項目完全同款；
+// 桌面 dropdown 同手機 drawer 用呢一份，唔再有獨立 CTA／金框入口／特色 row。
+// 新兩項擺最前（主打功能），其餘跟老闆指定嘅 INFO_LINKS 順序。
+const MORE_LINKS = [
+  { to: '/try-on', label: 'AI 試穿' },
+  { to: '/lucky-results', label: '中獎公告' },
+  ...INFO_LINKS,
 ];
 
 /** YYYYMMDD → 2026年9月（直播場次月份分組標題；v2.2.13 老闆指令：一個月30日唔可以逐日排晒出嚟） */
@@ -133,7 +142,7 @@ function DrawerRow({
       </span>
       <span
         className={cn(
-          'font-serif-tc text-2xl font-semibold transition-colors',
+          'min-w-0 flex-1 truncate font-serif-tc text-2xl font-semibold transition-colors',
           active ? 'text-pink-soft' : gold ? '' : 'text-txt-1 group-hover:text-pink-soft',
         )}
         style={gold ? { color: 'var(--gold)' } : undefined}
@@ -210,10 +219,29 @@ export default function Navbar() {
   const vipTier = user ? normalizeVipTier(user.vipTier) : null;
   // v2.2.0 級別格調：chip／色一律由 vipTheme.ts 出（NONE 低調——Navbar 唔出 chip）
   const vipTheme = vipTierTheme(vipTier);
-  // 2026-10-26：AI 試穿係全站主打功能，當前頁高亮（頂欄 CTA＋手機 drawer 共用）
-  const tryOnActive = pathname.startsWith('/try-on');
 
-  // 手機選單主組連結（購物核心＋會員中心）；更多資訊三項跟老闆順序擺會員中心下面（見 INFO_LINKS）
+  // 2026-10-26.2「更多」dropdown：可見狀態只由 moreOpen 控制，唔再由 CSS focus-within 偷偷重開。
+  // mouse hover、keyboard focus、觸控 click 都入同一狀態；Escape／轉頁後就係真正收起。
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const suppressMoreFocusOpenRef = useRef(false);
+  // 「更多」當前頁高亮：任何一個子路由（/try-on、/lucky-results 及其他）都著燈
+  const moreActive = MORE_LINKS.some((l) => pathname.startsWith(l.to));
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [moreOpen]);
+  // 轉頁後收埋 dropdown（dropdown 入面嘅連結冇各自 onClick，靠 route change 統一收）
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [pathname]);
+
+  // 手機選單主組連結（購物核心＋會員中心）；更多資訊（AI 試穿／中獎公告＋原有次級項目）擺會員中心下面（見 MORE_LINKS）
   const mobileMainLinks = [
     ...MAIN_LINKS,
     { to: '/cart', label: '購物車' },
@@ -370,26 +398,69 @@ export default function Navbar() {
               </NavLink>
             ),
           )}
-          {/* v2.2.13（老闆指令）：次級資訊收埋做「更多」hover dropdown——順豐站點查詢／VIP會員制度／關於我們 */}
-          <div className="group relative">
+          {/* 「更多」dropdown（2026-10-26.2）：AI 試穿／中獎公告同其他次級資訊共用 MORE_LINKS，
+              完全同款；mouse hover／keyboard focus／觸控 click 都統一控制 moreOpen。 */}
+          <div
+            ref={moreRef}
+            className="group relative"
+            onPointerEnter={(e) => {
+              if (e.pointerType === 'mouse') setMoreOpen(true);
+            }}
+            onPointerLeave={(e) => {
+              const focused = document.activeElement;
+              const hasKeyboardFocus =
+                focused instanceof HTMLElement &&
+                !!moreRef.current?.contains(focused) &&
+                focused.matches(':focus-visible');
+              // mouse 移走會收埋；但鍵盤焦點仍在選單時，唔因混合輸入而藏起聚焦項目。
+              if (e.pointerType === 'mouse' && !hasKeyboardFocus) setMoreOpen(false);
+            }}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setMoreOpen(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+                setMoreOpen(false);
+                if (document.activeElement !== moreBtnRef.current) {
+                  // focus 返個掣係無障礙要求，但呢一次 focus 唔可以重新打開選單。
+                  suppressMoreFocusOpenRef.current = true;
+                  moreBtnRef.current?.focus();
+                }
+              }
+            }}
+          >
             <button
               type="button"
+              ref={moreBtnRef}
               aria-haspopup="true"
-              className={cn(
-                'nav-link inline-flex items-center gap-1',
-                (INFO_LINKS.some((l) => l.to === pathname) || pathname.startsWith('/lucky-results')) && 'active',
-              )}
+              aria-expanded={moreOpen}
+              onFocus={(e) => {
+                if (suppressMoreFocusOpenRef.current) {
+                  suppressMoreFocusOpenRef.current = false;
+                  return;
+                }
+                // 鍵盤 Tab 到「更多」即開；mouse／touch 造成嘅普通 focus 交由 click 開關。
+                if (e.currentTarget.matches(':focus-visible')) setMoreOpen(true);
+              }}
+              onClick={() => setMoreOpen((v) => !v)}
+              className={cn('nav-link inline-flex items-center gap-1', moreActive && 'active')}
             >
               更多
               <ChevronDown
                 size={13}
                 strokeWidth={2.5}
                 aria-hidden="true"
-                className="transition-transform duration-200 group-hover:rotate-180"
+                className={cn('transition-transform duration-200 group-hover:rotate-180', moreOpen && 'rotate-180')}
               />
             </button>
-            {/* pt-2 做橋位：mouse 由選單移落 dropdown 唔會閃走；group-focus-within 照顧鍵盤 Tab */}
-            <div className="invisible absolute right-0 top-full translate-y-1 pt-2 opacity-0 transition-all duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100">
+            {/* pt-2 做橋位；可見性只睇 moreOpen，Escape／route change 後唔會被 hover／focus 偷開。 */}
+            <div
+              className={cn(
+                'absolute right-0 top-full pt-2 transition-all duration-150',
+                moreOpen ? 'visible translate-y-0 opacity-100' : 'invisible translate-y-1 opacity-0',
+              )}
+            >
               <div
                 className="min-w-[180px] rounded-2xl border px-1.5 py-2"
                 style={{
@@ -398,21 +469,7 @@ export default function Navbar() {
                   boxShadow: '0 14px 36px rgba(0, 0, 0, 0.35)',
                 }}
               >
-                {/* 中獎公告（2026-10-26 navbar-overflow 修正）：lg–xl 窄帶頂欄擺唔落 lucky icon，
-                    入口收喺「更多」呢度；xl 起頂欄 icon 返嚟，呢個即隱藏。
-                    獨立 NavLink，唔加入 INFO_LINKS——手機 drawer 已有專屬 row，唔好重複。 */}
-                <NavLink
-                  to="/lucky-results"
-                  className={({ isActive }) =>
-                    cn(
-                      'block rounded-xl px-3.5 py-2 text-[13px] font-bold tracking-wide transition-colors hover:bg-space-3 xl:hidden',
-                      isActive ? 'text-pink-soft' : 'text-txt-2',
-                    )
-                  }
-                >
-                  中獎公告
-                </NavLink>
-                {INFO_LINKS.map((l) => (
+                {MORE_LINKS.map((l) => (
                   <NavLink
                     key={l.to}
                     to={l.to}
@@ -431,42 +488,10 @@ export default function Navbar() {
           </div>
         </nav>
 
-        {/* 右：AI 試穿 CTA → Messenger → WhatsApp → 願望清單 → 購物車 → 會員；
+        {/* 右：Messenger → WhatsApp → 願望清單 → 購物車 → 會員（2026-10-26.2：AI 試穿／中獎公告
+            收埋入「更多」dropdown，頂欄唔再有獨立 CTA，1024/1280/1440 唔再撞位）；
             min-w-0：右 cluster 喺 flex 入面可縮，長會員名唔會再頂爆頂欄（2026-10-26 overflow 修正） */}
         <div className="flex min-w-0 items-center gap-2 xl:gap-3">
-          {/* v2.5.8（老闆指令）：公開「中獎公告」入口（LUCKY-DRAW-SLOT）——金邊玻璃鈕，
-              擺 AI 試穿 CTA 左邊；xl 起先出 icon（lg–xl 窄帶收喺「更多」dropdown，
-              見上面 xl:hidden 專用 NavLink），2xl 起連字。當前頁金框標記。 */}
-          <NavLink
-            to="/lucky-results"
-            className="btn hidden min-h-11 items-center !px-3 !py-2 text-sm xl:inline-flex 2xl:!px-4"
-            style={{
-              border: '1px solid rgba(245,197,24,0.55)',
-              color: 'var(--gold-soft)',
-              background: 'var(--glass-bg)',
-              ...(pathname.startsWith('/lucky-results')
-                ? { boxShadow: '0 0 0 2px var(--gold), 0 8px 24px rgba(245,197,24,0.25)' }
-                : undefined),
-            }}
-            aria-label="中獎公告：直播抽獎真實中獎名單"
-            aria-current={pathname.startsWith('/lucky-results') ? 'page' : undefined}
-          >
-            <Trophy size={20} aria-hidden="true" />
-            <span className="hidden 2xl:inline">中獎公告</span>
-          </NavLink>
-          {/* AI 試穿入口（2026-10-26 主打功能）：lg 起常駐頂欄 icon（lg 窄帶唯一保留嘅
-              功能 CTA），2xl 起連字。當前頁加金框標記。 */}
-          <NavLink
-            to="/try-on"
-            className="btn btn-primary hidden min-h-11 !px-3 !py-2 text-sm lg:inline-flex 2xl:!px-4"
-            style={tryOnActive ? { boxShadow: '0 0 0 2px var(--gold), 0 8px 24px rgba(255, 0, 84, 0.35)' } : undefined}
-            aria-label="AI 試穿：小精靈 Glo Glo 逐步帶路"
-            aria-current={tryOnActive ? 'page' : undefined}
-          >
-            <Sparkles size={20} aria-hidden="true" />
-            <span className="hidden 2xl:inline">AI 試穿</span>
-          </NavLink>
-
           {/* Messenger 鈕（2026-08-06 Glo 要求）：icon-only，一撳直開專頁對話。
               2026-10 batch1 UX：min-h-11（44px 觸控）＋icon 20px（年長客群） */}
           <a
@@ -625,72 +650,7 @@ export default function Navbar() {
               </Link>
             </div>
           )}
-          {/* AI 試穿入口（2026-10-26 主打功能）：金粉漸變特色 row，擺主連結之上最搶眼位；
-              小精靈 Glo Glo 會喺 /try-on 逐步帶路。 */}
-          <NavLink
-            to="/try-on"
-            onClick={() => setMenuOpen(false)}
-            aria-current={tryOnActive ? 'page' : undefined}
-            className="group flex items-center gap-4 rounded-2xl border px-4 py-4"
-            style={{
-              borderColor: tryOnActive ? 'var(--pink)' : 'rgba(245,197,24,0.45)',
-              background: 'linear-gradient(120deg, rgba(255,0,84,0.18), rgba(245,197,24,0.12))',
-              animation: 'mobile-nav-in 400ms var(--ease-expo) 40ms both',
-            }}
-          >
-            <Sparkles size={22} aria-hidden="true" color="var(--gold)" />
-            <span className="min-w-0 flex-1">
-              <span
-                className={cn(
-                  'block font-serif-tc text-2xl font-semibold',
-                  tryOnActive ? 'text-pink-soft' : 'text-txt-1 group-hover:text-pink-soft',
-                )}
-              >
-                AI 試穿
-              </span>
-              <span className="mt-0.5 block text-[12px] text-txt-3">
-                小精靈 Glo Glo 逐步帶路：影相 → 揀款 → 生成 → 帶走
-              </span>
-            </span>
-            {tryOnActive && (
-              <span aria-hidden="true" className="text-sm text-pink-soft">
-                ✦
-              </span>
-            )}
-          </NavLink>
-          {/* v2.5.8（老闆指令）：手機選單「中獎公告」公開入口（LUCKY-DRAW-SLOT）——
-              擺 AI 試穿 row 下面，同款式特色 row；當前頁 ✦ 標記。 */}
-          <NavLink
-            to="/lucky-results"
-            onClick={() => setMenuOpen(false)}
-            aria-current={pathname.startsWith('/lucky-results') ? 'page' : undefined}
-            className="group flex items-center gap-4 rounded-2xl border px-4 py-4"
-            style={{
-              borderColor: pathname.startsWith('/lucky-results') ? 'var(--gold)' : 'rgba(245,197,24,0.45)',
-              background: 'linear-gradient(120deg, rgba(245,197,24,0.16), rgba(255,0,84,0.10))',
-              animation: 'mobile-nav-in 400ms var(--ease-expo) 60ms both',
-            }}
-          >
-            <Trophy size={22} aria-hidden="true" color="var(--gold)" />
-            <span className="min-w-0 flex-1">
-              <span
-                className={cn(
-                  'block font-serif-tc text-2xl font-semibold',
-                  pathname.startsWith('/lucky-results') ? 'text-pink-soft' : 'text-txt-1 group-hover:text-pink-soft',
-                )}
-              >
-                中獎公告
-              </span>
-              <span className="mt-0.5 block text-[12px] text-txt-3">
-                直播即場抽出嘅真實幸運兒名單，下一個可能係你 ✦
-              </span>
-            </span>
-            {pathname.startsWith('/lucky-results') && (
-              <span aria-hidden="true" className="text-sm text-pink-soft">
-                ✦
-              </span>
-            )}
-          </NavLink>
+          {/* 2026-10-26.2：AI 試穿／中獎公告唔再做特色 row，收埋落「更多資訊」同其他項目同款（MORE_LINKS） */}
           {/* v2.2.13（老闆指令）：drawer 重新排順序＋高度美化——
               購物核心（商品/直播/我的訂單/購物車）→ 會員中心 → 更多資訊（順豐→VIP→關於）→ 後台管理。
               每行金色 mono 序號；當前頁 ✦ 標記；分組之間用金線小標隔開。 */}
@@ -873,7 +833,8 @@ export default function Navbar() {
               />
             );
           })}
-          {/* 更多資訊（老闆指定順序：順豐站點查詢 → VIP會員制度 → 關於我們，擺會員中心下面） */}
+          {/* 更多資訊（2026-10-26.2：同桌面 dropdown 共用 MORE_LINKS——AI 試穿 → 中獎公告 →
+              順豐站點查詢 → VIP會員制度 → 關於我們 → 常見問題；兩個新入口同其他項目完全同款 DrawerRow） */}
           <p
             className="flex items-center gap-3 pb-1 pt-6"
             style={{ animation: `mobile-nav-in 400ms var(--ease-expo) ${mobileMainLinks.length * 45}ms both` }}
@@ -885,7 +846,7 @@ export default function Navbar() {
             />
             <span className="font-mono text-[10px] font-bold tracking-[0.32em] text-txt-3">更多資訊 MORE</span>
           </p>
-          {INFO_LINKS.map((link, j) => {
+          {MORE_LINKS.map((link, j) => {
             const index = mobileMainLinks.length + j + 1;
             return (
               <DrawerRow
@@ -903,10 +864,10 @@ export default function Navbar() {
             <DrawerRow
               to="/admin"
               label="後台管理"
-              index={mobileMainLinks.length + INFO_LINKS.length + 1}
+              index={mobileMainLinks.length + MORE_LINKS.length + 1}
               active={pathname.startsWith('/admin')}
               gold
-              delayMs={(mobileMainLinks.length + INFO_LINKS.length) * 45}
+              delayMs={(mobileMainLinks.length + MORE_LINKS.length) * 45}
               onNavigate={() => setMenuOpen(false)}
             />
           )}
@@ -921,7 +882,7 @@ export default function Navbar() {
               className="border-b py-4 text-left font-serif-tc text-2xl font-semibold text-txt-3"
               style={{
                 borderColor: 'var(--space-line)',
-                animation: `mobile-nav-in 400ms var(--ease-expo) ${(mobileMainLinks.length + INFO_LINKS.length + (isStaff ? 1 : 0)) * 45}ms both`,
+                animation: `mobile-nav-in 400ms var(--ease-expo) ${(mobileMainLinks.length + MORE_LINKS.length + (isStaff ? 1 : 0)) * 45}ms both`,
               }}
             >
               登出

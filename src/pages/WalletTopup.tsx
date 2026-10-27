@@ -15,7 +15,7 @@ import { useReveal } from '@/hooks/useReveal';
 import { getToken } from '@/lib/auth';
 import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
 import { trpc } from '@/providers/trpc';
-import GloCutout from '@/components/GloCutout';
+import WalletMascot from '@/components/account/WalletMascot';
 import WishingStar from '@/components/account/WishingStar';
 import WalletLedgerList from '@/components/account/WalletLedgerList';
 import PaymentDropzone from '@/components/cart/PaymentDropzone';
@@ -31,7 +31,7 @@ import {
  *
  * ─ 導覽入口「會員購物金充值」（登入先入到；未登入 → 請先登入卡）
  * ─ 高度美化：hero 星空金箔底圖（/wallet/wallet-hero-bg.jpg）＋真・透明動畫
- *   Glo Glo（/wallet/glo-wallet-* 三層 GloCutout，同首頁 fairy-clap 一套做法）＋
+ *   Glo Glo（Wallet 專用單層 WalletMascot；乾淨 WebM／安全後備，唔同全站 GloCutout）＋
  *   金色 shimmer 套票卡＋reveal 入場
  * ─ 條款硬規定（老闆原話，一字唔准改）：
  *   「購物金不設退款」＋「本頁購物金使用只限購物官網所銷售之商品，直播商品並不適用。」
@@ -406,24 +406,14 @@ export default function WalletTopup() {
               </span>
             </div>
           </div>
-          {/* 真・透明動畫 Glo Glo 抱金幣（WebM alpha → 動畫 WebP → poster 三層） */}
-          {/* v2.5.3（老闆實測手機版）：手機唔再獨立成行漂喺中間 — 收成右上角小公仔；
-              桌面版照舊 grid 右欄 w-64 唔郁 */}
-          <div
-            className="absolute right-3 top-4 w-24 md:relative md:right-auto md:top-auto md:mx-auto md:w-64"
-            // 老闆實測「重影」根因之二：舊 drop-shadow 細 blur 高透明度，
-            // 喺金箔星雲亮底上投出一個清晰公仔形黑影＝似多咗個公仔。
-            // 調成大 blur 低透明度，化開做環境落地影，唔再係公仔形分身。
-            style={{ filter: 'drop-shadow(0 16px 36px rgba(0,0,0,0.25))' }}
-          >
-            <GloCutout
+          {/* Wallet 專用單層 Glo Glo：乾淨 WebM 通過真 alpha 驗證先顯示；後備係透明 poster＋原有微動。 */}
+          {/* 手機維持右上角小公仔；桌面維持 grid 右欄 w-64。唔再用人形 drop-shadow，亦唔用裁切帧 WebP。 */}
+          <div className="absolute right-3 top-4 w-24 md:relative md:right-auto md:top-auto md:mx-auto md:w-64">
+            <WalletMascot
               videoSrc="/wallet/glo-wallet-alpha.webm"
-              animSrc="/wallet/glo-wallet-anim.webp"
               poster="/wallet/glo-wallet-poster.webp"
               alt="Glo Glo 抱緊金幣同你打招呼"
               animClass="glo-sway"
-              posterW={512}
-              posterH={512}
               eager
             />
           </div>
@@ -690,13 +680,11 @@ export default function WalletTopup() {
           {topups.length === 0 ? (
             <div className="flex flex-col items-center gap-5 rounded-2xl border border-space-line bg-space-2 px-6 py-14 text-center">
               <div className="w-36">
-                <GloCutout
+                <WalletMascot
                   videoSrc="/wallet/glo-piggy-alpha.webm"
                   animSrc="/wallet/glo-piggy-anim.webp"
                   poster="/wallet/glo-piggy-poster.webp"
                   alt="Glo Glo 舉起豬仔錢罌"
-                  posterW={512}
-                  posterH={512}
                 />
               </div>
               <p className="max-w-sm text-[14px] leading-relaxed text-txt-2">

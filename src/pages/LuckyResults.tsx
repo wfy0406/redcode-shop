@@ -21,7 +21,8 @@ const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
  * LuckyResults（v2.5.8，老闆指令「公開抽獎公告要特別華麗動態引流」）
  * --------------------------------------------------------------
  * 公開中獎公告頁（唔使登入）：/lucky-results/:eventId
- * - 資料全部係真實抽獎結果（luckyDraw.publicEventResults）：活動名＋抽獎日期時間＋
+ * - 資料全部係真實抽獎結果（luckyDraw.publicEventResults）：活動名＋預定抽獎日（scheduledDrawDate，
+ *   null＝舊活動未定，如實寫「抽獎日待公佈」）＋實際抽獎日期時間（嚟自 winner 真實紀錄）＋
  *   winner 對外顯示名＋獎品名；唔放電話／email／會員編號／地址／內部備註。
  * - 沿用現行「已抽出」口径（pending＋confirmed）；cancelled／declined 唔當有效中獎
  *   （同後台 drawnCount 同一口径，唔係新加嘅展示過濾）。
@@ -35,6 +36,15 @@ const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 /** YYYYMMDD → YYYY-MM-DD */
 function fmtDate(d: string): string {
   return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+}
+
+/** 總頁活動日期標籤（v2026.10.26.2）：
+ *  有預定日一律如實寫「預定抽獎日」；已開獎嘅真實抽出日由單場頁 winner 紀錄列出；
+ *  舊活動 null＋未開獎 → 如實「抽獎日待公佈」（唔好用 createdAt 冒充）；
+ *  舊活動 null＋已開獎 → 總頁冇實際抽出日資料，唔出日期字（入單場頁睇每位 winner 真實抽獎日）。 */
+function indexDateLabel(ev: { scheduledDrawDate: string | null; winnerCount: number }): string {
+  if (ev.scheduledDrawDate) return `預定抽獎日 ${fmtDate(ev.scheduledDrawDate)}`;
+  return ev.winnerCount > 0 ? '' : '抽獎日待公佈';
 }
 
 /** 抽出時間（香港時間 HH:MM） */
@@ -173,22 +183,26 @@ function LuckyResultsIndex() {
             </div>
           ) : (
             <ul className="space-y-3">
-              {events.map((ev, i) => (
-                <li key={ev.id} className="lr-enter" style={{ animationDelay: `${0.35 + Math.min(i, 10) * 0.08}s` }}>
-                  <Link to={`/lucky-results/${ev.id}`} className="lr-winner lr-event-link">
-                    <Trophy size={16} aria-hidden="true" className="shrink-0 text-gold" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-serif-tc text-[16.5px] font-bold text-txt-1" title={ev.name}>
-                        {ev.name}
+              {events.map((ev, i) => {
+                const dateLabel = indexDateLabel(ev);
+                return (
+                  <li key={ev.id} className="lr-enter" style={{ animationDelay: `${0.35 + Math.min(i, 10) * 0.08}s` }}>
+                    <Link to={`/lucky-results/${ev.id}`} className="lr-winner lr-event-link">
+                      <Trophy size={16} aria-hidden="true" className="shrink-0 text-gold" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-serif-tc text-[16.5px] font-bold text-txt-1" title={ev.name}>
+                          {ev.name}
+                        </span>
+                        <span className="mt-0.5 block text-[12px] text-txt-3">
+                          {dateLabel ? `${dateLabel}・` : ''}
+                          {ev.winnerCount > 0 ? `${ev.winnerCount} 位幸運兒已誕生 ✦` : '中獎名單即將公佈'}
+                        </span>
                       </span>
-                      <span className="mt-0.5 block text-[12px] text-txt-3">
-                        {ev.winnerCount > 0 ? `${ev.winnerCount} 位幸運兒已誕生 ✦` : '中獎名單即將公佈'}
-                      </span>
-                    </span>
-                    <span aria-hidden="true" className="shrink-0 text-gold">→</span>
-                  </Link>
-                </li>
-              ))}
+                      <span aria-hidden="true" className="shrink-0 text-gold">→</span>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -216,6 +230,11 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
   );
 
   const data = query.data ?? null;
+  // v2026.10.26.2 活動日期顯示資料：
+  // scheduledLabel＝活動級預定抽獎日（scheduledDrawDate，null＝舊活動未定，如實寫待公佈）；
+  // actualDrawDates＝真實 winner 紀錄嘅實際抽出日（luckyDraws.drawDate，去重排序）——同預定日分開標示。
+  const scheduledLabel = data?.event.scheduledDrawDate ? fmtDate(data.event.scheduledDrawDate) : null;
+  const actualDrawDates = [...new Set((data?.winners ?? []).map((w) => w.drawDate))].sort();
   const notFound =
     query.isError &&
     (query.error.message.includes('唔存在') || query.error.message.includes('已刪除'));
@@ -293,15 +312,26 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
                 {data.event.name}
               </h2>
               {data.winners.length === 0 ? (
-                <div className="lr-state" role="status">
-                  <PartyPopper size={22} aria-hidden="true" className="mx-auto mb-3 text-gold" />
-                  <p className="font-serif-tc text-lg font-semibold text-txt-1">中獎名單即將公佈</p>
-                  <p className="mt-2 text-[13.5px] leading-relaxed text-txt-3">
-                    呢場仲未開獎——撳實開播通知，直播即場抽出嚟嘅幸運兒會第一時間喺度公佈。
+                <>
+                  {/* 未開獎：寫預定抽獎日；舊活動冇日期就如實寫待公佈 */}
+                  <p className="mt-3 text-center font-mono text-[13px] text-gold-soft">
+                    {scheduledLabel ? `預定抽獎日：${scheduledLabel}` : '抽獎日待公佈'}
                   </p>
-                </div>
+                  <div className="lr-state" role="status">
+                    <PartyPopper size={22} aria-hidden="true" className="mx-auto mb-3 text-gold" />
+                    <p className="font-serif-tc text-lg font-semibold text-txt-1">中獎名單即將公佈</p>
+                    <p className="mt-2 text-[13.5px] leading-relaxed text-txt-3">
+                      呢場仲未開獎——撳實開播通知，直播即場抽出嚟嘅幸運兒會第一時間喺度公佈。
+                    </p>
+                  </div>
+                </>
               ) : (
                 <>
+                  {/* 已開獎：實際抽獎日嚟自真實 winner 紀錄；有預定日就分行寫明係「預定」 */}
+                  <p className="mt-2 text-center font-mono text-[12.5px] text-txt-3">
+                    {scheduledLabel ? `預定抽獎日：${scheduledLabel}・` : ''}
+                    實際抽獎日：{actualDrawDates.map(fmtDate).join('、')}
+                  </p>
                   <p className="mt-2 text-center text-[12.5px] text-txt-3">
                     以下係直播即場抽出嘅真實結果，共 {data.winners.length} 位幸運兒 ✦
                   </p>

@@ -15,14 +15,14 @@
  *   item:  { sku, name?, price?, discountPrice?, stock?, sizes?, category, imageUrl }
  *   - imageUrl 以 "/" 開頭＝官網本地 path（listing-image 預存）→ 直接用；
  *     否則當外連（貨圖搜尋 RCFD）→ server fetch 下載落 uploads 先用，失敗＝item failed。
- *   - 冪等：batchNo 已存在且 status='approved' → { ok:true, already:true }。
+ *   - 冪等：batchNo 已完成且逐件成功 → { ok:true, already:true, results }；有失敗明細可用同批次重試。
  *   - action='reject'：batch 記 'rejected'，items 全留 'pending' → { ok:true }。
  *
  * 金額＝整數港元，全鏈唔乘除 100。
  * 逐步日誌（F8 §7）：console 前綴 [listing]；業務日誌落 logAudit＋listingBatches/items 表。
  * 唔准記 secret／base64；圖片下載失敗記 URL＋HTTP 狀態。
  */
-import { eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -153,6 +153,12 @@ async function downloadListingImage(url: string, sku: string): Promise<string> {
   return `/uploads/${filename}`;
 }
 
+/** PostgreSQL unique violation 可以喺 error 本身或 Drizzle cause；配合重查 SKU 先作 upsert fallback。 */
+function isUniqueViolation(error: unknown): boolean {
+  const e = error as { code?: string; cause?: { code?: string } } | null;
+  return e?.code === "23505" || e?.cause?.code === "23505";
+}
+
 /** 逐字校驗 batch 欄位；唔啱返錯誤字串，啱返 null */
 function validateBatch(b: Partial<ListingBatchIn>): string | null {
   if (!b.batchNo || typeof b.batchNo !== "string") return "冇 batchNo";
@@ -161,9 +167,13 @@ function validateBatch(b: Partial<ListingBatchIn>): string | null {
   if (!b.requestedBy || typeof b.requestedBy !== "string") return "冇 requestedBy";
   if (!Array.isArray(b.items) || b.items.length === 0) return "items 唔可以空";
   if (b.items.length > 100) return "一批最多 100 件";
+  const seenSkus = new Set<string>();
   for (const [i, it] of b.items.entries()) {
     if (!it || typeof it !== "object") return `第 ${i + 1} 件唔係物件`;
     if (!it.sku || typeof it.sku !== "string") return `第 ${i + 1} 件冇貨號`;
+    const skuKey = it.sku.trim().toUpperCase();
+    if (seenSkus.has(skuKey)) return `一批入面貨號 ${it.sku} 重複；請合併做一行，避免商品同審批結果互相覆蓋`;
+    seenSkus.add(skuKey);
     if (!it.imageUrl || typeof it.imageUrl !== "string") return `第 ${i + 1} 件（${it.sku}）冇圖`;
     if (it.category && !CATEGORY_SET.has(it.category)) return `第 ${i + 1} 件（${it.sku}）類別唔啱`;
     // v2.2.2：上架日期 override 格式檢查（選填；有就一定要係 YYYY-MM-DD）
@@ -205,14 +215,36 @@ export async function wmsListingBatch(c: Context) {
   }
   const b = batch as ListingBatchIn;
   const db = getDb();
+  const readSuccessfulResults = async (batchId: number) => {
+    const rows = await db
+      .select({ sku: listingBatchItems.sku, status: listingBatchItems.status, error: listingBatchItems.error })
+      .from(listingBatchItems)
+      .where(eq(listingBatchItems.batchId, batchId))
+      .orderBy(listingBatchItems.id);
+    if (rows.length === 0 || rows.some((row) => row.status !== "created" && row.status !== "updated")) return null;
+    return rows.map((row) => ({ sku: row.sku, status: row.status, ...(row.error ? { error: row.error } : {}) }));
+  };
   console.log(`[listing] 收到批次 ${b.batchNo} action=${action} ${b.items.length} 件（${b.liveDate} 第${b.liveSession}場，申請：${b.requestedBy}${b.reviewedBy ? `，審批：${b.reviewedBy}` : ""}）`);
 
-  // 冪等：batchNo 已存在
+  // 冪等：已完成的批次要回返逐件結果，唔可以只回 already 令 WMS 誤記全批失敗。
+  // 有 failed／pending 明細嘅舊批就唔跳過，容許 WMS 用同一 batchNo 安全重試。
   const existingBatch = await db.query.listingBatches.findFirst({
     where: eq(listingBatches.batchNo, b.batchNo),
   });
-  if (existingBatch && existingBatch.status === "approved") {
-    console.log(`[listing] 批次 ${b.batchNo} 已批准過，冪等跳過`);
+  const staleBefore = new Date(Date.now() - 120_000);
+  const staleProcessing = existingBatch?.status === "processing"
+    && new Date(existingBatch.updatedAt).getTime() < staleBefore.getTime();
+  if (existingBatch?.status === "processing" && !staleProcessing) {
+    return c.json({ ok: false, error: "批次正在官網處理，請稍後再試" }, 409);
+  }
+  if (existingBatch?.status === "approved" && action === "execute") {
+    const storedResults = await readSuccessfulResults(existingBatch.id);
+    if (storedResults) {
+      console.log(`[listing] 批次 ${b.batchNo} 已完成，冪等回返 ${storedResults.length} 件結果`);
+      return c.json({ ok: true, already: true, results: storedResults });
+    }
+  }
+  if (existingBatch?.status === "approved" && action === "reject") {
     return c.json({ ok: true, already: true });
   }
 
@@ -274,10 +306,14 @@ export async function wmsListingBatch(c: Context) {
   let batchId: number;
   if (existingBatch) {
     batchId = existingBatch.id;
-    await db
+    // 原子認領重試；processing 期間唔會刪走舊結果，第二個請求會喺上面收到 409。
+    // DB timestamp 可含微秒而 JS Date 只有毫秒，唔可以將讀返嘅 updatedAt 再做等值認領。
+    // status 轉移防止一般重試撞單；stale processing 則喺 UPDATE 當刻再驗舊心跳，
+    // 第一個請求刷新 updatedAt 後，第二個就 claim 唔到。
+    const claimed = await db
       .update(listingBatches)
       .set({
-        status: "approved",
+        status: "processing",
         liveDate: b.liveDate,
         liveSession: b.liveSession,
         itemCount: b.items.length,
@@ -286,22 +322,36 @@ export async function wmsListingBatch(c: Context) {
         reviewNote: null,
         updatedAt: new Date(),
       })
-      .where(eq(listingBatches.id, batchId));
+      .where(and(
+        eq(listingBatches.id, batchId),
+        eq(listingBatches.status, existingBatch.status),
+        ...(staleProcessing ? [lt(listingBatches.updatedAt, staleBefore)] : []),
+      ))
+      .returning({ id: listingBatches.id });
+    if (claimed.length === 0) return c.json({ ok: false, error: "批次狀態啱啱更新咗，請稍後再試" }, 409);
     await db.delete(listingBatchItems).where(eq(listingBatchItems.batchId, batchId));
   } else {
-    const [nb] = await db
+    const inserted = await db
       .insert(listingBatches)
       .values({
         batchNo: b.batchNo,
         liveDate: b.liveDate,
         liveSession: b.liveSession,
-        status: "approved",
+        status: "processing",
         itemCount: b.items.length,
         requestedBy: b.requestedBy,
         reviewedBy: b.reviewedBy ?? null,
       })
+      .onConflictDoNothing({ target: listingBatches.batchNo })
       .returning({ id: listingBatches.id });
-    batchId = nb.id;
+    if (inserted.length === 0) {
+      // 同 batchNo 同時送入：unique 擋咗第二個 insert；若先手已完成就直接回同一組結果。
+      const raced = await db.query.listingBatches.findFirst({ where: eq(listingBatches.batchNo, b.batchNo) });
+      const storedResults = raced?.status === "approved" ? await readSuccessfulResults(raced.id) : null;
+      if (storedResults) return c.json({ ok: true, already: true, results: storedResults });
+      return c.json({ ok: false, error: "相同批次正在處理，請稍後再試" }, 409);
+    }
+    batchId = inserted[0].id;
   }
 
   const delistAt = b.delistAt ? new Date(b.delistAt) : null;
@@ -340,23 +390,26 @@ export async function wmsListingBatch(c: Context) {
         ? { liveDate: null, liveSession: null }
         : { liveDate: b.liveDate, liveSession: b.liveSession };
       const overrideListedDate = overrideDate ? new Date(`${overrideDate}T00:00:00.000Z`) : null;
-      const existing = await db.query.products.findFirst({
-        where: eq(products.sku, it.sku),
-      });
-      if (existing) {
-        // 更新：image/photos[0]/category/場次/delist 照批；name/price 等有提供先郁；isActive 重新上架
+      let photosForArchive = [localImage];
+      const updateExistingProduct = async (existingProduct: typeof products.$inferSelect) => {
+        // 更新：封面換新，但保留官網原有其他相；冇 delistAt 都要清走舊定時下架，避免再上架後仍被舊時間下架。
+        const previousPhotos = existingProduct.photos?.length
+          ? existingProduct.photos
+          : existingProduct.image
+            ? [existingProduct.image]
+            : [];
+        const mergedPhotos = [localImage, ...previousPhotos.filter((photo) => photo && photo !== localImage)].slice(0, 12);
+        photosForArchive = mergedPhotos;
         const set: Partial<typeof products.$inferInsert> = {
           image: localImage,
-          photos: [localImage],
-          category: it.category ?? existing.category,
+          photos: mergedPhotos,
+          category: it.category ?? existingProduct.category,
           ...liveFields,
           isActive: true,
+          delistEnabled: Boolean(delistAt),
+          delistAt,
         };
         if (overrideListedDate) set.listedDate = overrideListedDate; // v2.2.2：改咗上架日期就跟上架日期
-        if (delistAt) {
-          set.delistEnabled = true;
-          set.delistAt = delistAt;
-        }
         if (it.name !== undefined) set.name = it.name;
         if (it.price !== undefined) set.price = it.price;
         if (it.discountPrice !== undefined) set.discountPrice = it.discountPrice;
@@ -365,40 +418,58 @@ export async function wmsListingBatch(c: Context) {
           set.sizes = it.sizes;
           set.sizeEnabled = Boolean(it.sizes);
         }
-        await db.update(products).set(set).where(eq(products.id, existing.id));
-        productId = existing.id;
+        await db.update(products).set(set).where(eq(products.id, existingProduct.id));
+        return existingProduct.id;
+      };
+
+      let existing = await db.query.products.findFirst({
+        where: eq(products.sku, it.sku),
+      });
+      if (existing) {
+        productId = await updateExistingProduct(existing);
         itemStatus = "updated";
       } else {
         // 新貨號：品名同原價必填
         if (!it.name || it.price === undefined) {
           throw new Error("新貨號需要品名同原價");
         }
-        const [np] = await db
-          .insert(products)
-          .values({
-            sku: it.sku,
-            name: it.name,
-            image: localImage,
-            photos: [localImage],
-            price: it.price,
-            discountPrice: it.discountPrice ?? null,
-            stock: it.stock ?? 0,
-            sizes: it.sizes ?? null,
-            sizeEnabled: Boolean(it.sizes),
-            category: it.category ?? "other",
-            ...liveFields,
-            delistEnabled: Boolean(delistAt),
-            delistAt,
-            listedDate: overrideListedDate ?? new Date(), // v2.2.2：有自訂就跟自訂
-            isActive: true,
-          })
-          .returning({ id: products.id });
-        productId = np.id;
-        itemStatus = "created";
+        try {
+          const [np] = await db
+            .insert(products)
+            .values({
+              sku: it.sku,
+              name: it.name,
+              image: localImage,
+              photos: [localImage],
+              price: it.price,
+              discountPrice: it.discountPrice ?? null,
+              stock: it.stock ?? 0,
+              sizes: it.sizes ?? null,
+              sizeEnabled: Boolean(it.sizes),
+              category: it.category ?? "other",
+              ...liveFields,
+              delistEnabled: Boolean(delistAt),
+              delistAt,
+              listedDate: overrideListedDate ?? new Date(), // v2.2.2：有自訂就跟自訂
+              isActive: true,
+            })
+            .returning({ id: products.id });
+          productId = np.id;
+          itemStatus = "created";
+        } catch (error) {
+          // 兩個不同批次同時上架同一新 SKU：另一邊可能啱啱 insert。unique 擋到重複列，
+          // 但唔應將呢件誤記 failed；重查返同一 SKU 並走正常 update。
+          if (!isUniqueViolation(error)) throw error;
+          const raced = await db.query.products.findFirst({ where: eq(products.sku, it.sku) });
+          if (!raced) throw error;
+          existing = raced;
+          productId = await updateExistingProduct(raced);
+          itemStatus = "updated";
+        }
       }
       console.log(`[listing] 商品 upsert ${it.sku} ${itemStatus} productId=${productId}`);
-      // ③ 圖片歸檔（WMS 補舊單圖保險，同 productsRouter 建/改商品一樣要入 archive）
-      await archiveProductImages(it.sku, it.name ?? existing?.name ?? null, localImage, [localImage]);
+      // ③ 圖片歸檔（保留完整相簿，唔再因 WMS 更新淨返封面）
+      await archiveProductImages(it.sku, it.name ?? existing?.name ?? null, localImage, photosForArchive);
       okCount += 1;
     } catch (e) {
       itemStatus = "failed";
@@ -421,7 +492,15 @@ export async function wmsListingBatch(c: Context) {
       error: itemError,
     });
     results.push({ sku: it.sku, status: itemStatus, ...(itemError ? { error: itemError } : {}) });
+    // 心跳：長批下載圖片期間都證明仲在做；若 server 中止，兩分鐘無心跳先容許恢復重試。
+    await db.update(listingBatches).set({ updatedAt: new Date() }).where(eq(listingBatches.id, batchId));
   }
+
+  // processing 要保持到全部明細落庫之後；咁樣同時送入嘅第二個請求唔會睇到半成品冪等結果。
+  await db
+    .update(listingBatches)
+    .set({ status: "approved", updatedAt: new Date() })
+    .where(eq(listingBatches.id, batchId));
 
   console.log(`[listing] 批次完成 ${b.batchNo} 成功${okCount} 失敗${failCount}`);
   void logAudit({

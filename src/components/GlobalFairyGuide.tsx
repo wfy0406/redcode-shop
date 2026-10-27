@@ -1,93 +1,173 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router';
 import { X } from 'lucide-react';
-import GloCutout from '@/components/GloCutout';
 import { usePageVisible } from '@/hooks/usePageVisible';
 import {
   EMPTY_TRYON_SIGNALS,
-  FAIRY_ALL_DONE_COPY,
   FAIRY_DISMISS_KEY,
-  FAIRY_GENERIC_COPY,
-  FAIRY_HOME_COPY,
-  FAIRY_HOME_TARGET_SELECTORS,
-  FAIRY_STEP_COPY,
-  FAIRY_STEP_ORDER,
-  FAIRY_STEP_TARGET_SELECTORS,
-  HOME_FAIRY_EVENT,
   TRYON_GUIDE_EVENT,
-  anchorToTarget,
-  approachPoint,
-  buildStepStates,
-  clampFairyPosition,
-  computePanelLayout,
+  chooseFairyPlacement,
+  computeBubbleLayout,
   computeTryOnStep,
-  hoverDrift,
-  parseHomeFairyReaction,
+  expandRect,
+  getFairyRouteGuide,
+  intersectRect,
   parseTryOnGuideAction,
-  restPosition,
+  visibleActionRect,
+  type FairyGuideCandidate,
   type FairyPoint,
+  type FairyRect,
   type FairySize,
-  type FairyStepId,
-  type FairyStepStatus,
+  type FairyStepCopy,
   type TryOnSignals,
 } from '@/components/globalFairyGuide';
+import './GlobalFairyGuide.css';
 
-/**
- * 全域小精靈導覽（2026-10-26）
- *
- * 掛載：Layout.tsx return 最底（<PrizeWinModal /> 之後）唯一實例；
- * 組件內部以 useLocation 判路由，/admin* 自動回避（全站動效慣例）。
- *
- * 行為摘要：
- * - 全站一隻小精靈（沿用 /fairy-fly-alpha.webm、/fairy-fly-anim.webp、
- *   /fairy-fly-poster.webp 原裝素材，經 GloCutout 三層切換，位元不變）
- * - fixed 全 viewport overlay：pointer-events-none；淨係小精靈掣同打開咗嘅
- *   面板 pointer-events-auto——永遠唔會擋用戶操作
- * - /try-on 五步帶路：影相/上載 → 揀款 → 生成 → 分享/下載 → 購買；
- *   上一步完成先飛去下一步目標（目標 rect、小精靈大細、viewport 全部 cached，
- *   observer/scroll/resize 觸發先重讀，rAF 每幀零 DOM 讀取——審碼修正：
- *   offsetWidth/innerWidth 只喺 refresh() 度，flight loop 淨係讀 ref）
- * - document.hidden：observers/listeners 全部拆走＋取消 pending refresh rAF，
- *   背景分頁零工作；返前景即刻 refresh 補返；unmount 取消晒兩個 rAF
- * - 面板打開時暫停飛行，面板位唔會同小精靈分離；關埋即恢復
- * - prefers-reduced-motion 直跳唔飛（GloCutout 自己會出靜態 poster）；
- *   手機 clamp 唔出界；落腳點驗證唔冚目標掣，冇位就退休息位；
- *   overlay overflow-hidden 冇橫向 overflow
- * - 鍵盤可達：小精靈係 <button>，Esc 關面板、關咗 focus 返小精靈；可收細（角落
- *   小徽章）或今次唔使（sessionStorage）；面板入面每個掣都有真功能
- *
- * data-attribute 合約（可選，見 globalFairyGuide.ts 頭註）：
- *   data-fairy-target="photo|product|generate|share|purchase|home-cta"
- *
- * 首頁互動聯動（跨組件合約）：監聽 window `redcode:home-fairy` CustomEvent；
- * 兩種 detail 詞彙都收（見 globalFairyGuide.ts）：計劃書版 { action:'celebrate'|'shy', x?, y? }
- * 同首頁 trio 版 { action:'tap'|'shy-start'|'shy-end' }（tap→慶祝、shy-start→怕羞、shy-end 唔使郁）。
- * celebrate 開面板＋飛埋去互動位，shy 收面板＋閃開；document.hidden／reduced-motion 降級（唔飛、唔裝 listener）。
- * 小精靈淨係 listen，永遠唔 dispatch 返——唔會同首頁互相撩到 loop。
- */
+type CandidateTarget = {
+  element: HTMLElement;
+  candidate: FairyGuideCandidate;
+  rect: FairyRect;
+  visibleRect: FairyRect;
+};
 
-type GuideTargetKey = FairyStepId | 'home';
+type Resolution = {
+  pathname: string;
+  candidateId: string | null;
+  hint: FairyStepCopy;
+  ring: FairyRect | null;
+  point: FairyPoint | null;
+  obstacleKey: string;
+  canScroll: boolean;
+  placed: boolean;
+  viewport: FairySize;
+};
 
-const PANEL_ESTIMATE = { w: 320, h: 300 };
+const VIEWPORT_RECT = (): FairyRect => ({
+  left: 0,
+  top: 0,
+  width: window.innerWidth,
+  height: window.innerHeight,
+});
 
-/** 喺 selector 清單入面揀第一個命中的元素（data-attribute 合約優先）。 */
-function queryFirst(selectors: readonly string[]): Element | null {
-  for (const selector of selectors) {
-    const el = document.querySelector(selector);
-    if (el) return el;
-  }
-  return null;
+function toRect(rect: DOMRect): FairyRect {
+  return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
 }
 
-/** 由而家 TryOn DOM 讀五步訊號（純讀取，唔寫唔改頁面任何嘢）。 */
+function roundedRect(rect: FairyRect | null): FairyRect | null {
+  if (!rect) return null;
+  return {
+    left: Math.round(rect.left),
+    top: Math.round(rect.top),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+}
+
+function sameRect(a: FairyRect | null, b: FairyRect | null): boolean {
+  if (!a || !b) return a === b;
+  return a.left === b.left && a.top === b.top && a.width === b.width && a.height === b.height;
+}
+
+function samePoint(a: FairyPoint | null, b: FairyPoint | null): boolean {
+  if (!a || !b) return a === b;
+  return a.x === b.x && a.y === b.y;
+}
+
+function makeObstacleKey(rects: readonly FairyRect[]): string {
+  const round = (value: number) => Math.round(value * 10) / 10;
+  return rects.map((rect) => [rect.left, rect.top, rect.width, rect.height].map(round).join(',')).join('|');
+}
+
+function sameResolution(a: Resolution, b: Resolution): boolean {
+  return (
+    a.pathname === b.pathname &&
+    a.candidateId === b.candidateId &&
+    a.hint.title === b.hint.title &&
+    a.hint.body === b.hint.body &&
+    a.canScroll === b.canScroll &&
+    a.placed === b.placed &&
+    a.viewport.w === b.viewport.w &&
+    a.viewport.h === b.viewport.h &&
+    a.obstacleKey === b.obstacleKey &&
+    samePoint(a.point, b.point) &&
+    sameRect(a.ring, b.ring)
+  );
+}
+
+function hidePlacementForRelayout(previous: Resolution): Resolution {
+  return previous.placed || previous.ring || previous.point || previous.canScroll
+    ? { ...previous, placed: false, ring: null, point: null, canScroll: false }
+    : previous;
+}
+
+/** 只等真正進場元素嘅有限位移；直播燈等 infinite 動畫及卡片 hover 唔會阻住導覽。 */
+function hasUnsettledEntranceMotion(): boolean {
+  if (typeof document.getAnimations !== 'function') return false;
+  return document.getAnimations().some((animation) => {
+    if (animation.playState === 'finished' || animation.playState === 'idle' || animation.playState === 'paused') return false;
+    const effect = animation.effect;
+    if (effect?.getTiming().iterations === Infinity) return false;
+    const target = effect && 'target' in effect ? (effect as KeyframeEffect).target : null;
+    if (!(target instanceof Element) || !target.matches('main .reveal, main .lr-enter, main .hero-enter')) return false;
+    // 完全離屏嘅 reveal（例如下方橫向牆）唔會改變而家可見目標，唔應令全站精靈無故閃避。
+    if (!intersectRect(toRect(target.getBoundingClientRect()), VIEWPORT_RECT())) return false;
+    if (typeof CSSTransition !== 'undefined' && animation instanceof CSSTransition) {
+      return animation.transitionProperty === 'transform';
+    }
+    return true;
+  });
+}
+
+function isRendered(element: Element, includeAriaHidden = false): element is HTMLElement {
+  if (!(element instanceof HTMLElement) || !element.isConnected) return false;
+  // aria-hidden 只係無障礙樹語義，裝飾浮卡仍然肉眼可見；只有 obstacle 收集會豁免，target 唔會放寬。
+  if (element.closest(includeAriaHidden ? '[inert]' : '[inert], [aria-hidden="true"]')) return false;
+  let current: HTMLElement | null = element;
+  while (current) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+    current = current.parentElement;
+  }
+  return element.getClientRects().length > 0;
+}
+
+function isActionable(element: HTMLElement): boolean {
+  if (!isRendered(element) || element.closest('header, [data-fairy-guide-root]')) return false;
+  if (element.matches(':disabled, [aria-disabled="true"]')) return false;
+  return window.getComputedStyle(element).pointerEvents !== 'none';
+}
+
+/** 真可見唔只係 rect 喺畫面入面：中心及四個採樣點至少一點冇被其他層遮住。 */
+function isUnoccluded(element: HTMLElement, visible: FairyRect): boolean {
+  if (typeof document.elementsFromPoint !== 'function') return true;
+  const insetX = Math.min(6, visible.width / 4);
+  const insetY = Math.min(6, visible.height / 4);
+  const left = visible.left + insetX;
+  const right = visible.left + visible.width - insetX;
+  const top = visible.top + insetY;
+  const bottom = visible.top + visible.height - insetY;
+  const cx = visible.left + visible.width / 2;
+  const cy = visible.top + visible.height / 2;
+  const points = [
+    [cx, cy],
+    [left, top],
+    [right, top],
+    [left, bottom],
+    [right, bottom],
+  ];
+  return points.some(([x, y]) => {
+    const stack = document.elementsFromPoint(x, y);
+    const hit = stack.find((item) => !item.closest('[data-fairy-guide-root]'));
+    return !!hit && (hit === element || element.contains(hit));
+  });
+}
+
 function readTryOnSignals(): Omit<TryOnSignals, 'shareActed' | 'purchaseActed'> {
-  const hasPhoto = !!document.querySelector('.tryon-photo-panel .tryon-photo-preview');
-  const selectionCount = document.querySelectorAll('.tryon-product-card[data-selected="true"]').length;
   const statusEl = document.querySelector('.tryon-result-section .tryon-job-status');
   const status = statusEl?.getAttribute('data-status') ?? '';
   return {
-    hasPhoto,
-    selectionCount,
+    hasPhoto: !!document.querySelector('.tryon-photo-panel .tryon-photo-preview'),
+    selectionCount: document.querySelectorAll('.tryon-product-card[data-selected="true"]').length,
     jobPresent: !!statusEl,
     jobActive: status === 'queued' || status === 'processing',
     jobCompleted: status === 'completed',
@@ -95,16 +175,104 @@ function readTryOnSignals(): Omit<TryOnSignals, 'shareActed' | 'purchaseActed'> 
   };
 }
 
+function collectElements(selectors: readonly string[]): HTMLElement[] {
+  const result: HTMLElement[] = [];
+  const seen = new Set<HTMLElement>();
+  for (const selector of selectors) {
+    for (const element of document.querySelectorAll<HTMLElement>(selector)) {
+      if (!seen.has(element)) {
+        seen.add(element);
+        result.push(element);
+      }
+    }
+  }
+  return result;
+}
+
+const NAV_OBSTACLE_SELECTORS = [
+  'header.sticky.top-0',
+  '.btn-whatsapp',
+  '.btn-messenger',
+  '[aria-label="安裝 RedCode App 提示"]',
+  'body .fixed.bottom-0',
+] as const;
+
+const CONTROL_OBSTACLE_SELECTOR =
+  'main button, main a[href], main input, main select, main textarea, main [role="radio"], main [role="tab"]';
+
+const MEDIA_OBSTACLE_SELECTORS = [
+  'main article img',
+  'main [class*="product"] img',
+  'main [class*="gallery"] img',
+  'main .duotone img',
+  'main .overflow-x-auto img',
+  // Home hero 浮卡用 MovingPhoto（video＋poster），冇 product/gallery/duotone class；成張旋轉卡都要避。
+  'main [aria-hidden="true"].absolute.rounded-2xl',
+  'main .tryon-result-frame',
+  'main .tryon-source-comparison',
+  'main .tryon-photo-stage',
+  // 抽獎公告卡包含日期、得主及獎品，唔只係裝飾框；全張卡都唔可以畀精靈冚住。
+  'main .lr-card',
+] as const;
+
+// 標題、商品資料同段落唔係可撳控制，但公仔或氣泡冚住都礙眼；FAQ 中文段落名係 span，所以一併涵蓋。
+const CONTENT_OBSTACLE_SELECTOR =
+  'main h1, main h2, main h3, main h4, main p, main figcaption, main blockquote, main dt, main dd, main .faq-kicker-cn, main header > p.script';
+
+/**
+ * 標題元素通常係全寬 block；直接用元素外框會將文字右邊嘅空白都當禁區，
+ * 令窄屏完全冇位放精靈。Range 只量實際文字行，既避開字，又保留可用空白。
+ */
+function collectContentObstacles(viewport: FairyRect): FairyRect[] {
+  const result: FairyRect[] = [];
+  for (const element of collectElements([CONTENT_OBSTACLE_SELECTOR])) {
+    if (!isRendered(element)) continue;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    for (const rect of Array.from(range.getClientRects())) {
+      const visible = intersectRect(toRect(rect), viewport);
+      if (visible) result.push(expandRect(visible, 5));
+    }
+    range.detach();
+  }
+  return result;
+}
+
+function collectObstacles(): { all: FairyRect[]; critical: FairyRect[] } {
+  const viewport = VIEWPORT_RECT();
+  const critical: FairyRect[] = [];
+  const all: FairyRect[] = [];
+  const seen = new Set<HTMLElement>();
+  const add = (elements: Iterable<HTMLElement>, target: FairyRect[]) => {
+    for (const element of elements) {
+      if (seen.has(element) && target === all) continue;
+      if (!isRendered(element, true)) continue;
+      const visible = intersectRect(toRect(element.getBoundingClientRect()), viewport);
+      if (visible) target.push(expandRect(visible, element.tagName === 'HEADER' ? 8 : 5));
+      if (target === all) seen.add(element);
+    }
+  };
+  add(collectElements(NAV_OBSTACLE_SELECTORS), critical);
+  add(collectElements(NAV_OBSTACLE_SELECTORS), all);
+  add(collectElements([CONTROL_OBSTACLE_SELECTOR, ...MEDIA_OBSTACLE_SELECTORS]), all);
+  all.push(...collectContentObstacles(viewport));
+  return { all, critical };
+}
+
+function hasBlockingLayer(): boolean {
+  return collectElements([
+    '[aria-modal="true"]',
+    'nav[aria-label="手機導航"]',
+    '[role="status"][aria-label="頁面載入中"]',
+  ]).some((element) => isRendered(element));
+}
+
 export default function GlobalFairyGuide() {
   const { pathname } = useLocation();
   const pageVisible = usePageVisible();
-  // 管理員工作台係數據密集頁（全站慣例：admin 唔要動效裝飾），小精靈一齊回避
   const isAdmin = pathname.startsWith('/admin');
-  const isTryOn = pathname === '/try-on';
-  const isHome = pathname === '/';
-
   const [reducedMotion, setReducedMotion] = useState(
-    () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   );
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -113,90 +281,125 @@ export default function GlobalFairyGuide() {
       return false;
     }
   });
-  const [minimized, setMinimized] = useState(false);
   const [open, setOpen] = useState(false);
+  const [denied, setDenied] = useState(false);
   const [signals, setSignals] = useState<TryOnSignals>(EMPTY_TRYON_SIGNALS);
-  const [panelPos, setPanelPos] = useState<FairyPoint | null>(null);
+  const [bubblePos, setBubblePos] = useState<FairyPoint | null>(null);
+  const [bubbleMode, setBubbleMode] = useState<'full' | 'short' | 'compact' | 'micro'>('full');
+  const [resolution, setResolution] = useState<Resolution>(() => ({
+    pathname,
+    candidateId: null,
+    hint: getFairyRouteGuide(pathname).fallback,
+    ring: null,
+    point: null,
+    obstacleKey: '',
+    canScroll: false,
+    placed: false,
+    viewport: { w: window.innerWidth, h: window.innerHeight },
+  }));
 
   const fairyRef = useRef<HTMLButtonElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const posRef = useRef<FairyPoint | null>(null);
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const positionRef = useRef<FairyPoint | null>(null);
+  const sizeRef = useRef<FairySize>({ w: 76, h: 128 });
+  const bubbleObstaclesRef = useRef<FairyRect[]>([]);
+  const pendingTargetRef = useRef<CandidateTarget | null>(null);
   const signalsRef = useRef<TryOnSignals>(EMPTY_TRYON_SIGNALS);
   const shareActedRef = useRef(false);
   const purchaseActedRef = useRef(false);
   const prevCompletedRef = useRef(false);
-  // 首頁互動聯動（redcode:home-fairy）：短時間內嘅「反應落腳點」，過期即返正常目標
-  const reactionRef = useRef<{ point: FairyPoint; until: number } | null>(null);
-  // 目標元素＋rect 快取：observer/scroll/resize 先更新，飛行迴圈零 DOM 讀取
-  const targetsRef = useRef<Map<GuideTargetKey, { el: Element; rect: DOMRect }>>(new Map());
-  // 小精靈大細＋viewport 都快取喺 ref：淨係 refresh()（observer/scroll/resize 觸發）
-  // 先會讀 offsetWidth/innerWidth，rAF 每幀唔再掂 layout（審碼修正 2026-10-26）
-  const sizeRef = useRef<FairySize>({ w: 96, h: 48 });
-  const viewportRef = useRef<FairySize>({
-    w: typeof window === 'undefined' ? 390 : window.innerWidth,
-    h: typeof window === 'undefined' ? 844 : window.innerHeight,
-  });
-  const rafRef = useRef(0);
-  const lastFrameRef = useRef(0);
-  // scheduleRefresh 嘅 pending rAF id（0 = 冇），方便 hidden／unmount 時取消
+  const openRef = useRef(false);
+  const positionedRef = useRef(false);
   const scheduledRafRef = useRef(0);
+  const refreshTimerRef = useRef(0);
+  const revealRafRef = useRef(0);
+  const focusTimerRef = useRef(0);
+  const scrollSettleTimerRef = useRef(0);
+  const motionRetryTimerRef = useRef(0);
+  const deniedTimerRef = useRef(0);
+  const scrollingRef = useRef(false);
+  const scrollTargetRef = useRef<EventTarget | null>(null);
+  const scrollHideRef = useRef(false);
+  const scrollEndCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const onChange = () => setReducedMotion(mq.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
+    openRef.current = open;
+  }, [open]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => setReducedMotion(media.matches);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
   }, []);
 
-  // 路由轉換：行為紀錄清零（新頁重新帶路），順手收埋面板＋清走反應落腳點
   useEffect(() => {
     shareActedRef.current = false;
     purchaseActedRef.current = false;
     prevCompletedRef.current = false;
-    reactionRef.current = null;
-    setOpen(false);
-    setSignals(EMPTY_TRYON_SIGNALS);
+    pendingTargetRef.current = null;
     signalsRef.current = EMPTY_TRYON_SIGNALS;
+    positionRef.current = null;
+    positionedRef.current = false;
+    if (revealRafRef.current) cancelAnimationFrame(revealRafRef.current);
+    if (deniedTimerRef.current) window.clearTimeout(deniedTimerRef.current);
+    revealRafRef.current = 0;
+    deniedTimerRef.current = 0;
+    // transform／transition 完全由呢個元件嘅 DOM ref 擁有，React 唔再重寫同一組屬性。
+    if (fairyRef.current) fairyRef.current.style.transition = 'none';
+    setSignals(EMPTY_TRYON_SIGNALS);
+    setOpen(false);
+    setDenied(false);
+    setBubblePos(null);
+    setBubbleMode('full');
   }, [pathname]);
 
-  /** 唯一會讀 layout 嘅地方：refresh 入面先度小精靈大細（rAF 迴圈唔會call）。 */
-  const measureFairy = () => {
-    const el = fairyRef.current;
-    if (el && el.offsetWidth > 0) {
-      sizeRef.current = { w: el.offsetWidth, h: el.offsetHeight };
-    }
-  };
+  const cancelScheduled = useCallback(() => {
+    scrollEndCleanupRef.current?.();
+    scrollEndCleanupRef.current = null;
+    if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+    if (scheduledRafRef.current) cancelAnimationFrame(scheduledRafRef.current);
+    if (revealRafRef.current) cancelAnimationFrame(revealRafRef.current);
+    if (focusTimerRef.current) window.clearTimeout(focusTimerRef.current);
+    if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
+    if (motionRetryTimerRef.current) window.clearTimeout(motionRetryTimerRef.current);
+    if (deniedTimerRef.current) window.clearTimeout(deniedTimerRef.current);
+    refreshTimerRef.current = 0;
+    scheduledRafRef.current = 0;
+    revealRafRef.current = 0;
+    focusTimerRef.current = 0;
+    scrollSettleTimerRef.current = 0;
+    motionRetryTimerRef.current = 0;
+    deniedTimerRef.current = 0;
+    scrollingRef.current = false;
+    scrollTargetRef.current = null;
+    scrollHideRef.current = false;
+  }, []);
 
-  /** 重讀 viewport／小精靈大細／目標 rect 快取＋TryOn 訊號。只喺 observer/scroll/resize/點擊觸發。 */
-  const refresh = useCallback(() => {
-    if (typeof document === 'undefined') return;
-    viewportRef.current = { w: window.innerWidth, h: window.innerHeight };
-    measureFairy();
-    const cache = targetsRef.current;
-    if (isTryOn) {
-      for (const step of FAIRY_STEP_ORDER) {
-        const cached = cache.get(step);
-        const el = cached?.el.isConnected ? cached.el : queryFirst(FAIRY_STEP_TARGET_SELECTORS[step]);
-        if (el) {
-          cache.set(step, { el, rect: el.getBoundingClientRect() });
-        } else {
-          cache.delete(step);
-        }
+  /** 唯一 layout 讀取入口；只由 route／observer／scroll 停止／resize／真實成功事件觸發。 */
+  const refresh = useCallback((): void => {
+    if (document.hidden || dismissed || isAdmin || scrollingRef.current) return;
+    if (hasUnsettledEntranceMotion()) {
+      if (openRef.current) setOpen(false);
+      setDenied(false);
+      setResolution(hidePlacementForRelayout);
+      // DOM event 以外嘅取消／WAAPI 情況都有自癒重試，唔會因動畫狀態永久收起導覽。
+      if (!motionRetryTimerRef.current) {
+        motionRetryTimerRef.current = window.setTimeout(() => {
+          motionRetryTimerRef.current = 0;
+          refresh();
+        }, 200);
       }
-    } else {
-      for (const step of FAIRY_STEP_ORDER) cache.delete(step);
+      return;
     }
-    if (isHome) {
-      const cached = cache.get('home');
-      const el = cached?.el.isConnected ? cached.el : queryFirst(FAIRY_HOME_TARGET_SELECTORS);
-      if (el) cache.set('home', { el, rect: el.getBoundingClientRect() });
-      else cache.delete('home');
-    } else {
-      cache.delete('home');
-    }
+    if (motionRetryTimerRef.current) window.clearTimeout(motionRetryTimerRef.current);
+    motionRetryTimerRef.current = 0;
+    const viewportSize = { w: window.innerWidth, h: window.innerHeight };
+    const viewportRect: FairyRect = { left: 0, top: 0, width: viewportSize.w, height: viewportSize.h };
+    const fairy = fairyRef.current;
+    if (fairy && fairy.offsetWidth > 0) sizeRef.current = { w: fairy.offsetWidth, h: fairy.offsetHeight };
 
-    if (isTryOn) {
-      // 新一次生成開始 → 分享／購買行為紀錄清零，唔會假裝已做
+    if (pathname === '/try-on') {
       const dom = readTryOnSignals();
       if (dom.jobActive && prevCompletedRef.current) {
         shareActedRef.current = false;
@@ -208,405 +411,439 @@ export default function GlobalFairyGuide() {
         shareActed: shareActedRef.current,
         purchaseActed: purchaseActedRef.current,
       };
-      const prev = signalsRef.current;
-      const changed = (Object.keys(next) as Array<keyof TryOnSignals>).some((key) => next[key] !== prev[key]);
+      const changed = (Object.keys(next) as Array<keyof TryOnSignals>).some(
+        (key) => next[key] !== signalsRef.current[key],
+      );
       if (changed) {
         signalsRef.current = next;
         setSignals(next);
       }
     }
 
-    // reduced-motion：冇飛行迴圈，呢度直接把小精靈放去目標（都係 observer 驅動，唔係每幀）
-    if (reducedMotion) {
-      const el = fairyRef.current;
-      if (el) {
-        const rest = restPosition(viewportRef.current, sizeRef.current);
-        el.style.transform = `translate3d(${Math.round(rest.x)}px, ${Math.round(rest.y)}px, 0)`;
+    const step = computeTryOnStep(signalsRef.current);
+    const guide = getFairyRouteGuide(pathname, step, {
+      tryOnAccess: !!document.querySelector('main .tryon-access-card'),
+      walletPayment: !!document.querySelector('#wallet-pay-panel'),
+    });
+    const blocked = hasBlockingLayer();
+    let active: CandidateTarget | null = null;
+    let pending: CandidateTarget | null = null;
+    let unavailable: CandidateTarget | null = null;
+
+    if (!blocked) {
+      for (const candidate of guide.candidates) {
+        const elements = collectElements(candidate.selectors);
+        for (const element of elements) {
+          if (!isActionable(element)) continue;
+          const rect = toRect(element.getBoundingClientRect());
+          if (rect.width <= 0 || rect.height <= 0) continue;
+          const visibleRect = visibleActionRect(rect, viewportSize);
+          const target: CandidateTarget = { element, candidate, rect, visibleRect: visibleRect ?? rect };
+          if (!unavailable) unavailable = target;
+          if (visibleRect && isUnoccluded(element, visibleRect)) {
+            active = { ...target, visibleRect };
+            break;
+          }
+          // 可見但被其他層遮住唔係「捲過去」就解決；只有真離屏先提供帶我去。
+          if (!visibleRect && !pending) pending = target;
+        }
+        if (active) break;
       }
     }
-  }, [isHome, isTryOn, reducedMotion]);
+    pendingTargetRef.current = active ? null : pending;
 
-  /** rAF 合併嘅 refresh（observer/事件風暴都唔會連環觸發 DOM 讀取）。 */
+    const obstacles = collectObstacles();
+    // 使用者撳開都唔係豁免：氣泡同精靈一樣避開商品、TryOn 媒體、真控制、公告及實際文字。
+    bubbleObstaclesRef.current = obstacles.all;
+    const placement = blocked
+      ? null
+      : chooseFairyPlacement({
+          viewport: viewportSize,
+          fairy: sizeRef.current,
+          target: active?.visibleRect ?? null,
+          obstacles: obstacles.all,
+          current: positionRef.current,
+        });
+
+    if (placement && fairy) {
+      positionRef.current = placement.point;
+      fairy.style.transform = `translate3d(${Math.round(placement.point.x)}px, ${Math.round(placement.point.y)}px, 0)`;
+      if (!positionedRef.current) {
+        positionedRef.current = true;
+        revealRafRef.current = requestAnimationFrame(() => {
+          revealRafRef.current = 0;
+          if (fairyRef.current) fairyRef.current.style.transition = '';
+        });
+      }
+    }
+
+    // 失去安全位會收埋氣泡，之後恢復時唔可以無使用者操作又自動彈出。
+    if ((blocked || !placement) && openRef.current) setOpen(false);
+    const ring = placement && active
+      ? roundedRect(intersectRect(expandRect(active.visibleRect, 5), viewportRect))
+      : null;
+    const hint = active?.candidate ?? unavailable?.candidate ?? guide.fallback;
+    const next: Resolution = {
+      pathname,
+      candidateId: (active ?? unavailable)?.candidate.id ?? null,
+      hint: { title: hint.title, body: hint.body },
+      ring,
+      point: placement ? { x: Math.round(placement.point.x), y: Math.round(placement.point.y) } : null,
+      obstacleKey: makeObstacleKey(obstacles.all),
+      canScroll: !!placement && !active && !!pending,
+      placed: !!placement,
+      viewport: viewportSize,
+    };
+    setResolution((previous) => (sameResolution(previous, next) ? previous : next));
+  }, [dismissed, isAdmin, pathname]);
+
   const scheduleRefresh = useCallback(() => {
-    if (scheduledRafRef.current) return;
-    scheduledRafRef.current = requestAnimationFrame(() => {
-      scheduledRafRef.current = 0;
-      refresh();
-    });
+    if (refreshTimerRef.current || scheduledRafRef.current || document.hidden) return;
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = 0;
+      scheduledRafRef.current = requestAnimationFrame(() => {
+        scheduledRafRef.current = 0;
+        refresh();
+      });
+    }, 120);
   }, [refresh]);
 
-  /** 取消 pending 嘅 scheduled refresh（hidden／unmount 時調用，防離場後做嘢）。 */
-  const cancelScheduledRefresh = useCallback(() => {
-    if (scheduledRafRef.current) {
-      cancelAnimationFrame(scheduledRafRef.current);
-      scheduledRafRef.current = 0;
-    }
-  }, []);
-
-  // DOM 觀察：MutationObserver（TryOn 狀態轉換）＋ ResizeObserver ＋ scroll ＋ resize。
-  // document.hidden（pageVisible=false）→ 全部 observer/listener 拆走＋取消 pending
-  // refresh，背景分頁零工作；返前景 effect 重跑 → 即刻 refresh() 補返最新狀態。
-  useEffect(() => {
-    if (dismissed || isAdmin || !pageVisible) return;
+  const settleScroll = useCallback(() => {
+    if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
+    scrollSettleTimerRef.current = 0;
+    if (!scrollingRef.current) return;
+    scrollingRef.current = false;
+    scrollTargetRef.current = null;
+    scrollHideRef.current = false;
     refresh();
-    // 留意：小精靈自己每幀寫 style.transform——mutation 喺自己 root 入面要跳過，
-    // 否則 observer 俾自己觸發到變相每幀讀 DOM
-    const mo = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        const t = mutation.target;
-        if (t instanceof Element && t.closest('[data-fairy-guide-root]')) continue;
+  }, [refresh]);
+
+  useEffect(() => {
+    if (dismissed || isAdmin) return;
+    if (!pageVisible) {
+      setDenied(false);
+      return;
+    }
+    refresh();
+    const observer = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) => !(mutation.target instanceof Element && mutation.target.closest('[data-fairy-guide-root]')))) {
         scheduleRefresh();
-        return;
       }
     });
-    mo.observe(document.body, {
+    observer.observe(document.body, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['class', 'style', 'data-status', 'data-selected', 'data-active'],
+      attributeFilter: ['class', 'style', 'data-status', 'data-selected', 'data-active', 'aria-expanded', 'aria-hidden', 'disabled'],
     });
-    const ro = new ResizeObserver(scheduleRefresh);
-    ro.observe(document.body);
-    window.addEventListener('resize', scheduleRefresh);
-    // capture：頁面入面任何 scroll 容器郁都會更新 cached rect
-    window.addEventListener('scroll', scheduleRefresh, { capture: true, passive: true });
-    return () => {
-      mo.disconnect();
-      ro.disconnect();
-      window.removeEventListener('resize', scheduleRefresh);
-      window.removeEventListener('scroll', scheduleRefresh, true);
-      cancelScheduledRefresh();
+    const resizeObserver = new ResizeObserver(scheduleRefresh);
+    resizeObserver.observe(document.body);
+    const isDocumentScrollTarget = (target: EventTarget | null) => (
+      target === document || target === window || target === document.scrollingElement
+    );
+    const isDocumentScroll = (event: Event) => isDocumentScrollTarget(event.target);
+    const isGuideScroll = (event: Event) => (
+      event.target instanceof Element && !!event.target.closest('[data-fairy-guide-root]')
+    );
+    const guideIntersectsScroller = (event: Event): boolean => {
+      if (!(event.target instanceof HTMLElement)) return true;
+      const scrollerRect = intersectRect(toRect(event.target.getBoundingClientRect()), VIEWPORT_RECT());
+      if (!scrollerRect) return false;
+      const ring = document.querySelector<HTMLElement>('[data-fairy-guide-root] [data-fairy-target-ring]');
+      return [fairyRef.current, ring, bubbleRef.current].some((element) => {
+        if (!element) return false;
+        const style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+        return !!intersectRect(toRect(element.getBoundingClientRect()), scrollerRect);
+      });
     };
-  }, [dismissed, isAdmin, pageVisible, pathname, refresh, scheduleRefresh, cancelScheduledRefresh]);
+    const beginScrollSettle = (event: Event, hide: boolean) => {
+      scrollingRef.current = true;
+      scrollTargetRef.current = event.target;
+      scrollHideRef.current = hide;
+      if (hide) {
+        if (openRef.current) setOpen(false);
+        setDenied(false);
+        // 舊位置唔可以喺新滾動畫面繼續展示；精靈同目標環先即時收起，停滾後再量真安全位。
+        setResolution(hidePlacementForRelayout);
+      }
+      if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
+      // scrollend 係主路徑；計時器涵蓋未支援 scrollend 嘅瀏覽器及連續滾動。
+      scrollSettleTimerRef.current = window.setTimeout(settleScroll, 180);
+    };
+    const onScroll = (event: Event) => {
+      // 氣泡自己嘅內層閱讀滾動唔可以令氣泡卸載；其他內層滾動都要停滾後更新真目標。
+      if (isGuideScroll(event)) return;
+      const documentScroll = isDocumentScroll(event);
+      const sameChannel = scrollingRef.current && (
+        scrollTargetRef.current === event.target ||
+        (documentScroll && isDocumentScrollTarget(scrollTargetRef.current))
+      );
+      // 無關 carousel 保持精靈原樣；真係同精靈、ring 或氣泡相交先收起，唔再持久指舊位。
+      const hide = documentScroll || guideIntersectsScroller(event) || (sameChannel && scrollHideRef.current);
+      beginScrollSettle(event, hide);
+    };
+    const onScrollEnd = (event: Event) => {
+      if (isGuideScroll(event) || !scrollingRef.current) return;
+      if (
+        scrollTargetRef.current === event.target ||
+        (isDocumentScroll(event) && isDocumentScrollTarget(scrollTargetRef.current))
+      ) settleScroll();
+    };
+    const isEntranceMotion = (event: Event) => {
+      if (!(event.target instanceof Element)) return false;
+      // start 事件都要即時排除離屏元素；唔可以只靠之後 refresh 嘅動畫掃描，否則可見精靈會閃一下。
+      if (!intersectRect(toRect(event.target.getBoundingClientRect()), VIEWPORT_RECT())) return false;
+      if (event.type === 'transitionrun') {
+        return event.target.matches('main .reveal') && (event as TransitionEvent).propertyName === 'transform';
+      }
+      if (event.type === 'animationstart') return event.target.matches('main .lr-enter, main .hero-enter');
+      return event.target.matches('main .reveal, main .lr-enter, main .hero-enter');
+    };
+    const onEntranceMotionStart = (event: Event) => {
+      if (!isEntranceMotion(event)) return;
+      if (openRef.current) setOpen(false);
+      setDenied(false);
+      setResolution(hidePlacementForRelayout);
+      scheduleRefresh();
+    };
+    const onEntranceMotionEnd = (event: Event) => {
+      if (isEntranceMotion(event)) scheduleRefresh();
+    };
+    window.addEventListener('resize', scheduleRefresh);
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    window.addEventListener('scrollend', onScrollEnd, true);
+    document.addEventListener('transitionrun', onEntranceMotionStart, true);
+    document.addEventListener('transitionend', onEntranceMotionEnd, true);
+    document.addEventListener('transitioncancel', onEntranceMotionEnd, true);
+    document.addEventListener('animationstart', onEntranceMotionStart, true);
+    document.addEventListener('animationend', onEntranceMotionEnd, true);
+    document.addEventListener('animationcancel', onEntranceMotionEnd, true);
+    return () => {
+      observer.disconnect();
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', scheduleRefresh);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('scrollend', onScrollEnd, true);
+      document.removeEventListener('transitionrun', onEntranceMotionStart, true);
+      document.removeEventListener('transitionend', onEntranceMotionEnd, true);
+      document.removeEventListener('transitioncancel', onEntranceMotionEnd, true);
+      document.removeEventListener('animationstart', onEntranceMotionStart, true);
+      document.removeEventListener('animationend', onEntranceMotionEnd, true);
+      document.removeEventListener('animationcancel', onEntranceMotionEnd, true);
+      cancelScheduled();
+    };
+  }, [cancelScheduled, dismissed, isAdmin, pageVisible, pathname, refresh, scheduleRefresh, settleScroll]);
 
-  // 分享／購買「完成」偵測（2026-10-26 第二輪）：廢除 capture-phase click 推測——
-  // 舊寫法 target.closest('[data-fairy-target="purchase"]') 會令購買區任何 click
-  // （優惠碼 input、wallet switch、移出清單、空白位）都誤記做已購買＝假進度。
-  // 而家只聽 TRYON_GUIDE_EVENT 明確成功事件（download/nativeShare/WhatsApp 真開分享、
-  // addMany 成功＋record 更新、buyNow draft 儲存成功先會由 TryOn/TryOnPurchase dispatch）。
-  // hidden／dismissed／admin 唔裝 listener；reduced-motion 照聽（狀態更新冇動作成分）。
   useEffect(() => {
-    if (!isTryOn || dismissed || isAdmin || !pageVisible) return;
+    if (pathname !== '/try-on' || dismissed || isAdmin || !pageVisible) return;
     const onGuideAction = (event: Event) => {
       const action = parseTryOnGuideAction(event instanceof CustomEvent ? event.detail : null);
-      if (!action) return;
       if (action === 'share') shareActedRef.current = true;
       if (action === 'purchase') purchaseActedRef.current = true;
-      scheduleRefresh();
+      if (action) scheduleRefresh();
     };
     window.addEventListener(TRYON_GUIDE_EVENT, onGuideAction);
-    return () => {
-      window.removeEventListener(TRYON_GUIDE_EVENT, onGuideAction);
-      cancelScheduledRefresh();
-    };
-  }, [dismissed, isAdmin, isTryOn, pageVisible, scheduleRefresh, cancelScheduledRefresh]);
+    return () => window.removeEventListener(TRYON_GUIDE_EVENT, onGuideAction);
+  }, [dismissed, isAdmin, pageVisible, pathname, scheduleRefresh]);
 
-  // 首頁互動聯動（跨組件合約）：首頁 dispatch `redcode:home-fairy`，小精靈做可見反應——
-  // celebrate：飛埋去互動位＋開面板打招呼；shy：收埋面板＋閃去遠離互動嘅低位。
-  // document.hidden（pageVisible=false）／已收皮／admin 頁一律唔裝 listener（降級唔做）；
-  // reduced-motion 唔飛（唔設反應落腳點），只開／關面板呢種無動作反應。
-  useEffect(() => {
-    if (dismissed || isAdmin || !pageVisible) return;
-    const onHomeFairy = (event: Event) => {
-      const reaction = parseHomeFairyReaction(event instanceof CustomEvent ? event.detail : null);
-      if (!reaction) return;
-      const viewport = viewportRef.current;
-      const size = sizeRef.current;
-      const px = reaction.x;
-      const py = reaction.y;
-      const hasPoint = typeof px === 'number' && typeof py === 'number' && !reducedMotion;
-      if (reaction.action === 'celebrate') {
-        setMinimized(false);
-        setOpen(true);
-        if (hasPoint) {
-          reactionRef.current = {
-            point: { x: px - size.w / 2, y: py - size.h / 2 },
-            until: performance.now() + 2400,
-          };
-        }
-      } else {
-        setOpen(false);
-        if (hasPoint) {
-          // 怕醜：閃去水平鏡像、貼近底部嘅位（夾取後一定喺 viewport 內）
-          reactionRef.current = {
-            point: { x: viewport.w - px - size.w / 2, y: viewport.h - size.h - 64 },
-            until: performance.now() + 1800,
-          };
-        }
-      }
-      scheduleRefresh();
-    };
-    window.addEventListener(HOME_FAIRY_EVENT, onHomeFairy);
-    return () => {
-      window.removeEventListener(HOME_FAIRY_EVENT, onHomeFairy);
-    };
-  }, [dismissed, isAdmin, pageVisible, reducedMotion, scheduleRefresh]);
+  useEffect(() => cancelScheduled, [cancelScheduled]);
 
-  // unmount 雙保險：取消 pending refresh rAF＋飛行 rAF，離場後零工作
-  useEffect(() => {
-    return () => {
-      cancelScheduledRefresh();
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, [cancelScheduledRefresh]);
-
-  /** 目標落腳點：全部讀快取（targetsRef／viewportRef／sizeRef），零 DOM 查詢。 */
-  const currentAnchor = useCallback((): FairyPoint => {
-    const viewport = viewportRef.current;
-    const size = sizeRef.current;
-    // 首頁互動反應窗：有效期內小精靈飛去互動位（已夾入 viewport），過期即丟
-    const reaction = reactionRef.current;
-    if (reaction) {
-      if (performance.now() < reaction.until) {
-        return clampFairyPosition(reaction.point, viewport, size);
-      }
-      reactionRef.current = null;
-    }
-    let rect: DOMRect | undefined;
-    if (isTryOn) {
-      rect = targetsRef.current.get(computeTryOnStep(signalsRef.current))?.rect;
-    } else if (isHome) {
-      rect = targetsRef.current.get('home')?.rect;
-    }
-    if (rect && rect.width > 0 && rect.height > 0) {
-      return anchorToTarget(rect, viewport, size);
-    }
-    return restPosition(viewport, size);
-  }, [isHome, isTryOn]);
-
-  // 飛行迴圈：transform 直寫 style（唔經 React re-render），每幀零 DOM 讀取；
-  // document.hidden／reduced-motion／收細／關閉／面板打開都會停，唔會背景嘥電，
-  // 面板開住時暫停飛行——面板位係開嗰刻按小精靈位置計，繼續飛會同面板分離。
-  const active = !dismissed && !minimized && !isAdmin;
-  useEffect(() => {
-    if (!active || reducedMotion || !pageVisible || open) return;
-    const el = fairyRef.current;
-    if (!el) return;
-    if (!posRef.current) posRef.current = currentAnchor();
-    lastFrameRef.current = performance.now();
-    const tick = (now: number) => {
-      const dt = Math.min(0.1, (now - lastFrameRef.current) / 1000);
-      lastFrameRef.current = now;
-      const anchor = currentAnchor();
-      const pos = approachPoint(posRef.current ?? anchor, anchor, dt);
-      posRef.current = pos;
-      const drift = hoverDrift(now / 1000);
-      const clamped = clampFairyPosition({ x: pos.x + drift.x, y: pos.y + drift.y }, viewportRef.current, sizeRef.current);
-      el.style.transform = `translate3d(${Math.round(clamped.x)}px, ${Math.round(clamped.y)}px, 0)`;
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [active, reducedMotion, pageVisible, open, currentAnchor]);
-
-  // 面板擺位：打開時＋訊號變化時計一次（面板開住時飛行已暫停，小精靈唔會郁，
-  // 所以唔使逐幀跟）；panelRef 度尺只係一次性事件，唔喺 rAF 入面
-  useEffect(() => {
-    if (!open) {
-      setPanelPos(null);
+  useLayoutEffect(() => {
+    if (!open || !resolution.placed || !resolution.point) {
+      setBubblePos(null);
       return;
     }
-    const viewport = viewportRef.current;
-    const size = sizeRef.current;
-    const origin = posRef.current ?? restPosition(viewport, size);
-    const measured = panelRef.current;
-    const panel = measured
-      ? { w: measured.offsetWidth, h: measured.offsetHeight }
-      : PANEL_ESTIMATE;
-    setPanelPos(computePanelLayout(origin, size, panel, viewport));
-  }, [open, signals]);
+    const bubble = bubbleRef.current;
+    if (!bubble) return;
+    const fairyPoint = resolution.point;
+    const size = { w: bubble.offsetWidth, h: bubble.offsetHeight };
+    const point = computeBubbleLayout(
+      fairyPoint,
+      sizeRef.current,
+      size,
+      resolution.viewport,
+      bubbleObstaclesRef.current,
+    );
+    if (!point) {
+      // 原尺寸真係冇位時，先用同一套碰撞規則逐級試可內部滾動嘅矮版、緊湊版及微型版；
+      // 唔放寬任何商品、文字或控制碰撞。每步都喺 paint 前完成，唔會閃出舊氣泡。
+      if (bubbleMode !== 'micro') {
+        setBubblePos(null);
+        setBubbleMode(bubbleMode === 'full' ? 'short' : bubbleMode === 'short' ? 'compact' : 'micro');
+        return;
+      }
+      // 最細安全版本都冇位先真正收埋，唔留 aria-expanded=true 嘅假開啟狀態。
+      setBubblePos(null);
+      setOpen(false);
+      setDenied(true);
+      if (deniedTimerRef.current) window.clearTimeout(deniedTimerRef.current);
+      deniedTimerRef.current = window.setTimeout(() => {
+        deniedTimerRef.current = 0;
+        setDenied(false);
+      }, 1600);
+      return;
+    }
+    setDenied(false);
+    setBubblePos(point);
+  }, [open, resolution, bubbleMode]);
 
-  // 打開面板：focus 入去；關閉：focus 返小精靈（鍵盤用戶唔會迷路）
-  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (open && !wasOpenRef.current) {
-      panelRef.current?.querySelector<HTMLElement>('[data-fairy-close]')?.focus();
-    }
-    if (!open && wasOpenRef.current) {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (fairyRef.current?.contains(target) || bubbleRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
       fairyRef.current?.focus();
-    }
-    wasOpenRef.current = open;
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
   }, [open]);
 
   if (dismissed || isAdmin) return null;
 
-  const step: FairyStepId = isTryOn ? computeTryOnStep(signals) : 'photo';
-  const allDone = isTryOn && signals.purchaseActed;
-  const stepStates = allDone
-    ? FAIRY_STEP_ORDER.map((id) => ({ id, status: 'done' as FairyStepStatus }))
-    : buildStepStates(step);
-  const copy = allDone
-    ? FAIRY_ALL_DONE_COPY
-    : isTryOn
-      ? FAIRY_STEP_COPY[step]
-      : isHome
-        ? FAIRY_HOME_COPY
-        : FAIRY_GENERIC_COPY;
-
-  const statusLabel = (status: FairyStepStatus) =>
-    status === 'done' ? '完成' : status === 'current' ? '而家' : '未到';
+  const step = computeTryOnStep(signals);
+  const routeFallback = getFairyRouteGuide(pathname, step).fallback;
+  const hint = resolution.pathname === pathname ? resolution.hint : routeFallback;
+  const showGuide = resolution.placed && resolution.pathname === pathname;
+  // 原造型隻手向右；只有真實可見目標先轉向，冇 ring 時唔會假裝指位。
+  const pointingDirection = showGuide && resolution.ring && resolution.point
+    ? resolution.ring.left + resolution.ring.width / 2 < resolution.point.x + sizeRef.current.w / 2
+      ? 'left'
+      : 'right'
+    : null;
 
   const dismissForSession = () => {
     try {
       window.sessionStorage.setItem(FAIRY_DISMISS_KEY, '1');
     } catch {
-      // 私密模式寫唔入都照收，重新整理先會再出現
+      // 私密模式寫唔入都照收；重新整理先再出現。
     }
+    if (deniedTimerRef.current) window.clearTimeout(deniedTimerRef.current);
+    deniedTimerRef.current = 0;
     setOpen(false);
+    setDenied(false);
     setDismissed(true);
+  };
+
+  const goToPendingTarget = () => {
+    const target = pendingTargetRef.current?.element;
+    if (!target?.isConnected) return;
+    setOpen(false);
+    cancelScheduled();
+    const cleanup = () => {
+      window.removeEventListener('scrollend', focusTarget);
+      if (focusTimerRef.current) window.clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = 0;
+      scrollEndCleanupRef.current = null;
+    };
+    const focusTarget = () => {
+      cleanup();
+      if (target.isConnected) target.focus({ preventScroll: true });
+      scheduleRefresh();
+    };
+    scrollEndCleanupRef.current = cleanup;
+    window.addEventListener('scrollend', focusTarget, { once: true });
+    // scrollend 支援實際完成時間；舊瀏覽器有 fallback，唔再用固定 520ms 估長距離捲動。
+    focusTimerRef.current = window.setTimeout(focusTarget, reducedMotion ? 60 : 1400);
+    target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
   };
 
   return (
     <div
-      className="pointer-events-none fixed inset-0 overflow-hidden"
-      style={{ zIndex: 60 }}
+      className={`fairy-guide-root${pageVisible ? '' : ' is-paused'}`}
       data-fairy-guide-root=""
+      data-route={pathname}
     >
-      {/* 收細狀態：角落小徽章，撳返大。都係真掣，唔係裝飾。 */}
-      {minimized ? (
-        <button
-          type="button"
-          onClick={() => setMinimized(false)}
-          aria-label="開返小精靈 Glo Glo 幫助"
-          className="pointer-events-auto absolute bottom-4 left-4 h-11 w-11 cursor-pointer rounded-full border border-[var(--glass-border)] bg-space-2/90 p-1 shadow-lg outline-none backdrop-blur focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold"
-        >
-          <img
-            src="/fairy-fly-poster.webp"
-            alt=""
-            width={512}
-            height={256}
-            className="h-full w-full object-contain"
-          />
-        </button>
-      ) : (
-        <button
-          ref={fairyRef}
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-label={open ? '收埋小精靈 Glo Glo 幫助面板' : '小精靈 Glo Glo：撳我開幫助同試穿帶路'}
-          className="pointer-events-auto absolute left-0 top-0 w-[clamp(64px,18vw,104px)] cursor-pointer border-0 bg-transparent p-0 outline-none will-change-transform focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold"
-        >
-          <GloCutout
-            videoSrc="/fairy-fly-alpha.webm"
-            animSrc="/fairy-fly-anim.webp"
-            poster="/fairy-fly-poster.webp"
-            alt=""
-            eager
-            posterW={512}
-            posterH={256}
-          />
-          {isTryOn && !allDone && (
-            <span
-              aria-hidden="true"
-              className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-gold text-[11px] font-bold text-space-1"
-            >
-              {FAIRY_STEP_ORDER.indexOf(step) + 1}
-            </span>
-          )}
-        </button>
+      {showGuide && resolution.ring && (
+        <div
+          aria-hidden="true"
+          className="fairy-guide-ring"
+          data-fairy-target-ring={resolution.candidateId ?? ''}
+          style={{
+            width: resolution.ring.width,
+            height: resolution.ring.height,
+            transform: `translate3d(${resolution.ring.left}px, ${resolution.ring.top}px, 0)`,
+          }}
+        />
       )}
 
-      {/* 幫助／帶路面板：非 modal，唔會鎖住頁面；Esc 或 ✕ 關閉 */}
-      {open && !minimized && (
-        <div
-          ref={panelRef}
-          role="dialog"
-          aria-modal="false"
-          aria-label="小精靈 Glo Glo 幫助"
-          className="pointer-events-auto absolute w-[min(320px,calc(100vw-32px))] rounded-2xl border border-[var(--glass-border)] bg-space-2/95 p-4 text-txt-1 shadow-2xl backdrop-blur"
-          style={panelPos ? { left: panelPos.x, top: panelPos.y } : { left: 16, bottom: 16, top: 'auto' }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.stopPropagation();
-              setOpen(false);
-            }
+      <button
+        ref={fairyRef}
+        type="button"
+        className="fairy-guide-button"
+        data-pointing={pointingDirection ?? undefined}
+        tabIndex={showGuide ? 0 : -1}
+        aria-expanded={open}
+        aria-controls="glo-guide-bubble"
+        aria-label={`${hint.title}。撳 Glo Glo 睇導覽提示`}
+        onClick={() => {
+          if (deniedTimerRef.current) window.clearTimeout(deniedTimerRef.current);
+          deniedTimerRef.current = 0;
+          setDenied(false);
+          if (!open) setBubbleMode('full');
+          setOpen((value) => !value);
+        }}
+        style={{
+          visibility: showGuide ? 'visible' : 'hidden',
+          pointerEvents: showGuide ? 'auto' : 'none',
+        }}
+      >
+        <span className="fairy-guide-float" aria-hidden="true">
+          <img src="/fairy/glo-guide.png" alt="" width={458} height={768} draggable={false} />
+        </span>
+      </button>
+
+      {showGuide && denied && resolution.point && (
+        <span
+          className="fairy-guide-denied"
+          role="status"
+          aria-label="呢度太密，安全提示暫時收起"
+          style={{
+            transform: `translate3d(${resolution.point.x}px, ${resolution.point.y}px, 0)`,
           }}
         >
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-[15px] font-bold">{copy.title}</p>
-            <button
-              type="button"
-              data-fairy-close=""
-              onClick={() => setOpen(false)}
-              aria-label="關閉幫助面板"
-              className="shrink-0 cursor-pointer rounded-md border-0 bg-transparent p-1 text-txt-3 outline-none hover:text-txt-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold"
-            >
-              <X size={18} aria-hidden="true" />
+          提示收起
+        </span>
+      )}
+
+      {showGuide && open && (
+        <div
+          ref={bubbleRef}
+          id="glo-guide-bubble"
+          role="group"
+          aria-label="Glo Glo 導覽提示"
+          className={`fairy-guide-bubble${bubbleMode === 'full' ? '' : ` is-${bubbleMode}`}`}
+          data-bubble-layout={bubbleMode}
+          style={{
+            visibility: bubblePos ? 'visible' : 'hidden',
+            transform: `translate3d(${bubblePos?.x ?? 12}px, ${bubblePos?.y ?? 12}px, 0)`,
+          }}
+        >
+          <div className="fairy-guide-bubble-heading">
+            <strong>{hint.title}</strong>
+            <button type="button" onClick={() => setOpen(false)} aria-label="收埋導覽提示">
+              <X size={16} aria-hidden="true" />
             </button>
           </div>
-
-          {isTryOn && (
-            <ol aria-label="試穿五步進度" className="mt-3 space-y-1.5">
-              {stepStates.map(({ id, status }) => (
-                <li
-                  key={id}
-                  aria-current={status === 'current' ? 'step' : undefined}
-                  className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1 text-[13px] ${
-                    status === 'current' ? 'bg-space-1 font-bold' : ''
-                  }`}
-                >
-                  <span className={status === 'todo' ? 'text-txt-3' : ''}>{FAIRY_STEP_COPY[id].title}</span>
-                  <span
-                    className={`shrink-0 text-[11px] ${
-                      status === 'done' ? 'text-gold' : status === 'current' ? 'text-txt-1' : 'text-txt-3'
-                    }`}
-                  >
-                    {statusLabel(status)}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-
-          <p className="mt-3 text-[13px] leading-[1.7] text-txt-3">{copy.body}</p>
-
-          {!isTryOn && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Link
-                to="/try-on"
-                className="btn btn-primary !px-4 !py-2 text-[13px] font-bold"
-                onClick={() => setOpen(false)}
-              >
-                開始 AI 試穿
-              </Link>
-              {isHome ? (
-                <Link
-                  to="/products"
-                  className="btn btn-secondary !px-4 !py-2 text-[13px]"
-                  onClick={() => setOpen(false)}
-                >
-                  先去揀心水款
-                </Link>
-              ) : (
-                <Link
-                  to="/faq"
-                  className="btn btn-secondary !px-4 !py-2 text-[13px]"
-                  onClick={() => setOpen(false)}
-                >
-                  常見問題
-                </Link>
-              )}
-            </div>
-          )}
-
-          <div className="mt-4 flex items-center gap-3 border-t border-[var(--glass-border)] pt-3 text-[12px]">
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                setMinimized(true);
-              }}
-              className="cursor-pointer border-0 bg-transparent p-0 text-txt-3 underline underline-offset-2 outline-none hover:text-txt-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold"
-            >
-              收細做角落徽章
-            </button>
-            <button
-              type="button"
-              onClick={dismissForSession}
-              className="cursor-pointer border-0 bg-transparent p-0 text-txt-3 underline underline-offset-2 outline-none hover:text-txt-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold"
-            >
-              今次唔使（關咗個 tab 先再出現）
+          <p>{hint.body}</p>
+          <div className="fairy-guide-bubble-actions">
+            {resolution.canScroll && (
+              <button type="button" className="fairy-guide-go" onClick={goToPendingTarget}>
+                帶我去真按鈕位置
+              </button>
+            )}
+            <button type="button" className="fairy-guide-dismiss" onClick={dismissForSession}>
+              今次唔使
             </button>
           </div>
         </div>

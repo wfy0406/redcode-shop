@@ -2,75 +2,179 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 /**
- * Navbar 頂欄溢出防退化（2026-10-26，camera agent T19 實測：1024 溢 50px、1280 溢 42px）。
+ * Navbar「更多」整合契約（2026-10-26.2，UI v2026.10.26.2 §5）：
  *
- * 直接掃 Navbar.tsx 源碼，鎖死以下 responsive 合約，任何人改返即刻紅：
- * - 中獎公告（lucky）頂欄 icon：xl 起先出（lg–xl 窄帶收喺「更多」dropdown）
- * - AI 試穿 CTA icon：lg 起保持（主打功能唔收埋）
- * - lucky／AI／WhatsApp 連字＋加寬 padding：2xl 起（1280/1440 icon-only）
- * - 「更多」dropdown 有 lg–xl 專用中獎公告 NavLink（xl:hidden），而且唔入 INFO_LINKS
- *   （手機 drawer 已有專屬 row，入 INFO_LINKS 會重複）
- * - 右 cluster／auth min-w-0＋會員名 truncate（長名唔再頂爆）
+ * 直接掃 Navbar.tsx 源碼，鎖死以下合約，任何人改返即刻紅：
+ * - AI 試穿 /try-on 同中獎公告 /lucky-results 收入同一份 MORE_LINKS，
+ *   桌面 dropdown 同手機 drawer 共用（各自 MORE_LINKS.map），同其他項目完全同款
+ * - MORE_LINKS 新兩項擺最前；原有 INFO_LINKS 順序（順豐→VIP→關於→FAQ）不變
+ * - 冇桌面獨立 AI CTA（lg:inline-flex btn-primary）、冇金框中獎入口（xl:inline-flex + Trophy）、
+ *   冇 xl:hidden dropdown 專用 lucky link、冇手機特色 row（Sparkles/Trophy 漸變 row）
+ * - Sparkles／Trophy 唔再 import（無死代碼）
+ * - 「更多」對子路由 active（MORE_LINKS.some startsWith），有 aria-expanded、Escape、
+ *   觸控 click 開關同 outside-click 收埋
+ * - 右 cluster／auth min-w-0＋會員名 truncate（長名唔再頂爆）；手機 DrawerRow label 都 truncate
+ * - WhatsApp 連字＋加寬 padding 維持 2xl 起（1280/1440 icon-only）
  */
 
 const source = readFileSync(new URL('./Navbar.tsx', import.meta.url), 'utf8');
 
-/** 抽出某個 to=... 嘅「頂欄 CTA」開 tag 區段（至 `>` 收口）做斷言。
- *  同一個 to 可能出現多次（頂欄 CTA／更多 dropdown／手機 drawer），
- *  頂欄 CTA 特徵係 className 入面有 inline-flex。 */
-function navLinkBlock(to: string): string {
-  let from = 0;
-  for (;;) {
-    const start = source.indexOf(`to="${to}"`, from);
-    if (start < 0) return '';
-    const end = source.indexOf('>', start);
-    const block = source.slice(start, end);
-    if (block.includes('inline-flex')) return block;
-    from = end + 1;
-  }
+/** 抽出 `const NAME = [...]` 陣列定義區段做斷言 */
+function constArrayBlock(name: string): string {
+  const start = source.indexOf(`const ${name}`);
+  if (start < 0) return '';
+  const end = source.indexOf('];', start);
+  return end < 0 ? '' : source.slice(start, end);
 }
 
-describe('Navbar responsive 合約（T19 溢出修正）', () => {
-  it('lucky 頂欄 icon xl 起先出（lg–xl 唔出）', () => {
-    const block = navLinkBlock('/lucky-results');
-    expect(block).toContain('xl:inline-flex');
-    expect(block).not.toContain('lg:inline-flex');
+/** 數某個 pattern 喺 source 出現幾多次 */
+function countOccurrences(needle: string): number {
+  return source.split(needle).length - 1;
+}
+
+describe('Navbar「更多」共用資料契約（2026-10.26.2）', () => {
+  it('MORE_LINKS 同時收 /try-on 同 /lucky-results，而且擺最前', () => {
+    const block = constArrayBlock('MORE_LINKS');
+    expect(block).not.toBe('');
+    const tryOnIdx = block.indexOf("to: '/try-on'");
+    const luckyIdx = block.indexOf("to: '/lucky-results'");
+    const spreadIdx = block.indexOf('...INFO_LINKS');
+    expect(tryOnIdx).toBeGreaterThanOrEqual(0);
+    expect(luckyIdx).toBeGreaterThanOrEqual(0);
+    expect(spreadIdx).toBeGreaterThanOrEqual(0);
+    // 新兩項擺 More 資料最前，原有 INFO_LINKS 項目跟尾
+    expect(tryOnIdx).toBeLessThan(luckyIdx);
+    expect(luckyIdx).toBeLessThan(spreadIdx);
   });
 
-  it('AI 試穿頂欄 icon 保持 lg 起', () => {
-    const block = navLinkBlock('/try-on');
-    expect(block).toContain('lg:inline-flex');
+  it('INFO_LINKS 原項目同順序不變（順豐 → VIP → 關於 → 常見問題）', () => {
+    const block = constArrayBlock('INFO_LINKS');
+    const order = ['/sf-stations', '/vip', '/about', '/faq'];
+    const idxs = order.map((to) => block.indexOf(`to: '${to}'`));
+    for (const idx of idxs) expect(idx).toBeGreaterThanOrEqual(0);
+    expect(idxs).toEqual([...idxs].sort((a, b) => a - b));
+    // INFO_LINKS 唔准直接收新兩項（佢哋只喺 MORE_LINKS 出現一次）
+    expect(block).not.toContain('/try-on');
+    expect(block).not.toContain('/lucky-results');
   });
 
-  it('lucky／AI 連字同加寬 padding 由 2xl 起', () => {
-    for (const to of ['/lucky-results', '/try-on']) {
-      const block = navLinkBlock(to);
-      expect(block).toContain('2xl:!px-4');
-      // 注意「2xl:!px-4」本身就包含子串「xl:!px-4」，要用邊界 regex 先分得開
-      expect(block).not.toMatch(/(^|\s)xl:!px-4/);
-    }
-    // label spans：AI 試穿／中獎公告／WhatsApp 全部 2xl 先出字
-    const labels = source.match(/hidden (?:2xl|xl):inline/g) ?? [];
-    expect(labels.length).toBeGreaterThanOrEqual(3);
-    expect(labels.every((label) => label === 'hidden 2xl:inline')).toBe(true);
+  it('MAIN_LINKS 原項目同順序不變', () => {
+    const block = constArrayBlock('MAIN_LINKS');
+    const order = ['/', '/products', '/live', '/orders', '/wallet-topup'];
+    const idxs = order.map((to) => block.indexOf(`to: '${to}'`));
+    for (const idx of idxs) expect(idx).toBeGreaterThanOrEqual(0);
+    expect(idxs).toEqual([...idxs].sort((a, b) => a - b));
   });
 
-  it('WhatsApp 連字＋padding 同樣 2xl 起', () => {
+  it('桌面 dropdown 同手機 drawer 共用 MORE_LINKS（兩處 MORE_LINKS.map）', () => {
+    expect(countOccurrences('MORE_LINKS.map')).toBe(2);
+  });
+
+  it('More 項目同其他 dropdown 項目同款（統一 NavLink 樣式，無 xl:hidden 特例）', () => {
+    // 桌面「更多」MORE_LINKS.map 行用返標準 dropdown 項目樣式（同商品分類項一致）
+    const moreMap = source.indexOf('MORE_LINKS.map');
+    expect(moreMap).toBeGreaterThanOrEqual(0);
+    const block = source.slice(moreMap, moreMap + 800);
+    expect(block).toContain('block rounded-xl px-3.5 py-2 text-[13px] font-bold tracking-wide transition-colors hover:bg-space-3');
+    // 唔再有任何 xl:hidden 嘅 breakpoint 特例連結
+    expect(source).not.toContain('xl:hidden');
+  });
+});
+
+describe('Navbar 無獨立入口（2026-10.26.2 刪除契約）', () => {
+  it('冇桌面獨立 AI 試穿 CTA（lg:inline-flex / btn-primary 頂欄鈕）', () => {
+    expect(source).not.toContain('lg:inline-flex');
+    expect(source).not.toMatch(/to="\/try-on"[\s\S]{0,300}?btn-primary/);
+  });
+
+  it('冇金框中獎公告頂欄入口（xl:inline-flex + 金邊 boxShadow）', () => {
+    expect(source).not.toContain('xl:inline-flex');
+    expect(source).not.toContain('rgba(245,197,24,0.55)');
+  });
+
+  it('Sparkles／Trophy icon 唔再 import（特色 row／CTA 已刪）', () => {
+    expect(source).not.toMatch(/import\s*\{[^}]*\bSparkles\b[^}]*\}\s*from 'lucide-react'/);
+    expect(source).not.toMatch(/import\s*\{[^}]*\bTrophy\b[^}]*\}\s*from 'lucide-react'/);
+    expect(source).not.toContain('<Sparkles');
+    expect(source).not.toContain('<Trophy');
+  });
+
+  it('冇手機特色 row（金粉漸變背景 row 已刪）', () => {
+    expect(source).not.toContain('linear-gradient(120deg, rgba(255,0,84,0.18)');
+    expect(source).not.toContain('linear-gradient(120deg, rgba(245,197,24,0.16)');
+  });
+
+  it('／try-on 同 /lucky-results 各自只喺 MORE_LINKS 定義出現一次（冇殘留硬編碼入口）', () => {
+    expect(countOccurrences("to: '/try-on'")).toBe(1);
+    expect(countOccurrences("to: '/lucky-results'")).toBe(1);
+    // JSX 入面唔再有 to="/try-on"／to="/lucky-results" 硬編碼
+    expect(source).not.toContain('to="/try-on"');
+    expect(source).not.toContain('to="/lucky-results"');
+  });
+});
+
+describe('Navbar「更多」互動契約', () => {
+  it('More 對子路由 active（MORE_LINKS.some startsWith）', () => {
+    expect(source).toContain('MORE_LINKS.some((l) => pathname.startsWith(l.to))');
+  });
+
+  it('More 掣有 aria-haspopup／aria-expanded，click 開關照顧觸控', () => {
+    const btn = source.slice(source.indexOf('aria-haspopup'), source.indexOf('aria-haspopup') + 900);
+    expect(btn).toContain('aria-expanded={moreOpen}');
+    expect(btn).toContain('onClick={() => setMoreOpen((v) => !v)}');
+  });
+
+  it('Escape 收埋兼 focus 返 More 掣', () => {
+    expect(source).toContain("e.key === 'Escape'");
+    expect(source).toContain('moreBtnRef.current?.focus()');
+  });
+
+  it('More 可見性只由 moreOpen 控制，Escape／轉頁後唔准被 CSS focus 偷開', () => {
+    const start = source.indexOf('ref={moreRef}');
+    const end = source.indexOf('{/* 右：', start);
+    const moreSection = source.slice(start, end);
+    expect(moreSection).not.toContain('group-focus-within:visible');
+    expect(moreSection).not.toContain('group-hover:visible');
+    expect(moreSection).toContain('suppressMoreFocusOpenRef.current = true');
+    expect(moreSection).toContain("matches(':focus-visible')");
+    expect(moreSection).toContain('onPointerEnter');
+  });
+
+  it('mouse 移走會收埋，但鍵盤焦點在選單時唔被混合輸入藏起', () => {
+    const start = source.indexOf('onPointerLeave={');
+    const section = source.slice(start, start + 900);
+    expect(section).toContain("e.pointerType === 'mouse' && !hasKeyboardFocus");
+    expect(section).toContain("focused.matches(':focus-visible')");
+    expect(section).toContain('moreRef.current?.contains(focused)');
+  });
+
+  it('outside pointerdown 同 route change 都會收埋 dropdown', () => {
+    expect(source).toContain("document.addEventListener('pointerdown', onPointerDown)");
+    expect(source).toMatch(/useEffect\(\(\) => \{\s*setMoreOpen\(false\);\s*\}, \[pathname\]\)/);
+  });
+
+  it('手機 drawer 無障礙保留（useDialogA11y：Esc＋focus trap＋滾動鎖）', () => {
+    expect(source).toContain('useDialogA11y(() => setMenuOpen(false), menuOpen)');
+  });
+});
+
+describe('Navbar responsive 合約（溢出防退化）', () => {
+  it('WhatsApp 連字＋加寬 padding 2xl 起（1280/1440 icon-only）', () => {
     expect(source).toContain('btn-whatsapp min-h-11 !px-3 !py-2 text-sm 2xl:!px-4');
+    expect(source).toContain('<span className="hidden 2xl:inline">WhatsApp</span>');
   });
 
-  it('「更多」dropdown 有 lg–xl 專用中獎公告（xl:hidden），唔入 INFO_LINKS', () => {
-    // dropdown 入面嘅獨立 NavLink 帶 xl:hidden
-    const dropdownLucky = source.match(/to="\/lucky-results"[\s\S]{0,400}?xl:hidden/);
-    expect(dropdownLucky).not.toBeNull();
-    // INFO_LINKS 定義唔准收 /lucky-results（手機 drawer 會重複）
-    const infoLinks = source.slice(source.indexOf('const INFO_LINKS'), source.indexOf('];', source.indexOf('const INFO_LINKS')));
-    expect(infoLinks).not.toContain('/lucky-results');
-  });
-
-  it('右 cluster／auth min-w-0，會員名 truncate', () => {
+  it('右 cluster／auth min-w-0，桌面會員名 truncate', () => {
     expect(source).toContain('flex min-w-0 items-center gap-2 xl:gap-3');
     expect(source).toContain('hidden min-w-0 items-center gap-2.5 lg:flex');
     expect(source).toMatch(/nav-link min-w-0 max-w-40 truncate/);
+  });
+
+  it('手機 DrawerRow label truncate（長會員名唔頂爆 drawer）', () => {
+    expect(source).toContain('min-w-0 flex-1 truncate font-serif-tc text-2xl font-semibold');
+  });
+
+  it('桌面主導航 lg 起、間距 lg→xl 漸進（唔撞 logo／右 cluster）', () => {
+    expect(source).toContain('hidden items-center gap-4 lg:flex xl:gap-6');
   });
 });

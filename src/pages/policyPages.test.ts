@@ -101,6 +101,33 @@ describe("私隱政策：公開抽獎公告（第 2.7 節）", () => {
   });
 });
 
+describe("私隱政策：託管／交易電郵服務商披露（第 06 節，只寫類別唔點名）", () => {
+  // 只抽第 06 節「資料披露及轉移對象」入面、公開頁實際顯示嘅託管及電郵段落做斷言，
+  // 唔掃成個源碼檔，避免註解或其他章節嘅字詞（例如 React render）誤中。
+  const disclosureParagraph = (() => {
+    const m = privacySrc.match(/雲端託管及系統服務商[\s\S]*?用於營運本網站及發送電郵/);
+    return m ? m[0] : "";
+  })();
+
+  it("公開政策有託管及電郵服務商披露段落", () => {
+    expect(disclosureParagraph).not.toBe("");
+  });
+
+  it("仍以第三方服務類別披露：雲端託管／資料庫 及 交易電郵傳送，並保留用途", () => {
+    expect(disclosureParagraph).toContain("第三方雲端託管及資料庫服務商");
+    expect(disclosureParagraph).toContain("第三方交易電郵傳送服務商");
+    // 用途及實際資料流保留：網站及資料庫託管、交易電郵寄出
+    expect(disclosureParagraph).toContain("網站及資料庫託管");
+    expect(disclosureParagraph).toContain("交易電郵寄出服務");
+    expect(disclosureParagraph).toContain("用於營運本網站及發送電郵");
+  });
+
+  it("公開披露段落唔再點名 Render／Resend", () => {
+    expect(disclosureParagraph).not.toMatch(/render/i);
+    expect(disclosureParagraph).not.toMatch(/resend/i);
+  });
+});
+
 describe("私隱政策：sessionStorage 草稿（第 8 節）", () => {
   it("寫明試穿結帳草稿及小精靈偏好只存裝置，唔係帳戶雲端保存", () => {
     expect(privacySrc).toContain("分頁工作階段儲存（sessionStorage）");

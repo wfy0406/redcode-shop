@@ -16,7 +16,12 @@ function esc(s: string): string {
  * App 用 HashRouter（#/products/123），但 hash 後面嘅嘢 crawler 永遠收唔到，
  * 所以分享連結用正式路徑 /products/123，由 server 喺 index.html 注入呢件商品嘅
  * og:title / og:description / og:image。 crawler 唔行 JS，一定要 server 出。
- * 搵唔到商品或 DB 出错：原封不動回 html（OG 失敗唔可以阻正常出頁）。
+ *
+ * 回傳值三種情況（2026-10-27 Search Console 軟 404 根治）：
+ * ─ 商品存在 → 注入後嘅 HTML（title/description/canonical/OG/JSON-LD/noscript 全文）
+ * ─ DB 查詢成功但商品**唔存在** → null（caller 要回真 404；例如已刪嘅 /products/94
+ *   之前回 200＋首頁 title/canonical，Google 當軟 404 / alternate page 處理）
+ * ─ DB 出錯／注入出錯 → 原封不動回 html（一時 DB 故障唔可以令在架商品被當 404 踢出索引）
  */
 /** 逐頁 SEO 注入參數；title/description/path 唔俾就照 index.html 預設 */
 export interface RouteMeta {
@@ -80,20 +85,45 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
   }
 }
 
-export async function injectProductOg(html: string, id: number, origin: string): Promise<string> {
+/** 商品描述入面嘅 HTML tag／控制碼／emoji 剝走，先至好入 meta description（純文字） */
+function toPlainText(s: string): string {
+  return s
+    .replace(/<[^>]*>/g, " ")
+    .replace(/[\u0000-\u001f]/g, " ")
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export async function injectProductOg(
+  html: string,
+  id: number,
+  origin: string,
+): Promise<string | null> {
+  let p: typeof products.$inferSelect | undefined;
   try {
     const db = getDb();
-    const [p] = await db.select().from(products).where(eq(products.id, id)).limit(1);
-    if (!p) return html;
-
+    [p] = await db.select().from(products).where(eq(products.id, id)).limit(1);
+  } catch {
+    // DB 一時故障：原封不動回 html（200），唔好令在架商品被當 404
+    return html;
+  }
+  // 查詢成功但冇呢件商品（已刪／從未存在，例如 /products/94）：null → caller 回真 404
+  if (!p) return null;
+  try {
     const pageUrl = `${origin}/products/${p.id}`;
     const imageUrl = p.image.startsWith("http") ? p.image : `${origin}${p.image}`;
     const price = p.discountPrice ?? p.price;
+    // meta description：同前端 ProductDetail 載入後嘅規則一致——商品描述純文字 120 字截斷；
+    // 冇描述就用商品名兜底。**之前呢度淨係改 OG/title，冇郁 meta[name=description]**，
+    // 件件商品出同一條首頁通用 description → Google 當 /products/85、/products/95 呢類
+    // 短名商品做 near-duplicate（duplicate without user-selected canonical）。
+    const descPlain = toPlainText(p.description ?? "");
     const descSrc =
-      p.description?.trim() ||
-      `${p.name}｜HK$${price}｜RedCode 香港女裝直播，每晚為你揀選星空下最閃嘅衫。`;
+      descPlain || `${p.name}——RedCode 香港女裝直播精選，直播優惠價發售，順豐站自取。`;
     const desc = descSrc.length > 120 ? `${descSrc.slice(0, 117)}…` : descSrc;
-    const title = `${p.name}｜RedCode`;
+    // title 同前端 ProductDetail 嘅 document.title 對齊（server HTML 同 rendered DOM 一致）
+    const title = `${p.name}｜RedCode Fashion Design`;
 
     const tags = [
       `<meta property="og:type" content="product" />`,
@@ -111,6 +141,12 @@ export async function injectProductOg(html: string, id: number, origin: string):
     // 抽走 index.html 入面嘅預設 og:/twitter: meta（首頁通用版），換上呢件商品嘅
     let out = html.replace(/[ \t]*<meta\s+(?:property|name)="(?:og:|twitter:)[^>]*\/>\s*\n?/g, "");
     out = out.replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`);
+    // SEO（2026-10-27）：meta description 都要換做呢件商品專屬嗰條（之前漏咗，
+    // 全部商品頁出同一條首頁 description，係 near-duplicate 嘅主要訊號之一）
+    out = out.replace(
+      /<meta\s+name="description"\s+content="[^"]*"\s*\/>/,
+      `<meta name="description" content="${esc(desc)}" />`,
+    );
     // SEO（v2.2.20）：canonical 指返呢件商品（replace 原有嗰條，唔會多一條出嚟）
     out = out.replace(
       '<link rel="canonical" href="https://redcode.red/" />',
@@ -118,20 +154,28 @@ export async function injectProductOg(html: string, id: number, origin: string):
     );
     out = out.replace("</head>", `    ${tags}\n  </head>`);
 
+    // SEO（2026-10-27）：server-rendered crawlable content——SPA 嘅 #root 出貨時係空，
+    // raw HTML 除咗 meta 乜都冇，件件商品頁近乎一樣。喺 <body> 尾加 <noscript>
+    // 商品摘要（名＋價＋描述純文字＋全部貨品連結）：唔行 JS 嘅 crawler 讀到真內容；
+    // 開咗 JS 嘅瀏覽器/Google 渲染後唔顯示，UI 一字唔郁。
+    // ⚠️ 唔好放落 #root 入面：index.html 白屏自救 script 靠 root.childNodes 判斷
+    // JS 有冇行到，塞嘢入去會整熄自救；React mount 時亦會清走 #root 原有內容。
+    const noscriptDesc =
+      (descPlain.length > 300 ? `${descPlain.slice(0, 297)}…` : descPlain) || desc;
+    const noscript =
+      `<noscript><h1>${esc(p.name)}</h1>` +
+      `<p>HK$${price}</p>` +
+      `<p>${esc(noscriptDesc)}</p>` +
+      `<p><a href="/products">全部貨品</a></p></noscript>`;
+    out = out.replace("</body>", `    ${noscript}\n  </body>`);
+
     // SEO（v2.2.20）：順手注入 Product JSON-LD（放 </head> 前）。
     // 價錢注意：products 表 price/discountPrice 係整數港元（唔係 cents——
     // cents 淨係訂單/VIP 引擎用），所以 JSON-LD price 直接 toFixed(2)，唔准 ÷100。
     // 任何一步出錯都靜靜雞 skip，唔好炸成個 injection。
     try {
-      const stripText = (s: string) =>
-        s
-          .replace(/<[^>]*>/g, " ")
-          .replace(/[\u0000-\u001f]/g, " ")
-          .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "")
-          .replace(/\s+/g, " ")
-          .trim();
-      const descPlain = stripText(p.description ?? "") || `${p.name}｜RedCode 香港女裝直播`;
-      const jsonDesc = descPlain.length > 200 ? `${descPlain.slice(0, 197)}…` : descPlain;
+      const jsonPlain = descPlain || `${p.name}｜RedCode 香港女裝直播`;
+      const jsonDesc = jsonPlain.length > 200 ? `${jsonPlain.slice(0, 197)}…` : jsonPlain;
       const images = (p.photos && p.photos.length ? p.photos : [p.image]).map((u) =>
         u.startsWith("http") ? u : `${origin}${u}`,
       );

@@ -22,8 +22,9 @@ const ROUTE_SEO: Record<string, { title: string; description: string }> = {
   },
   "/about": {
     title: "關於我們｜RedCode Fashion Design",
+    // 2026-10-27（老闆批准文案）：AI 試穿賣點入公開 SEO copy（網站本身有 /try-on 功能，屬實）
     description:
-      "RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。",
+      "RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。",
   },
   "/vip": {
     title: "VIP 會員｜RedCode Fashion Design",
@@ -115,12 +116,26 @@ export function serveStaticFiles(app: App) {
     // main.tsx 會即刻轉返 hash 路由，照常顯示商品頁。
     const productMatch = c.req.path.match(/^\/products\/(\d+)\/?$/);
     if (productMatch) {
-      const { injectProductOg } = await import("./og");
+      const { injectProductOg, injectRouteMeta } = await import("./og");
       // Render 反向代理後面 c.req.url 係 http://，OG 圖必須 https 先會被 FB 接受：
       // 用 x-forwarded-proto/host 還原訪客真正嘅 origin
       const proto = c.req.header("x-forwarded-proto") ?? new URL(c.req.url).protocol.replace(":", "");
       const host = c.req.header("x-forwarded-host") ?? c.req.header("host") ?? new URL(c.req.url).host;
-      content = await injectProductOg(content, Number(productMatch[1]), `${proto}://${host}`);
+      const injected = await injectProductOg(content, Number(productMatch[1]), `${proto}://${host}`);
+      if (injected === null) {
+        // 2026-10-27 Search Console 軟 404 根治：商品**確定唔存在**（DB 查詢成功、零行，
+        // 例如已刪嘅 /products/94）——之前回 200＋首頁 title/canonical，Google 當軟 404。
+        // 而家回真 404 狀態＋noindex；HTML 照出 SPA，前端 ProductDetail 會顯示
+        // 「搵唔到呢件商品」頁，人類訪客體驗唔變。
+        // DB 一時故障 injectProductOg 會回未注入嘅 html（唔係 null），在架商品唔會被誤 404。
+        const notFoundHtml = injectRouteMeta(content, {
+          title: "搵唔到呢件商品｜RedCode Fashion Design",
+          description: "呢件商品可能已經賣晒或落架，去全部貨品睇最新直播精選女裝。",
+          noindex: true,
+        });
+        return c.html(notFoundHtml, 404);
+      }
+      content = injected;
     } else {
       // v2.2.21（E2）逐頁 SEO：公開頁注入專屬 meta；私人/工具頁 noindex；
       // 其他未知路徑照舊派預設 index.html

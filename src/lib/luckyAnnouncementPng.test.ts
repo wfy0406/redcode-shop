@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   ANNOUNCEMENT_H,
   ANNOUNCEMENT_W,
+  announcementDateLines,
   fitText,
   layoutAnnouncement,
   shrinkToFit,
@@ -51,7 +52,7 @@ describe("shrinkToFit", () => {
 
 describe("layoutAnnouncement", () => {
   it("空名單 → empty 狀態（公告照出，寫即將公佈）", () => {
-    const l = layoutAnnouncement({ eventName: "前夕突擊抽獎", drawnAtLabel: null, winners: [] }, wideMeasure);
+    const l = layoutAnnouncement({ eventName: "前夕突擊抽獎", scheduledDrawDateLabel: null, drawnAtLabel: null, winners: [] }, wideMeasure);
     expect(l.empty).toBe(true);
     expect(l.rows).toHaveLength(0);
     expect(l.hiddenCount).toBe(0);
@@ -59,7 +60,7 @@ describe("layoutAnnouncement", () => {
 
   it("少人（≤6）用大行距，全部顯示", () => {
     const winners = Array.from({ length: 5 }, (_, i) => ({ name: `得獎者${i + 1}`, prizeName: `$55現金券` }));
-    const l = layoutAnnouncement({ eventName: "前夕突擊抽獎", drawnAtLabel: "2026-11-08 21:30", winners }, wideMeasure);
+    const l = layoutAnnouncement({ eventName: "前夕突擊抽獎", scheduledDrawDateLabel: "2026-11-08", drawnAtLabel: "2026-11-08 21:30", winners }, wideMeasure);
     expect(l.empty).toBe(false);
     expect(l.rows).toHaveLength(5);
     expect(l.hiddenCount).toBe(0);
@@ -68,7 +69,7 @@ describe("layoutAnnouncement", () => {
 
   it("多人（>16）用密行距；放唔晒有 hiddenCount", () => {
     const winners = Array.from({ length: 30 }, (_, i) => ({ name: `幸運兒${i + 1}號`, prizeName: `精美飾品` }));
-    const l = layoutAnnouncement({ eventName: "壓軸大抽獎", drawnAtLabel: "2026-11-11 22:00", winners }, wideMeasure);
+    const l = layoutAnnouncement({ eventName: "壓軸大抽獎", scheduledDrawDateLabel: "2026-11-11", drawnAtLabel: "2026-11-11 22:00", winners }, wideMeasure);
     expect(l.rows.length).toBeLessThan(30);
     expect(l.hiddenCount).toBe(30 - l.rows.length);
     expect(l.hiddenCount).toBeGreaterThan(0);
@@ -79,7 +80,7 @@ describe("layoutAnnouncement", () => {
     const winners = [
       { name: "超級無敵長嘅中獎人名稱陳大文先生閣下", prizeName: "超長獎品名稱之閃石頸鏈手鍊套裝限定版" },
     ];
-    const l = layoutAnnouncement({ eventName: "測試", drawnAtLabel: null, winners }, wideMeasure);
+    const l = layoutAnnouncement({ eventName: "測試", scheduledDrawDateLabel: null, drawnAtLabel: null, winners }, wideMeasure);
     const contentW = ANNOUNCEMENT_W - 84 * 2;
     const nameMaxW = Math.floor(contentW * 0.52);
     const prizeMaxW = contentW - nameMaxW - 40;
@@ -92,5 +93,34 @@ describe("layoutAnnouncement", () => {
     expect(ANNOUNCEMENT_W).toBe(1080);
     expect(ANNOUNCEMENT_H).toBe(1350);
     expect(ANNOUNCEMENT_H).toBeGreaterThanOrEqual(1350);
+  });
+});
+
+describe("announcementDateLines（v2026.10.26.2 活動日期行）", () => {
+  const base = { eventName: "測試活動", winners: [] };
+
+  it("未開獎有預定日 → 「預定抽獎日：…」", () => {
+    const lines = announcementDateLines({ ...base, scheduledDrawDateLabel: "2026-12-01", drawnAtLabel: null });
+    expect(lines).toEqual(["預定抽獎日：2026-12-01"]);
+  });
+
+  it("已開獎＋有預定日 → 預定日同實際抽獎時間兩行分開標示", () => {
+    const lines = announcementDateLines({
+      ...base,
+      scheduledDrawDateLabel: "2026-11-11",
+      drawnAtLabel: "2026-11-11 21:30",
+      winners: [{ name: "陳小明", prizeName: "禮物A" }],
+    });
+    expect(lines).toEqual(["預定抽獎日：2026-11-11", "抽獎時間：2026-11-11 21:30"]);
+  });
+
+  it("舊活動冇預定日但有 winner → 用真實抽出時間做「抽獎時間」行（唔寫預定）", () => {
+    const lines = announcementDateLines({ ...base, scheduledDrawDateLabel: null, drawnAtLabel: "2026-10-24 21:00" });
+    expect(lines).toEqual(["抽獎時間：2026-10-24 21:00"]);
+  });
+
+  it("舊活動 null＋未開獎 → 如實寫「抽獎日待公佈」（唔好用 createdAt 冒充）", () => {
+    const lines = announcementDateLines({ ...base, scheduledDrawDateLabel: null, drawnAtLabel: null });
+    expect(lines).toEqual(["抽獎日待公佈"]);
   });
 });

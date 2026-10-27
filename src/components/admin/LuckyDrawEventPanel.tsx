@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Archive, ArchiveRestore, Copy, Facebook, ImageDown, Pencil, Plus, Share2, Ticket, Trash2, Trophy } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { fmtDateTime } from './format';
@@ -10,9 +10,10 @@ import { downloadAnnouncementPng } from '@/lib/luckyAnnouncementPng';
  * LuckyDrawEventPanel —— 抽獎劵活動管理（v2.5.6，LuckyDrawPanel 劵模式右欄）
  *
  * 合約（api/luckyDrawRouter.ts 現況）：
- *   adminCreateEvent{name(≤128), maxWinsPerPerson(1–100)}——限中係全活動累計（pending+confirmed 計），
- *     建立時設定，冇 update endpoint → 現有活動唯讀顯示口径；
- *   adminListEvents→＋entryCount/totalTickets/drawnCount/archivedAt；
+ *   adminCreateEvent{name(≤128), maxWinsPerPerson(1–100), scheduledDrawDate(YYYYMMDD 真實曆日)}——
+ *     限中係全活動累計（pending+confirmed 計），建立時設定，冇 update endpoint → 現有活動唯讀顯示口径；
+ *     預定抽獎日（v2026.10.26.2）建立必填真實曆日，開咗之後可以用 adminSetEventScheduledDrawDate 改；
+ *   adminListEvents→＋entryCount/totalTickets/drawnCount/archivedAt/scheduledDrawDate；
  *   adminSetEventArchived（歸檔＝唔再匯入/抽得，紀錄留底）；
  *   v2.5.8（老闆指令）：adminRenameEvent（改名，唔郁劵數/紀錄）＋ adminDeleteEvent
  *     （刪成個活動：中獎紀錄解綁留底，訂單唔受影響；確認＋mutation pending 防雙擊）；
@@ -26,6 +27,7 @@ export type DrawEvent = {
   id: number;
   name: string;
   maxWinsPerPerson: number;
+  scheduledDrawDate: string | null;
   entryCount: number;
   totalTickets: number;
   drawnCount: number;
@@ -78,6 +80,32 @@ function publicResultsUrl(eventId: number): string {
   return `${base}#/lucky-results/${eventId}`;
 }
 
+/** YYYYMMDD → date input 格式 YYYY-MM-DD（null/唔啱格式 → 空串） */
+function ymdToDateInput(ymd: string | null | undefined): string {
+  return ymd && /^\d{8}$/.test(ymd) ? `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}` : '';
+}
+
+/** date input 值（YYYY-MM-DD）→ YYYYMMDD；唔啱格式 → null */
+function dateInputToYmd(v: string): string | null {
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v.replaceAll('-', '') : null;
+}
+
+/** YYYYMMDD 係咪真實曆日（同年 API 層守衛口径：月份 01–12＋該月真實日數＋閏年） */
+function isRealCalendarYmd(ymd: string): boolean {
+  if (!/^\d{8}$/.test(ymd)) return false;
+  const y = Number(ymd.slice(0, 4));
+  const m = Number(ymd.slice(4, 6));
+  const d = Number(ymd.slice(6, 8));
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/** 顯示用：YYYYMMDD → YYYY-MM-DD */
+function fmtYmd(ymd: string): string {
+  return ymdToDateInput(ymd) || ymd;
+}
+
 function fmtErr(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   if (msg.startsWith('[{')) {
@@ -103,10 +131,15 @@ export default function LuckyDrawEventPanel({
   const utils = trpc.useUtils();
   const [newName, setNewName] = useState('');
   const [newMaxWins, setNewMaxWins] = useState('1');
+  // v2026.10.26.2：開活動必填預定抽獎日（date input 值 YYYY-MM-DD）
+  const [newDrawDate, setNewDrawDate] = useState('');
   const [showEntries, setShowEntries] = useState(true);
   // v2.5.8：改名 inline 編輯＋中獎名單展開＋公告動作 state
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
+  // v2026.10.26.2：所選活動 inline 改預定抽獎日（date input 值 YYYY-MM-DD）
+  const [editingDate, setEditingDate] = useState(false);
+  const [dateValue, setDateValue] = useState('');
   const [showWinners, setShowWinners] = useState(false);
   const [pngBusy, setPngBusy] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -114,6 +147,12 @@ export default function LuckyDrawEventPanel({
   const eventsQuery = trpc.luckyDraw.adminListEvents.useQuery(undefined, { refetchOnWindowFocus: false });
   const events = (eventsQuery.data ?? []) as DrawEvent[];
   const selected = events.find((e) => e.id === selectedEventId) ?? null;
+
+  // 切換活動即取消未提交嘅日期編輯，避免將上一場嘅預填值誤套到下一場。
+  useEffect(() => {
+    setEditingDate(false);
+    setDateValue('');
+  }, [selectedEventId]);
 
   const entriesQuery = trpc.luckyDraw.adminListEventEntries.useQuery(
     { eventId: selectedEventId ?? 0 },
@@ -130,6 +169,10 @@ export default function LuckyDrawEventPanel({
   const createMut = trpc.luckyDraw.adminCreateEvent.useMutation({
     onSuccess: (ev) => {
       toast(`活動《${ev.name}》已建立（每人全活動限中 ${ev.maxWinsPerPerson} 次）`, 'success');
+      // 只有伺服器確認建立先清表格；失敗時保留管理員已輸入嘅名稱、日期同限中次數。
+      setNewName('');
+      setNewMaxWins('1');
+      setNewDrawDate('');
       invalidateEvents();
       onSelectEvent(ev.id);
     },
@@ -154,6 +197,15 @@ export default function LuckyDrawEventPanel({
     onSuccess: (r) => {
       toast(`活動已改名做《${r.name}》`, 'success');
       setRenaming(false);
+      invalidateEvents();
+    },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
+  // v2026.10.26.2（老闆指令）：改預定抽獎日（唔郁限中／歸檔／已抽紀錄）
+  const drawDateMut = trpc.luckyDraw.adminSetEventScheduledDrawDate.useMutation({
+    onSuccess: (r) => {
+      toast(`預定抽獎日已改做 ${fmtYmd(r.scheduledDrawDate)}`, 'success');
+      setEditingDate(false);
       invalidateEvents();
     },
     onError: (e) => toast(fmtErr(e), 'error'),
@@ -186,9 +238,16 @@ export default function LuckyDrawEventPanel({
       toast('每人限中次數要係 1–100', 'error');
       return;
     }
-    createMut.mutate({ name, maxWinsPerPerson: mw });
-    setNewName('');
-    setNewMaxWins('1');
+    const ymd = dateInputToYmd(newDrawDate);
+    if (!ymd) {
+      toast('請揀預定抽獎日', 'error');
+      return;
+    }
+    if (!isRealCalendarYmd(ymd)) {
+      toast('預定抽獎日唔係真實曆日', 'error');
+      return;
+    }
+    createMut.mutate({ name, maxWinsPerPerson: mw, scheduledDrawDate: ymd });
   };
 
   const busy =
@@ -196,6 +255,7 @@ export default function LuckyDrawEventPanel({
     archiveMut.isPending ||
     deleteEntryMut.isPending ||
     renameMut.isPending ||
+    drawDateMut.isPending ||
     deleteEventMut.isPending;
 
   /** v2.5.8：改名提交（空名／無改動唔出 request） */
@@ -211,6 +271,25 @@ export default function LuckyDrawEventPanel({
       return;
     }
     renameMut.mutate({ eventId: selected.id, name });
+  };
+
+  /** v2026.10.26.2：預定抽獎日提交（無改動／pending 唔出 request；假曆日即場擋） */
+  const commitDrawDate = () => {
+    if (!selected || drawDateMut.isPending) return;
+    const ymd = dateInputToYmd(dateValue);
+    if (!ymd) {
+      toast('請揀預定抽獎日', 'error');
+      return;
+    }
+    if (!isRealCalendarYmd(ymd)) {
+      toast('預定抽獎日唔係真實曆日', 'error');
+      return;
+    }
+    if (ymd === selected.scheduledDrawDate) {
+      setEditingDate(false);
+      return;
+    }
+    drawDateMut.mutate({ eventId: selected.id, scheduledDrawDate: ymd });
   };
 
   /** v2.5.8：刪活動（確認講明後果＋pending 防雙擊） */
@@ -252,6 +331,9 @@ export default function LuckyDrawEventPanel({
       const ok = await downloadAnnouncementPng(
         {
           eventName: selected.name,
+          // 預定抽獎日（活動級欄，null＝舊活動未定 → PNG 如實寫「抽獎日待公佈」）
+          scheduledDrawDateLabel: selected.scheduledDrawDate ? fmtYmd(selected.scheduledDrawDate) : null,
+          // 實際抽出時間（最後一筆企得硬 winner；同預定日分開標示，唔會混淆）
           drawnAtLabel: last ? fmtDateTime(String(last.createdAt)) : null,
           winners: standing.map((r) => ({
             name: r.winnerNameSnap ?? r.winnerName ?? '',
@@ -317,41 +399,54 @@ export default function LuckyDrawEventPanel({
         </div>
       )}
 
-      {/* 開活動 */}
-      <div className="grid min-w-0 grid-cols-1 gap-2 rounded-xl border p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]" style={{ borderColor: 'var(--space-line)' }}>
+      {/* 開活動：右欄就算得三百幾 px，都保持兩欄清清楚楚，唔再將日期／按鈕迫成直書。 */}
+      <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-3 sm:grid-cols-2" style={{ borderColor: 'var(--space-line)' }}>
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           placeholder="活動名（例：11月週年祭抽獎劵）"
           maxLength={128}
-          className="min-w-0 w-full rounded-lg border bg-transparent px-2.5 py-1.5 text-[12.5px] text-txt-1 outline-none focus:border-lavender"
+          className="min-w-0 w-full rounded-lg border bg-transparent px-2.5 py-1.5 text-[12.5px] text-txt-1 outline-none focus:border-lavender sm:col-span-2"
           style={{ borderColor: 'var(--space-line)' }}
         />
-        <label className="flex items-center gap-1.5 text-[12px] text-txt-2">
-          每人限中
+        <label className="flex min-w-0 flex-col gap-1.5 text-[12px] text-txt-2">
+          <span>預定抽獎日</span>
           <input
-            type="number"
-            min={1}
-            max={100}
-            value={newMaxWins}
-            onChange={(e) => setNewMaxWins(e.target.value)}
-            className="w-16 rounded-lg border bg-transparent px-2 py-1 text-center font-mono text-[12.5px] text-txt-1 outline-none focus:border-lavender"
-            style={{ borderColor: 'var(--space-line)' }}
+            type="date"
+            value={newDrawDate}
+            onChange={(e) => setNewDrawDate(e.target.value)}
+            aria-label="預定抽獎日"
+            className="min-w-0 w-full rounded-lg border bg-transparent px-2 py-1 font-mono text-[12.5px] text-txt-1 outline-none focus:border-lavender"
+            style={{ borderColor: 'var(--space-line)', colorScheme: 'dark' }}
           />
-          次
+        </label>
+        <label className="flex min-w-0 flex-col gap-1.5 text-[12px] text-txt-2">
+          <span>每人限中次數</span>
+          <span className="flex items-center gap-1.5">
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={newMaxWins}
+              onChange={(e) => setNewMaxWins(e.target.value)}
+              className="w-16 rounded-lg border bg-transparent px-2 py-1 text-center font-mono text-[12.5px] text-txt-1 outline-none focus:border-lavender"
+              style={{ borderColor: 'var(--space-line)' }}
+            />
+            次
+          </span>
         </label>
         <button
           type="button"
           onClick={create}
-          disabled={busy || !newName.trim()}
-          className="inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-[12.5px] font-bold disabled:opacity-40"
+          disabled={busy || !newName.trim() || !newDrawDate}
+          className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-4 py-2 text-[12.5px] font-bold disabled:opacity-40 sm:col-span-2"
           style={{ background: '#F5C518', color: '#241505' }}
         >
           <Plus size={13} aria-hidden="true" />
           開活動
         </button>
-        <p className="text-[11px] leading-relaxed text-txt-3 sm:col-span-3">
-          限中口径：全活動累計——同一持有人喺呢個活動中夠 N 次（待回應＋已確認都計）就抽唔中；取消／客人唔要唔計。開咗之後唔改得。
+        <p className="text-[11px] leading-relaxed text-txt-3 sm:col-span-2">
+          預定抽獎日係對外公佈嘅預定日期（公告頁／公告圖會照實顯示），開咗之後想改可以用活動詳情嘅「改日期」。限中口径：全活動累計——同一持有人喺呢個活動中夠 N 次（待回應＋已確認都計）就抽唔中；取消／客人唔要唔計，開咗之後唔改得。
         </p>
       </div>
 
@@ -402,6 +497,63 @@ export default function LuckyDrawEventPanel({
             <span className="font-mono text-[11.5px] text-txt-3">
               {selected.entryCount} 人・共 {selected.totalTickets} 張劵・已抽出 {selected.drawnCount} 件・每人限中 {selected.maxWinsPerPerson} 次
             </span>
+            {/* v2026.10.26.2：預定抽獎日 inline 修改（Enter 提交／Escape 取消；無改動唔出 request） */}
+            {editingDate ? (
+              <span className="flex shrink-0 items-center gap-1.5">
+                <input
+                  autoFocus
+                  type="date"
+                  value={dateValue}
+                  onChange={(e) => setDateValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitDrawDate();
+                    if (e.key === 'Escape') setEditingDate(false);
+                  }}
+                  aria-label="新預定抽獎日"
+                  className="rounded-lg border bg-transparent px-2 py-1 font-mono text-[12px] text-txt-1 outline-none focus:border-lavender"
+                  style={{ borderColor: '#F5C518', colorScheme: 'dark' }}
+                />
+                <button
+                  type="button"
+                  onClick={commitDrawDate}
+                  disabled={drawDateMut.isPending}
+                  className="shrink-0 rounded-lg border px-2.5 py-1 text-[11.5px] font-bold text-gold disabled:opacity-40"
+                  style={{ borderColor: 'rgba(245,197,24,0.5)' }}
+                >
+                  {drawDateMut.isPending ? '改緊…' : '確定'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingDate(false)}
+                  className="shrink-0 rounded-lg border px-2.5 py-1 text-[11.5px] text-txt-3"
+                  style={{ borderColor: 'var(--space-line)' }}
+                >
+                  取消
+                </button>
+              </span>
+            ) : (
+              <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11.5px] text-txt-3">
+                預定抽獎日：
+                {selected.scheduledDrawDate ? (
+                  <span className="text-gold-soft">{fmtYmd(selected.scheduledDrawDate)}</span>
+                ) : (
+                  <span>未定（對外顯示「抽獎日待公佈」）</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateValue(ymdToDateInput(selected.scheduledDrawDate));
+                    setEditingDate(true);
+                  }}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11.5px] text-txt-3 transition-colors hover:text-gold disabled:opacity-40"
+                  style={{ borderColor: 'var(--space-line)' }}
+                >
+                  <Pencil size={11} aria-hidden="true" />
+                  改日期
+                </button>
+              </span>
+            )}
             <span className="ml-auto flex shrink-0 items-center gap-1.5">
               {/* v2.5.8（老闆指令）：改名掣 */}
               <button

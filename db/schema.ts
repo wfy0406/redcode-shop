@@ -132,7 +132,7 @@ export const listingBatches = pgTable("listingBatches", {
   batchNo: varchar("batchNo", { length: 32 }).notNull().unique(), // LB20260929-483
   liveDate: varchar("liveDate", { length: 8 }), // YYYYMMDD
   liveSession: varchar("liveSession", { length: 16 }), // '1','2'…
-  status: varchar("status", { length: 16 }).notNull(), // 'approved' | 'rejected'
+  status: varchar("status", { length: 16 }).notNull(), // 'processing' | 'approved' | 'rejected'
   itemCount: integer("itemCount").notNull().default(0),
   requestedBy: varchar("requestedBy", { length: 255 }),
   reviewedBy: varchar("reviewedBy", { length: 255 }),
@@ -708,6 +708,10 @@ export const luckyDrawEvents = pgTable("luckyDrawEvents", {
   name: varchar("name", { length: 128 }).notNull(),
   // 每人全活動限中次數（1–100，API 層強制範圍）
   maxWinsPerPerson: integer("maxWinsPerPerson").notNull().default(1),
+  // v2026.10.26.2（老闆指令）：活動級預定抽獎日（香港曆日 YYYYMMDD）。
+  // nullable＝舊活動安全升級（null＝未定/待公佈）；新建立活動 API 層必填真實曆日。
+  // 呢個係「預定」宣佈日期，唔係實際抽出日——實際抽出日睇 winner 嘅 luckyDraws.drawDate。
+  scheduledDrawDate: varchar("scheduledDrawDate", { length: 8 }),
   createdBy: bigint("createdBy", { mode: "number" }),
   createdByName: varchar("createdByName", { length: 255 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),

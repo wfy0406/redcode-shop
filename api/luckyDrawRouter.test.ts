@@ -152,6 +152,7 @@ import { expectedHeaders, hasPkMagic, parseXlsxRows } from "./luckyDrawXlsx";
 import { sendPrizeWinEmail } from "./email";
 import { sendPrizeWinPush } from "./livePush";
 import { forwardOrderToWms } from "./wmsSync";
+import { logAudit } from "./audit";
 
 // hoisted mock 唔直接捕捉 import 綁定；模組載入後先登記 users table identity。
 h.state.userTable = users;
@@ -253,7 +254,7 @@ describe("supervisor 權限", () => {
     reset(null);
     await expect(caller().adminDrawEvent({ prizeId: 9, eventId: 7 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(caller().adminImportExcel({ kind: "list", fileBase64: "eA==" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    await expect(caller().adminCreateEvent({ name: "X", maxWinsPerPerson: 1 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller().adminCreateEvent({ name: "X", maxWinsPerPerson: 1, scheduledDrawDate: "20261201" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(caller().adminRedraw({ drawId: 50 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(caller().adminDraw({ prizeId: 9, filter: { allMembers: true } })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
@@ -1616,6 +1617,146 @@ describe("adminRenameEvent 活動改名（v2.5.8 老闆指令）", () => {
   });
 });
 
+// ───────────────────────── v2026.10.26.2：活動預定抽獎日 scheduledDrawDate ─────────────────────────
+
+describe("adminCreateEvent 預定抽獎日（建立必填 YYYYMMDD 真實曆日）", () => {
+  it("成功：scheduledDrawDate 照寫入 insert values，audit 提預定抽獎日", async () => {
+    const EVENT_ROW = {
+      id: 7, name: "週年慶", maxWinsPerPerson: 1, scheduledDrawDate: "20261201",
+      createdBy: 1, createdByName: "Boss", createdAt: new Date(), archivedAt: null, archivedByName: null,
+    };
+    h.state.queue = [
+      [{ name: "Boss" }], // actorName
+      [EVENT_ROW], // insert returning
+    ];
+    const r = await caller().adminCreateEvent({ name: "週年慶", maxWinsPerPerson: 1, scheduledDrawDate: "20261201" });
+    expect(r).toMatchObject({ id: 7, scheduledDrawDate: "20261201" });
+    const ins = insertsOf(luckyDrawEvents);
+    expect(ins).toHaveLength(1);
+    expect(ins[0].values).toMatchObject({ name: "週年慶", maxWinsPerPerson: 1, scheduledDrawDate: "20261201" });
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.createEvent",
+      targetType: "luckyDrawEvent",
+      targetId: "7",
+      detail: expect.stringContaining("預定抽獎日 2026-12-01"),
+    }));
+  });
+
+  it("唔俾唔填／格式唔啱（唔係 8 位數字）→ input 擋，零 DB 寫", async () => {
+    await expect(
+      caller().adminCreateEvent({ name: "週年慶", maxWinsPerPerson: 1 } as never), // 缺 scheduledDrawDate
+    ).rejects.toThrow();
+    await expect(
+      caller().adminCreateEvent({ name: "週年慶", maxWinsPerPerson: 1, scheduledDrawDate: "2026-12-01" }),
+    ).rejects.toThrow();
+    await expect(
+      caller().adminCreateEvent({ name: "週年慶", maxWinsPerPerson: 1, scheduledDrawDate: "2026121" }),
+    ).rejects.toThrow();
+    expect(h.state.inserts).toHaveLength(0);
+  });
+
+  it("假曆日（2月30日／13月／2026 唔係閏年冇 2月29）→ input 擋，零 DB 寫", async () => {
+    await expect(
+      caller().adminCreateEvent({ name: "A", maxWinsPerPerson: 1, scheduledDrawDate: "20260230" }),
+    ).rejects.toThrow();
+    await expect(
+      caller().adminCreateEvent({ name: "A", maxWinsPerPerson: 1, scheduledDrawDate: "20261301" }),
+    ).rejects.toThrow();
+    await expect(
+      caller().adminCreateEvent({ name: "A", maxWinsPerPerson: 1, scheduledDrawDate: "20260229" }),
+    ).rejects.toThrow();
+    expect(h.state.inserts).toHaveLength(0);
+  });
+
+  it("閏年 2月29（20280229）／12月31 係真實曆日 → 過到驗證落 DB", async () => {
+    h.state.queue = [
+      [{ name: "Boss" }],
+      [{ id: 8, name: "閏年場", maxWinsPerPerson: 1, scheduledDrawDate: "20280229" }],
+    ];
+    const r = await caller().adminCreateEvent({ name: "閏年場", maxWinsPerPerson: 1, scheduledDrawDate: "20280229" });
+    expect(r.scheduledDrawDate).toBe("20280229");
+    expect(insertsOf(luckyDrawEvents)[0].values.scheduledDrawDate).toBe("20280229");
+  });
+});
+
+describe("adminSetEventScheduledDrawDate 改預定抽獎日（event 鎖內重讀＋audit，唔郁限中/歸檔/winner）", () => {
+  it("staff → FORBIDDEN；未登入 → UNAUTHORIZED", async () => {
+    reset({ userId: 3, role: "staff" });
+    await expect(caller().adminSetEventScheduledDrawDate({ eventId: 7, scheduledDrawDate: "20261201" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    reset(null);
+    await expect(caller().adminSetEventScheduledDrawDate({ eventId: 7, scheduledDrawDate: "20261201" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("成功：transaction 內 EVENT_LOCK_NS 雙 key 鎖 → 鎖內重讀 → update 淨係郁 scheduledDrawDate", async () => {
+    h.state.queue = [
+      {}, // tx execute：event 雙 key 鎖
+      [{ id: 7 }], // 鎖內重讀活動
+      [], // update luckyDrawEvents
+    ];
+    const r = await caller().adminSetEventScheduledDrawDate({ eventId: 7, scheduledDrawDate: "20261225" });
+    expect(r).toEqual({ ok: true, id: 7, scheduledDrawDate: "20261225" });
+    expect(h.state.txCount).toBe(1);
+    expect(h.state.executeCount).toBe(1);
+    const lock = pgDialect.sqlToQuery(h.state.executes[0]);
+    expect(lock.sql).toContain("pg_advisory_xact_lock");
+    expect(lock.params).toEqual([845120, 7]); // 同歸檔／改名／抽獎／匯入同一把 event 鎖
+    const upd = h.state.updates.filter((u) => u.table === luckyDrawEvents);
+    expect(upd).toHaveLength(1);
+    expect(upd[0].set).toEqual({ scheduledDrawDate: "20261225" }); // 淨係郁預定抽獎日
+    expectWhere(upd[0].where, ['"id" = $1'], [7]);
+    // 鎖先於 update，中間要有鎖內重讀 select
+    const lockIdx = h.state.ops.findIndex((o) => o.op === "execute");
+    const updIdx = h.state.ops.findIndex((o) => o.op === "update" && o.table === luckyDrawEvents);
+    expect(updIdx).toBeGreaterThan(lockIdx);
+    expect(h.state.ops.slice(lockIdx + 1, updIdx).filter((o) => o.op === "select").length).toBeGreaterThanOrEqual(1);
+    // 唔郁中獎紀錄／劵名單／歸檔欄
+    expect(h.state.updates.filter((u) => u.table === luckyDraws)).toHaveLength(0);
+    expect(h.state.updates.filter((u) => u.table === luckyDrawEventEntries)).toHaveLength(0);
+    expect(h.state.deletes).toHaveLength(0);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.setEventScheduledDrawDate",
+      targetType: "luckyDrawEvent",
+      targetId: "7",
+      detail: "活動預定抽獎日 → 2026-12-25",
+    }));
+  });
+
+  it("hardening：鎖內重讀發現活動啱啱俾人刪咗 → NOT_FOUND，唔 update", async () => {
+    h.state.queue = [
+      {}, // tx event lock
+      [], // 鎖內重讀：活動冇咗
+    ];
+    await expect(caller().adminSetEventScheduledDrawDate({ eventId: 7, scheduledDrawDate: "20261225" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.state.executeCount).toBe(1);
+    expect(h.state.updates).toHaveLength(0);
+  });
+
+  it("假曆日／格式唔啱 → input 擋（唔入 DB、唔入鎖）", async () => {
+    await expect(caller().adminSetEventScheduledDrawDate({ eventId: 7, scheduledDrawDate: "20261131" })).rejects.toThrow(); // 11月冇31號
+    await expect(caller().adminSetEventScheduledDrawDate({ eventId: 7, scheduledDrawDate: "2026/12/01" })).rejects.toThrow();
+    expect(h.state.txCount).toBe(0);
+    expect(h.state.executeCount).toBe(0);
+    expect(h.state.updates).toHaveLength(0);
+  });
+});
+
+describe("adminListEvents 輸出 scheduledDrawDate（後台活動一覽）", () => {
+  it("活動 row 嘅 scheduledDrawDate 原樣輸出（null＝舊活動未定日期）", async () => {
+    h.state.queue = [
+      [
+        { id: 8, name: "新場", maxWinsPerPerson: 1, scheduledDrawDate: "20261201", createdAt: new Date(), archivedAt: null },
+        { id: 7, name: "舊場", maxWinsPerPerson: 1, scheduledDrawDate: null, createdAt: new Date(), archivedAt: null },
+      ],
+      [], // entryStats
+      [], // drawStats
+    ];
+    const r = await caller().adminListEvents();
+    expect(r[0]).toMatchObject({ id: 8, scheduledDrawDate: "20261201" });
+    expect(r[1]).toMatchObject({ id: 7, scheduledDrawDate: null });
+  });
+});
+
+
 describe("adminDeleteEvent 刪除活動（v2.5.8 老闆指令：紀錄留底、訂單唔受影響）", () => {
   it("staff → FORBIDDEN；未登入 → UNAUTHORIZED", async () => {
     reset({ userId: 3, role: "staff" });
@@ -1729,7 +1870,7 @@ describe("adminEventWinners 每場活動中獎名單（內部跟進資料）", (
 // ───────────────────────── v2.5.8：公開中獎公告 ─────────────────────────
 
 describe("publicEventResults 公開中獎公告（唔使登入）", () => {
-  const EVENT_PUB = { id: 7, name: "雙十一．壓軸狂歡", createdAt: new Date() };
+  const EVENT_PUB = { id: 7, name: "雙十一．壓軸狂歡", createdAt: new Date(), scheduledDrawDate: "20261111" };
 
   it("唔使登入都睇到（reset(null)）；活動唔存在或已刪除 → NOT_FOUND", async () => {
     reset(null);
@@ -1737,7 +1878,7 @@ describe("publicEventResults 公開中獎公告（唔使登入）", () => {
     await expect(caller().publicEventResults({ eventId: 7 })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  it("對外只放：顯示名（快照優先）＋獎品名＋抽獎日期時間；唔放電話/email/會員編號/地址", async () => {
+  it("對外只放：活動名＋預定抽獎日＋顯示名（快照優先）＋獎品名＋抽獎日期時間；唔放電話/email/會員編號/地址", async () => {
     reset(null);
     h.state.queue = [
       [EVENT_PUB],
@@ -1749,7 +1890,9 @@ describe("publicEventResults 公開中獎公告（唔使登入）", () => {
       ],
     ];
     const r = await caller().publicEventResults({ eventId: 7 });
-    expect(r.event).toMatchObject({ id: 7, name: "雙十一．壓軸狂歡" });
+    expect(r.event).toMatchObject({ id: 7, name: "雙十一．壓軸狂歡", scheduledDrawDate: "20261111" });
+    // 活動物件白名單：淨係 id/name/createdAt/scheduledDrawDate（唔放 createdBy／限中／歸檔內部欄）
+    expect(Object.keys(r.event).sort()).toEqual(["createdAt", "id", "name", "scheduledDrawDate"]);
     expect(r.winners).toHaveLength(2);
     expect(r.winners[0].name).toBe("陳小明（直播暱稱）"); // 快照優先
     expect(r.winners[1].name).toBe("王小虎"); // 舊紀錄 fallback
@@ -1764,6 +1907,14 @@ describe("publicEventResults 公開中獎公告（唔使登入）", () => {
     expectWhere(winnerSelect.where, ['"eventId" = $1', /"status" in \(/], [7, "pending", "confirmed"]);
   });
 
+  it("舊活動 scheduledDrawDate=null（未定日期）→ 如實輸出 null，唔用 createdAt 冒充", async () => {
+    reset(null);
+    h.state.queue = [[{ ...EVENT_PUB, scheduledDrawDate: null }], []];
+    const r = await caller().publicEventResults({ eventId: 7 });
+    expect(r.event.scheduledDrawDate).toBeNull();
+    expect(r.winners).toEqual([]);
+  });
+
   it("仲未抽獎 → winners 空陣列（公開頁顯示即將公佈，唔係錯誤）", async () => {
     reset(null);
     h.state.queue = [[EVENT_PUB], []];
@@ -1773,19 +1924,23 @@ describe("publicEventResults 公開中獎公告（唔使登入）", () => {
 });
 
 describe("publicEvents 公開公告總頁（唔使登入）", () => {
-  it("回全部未刪除活動＋企得硬中獎數（pending+confirmed 口径）；唔放參加者資料", async () => {
+  it("回全部未刪除活動＋預定抽獎日＋企得硬中獎數（pending+confirmed 口径）；唔放參加者資料", async () => {
     reset(null);
     h.state.queue = [
       [
-        { id: 8, name: "壓軸狂歡", createdAt: new Date() },
-        { id: 7, name: "前夕突擊", createdAt: new Date() },
+        { id: 8, name: "壓軸狂歡", createdAt: new Date(), scheduledDrawDate: "20261201" },
+        { id: 7, name: "前夕突擊", createdAt: new Date(), scheduledDrawDate: null },
       ],
       [{ eventId: 8, n: 3 }, { eventId: 7, n: 0 }],
     ];
     const r = await caller().publicEvents();
     expect(r).toHaveLength(2);
-    expect(r[0]).toMatchObject({ id: 8, winnerCount: 3 });
-    expect(r[1]).toMatchObject({ id: 7, winnerCount: 0 });
+    expect(r[0]).toMatchObject({ id: 8, winnerCount: 3, scheduledDrawDate: "20261201" });
+    expect(r[1]).toMatchObject({ id: 7, winnerCount: 0, scheduledDrawDate: null });
+    // 白名單：每場淨係 id/name/createdAt/scheduledDrawDate/winnerCount
+    for (const ev of r) {
+      expect(Object.keys(ev).sort()).toEqual(["createdAt", "id", "name", "scheduledDrawDate", "winnerCount"]);
+    }
     expect(JSON.stringify(r)).not.toMatch(/phone|email|address|orderNo/i);
   });
 

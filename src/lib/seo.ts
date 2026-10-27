@@ -11,8 +11,9 @@ import { useLocation } from 'react-router';
 export const PAGE_SEO: Record<string, { title: string; description: string }> = {
   '/': {
     title: 'RedCode Fashion Design｜香港女裝直播網店',
+    // 2026-10-27（老闆批准文案）：AI 試穿賣點入公開 SEO copy（網站本身有 /try-on 功能，屬實）
     description:
-      'RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 每晚為你揀選星空下最閃嘅衫。直播專屬優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。',
+      'RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 每晚為你揀選星空下最閃嘅衫。AI 試穿：影張相即刻試穿，即刻睇到著上身效果。直播專屬優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。',
   },
   '/products': {
     title: '全部貨品｜RedCode Fashion Design',
@@ -25,8 +26,9 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   },
   '/about': {
     title: '關於我們｜RedCode Fashion Design',
+    // 2026-10-27（老闆批准文案）：同 api/lib/vite.ts ROUTE_SEO['/about'] 保持一致
     description:
-      'RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。',
+      'RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。',
   },
   '/vip': {
     title: 'VIP 會員｜RedCode Fashion Design',
@@ -100,14 +102,17 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     description: 'RedCode 直播抽獎中獎公告——即場抽出嘅真實幸運兒名單，下一個可能係你。',
   },
   // v2.5.8：公開中獎公告（動態段 /lucky-results/:eventId）
+  // 2026-10-27（Search Console duplicate title 修正）：呢條係單場活動嘅中獎名單詳情頁
+  // （LuckyResults → LuckyResultsEvent），唔係公告總頁；title 用頁面自己嘅用字
+  // 「中獎名單」同總頁「中獎公告」區分，兩條 route 唔再共用同一 title。
   '/lucky-results/:eventId': {
-    title: '中獎公告｜RedCode Fashion Design',
+    title: '中獎名單｜RedCode Fashion Design',
     description: 'RedCode 直播抽獎中獎公告——即場抽出嘅真實幸運兒名單，下一個可能係你。',
   },
 };
 
-/** 按 pathname 攞 SEO；未知路由 fallback 首頁 */
-function resolveSeo(pathname: string): { title: string; description: string } {
+/** 按 pathname 攞 SEO；未知路由 fallback 首頁（export 俾測試驗路由→meta 對應） */
+export function resolveSeo(pathname: string): { title: string; description: string } {
   if (/^\/products\/\d+/.test(pathname)) return PAGE_SEO['/products/:id'];
   if (/^\/receipt\//.test(pathname)) return PAGE_SEO['/receipt/:orderId'];
   if (/^\/lucky-results\/\d+/.test(pathname)) return PAGE_SEO['/lucky-results/:eventId'];
