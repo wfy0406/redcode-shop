@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   EMPTY_TRYON_SIGNALS,
+  FAIRY_DRAG_RETURN_MS,
+  FAIRY_DRAG_THRESHOLD_PX,
+  FAIRY_FLIGHT_STALL_WINDOW_FRAMES,
   FAIRY_STEP_ORDER,
   FAIRY_STEP_TARGET_SELECTORS,
   TRYON_GUIDE_EVENT,
@@ -12,10 +15,14 @@ import {
   computeTryOnStep,
   expandRect,
   fairyOverlapsRect,
+  fairyEscapeTarget,
+  fairyPointSafe,
   getFairyRouteGuide,
   intersectRect,
   parseTryOnGuideAction,
   restPosition,
+  shouldStartFairyDrag,
+  shouldStopStalledFlight,
   visibleActionRect,
   type FairyRect,
   type FairySize,
@@ -218,8 +225,11 @@ describe('可見面積同 viewport 夾取', () => {
     )).toBeNull();
   });
 
-  it('休息位完整喺 viewport', () => {
-    expectInside(restPosition(viewport, fairy), fairy, viewport);
+  it('休息位完整喺 viewport 右下角，唔再寫錯去左下', () => {
+    const rest = restPosition(viewport, fairy);
+    expectInside(rest, fairy, viewport);
+    expect(rest.x).toBe(viewport.w - fairy.w - 16);
+    expect(rest.y).toBe(viewport.h - fairy.h - 64);
   });
 });
 
@@ -261,6 +271,29 @@ describe('碰撞安全：目標、header、浮鈕及 dock', () => {
     expect(placement).not.toBeNull();
     expect(placement!.nearTarget).toBe(false);
     for (const obstacle of obstacles) expect(fairyOverlapsRect(placement!.point, fairy, obstacle)).toBe(false);
+  });
+
+  it('無可見導覽目標時由內容中間返回右下；右下被浮鈕佔用就揀最近安全位', () => {
+    const current = { x: 173, y: 411 };
+    const rest = restPosition(viewport, fairy);
+    expect(chooseFairyPlacement({ viewport, fairy, current, obstacles: [], preferRest: true })?.point).toEqual(rest);
+
+    const blockingFloatButton = {
+      left: rest.x - 4,
+      top: rest.y - 4,
+      width: fairy.w + 8,
+      height: fairy.h + 8,
+    };
+    const moved = chooseFairyPlacement({
+      viewport,
+      fairy,
+      current,
+      obstacles: [blockingFloatButton],
+      preferRest: true,
+    });
+    expect(moved).not.toBeNull();
+    expect(moved!.point).not.toEqual(current);
+    expect(fairyOverlapsRect(moved!.point, fairy, blockingFloatButton)).toBe(false);
   });
 
   it('scroll 新幀舊位仍安全就保持；真相撞先重新掃位', () => {
@@ -598,6 +631,314 @@ describe('TryOn 明確成功事件', () => {
   });
 });
 
+describe('拖曳門檻、安全位檢查及放開返回', () => {
+  const viewport = { w: 390, h: 844 };
+  const fairy = { w: 66, h: 111 };
+
+  it('6px 門檻：輕微郁動唔當拖曳，超過先開始', () => {
+    expect(FAIRY_DRAG_THRESHOLD_PX).toBe(6);
+    expect(shouldStartFairyDrag({ x: 100, y: 100 }, { x: 103, y: 104 })).toBe(false);
+    expect(shouldStartFairyDrag({ x: 100, y: 100 }, { x: 100, y: 105.9 })).toBe(false);
+    expect(shouldStartFairyDrag({ x: 100, y: 100 }, { x: 106, y: 100 })).toBe(true);
+    expect(shouldStartFairyDrag({ x: 100, y: 100 }, { x: 94, y: 100 })).toBe(true);
+  });
+
+  it('放開返回休息位約 5 秒', () => {
+    expect(FAIRY_DRAG_RETURN_MS).toBe(5000);
+  });
+
+  it('fairyPointSafe：完整喺畫面、無碰撞先安全；需 clamp 或撞障礙物就唔安全', () => {
+    const free = { x: 100, y: 400 };
+    expect(fairyPointSafe(free, fairy, [], viewport)).toBe(true);
+    const blocker = { left: 90, top: 390, width: 120, height: 160 };
+    expect(fairyPointSafe(free, fairy, [blocker], viewport)).toBe(false);
+    // 超出 viewport 會被 clamp 移位，唔算仍然安全。
+    expect(fairyPointSafe({ x: -30, y: 400 }, fairy, [], viewport)).toBe(false);
+    expect(fairyPointSafe({ x: 390, y: 400 }, fairy, [], viewport)).toBe(false);
+    // 極細 viewport 下任何位置都被 clamp，唔會誤當安全而停止逃脫。
+    expect(fairyPointSafe({ x: 10, y: 10 }, fairy, [], { w: 40, h: 50 })).toBe(false);
+  });
+});
+
+describe('窗口制飛行 stall 偵測', () => {
+  it('未夠窗口帧數唔會誤停', () => {
+    const window = { frames: 3, start: { x: 0, y: 0 }, startTargetDistance: 500 };
+    expect(shouldStopStalledFlight(window, { x: 0.5, y: 0 }, 499.5)).toBe(false);
+  });
+
+  it('窗口內來回震盪（淨位移同接近目標都無進展）即停', () => {
+    const window = { frames: FAIRY_FLIGHT_STALL_WINDOW_FRAMES, start: { x: 100, y: 400 }, startTargetDistance: 700 };
+    expect(shouldStopStalledFlight(window, { x: 106.7, y: 400 }, 700)).toBe(true);
+    expect(shouldStopStalledFlight(window, { x: 93.3, y: 401 }, 702)).toBe(true);
+  });
+
+  it('窗口內有實質位移或持續接近目標唔會停', () => {
+    const window = { frames: 48, start: { x: 100, y: 400 }, startTargetDistance: 700 };
+    expect(shouldStopStalledFlight(window, { x: 180, y: 420 }, 640)).toBe(false);
+    // 沿牆滑動：位置郁得多但目標距離冇縮都當有進展（繞行中）。
+    expect(shouldStopStalledFlight(window, { x: 100, y: 250 }, 700)).toBe(false);
+  });
+
+  it('「安全但不可達」全高牆：有限帧內停止，而且唔再左右反轉', () => {
+    const viewport = { w: 1280, h: 800 };
+    const fairy = { w: 86, h: 144 };
+    // 審查重現個案：全高牆擋住，目標喺牆另一邊；目標本身安全但到唔到。
+    const wall: FairyRect = { left: 500, top: 0, width: 120, height: 800 };
+    const target = { x: 1100, y: 400 };
+    let current = { x: 60, y: 400 };
+    let window = { frames: 0, start: { ...current }, startTargetDistance: Math.hypot(target.x - current.x, target.y - current.y) };
+    let stoppedAt = -1;
+    let reversals = 0;
+    let prevDx = 0;
+    for (let frame = 0; frame < 600 && stoppedAt < 0; frame += 1) {
+      const next = advanceFairyFlight({
+        current, target, viewport, fairy, obstacles: [wall], deltaMs: 16.67, maxSpeed: 1200,
+      });
+      const dx = next.x - current.x;
+      if (prevDx !== 0 && dx !== 0 && Math.sign(dx) !== Math.sign(prevDx)) reversals += 1;
+      if (Math.abs(dx) > 0.01) prevDx = dx;
+      window.frames += 1;
+      const remaining = Math.hypot(target.x - next.x, target.y - next.y);
+      if (shouldStopStalledFlight(window, next, remaining)) {
+        stoppedAt = frame;
+      } else if (window.frames >= FAIRY_FLIGHT_STALL_WINDOW_FRAMES) {
+        window = { frames: 0, start: { ...next }, startTargetDistance: remaining };
+      }
+      current = next;
+    }
+    expect(stoppedAt).toBeGreaterThanOrEqual(FAIRY_FLIGHT_STALL_WINDOW_FRAMES - 1);
+    expect(stoppedAt).toBeLessThan(200);
+    // 牆左邊停低，唔會穿牆；全段飛行唔會長期左右拉鋸。
+    expect(current.x + fairy.w).toBeLessThanOrEqual(wall.left + 0.5);
+    expect(reversals).toBeLessThan(60);
+  });
+
+  it('可達目標喺同一窗口規則下唔會被誤停，正常到達', () => {
+    const viewport = { w: 1280, h: 800 };
+    const fairy = { w: 86, h: 144 };
+    const target = { x: 1100, y: 400 };
+    let current = { x: 60, y: 400 };
+    let window = { frames: 0, start: { ...current }, startTargetDistance: Math.hypot(target.x - current.x, target.y - current.y) };
+    let frames = 0;
+    for (; frames < 300 && Math.hypot(target.x - current.x, target.y - current.y) > 0.5; frames += 1) {
+      const next = advanceFairyFlight({ current, target, viewport, fairy, deltaMs: 16.67, maxSpeed: 1200 });
+      window.frames += 1;
+      const remaining = Math.hypot(target.x - next.x, target.y - next.y);
+      expect(shouldStopStalledFlight(window, next, remaining)).toBe(false);
+      if (window.frames >= FAIRY_FLIGHT_STALL_WINDOW_FRAMES) {
+        window = { frames: 0, start: { ...next }, startTargetDistance: remaining };
+      }
+      current = next;
+    }
+    expect(Math.hypot(target.x - current.x, target.y - current.y)).toBeLessThanOrEqual(0.5);
+    expect(frames).toBeLessThan(300);
+  });
+});
+
+describe('unsafe drop 脫困：stall 唔准停喺碰撞位', () => {
+  const viewport = { w: 390, h: 844 };
+  const fairy = { w: 66, h: 110.67 };
+
+  /** 同 GlobalFairyGuide flight loop 一樣嘅 stall＋rescue 脫困規則，純函數重現。 */
+  function simulateWithEscape(
+    start: { x: number; y: number },
+    initialTarget: { x: number; y: number },
+    obstacles: readonly FairyRect[],
+    maxFrames = 1500,
+  ) {
+    let current = { ...start };
+    let destination = { ...initialTarget };
+    const tried: Array<{ x: number; y: number }> = [];
+    const freshWindow = (from: { x: number; y: number }, to: { x: number; y: number }) => ({
+      frames: 0,
+      start: { ...from },
+      startTargetDistance: Math.hypot(to.x - from.x, to.y - from.y),
+    });
+    let window = freshWindow(current, destination);
+    let escapeMode = !fairyPointSafe(current, fairy, obstacles, viewport);
+    for (let frame = 0; frame < maxFrames; frame += 1) {
+      const next = advanceFairyFlight({
+        current, target: destination, viewport, fairy,
+        obstacles: escapeMode ? [] : obstacles, deltaMs: 16.67, maxSpeed: 960,
+      });
+      window.frames += 1;
+      const stillUnsafe = !fairyPointSafe(next, fairy, obstacles, viewport);
+      current = next;
+      if (escapeMode && !stillUnsafe) {
+        escapeMode = false;
+        window = freshWindow(current, destination);
+      }
+      const remaining = Math.hypot(destination.x - next.x, destination.y - next.y);
+      if (remaining <= 0.5) return { point: current, outcome: 'reached' as const, frames: frame + 1 };
+      if (!escapeMode && shouldStopStalledFlight(window, next, remaining)) {
+        if (!stillUnsafe) return { point: current, outcome: 'safe-stall' as const, frames: frame + 1 };
+        escapeMode = true;
+        if (!fairyPointSafe(destination, fairy, obstacles, viewport)) {
+          tried.push(destination);
+          const escape = tried.length <= 8 ? fairyEscapeTarget(next, tried, viewport, fairy, obstacles) : null;
+          if (!escape) return { point: current, outcome: 'exhausted' as const, frames: frame + 1 };
+          destination = escape;
+        }
+        window = freshWindow(current, destination);
+      } else if (window.frames >= FAIRY_FLIGHT_STALL_WINDOW_FRAMES) {
+        window = freshWindow(current, destination);
+      }
+    }
+    return { point: current, outcome: 'timeout' as const, frames: maxFrames };
+  }
+
+  it('fairyEscapeTarget 回最近嘅真 freeAt 安全位，排除已試目標', () => {
+    const cta: FairyRect = { left: 10, top: 464, width: 370, height: 84 };
+    const current = { x: 157, y: 483 };
+    const escape = fairyEscapeTarget(current, [], viewport, fairy, [cta]);
+    expect(escape).not.toBeNull();
+    expect(fairyPointSafe(escape!, fairy, [cta], viewport)).toBe(true);
+    const again = fairyEscapeTarget(current, [escape!], viewport, fairy, [cta]);
+    expect(again).not.toBeNull();
+    expect(Math.hypot(again!.x - escape!.x, again!.y - escape!.y)).toBeGreaterThanOrEqual(24);
+    expect(fairyPointSafe(again!, fairy, [cta], viewport)).toBe(true);
+  });
+
+  it('主線重現個案：拖放上全寬 CTA，有限帧內脫困到唔再重疊嘅安全位', () => {
+    // 390×844 首頁：ring/CTA x15 y469 w360 h74（擴 5），下方浮鈕，上方文字帶。
+    const obstacles: FairyRect[] = [
+      { left: 10, top: 464, width: 370, height: 84 }, // 全寬 CTA（擴 5）
+      { left: 10, top: 300, width: 370, height: 120 }, // CTA 上方內容帶
+      { left: 290, top: 700, width: 80, height: 130 }, // 右下浮鈕
+    ];
+    const drop = { x: 157.46, y: 483.79 };
+    expect(fairyPointSafe(drop, fairy, obstacles, viewport)).toBe(false);
+    const result = simulateWithEscape(drop, { x: 308, y: 717.33 }, obstacles);
+    // 可以到達目標，或中途已 free 就停——重點係最終 freeAt 且唔再冚 CTA，唔准 stall 喺碰撞位。
+    expect(['reached', 'safe-stall']).toContain(result.outcome);
+    expect(result.frames).toBeLessThan(1500);
+    expect(fairyPointSafe(result.point, fairy, obstacles, viewport)).toBe(true);
+    for (const obstacle of obstacles) {
+      expect(fairyOverlapsRect(result.point, fairy, obstacle)).toBe(false);
+    }
+  });
+
+  it('全高牆不可達：已 free 就停安全位，唔會因脫困邏輯亂飛', () => {
+    const wall: FairyRect = { left: 500, top: 0, width: 120, height: 800 };
+    const desktop = { w: 1280, h: 800 };
+    const big = { w: 86, h: 144 };
+    const result = simulateWithEscape({ x: 60, y: 400 }, { x: 1100, y: 400 }, [wall], 600);
+    expect(result.outcome).toBe('safe-stall');
+    expect(fairyPointSafe(result.point, big, [wall], desktop)).toBe(true);
+    expect(result.point.x + big.w).toBeLessThanOrEqual(wall.left + 0.5);
+  });
+
+  it('全部候選都唔 free 嘅極密頁：回 exhausted 而唔係死循環', () => {
+    const full: FairyRect = { left: 0, top: 0, width: 390, height: 844 };
+    expect(fairyEscapeTarget({ x: 100, y: 400 }, [], viewport, fairy, [full])).toBeNull();
+  });
+});
+
+describe('源碼防退化：拖曳、reduced-motion 中途停機及 scroll 唔即時 retarget', () => {
+  const source = readFileSync(new URL('./GlobalFairyGuide.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('./GlobalFairyGuide.css', import.meta.url), 'utf8');
+
+  it('pointer capture 拖曳：6px 門檻、拖曳唔觸發 click、觸控唔捲頁', () => {
+    expect(source).toContain('onPointerDown={onFairyPointerDown}');
+    expect(source).toContain('onPointerMove={onFairyPointerMove}');
+    expect(source).toContain('onPointerUp={(event) => endFairyDrag(event, false)}');
+    expect(source).toContain('onPointerCancel={(event) => endFairyDrag(event, true)}');
+    expect(source).toContain('fairy.setPointerCapture(event.pointerId)');
+    expect(source).toContain('shouldStartFairyDrag(');
+    expect(source).toContain('suppressClickRef.current = true;');
+    expect(source).toContain('if (suppressClickRef.current) {');
+    expect(css).toMatch(/\.fairy-guide-button\s*\{[\s\S]*?touch-action:\s*none/);
+    expect(css).toContain('.fairy-guide-button[data-dragging="true"]');
+  });
+
+  it('拖曳進入即停現有飛行並以肉眼位置接手，唔會閃走', () => {
+    expect(source).toContain('drag.active = true;');
+    expect(source).toContain('if (flightRafRef.current) cancelAnimationFrame(flightRafRef.current);\n      flightRafRef.current = 0;\n      flightLastTimeRef.current = 0;\n      flightTargetRef.current = null;\n      if (openRef.current) setOpen(false);');
+    expect(source).toContain('renderedPositionRef.current = point;\n    positionRef.current = point;');
+  });
+
+  it('放開約 5 秒由肉眼位置連續返回安全休息位，唔准瞬移', () => {
+    expect(source).toContain('FAIRY_DRAG_RETURN_MS');
+    expect(source).toContain('forceReplaceRef.current = true;\n      refresh();');
+    expect(source).toContain('dragReturnTimerRef.current = window.setTimeout(');
+    expect(source).toContain('if (dragReturnTimerRef.current) window.clearTimeout(dragReturnTimerRef.current);');
+    // 放開撞內容會先飛去最近安全位，唔係 hide 或瞬移。
+    expect(source).toContain('`drag-drop|${makeObstacleKey(dropObstacles)}`');
+  });
+
+  it('拖曳 scared、真指引 point、平時閒置循環', () => {
+    expect(source).toContain("? 'scared'");
+    expect(source).toContain(": showGuide && sameRoute && !isScrolling && resolution.ring");
+    expect(source).toContain("? 'point'");
+    expect(source).toContain('action={displayedAction}');
+    expect(source).toContain('if (!isFairyIdleAction(completed)) return;');
+    expect(source).toContain('data-dragging={dragging ?');
+  });
+
+  it('scroll 中現有飛行目標仍安全就唔 retarget，只更新障礙物資料', () => {
+    expect(source).toContain('const keepFlight =');
+    expect(source).toContain('flightMode === lastFlightModeRef.current &&');
+    expect(source).toContain('flightCandidate === lastFlightCandidateRef.current &&');
+    expect(source).toContain('fairyPointSafe(existingTarget, sizeRef.current, flightObstacles, viewportSize)');
+    expect(source).toContain('if (keepFlight && existingTarget) {');
+    expect(source).toContain('flightObstaclesRef.current = flightObstacles;');
+    // 揀位錨點係肉眼位置，唔係幾百毫秒後嘅飛行終點。
+    expect(source).toContain('renderedPositionRef.current ?? positionRef.current');
+  });
+
+  it('reduced-motion 中途切換即停飛行 rAF 並 snap 到安全目標', () => {
+    const reduce = source.slice(
+      source.indexOf('if (!reducedMotion) return;'),
+      source.indexOf('}, [reducedMotion, syncPointing]);'),
+    );
+    expect(reduce).toContain('cancelAnimationFrame(flightRafRef.current)');
+    expect(reduce).toContain('flightTargetRef.current = null;');
+    expect(reduce).toContain('renderedPositionRef.current = { ...target };');
+    // 拖曳緊唔 snap 走用家手底下嘅精靈。
+    expect(reduce).toContain('!draggingRef.current');
+  });
+  it('pointercancel 唔留 suppress 殘留吞下次真 tap；新按下會清狀態', () => {
+    expect(source).toContain('if (!cancelled) suppressClickRef.current = true;');
+    expect(source).not.toMatch(/if \(!drag\.active\) return;\s*\n\s*suppressClickRef\.current = true;/);
+    const pointerDown = source.slice(source.indexOf('const onFairyPointerDown'), source.indexOf('const onFairyPointerMove'));
+    expect(pointerDown).toContain('suppressClickRef.current = false;');
+    expect(pointerDown).toContain('dragReturnPendingRef.current = false;');
+    expect(pointerDown).toContain('clearDragReturnTimer();');
+  });
+
+  it('放開後 5 秒 freeze window：普通 refresh 保持 drop 位，timer 到先強制重揀', () => {
+    expect(source).toContain('const dragReturnPendingRef = useRef(false);');
+    expect(source).toContain('dragReturnPendingRef.current = true;');
+    expect(source).toContain('dragReturnPendingRef.current = false;\n      forceReplaceRef.current = true;\n      refresh();');
+    expect(source).toContain('preferRest: !active && !dragReturnPendingRef.current,');
+  });
+
+  it('cancelled drag 掉喺障礙物都即時去最近安全位', () => {
+    const endDrag = source.slice(source.indexOf('const endFairyDrag'), source.indexOf('const displayedAction'));
+    expect(endDrag).toContain('if (drop) {');
+    expect(endDrag).not.toContain('if (!cancelled && drop) {');
+    expect(endDrag).toContain('`drag-drop|${makeObstacleKey(dropObstacles)}`');
+  });
+
+  it('窗口制 stall 偵測取代單帧 moved 門檻', () => {
+    expect(source).toContain('shouldStopStalledFlight(stallWindow, next, remaining)');
+    expect(source).toContain('FAIRY_FLIGHT_STALL_WINDOW_FRAMES');
+    expect(source).toContain('stallWindow = { frames: 0, start: { ...next }, startTargetDistance: remaining };');
+    expect(source).not.toContain('stalledFrames');
+  });
+
+  it('stall 時仍碰撞唔准停：入 rescue 模式直線去已驗證 freeAt 位，free 先恢復正常碰撞飛行', () => {
+    expect(source).toContain('const stillUnsafe = !fairyPointSafe(next, sizeRef.current, flightObstaclesRef.current, flightViewportRef.current);');
+    expect(source).toContain('obstacles: escapeMode ? [] : flightObstaclesRef.current,');
+    expect(source).toContain('if (escapeMode && !stillUnsafe) {');
+    expect(source).toContain('escapeMode = true;');
+    expect(source).toContain('fairyEscapeTarget(next, escapeTried, flightViewportRef.current, sizeRef.current, flightObstaclesRef.current)');
+    expect(source).toContain('escapeTried.length <= 8');
+    // 拖放脫困要連真指引目標（ring）都當障礙物。
+    expect(source).toContain('const dropObstacles = pointingRingRef.current');
+  });
+});
+
 describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
   const source = readFileSync(new URL('./GlobalFairyGuide.tsx', import.meta.url), 'utf8');
   const css = readFileSync(new URL('./GlobalFairyGuide.css', import.meta.url), 'utf8');
@@ -717,6 +1058,7 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
     expect(source).toContain('now - lastScrollRefreshRef.current >= 80');
     expect(source).toContain('const startFlight = useCallback(');
     expect(source).toContain('advanceFairyFlight({');
+    expect(source).toContain('preferRest: !active');
     expect(source).toContain('renderedPositionRef.current = next');
     expect(source).toContain('point.x.toFixed(2)');
     expect(source).toContain('point.y.toFixed(2)');
@@ -766,7 +1108,8 @@ describe('源碼防退化：舊大面板及假指唔准返嚟', () => {
     expect(source).toContain('{showGuide && sameRoute && !isScrolling && resolution.ring && (');
     expect(source).toContain('setIsScrolling(true);');
     expect(source).toContain('setIsScrolling(false);');
-    expect(source).toContain('if (stalledFrames >= 12)');
+    expect(source).toContain('if (!escapeMode && shouldStopStalledFlight(stallWindow, next, remaining)) {');
+    expect(source).toContain('stallWindow.frames += 1;');
     expect(source).toContain('flightStallKeyRef.current === flightKey');
     expect(css).not.toMatch(/transition:\s*transform/);
   });

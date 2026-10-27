@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, desc, eq, gt, inArray, isNull, lt, or, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sum } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { products, siteSettings, tryOnJobs, users, type TryOnJob } from "@db/schema";
 import {
@@ -47,6 +47,12 @@ import {
   writeTryOnMedia,
 } from "./tryonMedia";
 import { inspectTryOnModelImage } from "./tryonPreflight";
+import {
+  TRYON_ADMIN_ARCHIVE_RETENTION_MS,
+  archiveTryOnMediaCopy,
+  deleteTryOnAdminArchive,
+} from "./tryonAdminArchive";
+import { signTryOnShare, verifyTryOnShare } from "./tryonSharing";
 import type { AuthUser } from "./middleware";
 
 const USAGE_STATUS_LIST = [...TRYON_USAGE_STATUSES] as string[];
@@ -222,6 +228,15 @@ function requestDigest(args: {
     .update(`${args.userId}|${args.productId}|${args.photoIndex}|${args.sourcePublicId ?? "root"}|`)
     .update(args.input)
     .digest("hex");
+}
+
+/** 後台副本係獨立審計資料；寫失敗要留警示，但唔令已成功的客戶生成流程反轉。 */
+async function archiveTryOnMediaBestEffort(publicId: string, kind: "input" | "output"): Promise<void> {
+  try {
+    await archiveTryOnMediaCopy(publicId, kind);
+  } catch {
+    console.warn(`[tryon] admin archive ${kind} copy unavailable for job ${publicId}`);
+  }
 }
 
 export async function createTryOnGeneration(args: {
@@ -495,6 +510,9 @@ export async function createTryOnGeneration(args: {
     });
     throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "私人圖片暫存失敗，請稍後再試" });
   }
+  // 客戶原相寫成功即刻備一份入 30 日後台 archive（best-effort；失敗只留警示，唔反轉已成立嘅工作）。
+  // 之後客戶刪除／24 小時到期清理都郁唔到呢份副本。
+  await archiveTryOnMediaBestEffort(publicId, "input");
   void processTryOnJob(reserved.job.id);
   return serializeTryOnJob(reserved.job);
 }
@@ -678,6 +696,9 @@ export async function processTryOnJob(jobId: number, injectedProvider?: TryOnPro
         try {
           const output = await normalizeTryOnProviderOutput(result.imageDataUri);
           const outputPath = await writeTryOnMedia(job.publicId, "output", output);
+          // 乾淨 output 寫成功即刻備一份入 30 日後台 archive（best-effort）。
+          // 就算下面完成更新同客戶刪除競爭而要清走私人檔，後台副本仍按 createdAt＋30 日獨立保留。
+          await archiveTryOnMediaBestEffort(job.publicId, "output");
           const [completed] = await db
             .update(tryOnJobs)
             .set({
@@ -853,6 +874,114 @@ export async function getOwnedTryOnJob(user: AuthUser, publicId: string) {
   return serializeTryOnJob(job);
 }
 
+/** 客戶自己嘅完成紀錄：server 端強制 userId scope，絕唔靠瀏覽器 sessionStorage 砌歷史。 */
+export async function listMyTryOnRecords(user: AuthUser) {
+  const db = getDb();
+  const rows = await db
+    .select({
+      publicId: tryOnJobs.publicId,
+      lookId: tryOnJobs.lookId,
+      stepNumber: tryOnJobs.stepNumber,
+      productId: tryOnJobs.productId,
+      productName: tryOnJobs.productName,
+      productSku: tryOnJobs.productSku,
+      productPrice: tryOnJobs.productPrice,
+      productDiscountPrice: tryOnJobs.productDiscountPrice,
+      listedDate: products.listedDate,
+      outputImagePath: tryOnJobs.outputImagePath,
+      expiresAt: tryOnJobs.expiresAt,
+      createdAt: tryOnJobs.createdAt,
+      userId: tryOnJobs.userId,
+    })
+    .from(tryOnJobs)
+    .leftJoin(products, eq(products.id, tryOnJobs.productId))
+    .where(
+      and(
+        eq(tryOnJobs.userId, user.userId),
+        eq(tryOnJobs.status, "completed"),
+        isNull(tryOnJobs.mediaDeletedAt),
+        isNotNull(tryOnJobs.outputImagePath),
+        gt(tryOnJobs.expiresAt, new Date()),
+      ),
+    )
+    .orderBy(desc(tryOnJobs.id))
+    .limit(60);
+
+  return rows.map(({ outputImagePath: _outputImagePath, userId, ...row }) => ({
+    ...row,
+    outputUrl: signTryOnMediaUrl({ publicId: row.publicId, kind: "output", userId, secret: env.appSecret }),
+  }));
+}
+
+/** 只有 owner 可以簽發；分享期限直接綁呢個 job 原本嘅 24 小時到期，不會重新延長。 */
+export async function getOwnedTryOnShareLink(user: AuthUser, publicId: string) {
+  const db = getDb();
+  const [job] = await db
+    .select()
+    .from(tryOnJobs)
+    .where(and(eq(tryOnJobs.publicId, publicId), eq(tryOnJobs.userId, user.userId)))
+    .limit(1);
+  if (!job || job.status !== "completed" || !job.outputImagePath || !mediaAvailable(job)) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "呢次試穿已刪除、到期或未能分享" });
+  }
+  const share = signTryOnShare({ publicId: job.publicId, expiresAt: job.expiresAt, secret: env.appSecret });
+  return { url: share.url, expiresAt: share.expiresAt };
+}
+
+/** 公開分享頁 DTO：只回生成圖同公開商品資料，唔回 userId、inputUrl 或任何 storage path。 */
+export async function getSharedTryOnRecord(args: { publicId: string; expires: number; signature: string }) {
+  if (
+    !verifyTryOnShare({
+      publicId: args.publicId,
+      expires: args.expires,
+      supplied: args.signature,
+      secret: env.appSecret,
+    })
+  ) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "分享連結無效或已過期" });
+  }
+  const db = getDb();
+  const [row] = await db
+    .select({
+      publicId: tryOnJobs.publicId,
+      status: tryOnJobs.status,
+      outputImagePath: tryOnJobs.outputImagePath,
+      mediaDeletedAt: tryOnJobs.mediaDeletedAt,
+      expiresAt: tryOnJobs.expiresAt,
+      productId: tryOnJobs.productId,
+      productName: tryOnJobs.productName,
+      productSku: tryOnJobs.productSku,
+      productPrice: tryOnJobs.productPrice,
+      productDiscountPrice: tryOnJobs.productDiscountPrice,
+      listedDate: products.listedDate,
+    })
+    .from(tryOnJobs)
+    .leftJoin(products, eq(products.id, tryOnJobs.productId))
+    .where(eq(tryOnJobs.publicId, args.publicId))
+    .limit(1);
+  if (
+    !row ||
+    row.status !== "completed" ||
+    !row.outputImagePath ||
+    row.mediaDeletedAt ||
+    row.expiresAt.getTime() !== args.expires ||
+    row.expiresAt.getTime() <= Date.now()
+  ) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "分享內容已過期或唔再可用" });
+  }
+  const share = signTryOnShare({ publicId: row.publicId, expiresAt: row.expiresAt, secret: env.appSecret });
+  return {
+    productId: row.productId,
+    productName: row.productName,
+    productSku: row.productSku,
+    productPrice: row.productPrice,
+    productDiscountPrice: row.productDiscountPrice,
+    listedDate: row.listedDate,
+    outputUrl: share.mediaUrl,
+    expiresAt: row.expiresAt,
+  };
+}
+
 export async function deleteOwnedTryOnMedia(user: AuthUser, publicId: string): Promise<{ ok: true }> {
   const db = getDb();
   const [job] = await db
@@ -1020,16 +1149,48 @@ export async function cleanupExpiredTryOnMedia(): Promise<number> {
   return deleted;
 }
 
+/**
+ * 30 日後台 archive 清理：只按 tryOnJobs.createdAt 判斷（createdAt + 30 日 ≤ now 即刪），
+ * 完全唔睇客戶嘅 expiresAt／mediaDeletedAt——後台副本係獨立審計資料，
+ * 客戶刪除或 24 小時到期都唔會提早清走，30 日一到就唔會因客戶媒體仍在而多留。
+ * boundary 同 tryOnAdminArchiveAvailable 一致：啱啱好 30 日嗰刻已唔再可睇，所以呢批要刪。
+ */
+export async function cleanupExpiredTryOnAdminArchive(): Promise<number> {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - TRYON_ADMIN_ARCHIVE_RETENTION_MS);
+  const expired = await db
+    .select({ id: tryOnJobs.id, publicId: tryOnJobs.publicId })
+    .from(tryOnJobs)
+    .where(lte(tryOnJobs.createdAt, cutoff))
+    .limit(200);
+  let deleted = 0;
+  for (const job of expired) {
+    try {
+      await deleteTryOnAdminArchive(job.publicId);
+      deleted++;
+    } catch {
+      // 刪唔到留待下一輪重試；唔會標記任何客戶欄位。
+    }
+  }
+  return deleted;
+}
+
 let mediaSweeperStarted = false;
 export function startTryOnMediaSweeper(): void {
   if (mediaSweeperStarted) return;
   mediaSweeperStarted = true;
   const recover = () => void recoverStaleTryOnJobs().catch(() => console.error("[tryon] stale job recovery failed"));
   const clean = () => void cleanupExpiredTryOnMedia().catch(() => console.error("[tryon] media cleanup failed"));
+  const cleanArchive = () =>
+    void cleanupExpiredTryOnAdminArchive().catch(() => console.error("[tryon] admin archive cleanup failed"));
   recover();
   clean();
+  cleanArchive();
   const recoveryTimer = setInterval(recover, 60 * 1000);
   const mediaTimer = setInterval(clean, 6 * 60 * 60 * 1000);
+  // 後台 archive 30 日 retention：每 6 小時同客戶媒體清理一齊掃（兩者標準獨立，互不影響）。
+  const archiveTimer = setInterval(cleanArchive, 6 * 60 * 60 * 1000);
   recoveryTimer.unref();
   mediaTimer.unref();
+  archiveTimer.unref();
 }

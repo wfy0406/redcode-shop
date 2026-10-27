@@ -132,6 +132,22 @@ describe("同一步失敗重試嘅對外造型清單", () => {
     expect(text).not.toContain("signature=");
   });
 
+  it("WhatsApp 可附 24 小時分享頁，但唔帶私人 signed media URL", () => {
+    const products: TryOnShareProduct[] = [{
+      productId: 101,
+      productName: "短款牛仔外套",
+      productSku: "TOP-101",
+      productPrice: 599,
+      productDiscountPrice: null,
+    }];
+    const shareUrl = "https://redcode.red/try-on/shared/00000000-0000-4000-8000-000000000001?e=123&s=share-signature";
+    const url = buildTryOnWhatsAppUrl(products, "https://redcode.red", shareUrl);
+    const text = decodeURIComponent(url.slice("https://wa.me/?text=".length));
+    expect(text).toContain(`效果圖（24 小時內有效）：${shareUrl}`);
+    expect(text).not.toContain("/api/tryon/media/");
+    expect(text).not.toContain("/api/tryon/shared-media/");
+  });
+
   it("一件商品同樣註明係 AI 試穿；使用生成時價錢快照", () => {
     const text = buildTryOnShareText([{
       productId: 7,

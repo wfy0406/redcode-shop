@@ -1,4 +1,4 @@
-/* 全站 Glo Glo：真透明六幀動作 WebP、細金目標環、非 modal 短氣泡。 */
+/* 全站 Glo Glo：真透明 60 幀動作 WebP、細金目標環、非 modal 短氣泡、pointer 拖曳。 */
 .fairy-guide-root {
   position: fixed;
   inset: 0;
@@ -21,15 +21,20 @@
   border: 0;
   border-radius: 42%;
   background: transparent;
-  cursor: pointer;
+  cursor: grab;
   pointer-events: auto;
-  touch-action: manipulation;
+  /* 精靈可以拖曳：觸控手勢唔准變成捲頁，否則一拖就頁面走位。 */
+  touch-action: none;
   -webkit-tap-highlight-color: transparent;
   /* transform 由時間制飛行 loop 逐幀寫入；唔用 CSS transition 同 JS 兩邊爭控制。 */
   transition: opacity 160ms ease;
   will-change: transform;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+}
+
+.fairy-guide-button[data-dragging="true"] {
+  cursor: grabbing;
 }
 
 .fairy-guide-button:focus-visible {

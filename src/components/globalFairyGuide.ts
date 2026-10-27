@@ -490,7 +490,7 @@ export function clampFairyPosition(
 
 export function restPosition(viewport: FairySize, fairy: FairySize, margin = 16): FairyPoint {
   return clampFairyPosition(
-    { x: margin, y: viewport.h - fairy.h - margin * 4 },
+    { x: viewport.w - fairy.w - margin, y: viewport.h - fairy.h - margin * 4 },
     viewport,
     fairy,
     margin,
@@ -518,6 +518,103 @@ export function visibleActionRect(rect: FairyRect, viewport: FairySize, bounds?:
   const minH = Math.min(28, rect.height);
   const ratio = (visible.width * visible.height) / (rect.width * rect.height);
   return visible.width >= minW && visible.height >= minH && ratio >= 0.35 ? visible : null;
+}
+
+/**
+ * 飛行目的地喺新幾何下是否仍然安全：完整喺 viewport 內（唔需要 clamp 移位）
+ * 而且唔撞任何障礙物。scroll 中流動幾何重讀時，仍安全嘅現有目標唔會被重排。
+ */
+export function fairyPointSafe(
+  point: FairyPoint,
+  fairy: FairySize,
+  obstacles: readonly FairyRect[],
+  viewport: FairySize,
+): boolean {
+  const clamped = clampFairyPosition(point, viewport, fairy);
+  if (Math.abs(clamped.x - point.x) > 0.01 || Math.abs(clamped.y - point.y) > 0.01) return false;
+  return freeAt(point, fairy, obstacles);
+}
+
+/**
+ * 飛行 stall 偵測：以窗口淨位移＋目標距離進展判斷，唔係單幀郁唔郁。
+ * 「安全但不可達」目標會令 advanceFairyFlight 每帧 ±幾 px 左右震盪——
+ * 單帧郁動大過 0.01 所以舊 stalledFrames 永遠唔觸發；窗口內淨位移同
+ * 接近目標距離都無實質進展，先係真 stall。
+ */
+export const FAIRY_FLIGHT_STALL_WINDOW_FRAMES = 24;
+export const FAIRY_FLIGHT_STALL_MIN_PROGRESS_PX = 8;
+
+export interface FairyFlightStallWindow {
+  frames: number;
+  start: FairyPoint;
+  startTargetDistance: number;
+}
+
+export function shouldStopStalledFlight(
+  window: FairyFlightStallWindow,
+  current: FairyPoint,
+  targetDistance: number,
+  minFrames = FAIRY_FLIGHT_STALL_WINDOW_FRAMES,
+  minProgressPx = FAIRY_FLIGHT_STALL_MIN_PROGRESS_PX,
+): boolean {
+  if (window.frames < minFrames) return false;
+  const netMoved = Math.hypot(current.x - window.start.x, current.y - window.start.y);
+  const approached = window.startTargetDistance - targetDistance;
+  return netMoved < minProgressPx && approached < minProgressPx;
+}
+
+/**
+ * stall 後仍碰撞嘅脫困目標：由肉眼位置揀最近嘅真 freeAt 安全位，
+ * 排除已試過嘅目標，逐個方向試，唔會停喺仍然碰撞嘅位置。
+ * 全部候選都唔 free 先回 null（極密頁面接受停留，等幾何改變）。
+ */
+export function fairyEscapeTarget(
+  current: FairyPoint,
+  exclude: readonly FairyPoint[],
+  viewport: FairySize,
+  fairy: FairySize,
+  obstacles: readonly FairyRect[],
+): FairyPoint | null {
+  const isExcluded = (point: FairyPoint) =>
+    exclude.some((tried) => Math.hypot(tried.x - point.x, tried.y - point.y) < 24);
+  const candidates: FairyPoint[] = [];
+  const seen = new Set<string>();
+  const push = (raw: FairyPoint) => {
+    const point = clampFairyPosition(raw, viewport, fairy);
+    const key = `${Math.round(point.x)},${Math.round(point.y)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(point);
+  };
+  // 常用 dock 先試（右下休息位優先），再掃 32px 網格。
+  push(restPosition(viewport, fairy, 16));
+  push({ x: 16, y: viewport.h * 0.56 - fairy.h / 2 });
+  push({ x: viewport.w - fairy.w - 16, y: viewport.h * 0.48 - fairy.h / 2 });
+  push({ x: 16, y: 96 });
+  push({ x: viewport.w - fairy.w - 16, y: 96 });
+  const min = clampFairyPosition({ x: 12, y: 12 }, viewport, fairy);
+  const max = clampFairyPosition({ x: viewport.w - fairy.w - 12, y: viewport.h - fairy.h - 12 }, viewport, fairy);
+  for (let y = min.y; y <= max.y; y += 32) {
+    for (let x = min.x; x <= max.x; x += 32) push({ x, y });
+  }
+  push(max);
+  const viable = candidates
+    .filter((point) => !isExcluded(point))
+    .filter((point) => freeAt(point, fairy, obstacles))
+    .sort((a, b) => Math.hypot(a.x - current.x, a.y - current.y) - Math.hypot(b.x - current.x, b.y - current.y));
+  return viable[0] ?? null;
+}
+
+/** 拖曳：超過 6px 先當拖曳，唔會擋住正常 click；放開約 5 秒後連續飛返安全休息位。 */
+export const FAIRY_DRAG_THRESHOLD_PX = 6;
+export const FAIRY_DRAG_RETURN_MS = 5000;
+
+export function shouldStartFairyDrag(
+  start: FairyPoint,
+  current: FairyPoint,
+  threshold = FAIRY_DRAG_THRESHOLD_PX,
+): boolean {
+  return Math.hypot(current.x - start.x, current.y - start.y) >= threshold;
 }
 
 function gapBetweenRects(a: FairyRect, b: FairyRect): number {
@@ -755,6 +852,8 @@ export interface FairyPlacementInput {
   target?: FairyRect | null;
   obstacles?: readonly FairyRect[];
   current?: FairyPoint | null;
+  /** 冇可見導覽目標時優先返回右下休息位；被浮鈕佔用就先揀最近安全位。 */
+  preferRest?: boolean;
   margin?: number;
   gap?: number;
 }
@@ -773,17 +872,23 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
   const margin = input.margin ?? 12;
   const gap = input.gap ?? 12;
   const obstacles = input.obstacles ?? [];
-  const target = input.target ?? null;
+  const preferRest = input.preferRest ?? false;
+  const target = preferRest ? null : input.target ?? null;
   const collisions = target ? [...obstacles, expandRect(target, 5)] : obstacles;
+  const idealRest = restPosition(viewport, fairy, 16);
+  const currentPoint = current ? clampFairyPosition(current, viewport, fairy, margin) : null;
+  const currentSafe = currentPoint && freeAt(currentPoint, fairy, collisions) ? currentPoint : null;
 
-  // 舊位置仍然安全就唔搬，即使導覽目標改變都一樣；ring 可以更新，精靈唔需要跟住每粒掣閃位。
+  // 冇目標要指時以右下休息位為首選；唔再因舊位置「冇碰撞」就永遠停喺頁面中間。
+  if (preferRest && freeAt(idealRest, fairy, collisions)) {
+    return { point: idealRest, nearTarget: false };
+  }
+
+  // 有導覽目標時，舊位置仍然安全就唔搬；ring 可以更新，精靈唔需要跟住每粒掣閃位。
   // 一旦真正相撞，先揀最近安全出口，再由時間制飛行 loop 連續移過去。
-  if (current) {
-    const point = clampFairyPosition(current, viewport, fairy, margin);
-    if (freeAt(point, fairy, collisions)) {
-      const nearTarget = !!target && gapBetweenRects(rectFromPoint(point, fairy), target) <= gap + 32;
-      return { point, nearTarget };
-    }
+  if (currentSafe && !preferRest) {
+    const nearTarget = !!target && gapBetweenRects(rectFromPoint(currentSafe, fairy), target) <= gap + 32;
+    return { point: currentSafe, nearTarget };
   }
 
   if (target) {
@@ -810,7 +915,7 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
   }
 
   const docks: FairyPoint[] = [
-    restPosition(viewport, fairy, 16),
+    idealRest,
     { x: 16, y: viewport.h * 0.56 - fairy.h / 2 },
     { x: viewport.w - fairy.w - 16, y: viewport.h * 0.48 - fairy.h / 2 },
     { x: 16, y: 96 },
@@ -823,9 +928,10 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
     }))
     .filter(({ point }) => freeAt(point, fairy, collisions))
     .sort((a, b) => {
-      if (!current) return a.index - b.index;
-      const da = Math.hypot(a.point.x - current.x, a.point.y - current.y);
-      const db = Math.hypot(b.point.x - current.x, b.point.y - current.y);
+      const dockAnchor = preferRest ? idealRest : current;
+      if (!dockAnchor) return a.index - b.index;
+      const da = Math.hypot(a.point.x - dockAnchor.x, a.point.y - dockAnchor.y);
+      const db = Math.hypot(b.point.x - dockAnchor.x, b.point.y - dockAnchor.y);
       return da - db || a.index - b.index;
     });
   // 初次進場先用常用 dock；已有位置被撞時，dock 只係候選之一，
@@ -846,7 +952,7 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
     values.push(to);
     return [...new Set(values)];
   };
-  const anchor = current ?? restPosition(viewport, fairy, 16);
+  const anchor = preferRest ? idealRest : current ?? idealRest;
   const grid: Array<{ point: FairyPoint; distance: number }> = viableDocks.map(({ point }) => ({
     point,
     distance: Math.hypot(point.x - anchor.x, point.y - anchor.y),
@@ -861,6 +967,8 @@ export function chooseFairyPlacement(input: FairyPlacementInput): FairyPlacement
   for (const { point } of grid) {
     if (freeAt(point, fairy, collisions)) return { point, nearTarget: false };
   }
+  // 極密頁面如果真係搵唔到更近右下嘅位，安全舊位仍好過硬冚內容或憑空消失。
+  if (currentSafe) return { point: currentSafe, nearTarget: false };
   return null;
 }
 

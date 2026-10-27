@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useLocation } from 'react-router';
 import { X } from 'lucide-react';
 import { usePageVisible } from '@/hooks/usePageVisible';
 import FairyActionAnimation from '@/components/FairyActionAnimation';
-import { nextFairyAction, type FairyAction } from '@/components/fairyActions';
+import { isFairyIdleAction, nextFairyAction, type FairyAction } from '@/components/fairyActions';
 import {
   EMPTY_TRYON_SIGNALS,
   FAIRY_DISMISS_KEY,
+  FAIRY_DRAG_RETURN_MS,
+  FAIRY_FLIGHT_STALL_WINDOW_FRAMES,
   TRYON_GUIDE_EVENT,
   advanceFairyFlight,
   chooseFairyPlacement,
@@ -14,10 +16,15 @@ import {
   computeBubbleLayout,
   computeTryOnStep,
   expandRect,
+  fairyEscapeTarget,
+  fairyPointSafe,
   getFairyRouteGuide,
   intersectRect,
   parseTryOnGuideAction,
+  shouldStartFairyDrag,
+  shouldStopStalledFlight,
   visibleActionRect,
+  type FairyFlightStallWindow,
   type FairyGuideCandidate,
   type FairyPoint,
   type FairyRect,
@@ -359,6 +366,25 @@ export default function GlobalFairyGuide() {
   const flightGeometryKeyRef = useRef('');
   const flightStallKeyRef = useRef<string | null>(null);
   const pointingRingRef = useRef<FairyRect | null>(null);
+  // scroll 中流動幾何唔會即時 retarget：記低現有飛行嘅模式及候選，幾何唔變就只更新障礙物。
+  const lastFlightModeRef = useRef<'target' | 'rest' | null>(null);
+  const lastFlightCandidateRef = useRef<string | null>(null);
+  // 拖曳放開 5 秒後要強制由肉眼位置重新揀安全休息位，唔畀 currentSafe 留喺drop點。
+  const forceReplaceRef = useRef(false);
+  const [dragging, setDragging] = useState(false);
+  const draggingRef = useRef(false);
+  const dragPointerRef = useRef<{
+    id: number;
+    startX: number;
+    startY: number;
+    grabDX: number;
+    grabDY: number;
+    active: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  const dragReturnTimerRef = useRef(0);
+  // 放開後 5000ms freeze window：普通 refresh 保持肉眼 drop 位置，timer 到先強制重揀安全休息位。
+  const dragReturnPendingRef = useRef(false);
 
   useEffect(() => {
     openRef.current = open;
@@ -372,7 +398,9 @@ export default function GlobalFairyGuide() {
   }, []);
 
   // 動作播放器會喺目前動畫真正可顯示後先起計完整循環；scroll 唔會暫停動作。
+  // point／scared 由指引／拖曳狀態即時控制，hold 到時唔會當閒置動作輪轉。
   const completeFairyAction = useCallback((completed: FairyAction) => {
+    if (!isFairyIdleAction(completed)) return;
     setFairyAction((current) => current === completed ? nextFairyAction(current) : current);
   }, []);
 
@@ -390,6 +418,16 @@ export default function GlobalFairyGuide() {
     flightLastTimeRef.current = 0;
     flightGeometryKeyRef.current = '';
     flightStallKeyRef.current = null;
+    lastFlightModeRef.current = null;
+    lastFlightCandidateRef.current = null;
+    forceReplaceRef.current = false;
+    dragPointerRef.current = null;
+    suppressClickRef.current = false;
+    draggingRef.current = false;
+    dragReturnPendingRef.current = false;
+    setDragging(false);
+    if (dragReturnTimerRef.current) window.clearTimeout(dragReturnTimerRef.current);
+    dragReturnTimerRef.current = 0;
     pointingRingRef.current = null;
     fairyRef.current?.removeAttribute('data-pointing');
     if (revealRafRef.current) cancelAnimationFrame(revealRafRef.current);
@@ -418,6 +456,9 @@ export default function GlobalFairyGuide() {
     if (flightRafRef.current) cancelAnimationFrame(flightRafRef.current);
     if (motionRetryTimerRef.current) window.clearTimeout(motionRetryTimerRef.current);
     if (deniedTimerRef.current) window.clearTimeout(deniedTimerRef.current);
+    if (dragReturnTimerRef.current) window.clearTimeout(dragReturnTimerRef.current);
+    dragReturnTimerRef.current = 0;
+    dragReturnPendingRef.current = false;
     refreshTimerRef.current = 0;
     scheduledRafRef.current = 0;
     revealRafRef.current = 0;
@@ -449,6 +490,24 @@ export default function GlobalFairyGuide() {
     const direction = ring.left + ring.width / 2 < point.x + sizeRef.current.w / 2 ? 'left' : 'right';
     fairy.setAttribute('data-pointing', direction);
   }, []);
+
+  // reduced-motion 中途切換：即停飛行 rAF 並 snap 到最新安全目標；唔等下一帧先停。
+  useEffect(() => {
+    if (!reducedMotion) return;
+    if (flightRafRef.current) cancelAnimationFrame(flightRafRef.current);
+    flightRafRef.current = 0;
+    flightLastTimeRef.current = 0;
+    flightTargetRef.current = null;
+    flightStallKeyRef.current = null;
+    const target = positionRef.current;
+    if (target && positionedRef.current && !draggingRef.current) {
+      renderedPositionRef.current = { ...target };
+      if (fairyRef.current) {
+        fairyRef.current.style.transform = `translate3d(${target.x.toFixed(2)}px, ${target.y.toFixed(2)}px, 0)`;
+      }
+      syncPointing(target);
+    }
+  }, [reducedMotion, syncPointing]);
 
   /** DOM transform 專用飛行 loop；layout 重讀同畫面更新分開，手機滾動唔會再被離散座標拉住跳。 */
   const startFlight = useCallback((
@@ -487,14 +546,29 @@ export default function GlobalFairyGuide() {
       return;
     }
     // 同一組幾何真係完全無路行，就停低等新目標／新障礙物；唔好用 60/120Hz 永久空轉。
+    // 但精靈而家仲撞緊內容（unsafe）就唔准用呢個理由停——一定要繼續脫困。
     if (flightStallKeyRef.current === flightKey) {
-      flightTargetRef.current = null;
-      return;
+      const current = renderedPositionRef.current;
+      const unsafe = !!current && !fairyPointSafe(current, size, flightObstaclesRef.current, viewport);
+      if (!unsafe) {
+        flightTargetRef.current = null;
+        return;
+      }
     }
     flightStallKeyRef.current = null;
     if (flightRafRef.current || document.hidden) return;
     flightLastTimeRef.current = 0;
-    let stalledFrames = 0;
+    const flightStart = renderedPositionRef.current;
+    let stallWindow: FairyFlightStallWindow = {
+      frames: 0,
+      start: flightStart ? { ...flightStart } : { ...target },
+      startTargetDistance: flightStart ? Math.hypot(target.x - flightStart.x, target.y - flightStart.y) : 0,
+    };
+    // 脫困救援：一開始位置已碰撞（例如拖放上商品）即入 rescue 模式——
+    // 直線連續飛去已驗證 freeAt 嘅安全位，期間唔被一般障礙物截停；
+    // 呢段係用家拖入障礙物後嘅短暫救援，唔係正常飛行穿牆。free 咗即刻恢復正常碰撞飛行。
+    let escapeMode = !!flightStart && !fairyPointSafe(flightStart, sizeRef.current, flightObstaclesRef.current, flightViewportRef.current);
+    const escapeTried: FairyPoint[] = [];
     let lastGeometryKey = flightKey;
     const frame = (now: number) => {
       flightRafRef.current = 0;
@@ -506,7 +580,11 @@ export default function GlobalFairyGuide() {
       }
       if (lastGeometryKey !== flightGeometryKeyRef.current) {
         lastGeometryKey = flightGeometryKeyRef.current;
-        stalledFrames = 0;
+        stallWindow = {
+          frames: 0,
+          start: { ...current },
+          startTargetDistance: Math.hypot(destination.x - current.x, destination.y - current.y),
+        };
       }
       const deltaMs = flightLastTimeRef.current ? now - flightLastTimeRef.current : 16.67;
       flightLastTimeRef.current = now;
@@ -515,20 +593,65 @@ export default function GlobalFairyGuide() {
         target: destination,
         viewport: flightViewportRef.current,
         fairy: sizeRef.current,
-        obstacles: flightObstaclesRef.current,
+        obstacles: escapeMode ? [] : flightObstaclesRef.current,
         deltaMs,
         maxSpeed: window.innerWidth <= 480 ? 960 : 1200,
       });
-      const moved = Math.hypot(next.x - current.x, next.y - current.y);
-      stalledFrames = moved > 0.01 ? 0 : stalledFrames + 1;
+      stallWindow.frames += 1;
       renderedPositionRef.current = next;
       write(next);
-      if (Math.hypot(destination.x - next.x, destination.y - next.y) > 0.5) {
-        if (stalledFrames >= 12) {
-          flightStallKeyRef.current = flightGeometryKeyRef.current;
-          flightTargetRef.current = null;
-          flightLastTimeRef.current = 0;
+      const stillUnsafe = !fairyPointSafe(next, sizeRef.current, flightObstaclesRef.current, flightViewportRef.current);
+      if (escapeMode && !stillUnsafe) {
+        // 脫困成功：恢復正常碰撞飛行，stall 偵測重新開窗。
+        escapeMode = false;
+        stallWindow = {
+          frames: 0,
+          start: { ...next },
+          startTargetDistance: Math.hypot(destination.x - next.x, destination.y - next.y),
+        };
+      }
+      const remaining = Math.hypot(destination.x - next.x, destination.y - next.y);
+      if (remaining > 0.5) {
+        // 窗口制 stall 偵測：「安全但不可達」目標會令每帧 ±幾 px 來回震盪，
+        // 單帧郁動永遠大過門檻；N 帧窗口內淨位移同接近目標都無實質進展先停，
+        // 等幾何改變先再試。rescue 模式直線飛行唔會 stall。
+        if (!escapeMode && shouldStopStalledFlight(stallWindow, next, remaining)) {
+          if (!stillUnsafe) {
+            // 已經喺安全位：真 stall 先停，唔再震盪。
+            flightStallKeyRef.current = flightGeometryKeyRef.current;
+            flightTargetRef.current = null;
+            flightLastTimeRef.current = 0;
+            return;
+          }
+          // 仍然碰撞（例如拖曳放上商品）：唔准停喺碰撞位。
+          // 入 rescue 模式直線飛去已驗證 freeAt 安全位；
+          // 呢段係用家拖入障礙物後嘅短暫救援，唔係正常穿牆。
+          escapeMode = true;
+          if (!fairyPointSafe(destination, sizeRef.current, flightObstaclesRef.current, flightViewportRef.current)) {
+            escapeTried.push({ ...destination });
+            const escape = escapeTried.length <= 8
+              ? fairyEscapeTarget(next, escapeTried, flightViewportRef.current, sizeRef.current, flightObstaclesRef.current)
+              : null;
+            if (!escape) {
+              // 極密頁面所有候選都唔 free：停低等幾何改變，唔好用 60Hz 永久空轉。
+              flightTargetRef.current = null;
+              flightLastTimeRef.current = 0;
+              return;
+            }
+            flightTargetRef.current = escape;
+          }
+          const resumeTarget = flightTargetRef.current ?? destination;
+          stallWindow = {
+            frames: 0,
+            start: { ...next },
+            startTargetDistance: Math.hypot(resumeTarget.x - next.x, resumeTarget.y - next.y),
+          };
+          flightRafRef.current = requestAnimationFrame(frame);
           return;
+        }
+        if (stallWindow.frames >= FAIRY_FLIGHT_STALL_WINDOW_FRAMES) {
+          // 窗口有實質進展：以而家位置開新窗口繼續觀察，唔會誤停長距離飛行。
+          stallWindow = { frames: 0, start: { ...next }, startTargetDistance: remaining };
         }
         flightRafRef.current = requestAnimationFrame(frame);
       } else {
@@ -632,9 +755,14 @@ export default function GlobalFairyGuide() {
     // 使用者撳開都唔係豁免：氣泡同精靈一樣避開商品、TryOn 媒體、真控制、公告及實際文字。
     bubbleObstaclesRef.current = obstacles.all;
     let placement: ReturnType<typeof chooseFairyPlacement> = null;
-    if (!blocked) {
+    if (!blocked && !draggingRef.current) {
       // 原尺寸真係完全無安全位時，先逐級等比例縮細再重掃；所有商品、文字及控制碰撞照舊。
       // 44px 係最細互動寬度，唔會為咗硬塞而變成難以點擊嘅裝飾點。
+      // 錨點用肉眼真正見到嘅連續位置（唔係幾百毫秒後嘅飛行終點），逃脫時唔會左右反覆。
+      const anchor = forceReplaceRef.current
+        ? null
+        : renderedPositionRef.current ?? positionRef.current;
+      forceReplaceRef.current = false;
       const widths = [...new Set([naturalSize.w, 66, 56, 48, 44].filter((width) => width <= naturalSize.w))];
       for (const width of widths) {
         const size = { w: width, h: width * 768 / 458 };
@@ -643,7 +771,11 @@ export default function GlobalFairyGuide() {
           fairy: size,
           target: active?.visibleRect ?? null,
           obstacles: obstacles.all,
-          current: positionRef.current,
+          current: anchor,
+          // 冇可見目標要指時唔再長期停喺內容中間；返回右下安全待命位。
+          // 有 off-screen 指引時一樣先待命，使用者撳「帶我去」先再出發。
+          // 拖曳放開後 5 秒 freeze window 內例外：保持肉眼 drop 位置，唔提前返回。
+          preferRest: !active && !dragReturnPendingRef.current,
         });
         if (!candidate) continue;
         placement = candidate;
@@ -657,13 +789,31 @@ export default function GlobalFairyGuide() {
     }
 
     if (placement && fairy) {
-      positionRef.current = placement.point;
       const flightObstacles = active?.visibleRect
         ? [...obstacles.all, expandRect(active.visibleRect, 5)]
         : obstacles.all;
+      const flightMode: 'target' | 'rest' = active?.visibleRect ? 'target' : 'rest';
+      const flightCandidate = active?.candidate.id ?? null;
+      const existingTarget = flightTargetRef.current;
+      // scroll 中流動幾何唔即時 retarget：模式同候選不變、現有飛行目標喺新幾何下仍安全，
+      // 就只更新障礙物／viewport 資料，等飛行 loop 繼續去原目標，唔會因重排左右震盪。
+      const keepFlight =
+        !!existingTarget &&
+        flightMode === lastFlightModeRef.current &&
+        flightCandidate === lastFlightCandidateRef.current &&
+        fairyPointSafe(existingTarget, sizeRef.current, flightObstacles, viewportSize);
+      lastFlightModeRef.current = flightMode;
+      lastFlightCandidateRef.current = flightCandidate;
       const needsReveal = !positionedRef.current;
-      const activeKey = active?.visibleRect ? makeObstacleKey([expandRect(active.visibleRect, 5)]) : '';
-      startFlight(placement.point, flightObstacles, viewportSize, `${obstacleKey}|${activeKey}`);
+      if (keepFlight && existingTarget) {
+        positionRef.current = { ...existingTarget };
+        flightObstaclesRef.current = flightObstacles;
+        flightViewportRef.current = viewportSize;
+      } else {
+        positionRef.current = placement.point;
+        const activeKey = active?.visibleRect ? makeObstacleKey([expandRect(active.visibleRect, 5)]) : '';
+        startFlight(placement.point, flightObstacles, viewportSize, `${obstacleKey}|${activeKey}`);
+      }
       if (needsReveal && !revealRafRef.current) {
         revealRafRef.current = requestAnimationFrame(() => {
           revealRafRef.current = 0;
@@ -1006,6 +1156,129 @@ export default function GlobalFairyGuide() {
     target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
   };
 
+  const clearDragReturnTimer = () => {
+    if (dragReturnTimerRef.current) window.clearTimeout(dragReturnTimerRef.current);
+    dragReturnTimerRef.current = 0;
+  };
+
+  /** 滑鼠／觸控拖曳：pointer capture 由按下開始，超過 6px 先進入拖曳，唔會擋正常 click。 */
+  const onFairyPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const fairy = fairyRef.current;
+    const position = renderedPositionRef.current;
+    if (!fairy || !position || !positionedRef.current) return;
+    // 新一次按下即清上一輪殘留狀態：pointercancel 後唔會有 click 被誤吞，
+    // 亦重新計 5 秒 freeze window。
+    suppressClickRef.current = false;
+    dragReturnPendingRef.current = false;
+    clearDragReturnTimer();
+    dragPointerRef.current = {
+      id: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      grabDX: event.clientX - position.x,
+      grabDY: event.clientY - position.y,
+      active: false,
+    };
+    try {
+      fairy.setPointerCapture(event.pointerId);
+    } catch {
+      // 舊瀏覽器冇 capture 都照樣用 move/up 事件拖。
+    }
+  };
+
+  const onFairyPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragPointerRef.current;
+    if (!drag || event.pointerId !== drag.id) return;
+    if (!drag.active) {
+      if (!shouldStartFairyDrag(
+        { x: drag.startX, y: drag.startY },
+        { x: event.clientX, y: event.clientY },
+      )) return;
+      drag.active = true;
+      draggingRef.current = true;
+      setDragging(true);
+      // 拖曳進入即停現有飛行：以肉眼位置接手，精靈唔會閃走或被 flight loop 拉走。
+      if (flightRafRef.current) cancelAnimationFrame(flightRafRef.current);
+      flightRafRef.current = 0;
+      flightLastTimeRef.current = 0;
+      flightTargetRef.current = null;
+      if (openRef.current) setOpen(false);
+    }
+    const viewport = { w: window.innerWidth, h: window.innerHeight };
+    const point = clampFairyPosition(
+      { x: event.clientX - drag.grabDX, y: event.clientY - drag.grabDY },
+      viewport,
+      sizeRef.current,
+    );
+    renderedPositionRef.current = point;
+    positionRef.current = point;
+    if (fairyRef.current) {
+      fairyRef.current.style.transform = `translate3d(${point.x.toFixed(2)}px, ${point.y.toFixed(2)}px, 0)`;
+    }
+  };
+
+  const endFairyDrag = (event: ReactPointerEvent<HTMLButtonElement>, cancelled: boolean) => {
+    const drag = dragPointerRef.current;
+    if (!drag || event.pointerId !== drag.id) return;
+    dragPointerRef.current = null;
+    try {
+      fairyRef.current?.releasePointerCapture(event.pointerId);
+    } catch {
+      // capture 可能已自動釋放。
+    }
+    if (!drag.active) return;
+    // 只有真放開先壓制跟住嘅 click；pointercancel 唔會有 click，
+    // 殘留 suppress 會吞咗下一次真 tap。
+    if (!cancelled) suppressClickRef.current = true;
+    draggingRef.current = false;
+    setDragging(false);
+    // 放開（包括 cancel 掉喺障礙物上）如果撞內容，即時由肉眼位置連續飛去最近安全位；
+    // 唔瞬移、唔提前返回 rest。
+    const drop = renderedPositionRef.current;
+    if (drop) {
+      const viewport = { w: window.innerWidth, h: window.innerHeight };
+      // 拖放安全檢查要連真指引目標（ring）都當障礙物，唔准脫困後仍冚住目標。
+      const dropObstacles = pointingRingRef.current
+        ? [...bubbleObstaclesRef.current, pointingRingRef.current]
+        : bubbleObstaclesRef.current;
+      if (!fairyPointSafe(drop, sizeRef.current, dropObstacles, viewport)) {
+        const safe = chooseFairyPlacement({
+          viewport,
+          fairy: sizeRef.current,
+          obstacles: dropObstacles,
+          current: drop,
+        });
+        if (safe) {
+          positionRef.current = safe.point;
+          startFlight(
+            safe.point,
+            dropObstacles,
+            viewport,
+            `drag-drop|${makeObstacleKey(dropObstacles)}`,
+          );
+        }
+      }
+    }
+    // 放開約 5 秒 freeze window：期間普通 refresh 保持肉眼 drop 位置；
+    // timer 到先由肉眼位置連續返回安全休息位（有真指引目標就去目標旁，否則右下）。
+    dragReturnPendingRef.current = true;
+    clearDragReturnTimer();
+    dragReturnTimerRef.current = window.setTimeout(() => {
+      dragReturnTimerRef.current = 0;
+      dragReturnPendingRef.current = false;
+      forceReplaceRef.current = true;
+      refresh();
+    }, FAIRY_DRAG_RETURN_MS);
+  };
+
+  // 平時閒置循環（shy 喺 ORDER 入面）；有真可見指引目標就 point；拖曳時 scared。
+  const displayedAction: FairyAction = dragging
+    ? 'scared'
+    : showGuide && sameRoute && !isScrolling && resolution.ring
+      ? 'point'
+      : fairyAction;
+
   return (
     <div
       className={`fairy-guide-root${pageVisible ? '' : ' is-paused'}`}
@@ -1033,7 +1306,16 @@ export default function GlobalFairyGuide() {
         aria-expanded={open}
         aria-controls="glo-guide-bubble"
         aria-label={`${hint.title}。撳 Glo Glo 睇導覽提示`}
+        data-dragging={dragging ? 'true' : undefined}
+        onPointerDown={onFairyPointerDown}
+        onPointerMove={onFairyPointerMove}
+        onPointerUp={(event) => endFairyDrag(event, false)}
+        onPointerCancel={(event) => endFairyDrag(event, true)}
         onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
           const visiblePoint = renderedPositionRef.current;
           if (visiblePoint) {
             // 使用者撳嘅係而家呢個位置：停低飛行並以實際位置開氣泡，唔會即刻又飛走留低舊氣泡。
@@ -1059,7 +1341,7 @@ export default function GlobalFairyGuide() {
       >
         <span className="fairy-guide-float" aria-hidden="true">
           <FairyActionAnimation
-            action={fairyAction}
+            action={displayedAction}
             animate={pageVisible && !reducedMotion}
             replay={actionReplay}
             onHoldComplete={completeFairyAction}

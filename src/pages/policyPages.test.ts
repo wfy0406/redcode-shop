@@ -28,9 +28,9 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 describe("政策頁更新日期", () => {
-  it("兩頁都註明 2026 年 10 月 26 日", () => {
-    expect(privacySrc).toContain("最近更新：2026 年 10 月 26 日");
-    expect(termsSrc).toContain("最近更新：2026 年 10 月 26 日");
+  it("兩頁都註明 2026 年 10 月 28 日", () => {
+    expect(privacySrc).toContain("最近更新：2026 年 10 月 28 日");
+    expect(termsSrc).toContain("最近更新：2026 年 10 月 28 日");
   });
 });
 
@@ -55,9 +55,9 @@ describe("私隱政策：AI 試穿披露（第 2.6 節及相關節）", () => {
     expect(privacySrc).toContain("即時刪除");
   });
 
-  it("保留表述準確：24h 係網站存取有效期，到期後定期清理，唔過度承諾實體即時刪除", () => {
-    expect(privacySrc).toContain("網站存取有效期最長");
-    expect(privacySrc).toContain("到期後唔可以再經網站開啟");
+  it("保留表述準確：前台／分享 24h，到期後定期清理，唔過度承諾實體即時刪除", () => {
+    expect(privacySrc).toContain("你嘅前台及分享存取（24 小時）");
+    expect(privacySrc).toContain("到期後唔可以再經呢啲客戶頁面或分享連結開啟");
     expect(privacySrc).toContain("定期清理");
     expect(privacySrc).toContain("實際刪除完成時間稍為延後");
     // 唔准再寫「到期即自動刪除」式嘅過度承諾
@@ -67,16 +67,22 @@ describe("私隱政策：AI 試穿披露（第 2.6 節及相關節）", () => {
     expect(privacySrc).not.toContain("最多保留 24 小時");
   });
 
-  it("寫明刪圖唔等於刪晒所有紀錄，後台只保留必要工作紀錄（唔包括圖片）", () => {
+  it("分清後台 30 日圖片副本同較長期無圖業務紀錄；前台刪圖唔會即時刪走副本", () => {
+    expect(privacySrc).toContain("主管／管理員後台副本（最多 30 日）");
+    expect(privacySrc).toContain("只限獲授權嘅主管及管理員查閱");
+    expect(privacySrc).toContain("唔會令呢個後台副本即時消失");
     expect(privacySrc).toContain("刪圖唔等於刪晒所有紀錄");
+    expect(privacySrc).toContain("除上述最多 30 日");
     expect(privacySrc).toContain("邊位會員、邊件商品、狀態、時間");
     expect(privacySrc).toContain("唔包括你嘅圖片");
-    expect(privacySrc).toContain("管理員及主管");
   });
 
-  it("寫明分享係客人主動跳轉第三方，網站唔會自動發佈私人圖片", () => {
+  it("寫明主要分享直接傳 PNG、由客人主動發送；離開系統後無法撤回", () => {
+    expect(privacySrc).toContain("PNG 相檔");
+    expect(privacySrc).toContain("經裝置分享面板傳出");
     expect(privacySrc).toContain("唔會自動發佈");
     expect(privacySrc).toContain("唔會自動代你發佈");
+    expect(privacySrc).toContain("無法經本網站撤回");
   });
 
   it("披露對象有第三方 AI 圖像處理服務商類別（唔點名），後續處理受其安排管限", () => {
@@ -159,9 +165,11 @@ describe("服務條款：AI 試穿（第 4 節）", () => {
     expect(termsSrc).toContain("生成失敗唔會扣你嘅個人額度");
   });
 
-  it("第 4.4 條保留表述同私隱一致：24h 係網站存取有效期＋定期清理", () => {
-    expect(termsSrc).toContain("網站存取有效期最長 24 小時");
-    expect(termsSrc).toContain("定期清理");
+  it("第 4.4 條同私隱一致：前台／分享 24h；後台副本最多 30 日，到期拒絕存取並定期清除", () => {
+    expect(termsSrc).toContain("前台原相、結果及分享連結存取有效期最長 24 小時");
+    expect(termsSrc).toContain("後台副本，由工作建立時間起最多保留 30 日");
+    expect(termsSrc).toContain("唔會因前台刪除即時消失");
+    expect(termsSrc).toContain("到期會拒絕存取並定期清除");
     expect(termsSrc).not.toContain("預設最多保留 24 小時");
     expect(termsSrc).not.toContain("最長保留 24 小時");
   });

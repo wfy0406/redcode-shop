@@ -33,7 +33,8 @@ import { isTopupNo } from "./wallet";
 import { logAudit } from "./audit";
 import { RateLimiter } from "./guestUtils";
 import { recheckUserRole } from "./middleware";
-import { tryOnPrivateMedia } from "./tryonHttp";
+import { tryOnPrivateMedia, tryOnSharedMedia } from "./tryonHttp";
+import { tryOnAdminMedia } from "./tryonAdminMedia";
 import { startTryOnMediaSweeper } from "./tryonService";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
@@ -103,6 +104,11 @@ app.get("/api/export/daily", exportDaily);
 
 // AI 試穿私人原相／結果：HMAC＋DB owner＋到期逐次核對；必须喺 /api/* 404 前註冊
 app.get("/api/tryon/media/:publicId/:kind", tryOnPrivateMedia);
+// 分享只回已完成生成圖；同 job 原本 24 小時 expiresAt 綁定，不會因分享而延期
+app.get("/api/tryon/shared-media/:publicId", tryOnSharedMedia);
+// 後台 30 日私人副本：admin-archive HMAC＋Bearer＋每 request DB 最新 role（只 supervisor/admin）
+// ＋ createdAt+30d 到期 410＋no-store＋成功讀圖寫 audit；同樣必须喺 /api/* 404 前註冊
+app.get("/api/admin/tryon-media/:publicId/:kind", tryOnAdminMedia);
 
 // WMS → 官網審批回調（shared secret 驗證；同樣喺 tRPC mount 前註冊）
 app.post("/api/wms/review-callback", wmsReviewCallback);

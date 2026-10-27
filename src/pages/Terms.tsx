@@ -16,6 +16,7 @@ import { Link } from 'react-router';
  *   30 分鐘付款期、不設退款、訂單取消自動返還）；原第 4–15 節順延為第 5–17 節，
  *   所有內部交叉引用同步更新；第 9.1／13.4 條補明優惠碼／購物金／運費以結帳重算為準；
  *   第 16.2 條補明第三方連結及主動分享跳轉嘅責任分界。
+ * 2026-10-28：第 4.4 條同步前台／分享 24 小時與後台品質／爭議處理副本最多 30 日嘅安排。
  */
 
 function Section({
@@ -77,7 +78,7 @@ export default function Terms() {
           TERMS OF SERVICE
         </p>
         <p className="mt-3 font-mono text-[13px] tracking-[0.08em] text-txt-3">
-          RedCode Fashion Design · 最近更新：2026 年 10 月 26 日
+          RedCode Fashion Design · 最近更新：2026 年 10 月 28 日
         </p>
       </header>
 
@@ -201,7 +202,7 @@ export default function Terms() {
             <Link to="/privacy" className="text-pink-soft underline underline-offset-4 hover:opacity-80">
               《私隱政策》
             </Link>
-            第 2.6 節為準——私人原相同結果嘅網站存取有效期最長 24 小時，到期後唔可以再經網站開啟，系統其後會定期清理；你可以隨時喺試穿頁面即時刪除。
+            第 2.6 節為準——你嘅前台原相、結果及分享連結存取有效期最長 24 小時，你可以隨時刪除前台圖片並停用分享；主管／管理員為品質、爭議處理及防止濫用另留嘅後台副本，由工作建立時間起最多保留 30 日，唔會因前台刪除即時消失，到期會拒絕存取並定期清除。
           </p>
           <p>
             4.5 我哋可以因服務維護、額度或系統限制，不時暫停或調整 AI

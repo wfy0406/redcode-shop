@@ -3,7 +3,11 @@ import { TRPCError } from "@trpc/server";
 import { adminProcedure, authedProcedure, createRouter, publicQuery, supervisorProcedure } from "./middleware";
 import { env } from "./lib/env";
 import { logAudit } from "./audit";
-import { listTryOnAdminRecords, TRYON_ADMIN_RECORD_STATUSES } from "./tryonAdminRecords";
+import {
+  getTryOnAdminRecordMedia,
+  listTryOnAdminRecords,
+  TRYON_ADMIN_RECORD_STATUSES,
+} from "./tryonAdminRecords";
 import {
   TRYON_CREDITS_PER_GENERATION,
   TRYON_MAX_MIX_STEPS,
@@ -16,8 +20,11 @@ import {
   deleteOwnedTryOnMedia,
   getMyTryOnAccess,
   getOwnedTryOnJob,
+  getOwnedTryOnShareLink,
+  getSharedTryOnRecord,
   getTryOnAdminStats,
   getTryOnSettings,
+  listMyTryOnRecords,
   listTryOnProducts,
   saveTryOnSettings,
   tryOnMediaSecretConfigured,
@@ -80,6 +87,22 @@ export const tryonRouter = createRouter({
     getOwnedTryOnJob(ctx.user, input.publicId),
   ),
 
+  listMyRecords: authedProcedure.query(({ ctx }) => listMyTryOnRecords(ctx.user)),
+
+  getShareLink: authedProcedure.input(z.object({ publicId: publicIdSchema })).query(({ ctx, input }) =>
+    getOwnedTryOnShareLink(ctx.user, input.publicId),
+  ),
+
+  getShared: publicQuery
+    .input(
+      z.object({
+        publicId: publicIdSchema,
+        expires: z.number().int().positive().safe(),
+        signature: z.string().min(1).max(128),
+      }),
+    )
+    .query(({ input }) => getSharedTryOnRecord(input)),
+
   deleteMedia: authedProcedure.input(z.object({ publicId: publicIdSchema })).mutation(({ ctx, input }) =>
     deleteOwnedTryOnMedia(ctx.user, input.publicId),
   ),
@@ -123,9 +146,8 @@ export const tryonRouter = createRouter({
 
   getAdminStats: adminProcedure.query(() => getTryOnAdminStats()),
 
-  // 後台試穿紀錄（2026-10-26）：supervisor／admin 專用——逐件列出邊個會員試咗邊件商品。
-  // 只回會員識別＋商品 snapshot＋狀態＋時間；私人原相／結果圖 URL、storage key、
-  // provider／model、成本、prompt 等一律唔會出（見 api/tryonAdminRecords.ts 紅線註解）。
+  // 後台試穿紀錄：supervisor／admin 專用。列表只回公開商品圖 snapshot；
+  // 私人原相／生成圖要另按「查看圖片」即場簽發，绝唔批量放入列表。
   listAdminRecords: supervisorProcedure
     .input(
       z.object({
@@ -137,4 +159,8 @@ export const tryonRouter = createRouter({
       }),
     )
     .query(({ input }) => listTryOnAdminRecords(input)),
+
+  getAdminRecordMedia: supervisorProcedure
+    .input(z.object({ publicId: publicIdSchema }))
+    .query(({ input }) => getTryOnAdminRecordMedia(input.publicId)),
 });

@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Clock3, RefreshCw, Search, Shirt, X } from '
 import { trpc } from '@/providers/trpc';
 import { fmtDateTime } from './format';
 import { LoadingBlock } from './WishingStar';
+import TryOnRecordMedia from './TryOnRecordMedia';
 import {
   TRYON_RECORD_STATUSES,
   describeTryOnRecord,
@@ -18,8 +19,11 @@ import {
 /**
  * 後台「AI 試穿紀錄」面板（supervisor／admin；後端 tryon.listAdminRecords 把關）
  * ─ 逐件列出真實試穿工作：邊個會員 → 試咗邊件商品（生成時品名/貨號 snapshot）→ 第幾件 → 狀態 → 時間
- * ─ 私隱紅線：私人原相／結果圖、storage key、signed URL 後端根本唔會回嚟，呢度亦唔會有任何圖片連結；
- *   成本／credits／provider／model 等內部技術資料一律唔顯示
+ * ─ 三圖核對（2026-10-28，TryOnRecordMedia）：每筆撳「查看圖片」先按需打 tryon.getAdminRecordMedia
+ *   攞私人圖 URL，再用 fetch 帶 auth token 攞 blob 顯示；list payload 只有
+ *   media: { archiveAvailable, productImageUrl }——私人 URL／storage key／signed URL 絕對唔落 list
+ * ─ 保留期：客戶前台 24 小時；後台原相及生成圖只保留 30 日，過期顯示「已過30日保留期」
+ * ─ 成本／credits／provider／model 等內部技術資料一律唔顯示；圖片只供核對，唔提供下載
  * ─ 唯讀：冇任何修改／刪除操作（刪圖流程同 retention 唔經呢度）
  * ─ 無 props：Admin.tsx 直接 <TryOnRecordsPanel /> 接入（主管＋管理員先用得）
  */
@@ -152,7 +156,8 @@ export default function TryOnRecordsPanel() {
       </div>
       <p className="mt-1.5 text-[13px] text-txt-3">
         真實試穿工作逐件列出：邊個會員、試咗邊件商品（生成時品名／貨號快照）、第幾件、狀態同時間。
-        私人原相同生成結果圖片一律唔會喺度顯示或下載。
+        撳「查看圖片」可核對客戶原相、AI 生成圖同商品圖；私人圖片要經授權核實先顯示，唔提供下載。
+        保留期：客戶前台 24 小時；後台原相及生成圖只保留 30 日，逾期自動刪除。
       </p>
 
       {/* ── 篩選：會員（名/電話）＋商品（品名/貨號）＋狀態 ── */}
@@ -244,7 +249,7 @@ export default function TryOnRecordsPanel() {
         <>
           {/* 桌面版：表格（橫向捲動限喺容器入面，頁面唔會溢出） */}
           <div className="mt-4 hidden overflow-x-auto lg:block">
-            <table className="w-full min-w-[960px] border-collapse text-[13px]">
+            <table className="w-full min-w-[1180px] border-collapse text-[13px]">
               <thead>
                 <tr
                   className="border-b text-left text-[12px] tracking-[0.08em] text-txt-3"
@@ -253,6 +258,7 @@ export default function TryOnRecordsPanel() {
                   <th className="w-32 py-2 pr-3 font-normal">建立時間</th>
                   <th className="py-2 pr-3 font-normal">會員</th>
                   <th className="py-2 pr-3 font-normal">試穿商品</th>
+                  <th className="w-64 py-2 pr-3 font-normal">圖片</th>
                   <th className="w-16 py-2 pr-3 font-normal">第幾件</th>
                   <th className="w-28 py-2 pr-3 font-normal">狀態</th>
                   <th className="w-32 py-2 pr-3 font-normal">完成時間</th>
@@ -273,6 +279,15 @@ export default function TryOnRecordsPanel() {
                     </td>
                     <td className="max-w-0 truncate py-2.5 pr-3">
                       <ProductCell product={item.product} />
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      <TryOnRecordMedia
+                        publicId={item.publicId}
+                        status={item.status}
+                        archiveAvailable={item.media.archiveAvailable}
+                        productImageUrl={item.media.productImageUrl}
+                        describe={describeTryOnRecord(item)}
+                      />
                     </td>
                     <td className="py-2.5 pr-3 font-mono text-[12px] text-txt-2">第 {item.stepNumber} 件</td>
                     <td className="py-2.5 pr-3">
@@ -325,6 +340,17 @@ export default function TryOnRecordsPanel() {
                 <div className="mt-3 border-t pt-2.5" style={{ borderColor: 'var(--space-line)' }}>
                   <ProductCell product={item.product} />
                   <p className="mt-1.5 text-[12px] text-txt-2">第 {item.stepNumber} 件</p>
+                </div>
+
+                {/* 三圖：客戶原相／AI 生成圖／商品圖（按需載入，私人圖帶 auth token fetch） */}
+                <div className="mt-3 border-t pt-2.5" style={{ borderColor: 'var(--space-line)' }}>
+                  <TryOnRecordMedia
+                    publicId={item.publicId}
+                    status={item.status}
+                    archiveAvailable={item.media.archiveAvailable}
+                    productImageUrl={item.media.productImageUrl}
+                    describe={describeTryOnRecord(item)}
+                  />
                 </div>
 
                 <div

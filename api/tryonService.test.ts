@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   inspectTryOnModelImage: vi.fn(),
   writeTryOnMedia: vi.fn(),
   deleteTryOnMedia: vi.fn(),
+  archiveTryOnMediaCopy: vi.fn(),
+  deleteTryOnAdminArchive: vi.fn(),
 }));
 
 vi.mock("./queries/connection", () => ({ getDb: mocks.getDb }));
@@ -36,8 +38,29 @@ vi.mock("./tryonMedia", async (importOriginal) => {
   };
 });
 vi.mock("./tryonPreflight", () => ({ inspectTryOnModelImage: mocks.inspectTryOnModelImage }));
+// 後台 30 日 archive：實際寫檔由 tryonAdminArchive.test.ts 覆蓋；呢度用 spy 驗證接線時機。
+vi.mock("./tryonAdminArchive", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./tryonAdminArchive")>();
+  return {
+    ...actual,
+    archiveTryOnMediaCopy: mocks.archiveTryOnMediaCopy,
+    deleteTryOnAdminArchive: mocks.deleteTryOnAdminArchive,
+  };
+});
 
-import { TRYON_JOB_TIMEOUT_MS, createTryOnGeneration, getMyTryOnAccess, processTryOnJob } from "./tryonService";
+import {
+  TRYON_JOB_TIMEOUT_MS,
+  cleanupExpiredTryOnAdminArchive,
+  createTryOnGeneration,
+  getMyTryOnAccess,
+  getOwnedTryOnShareLink,
+  getSharedTryOnRecord,
+  listMyTryOnRecords,
+  processTryOnJob,
+} from "./tryonService";
+import { TRYON_ADMIN_ARCHIVE_RETENTION_MS } from "./tryonAdminArchive";
+import { signTryOnShare } from "./tryonSharing";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -249,6 +272,8 @@ describe("背景生成失敗結算", () => {
       status: "failed", failureCode: "OUTPUT_STORAGE", creditsUsed: 3,
       estimatedCostCents: 30, costUncertain: false,
     });
+    // 私人 output 寫唔成功就唔可以有後台副本
+    expect(mocks.archiveTryOnMediaCopy).not.toHaveBeenCalled();
   });
 
   it("成功完成：記錄實際 3 credits、私人 output path，唔標成本不確定", async () => {
@@ -264,6 +289,25 @@ describe("背景生成失敗結算", () => {
       outputImagePath: "123e4567-e89b-42d3-a456-426614174000/output.png",
       costUncertain: false, failureCode: null,
     });
+    // output 寫成功後即刻備一份入 30 日後台 archive
+    expect(mocks.archiveTryOnMediaCopy).toHaveBeenCalledTimes(1);
+    expect(mocks.archiveTryOnMediaCopy).toHaveBeenCalledWith(job.publicId, "output");
+    // 接線順序：先寫私人 output 成功，先至複製去後台 archive
+    const writeOrder = mocks.writeTryOnMedia.mock.invocationCallOrder[0]!;
+    const archiveOrder = mocks.archiveTryOnMediaCopy.mock.invocationCallOrder[0]!;
+    expect(archiveOrder).toBeGreaterThan(writeOrder);
+  });
+
+  it("後台 archive 複製失敗唔會反轉已成功嘅完成結算（best-effort）", async () => {
+    const job = makeJob();
+    const { db } = makeDb(job);
+    mocks.getDb.mockReturnValue(db);
+    mocks.archiveTryOnMediaCopy.mockRejectedValue(new Error("archive disk full"));
+    const p = provider({
+      status: vi.fn(async () => ({ state: "completed" as const, imageDataUri: "data:image/png;base64,aGVsbG8=" })),
+    });
+    await processTryOnJob(job.id, p);
+    expect(job).toMatchObject({ status: "completed", creditsUsed: 3, failureCode: null });
   });
 });
 
@@ -348,6 +392,20 @@ function makeTryOnDb(options: TryOnDbOptions = {}) {
           return {
             onConflictDoNothing: async () => undefined,
             returning: async () => [createdJob],
+          };
+        },
+      };
+    },
+    update() {
+      return {
+        set() {
+          return this;
+        },
+        where() {
+          return {
+            returning: async () => [],
+            then: (resolve: (value?: unknown) => unknown, reject?: (reason?: unknown) => unknown) =>
+              Promise.resolve(undefined).then(resolve, reject),
           };
         },
       };
@@ -524,6 +582,141 @@ describe("createTryOnGeneration 同帳號並發防重", () => {
   });
 });
 
+describe("createTryOnGeneration 後台 archive 接線", () => {
+  const savedKey = process.env.FASHN_API_KEY;
+  beforeEach(() => {
+    process.env.FASHN_API_KEY = "test-fashn-key";
+  });
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env.FASHN_API_KEY;
+    else process.env.FASHN_API_KEY = savedKey;
+  });
+
+  const baseInput = {
+    user: { userId: 7, role: "staff" as const },
+    productId: 101,
+    photoIndex: 0,
+    idempotencyKey: "operation-1",
+    modelImage: "data:image/png;base64,iVBORw0KGgo=",
+  };
+
+  it("input 寫入私人目錄成功後，即刻用同一 publicId 備一份入 30 日後台 archive", async () => {
+    const { db, inserted } = makeTryOnDb({ product: makeProduct() });
+    mocks.getDb.mockReturnValue(db);
+    const result = await createTryOnGeneration(baseInput);
+    expect(result.status).toBe("queued");
+    expect(inserted).toHaveLength(1);
+    expect(mocks.writeTryOnMedia).toHaveBeenCalledTimes(1);
+    const [publicId, kind] = mocks.writeTryOnMedia.mock.calls[0] as [string, string, Buffer];
+    expect(kind).toBe("input");
+    expect(mocks.archiveTryOnMediaCopy).toHaveBeenCalledTimes(1);
+    expect(mocks.archiveTryOnMediaCopy).toHaveBeenCalledWith(publicId, "input");
+    // 順序：先寫私人 input 成功，先至複製去後台 archive
+    expect(mocks.archiveTryOnMediaCopy.mock.invocationCallOrder[0]!).toBeGreaterThan(
+      mocks.writeTryOnMedia.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("私人 input 寫檔失敗：唔會有後台副本，工作標記 PRIVATE_STORAGE", async () => {
+    const { db } = makeTryOnDb({ product: makeProduct() });
+    mocks.getDb.mockReturnValue(db);
+    mocks.writeTryOnMedia.mockRejectedValue(new Error("disk full"));
+    await expect(createTryOnGeneration(baseInput)).rejects.toMatchObject({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "私人圖片暫存失敗，請稍後再試",
+    });
+    expect(mocks.archiveTryOnMediaCopy).not.toHaveBeenCalled();
+  });
+
+  it("後台 archive 複製失敗唔會反轉已成立嘅工作（best-effort，照樣起背景生成）", async () => {
+    const { db, inserted } = makeTryOnDb({ product: makeProduct() });
+    mocks.getDb.mockReturnValue(db);
+    mocks.archiveTryOnMediaCopy.mockRejectedValue(new Error("archive disk full"));
+    const result = await createTryOnGeneration(baseInput);
+    expect(result.status).toBe("queued");
+    expect(inserted).toHaveLength(1);
+    expect(mocks.archiveTryOnMediaCopy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("cleanupExpiredTryOnAdminArchive 30 日 retention sweeper", () => {
+  const FIXED_NOW = 1_760_000_000_000;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function makeSweepDb(rows: Array<{ id: number; publicId: string }>) {
+    let capturedWhere: unknown;
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: (where: unknown) => {
+            capturedWhere = where;
+            return { limit: async () => rows };
+          },
+        }),
+      }),
+    };
+    return { db, getWhere: () => capturedWhere };
+  }
+
+  it("只按 createdAt ≤ now−30d 刪後台副本；where 絕唔掛 expiresAt／mediaDeletedAt", async () => {
+    const rows = [
+      { id: 1, publicId: "123e4567-e89b-42d3-a456-426614174000" },
+      { id: 2, publicId: "223e4567-e89b-42d3-a456-426614174000" },
+    ];
+    const { db, getWhere } = makeSweepDb(rows);
+    mocks.getDb.mockReturnValue(db);
+    const deleted = await cleanupExpiredTryOnAdminArchive();
+    expect(deleted).toBe(2);
+    expect(mocks.deleteTryOnAdminArchive).toHaveBeenNthCalledWith(1, rows[0]!.publicId);
+    expect(mocks.deleteTryOnAdminArchive).toHaveBeenNthCalledWith(2, rows[1]!.publicId);
+
+    const q = new PgDialect().sqlToQuery(getWhere() as any);
+    expect(q.sql).toContain("createdAt");
+    expect(q.sql).toContain("<=");
+    // PgDialect 會將 Date 參數序列化成 ISO string；核對實際 cutoff 時刻，唔綁死驅動嘅參數表示法。
+    expect(new Date(q.params[0] as string | Date).getTime()).toBe(
+      FIXED_NOW - TRYON_ADMIN_ARCHIVE_RETENTION_MS,
+    );
+    expect(q.sql).not.toContain("expiresAt");
+    expect(q.sql).not.toContain("mediaDeletedAt");
+  });
+
+  it("cutoff boundary 同 archiveAvailable helper 一致：啱啱好 30 日（createdAt+30d === now）落入刪除範圍", () => {
+    // helper：createdAt + 30d > now 先可睇 → 啱啱好 30 日唔可睇
+    // sweeper：lte(createdAt, now − 30d) → 啱啱好 30 日會被刪。兩者 boundary 完全一致。
+    const cutoff = new Date(FIXED_NOW - TRYON_ADMIN_ARCHIVE_RETENTION_MS);
+    expect(cutoff.getTime() + TRYON_ADMIN_ARCHIVE_RETENTION_MS).toBe(FIXED_NOW);
+  });
+
+  it("個別副本刪除失敗唔會阻其他，回報實際刪到嘅數目，留待下一輪重試", async () => {
+    const rows = [
+      { id: 1, publicId: "123e4567-e89b-42d3-a456-426614174000" },
+      { id: 2, publicId: "223e4567-e89b-42d3-a456-426614174000" },
+    ];
+    const { db } = makeSweepDb(rows);
+    mocks.getDb.mockReturnValue(db);
+    mocks.deleteTryOnAdminArchive
+      .mockRejectedValueOnce(new Error("io error"))
+      .mockResolvedValueOnce(undefined);
+    const deleted = await cleanupExpiredTryOnAdminArchive();
+    expect(deleted).toBe(1);
+    expect(mocks.deleteTryOnAdminArchive).toHaveBeenCalledTimes(2);
+  });
+
+  it("冇到期工作：唔郁任何副本", async () => {
+    const { db } = makeSweepDb([]);
+    mocks.getDb.mockReturnValue(db);
+    expect(await cleanupExpiredTryOnAdminArchive()).toBe(0);
+    expect(mocks.deleteTryOnAdminArchive).not.toHaveBeenCalled();
+  });
+});
+
 describe("createTryOnGeneration 已刪除步驟嘅混搭分叉", () => {
   const savedKey = process.env.FASHN_API_KEY;
   beforeEach(() => {
@@ -606,5 +799,183 @@ describe("createTryOnGeneration 已刪除步驟嘅混搭分叉", () => {
     expect(result.lookItems).toHaveLength(1);
     expect(result.lookItems[0]).toMatchObject({ mediaDeleted: true });
     expect(result.lookItems[0]).not.toHaveProperty("mediaDeletedAt");
+  });
+});
+
+describe("客戶試穿紀錄及 24 小時分享 DTO", () => {
+  const FIXED_NOW = 1_760_000_000_000;
+
+  function makeHistoryDb(rows: Array<Record<string, unknown>>) {
+    const state = { where: undefined as unknown };
+    const limit = vi.fn(async () => rows);
+    const orderBy = vi.fn(() => ({ limit }));
+    const where = vi.fn((condition: unknown) => {
+      state.where = condition;
+      return { limit, orderBy };
+    });
+    const leftJoin = vi.fn(() => ({ where }));
+    const db = {
+      select: () => ({
+        from: () => ({ where, leftJoin }),
+      }),
+    };
+    return { db, state, limit, orderBy, leftJoin };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("listMyTryOnRecords：server where 強制本人 userId，只回 completed 未刪未到期 output，DTO 無私人路徑", async () => {
+    const row = {
+      publicId: "123e4567-e89b-42d3-a456-426614174000",
+      lookId: "223e4567-e89b-42d3-a456-426614174000",
+      stepNumber: 1,
+      productId: 101,
+      productName: "測試上衣",
+      productSku: "TOP-101",
+      productPrice: 599,
+      productDiscountPrice: 499,
+      listedDate: new Date(FIXED_NOW - 1000),
+      outputImagePath: "private/output.png",
+      expiresAt: new Date(FIXED_NOW + 60_000),
+      createdAt: new Date(FIXED_NOW - 1000),
+      userId: 7,
+    };
+    const h = makeHistoryDb([row]);
+    mocks.getDb.mockReturnValue(h.db);
+
+    const result = await listMyTryOnRecords({ userId: 7, role: "member" });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ productName: "測試上衣", productSku: "TOP-101", productPrice: 599 });
+    expect(result[0]?.outputUrl).toContain("/api/tryon/media/123e4567-e89b-42d3-a456-426614174000/output?");
+    expect(result[0]).not.toHaveProperty("userId");
+    expect(result[0]).not.toHaveProperty("outputImagePath");
+    expect(JSON.stringify(result)).not.toContain("private/output.png");
+    expect(h.limit).toHaveBeenCalledWith(60);
+    expect(h.orderBy).toHaveBeenCalledTimes(1);
+
+    const q = new PgDialect().sqlToQuery(h.state.where as any);
+    expect(q.sql).toContain("userId");
+    expect(q.sql).toContain("status");
+    expect(q.sql).toContain("mediaDeletedAt");
+    expect(q.sql).toContain("expiresAt");
+    expect(q.params).toContain(7);
+    expect(q.params).toContain("completed");
+  });
+
+  it("getOwnedTryOnShareLink：owner scope 綁 publicId＋userId，分享期限同 DB expiresAt 完全一致", async () => {
+    const job = makeJob({
+      status: "completed",
+      outputImagePath: "private/output.png",
+      expiresAt: new Date(FIXED_NOW + 3_600_000),
+    });
+    const h = makeHistoryDb([job as unknown as Record<string, unknown>]);
+    mocks.getDb.mockReturnValue(h.db);
+
+    const result = await getOwnedTryOnShareLink({ userId: 7, role: "member" }, job.publicId);
+    expect(result.expiresAt.getTime()).toBe(job.expiresAt.getTime());
+    const url = new URL(result.url, "https://redcode.example");
+    expect(url.pathname).toBe(`/try-on/shared/${job.publicId}`);
+    expect(Number(url.searchParams.get("e"))).toBe(job.expiresAt.getTime());
+    expect(url.searchParams.get("s")).toBeTruthy();
+    expect(url.searchParams.get("u")).toBeNull();
+
+    const q = new PgDialect().sqlToQuery(h.state.where as any);
+    expect(q.params).toContain(job.publicId);
+    expect(q.params).toContain(7);
+  });
+
+  it("getOwnedTryOnShareLink：非 owner 或已刪都唔簽", async () => {
+    const missing = makeHistoryDb([]);
+    mocks.getDb.mockReturnValue(missing.db);
+    await expect(
+      getOwnedTryOnShareLink({ userId: 99, role: "member" }, "123e4567-e89b-42d3-a456-426614174000"),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const deleted = makeJob({ status: "completed", outputImagePath: "private/output.png", mediaDeletedAt: new Date() });
+    const h = makeHistoryDb([deleted as unknown as Record<string, unknown>]);
+    mocks.getDb.mockReturnValue(h.db);
+    await expect(
+      getOwnedTryOnShareLink({ userId: 7, role: "member" }, deleted.publicId),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("getSharedTryOnRecord：有效凭证只回生成圖同公開商品資料，唔回原相、userId、DB 狀態或私人路徑", async () => {
+    const publicId = "123e4567-e89b-42d3-a456-426614174000";
+    const expiresAt = new Date(FIXED_NOW + 3_600_000);
+    const share = signTryOnShare({ publicId, expiresAt, secret: env.appSecret });
+    const url = new URL(share.url, "https://redcode.example");
+    const row = {
+      publicId,
+      status: "completed",
+      outputImagePath: "private/output.png",
+      mediaDeletedAt: null,
+      expiresAt,
+      productId: 101,
+      productName: "測試上衣",
+      productSku: "TOP-101",
+      productPrice: 599,
+      productDiscountPrice: null,
+      listedDate: new Date(FIXED_NOW - 1000),
+      userId: 7,
+      inputImagePath: "private/input.jpg",
+    };
+    const h = makeHistoryDb([row]);
+    mocks.getDb.mockReturnValue(h.db);
+
+    const result = await getSharedTryOnRecord({
+      publicId,
+      expires: expiresAt.getTime(),
+      signature: url.searchParams.get("s")!,
+    });
+    expect(result.outputUrl).toContain(`/api/tryon/shared-media/${publicId}?`);
+    expect(Object.keys(result).sort()).toEqual([
+      "expiresAt",
+      "listedDate",
+      "outputUrl",
+      "productDiscountPrice",
+      "productId",
+      "productName",
+      "productPrice",
+      "productSku",
+    ].sort());
+    expect(JSON.stringify(result)).not.toContain("private/");
+    expect(JSON.stringify(result)).not.toContain("userId");
+  });
+
+  it("getSharedTryOnRecord：篡改凭证唔會查 DB；DB 期限唔一致都拒絕", async () => {
+    const publicId = "123e4567-e89b-42d3-a456-426614174000";
+    const expiresAt = new Date(FIXED_NOW + 3_600_000);
+    await expect(
+      getSharedTryOnRecord({ publicId, expires: expiresAt.getTime(), signature: "tampered" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mocks.getDb).not.toHaveBeenCalled();
+
+    const share = signTryOnShare({ publicId, expiresAt, secret: env.appSecret });
+    const url = new URL(share.url, "https://redcode.example");
+    const row = {
+      publicId,
+      status: "completed",
+      outputImagePath: "private/output.png",
+      mediaDeletedAt: null,
+      expiresAt: new Date(FIXED_NOW + 7_200_000),
+      productId: 101,
+      productName: "測試上衣",
+      productSku: "TOP-101",
+      productPrice: 599,
+      productDiscountPrice: null,
+      listedDate: null,
+    };
+    const h = makeHistoryDb([row]);
+    mocks.getDb.mockReturnValue(h.db);
+    await expect(
+      getSharedTryOnRecord({ publicId, expires: expiresAt.getTime(), signature: url.searchParams.get("s")! }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

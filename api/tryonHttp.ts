@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { tryOnJobs } from "@db/schema";
 import { env } from "./lib/env";
+import { verifyTryOnShare } from "./tryonSharing";
 import {
   deleteTryOnMedia,
   detectTryOnImageMime,
@@ -14,6 +15,17 @@ import {
 
 function notFound(c: Context): Response {
   return c.json({ error: "Not Found" }, 404);
+}
+
+function imageResponse(c: Context, publicId: string, kind: TryOnMediaKind, bytes: Buffer): Response {
+  const contentType = detectTryOnImageMime(bytes);
+  return c.body(new Uint8Array(bytes), 200, {
+    "Content-Type": contentType,
+    "Cache-Control": "private, no-store, max-age=0",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Content-Disposition": `inline; filename="tryon-${publicId}-${kind}.${contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg"}"`,
+  });
 }
 
 /**
@@ -75,14 +87,51 @@ export async function tryOnPrivateMedia(c: Context): Promise<Response> {
     const storedBytes = await readTryOnMedia(publicId, kind);
     // 原相保持原樣；成果只喺回應時加透明水印。乾淨 stored output 仍供下一步生成使用。
     const bytes = kind === "output" ? await tryOnOutputForDisplay(storedBytes) : storedBytes;
-    const contentType = detectTryOnImageMime(bytes);
-    return c.body(new Uint8Array(bytes), 200, {
-      "Content-Type": contentType,
-      "Cache-Control": "private, no-store, max-age=0",
-      Pragma: "no-cache",
-      Expires: "0",
-      "Content-Disposition": `inline; filename="tryon-${publicId}-${kind}.${contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg"}"`,
-    });
+    return imageResponse(c, publicId, kind, bytes);
+  } catch {
+    return notFound(c);
+  }
+}
+
+/**
+ * 24 小時分享圖：唔使登入，但必須有同 job.expiresAt 完全一致嘅 HMAC。
+ * 每次存取仍查 DB；只回 completed output，絕唔經呢條公開鏈回原相或會員資料。
+ */
+export async function tryOnSharedMedia(c: Context): Promise<Response> {
+  const publicId = c.req.param("publicId") ?? "";
+  const expires = Number(c.req.query("e"));
+  const supplied = c.req.query("s") ?? "";
+  if (!verifyTryOnShare({ publicId, expires, supplied, secret: env.appSecret })) return notFound(c);
+
+  const db = getDb();
+  const [job] = await db
+    .select({
+      id: tryOnJobs.id,
+      status: tryOnJobs.status,
+      outputImagePath: tryOnJobs.outputImagePath,
+      expiresAt: tryOnJobs.expiresAt,
+      mediaDeletedAt: tryOnJobs.mediaDeletedAt,
+    })
+    .from(tryOnJobs)
+    .where(eq(tryOnJobs.publicId, publicId))
+    .limit(1);
+  if (!job || job.mediaDeletedAt) return notFound(c);
+  if (job.expiresAt.getTime() !== expires) return notFound(c);
+  if (job.expiresAt.getTime() <= Date.now()) {
+    if (job.status === "completed" || job.status === "failed") {
+      try {
+        await deleteTryOnMedia(publicId);
+        await db.update(tryOnJobs).set({ mediaDeletedAt: new Date(), updatedAt: new Date() }).where(eq(tryOnJobs.id, job.id));
+      } catch {
+        // 存取已拒絕；實體刪除留待下一輪重試。
+      }
+    }
+    return c.json({ error: "Media expired" }, 410);
+  }
+  if (job.status !== "completed" || !job.outputImagePath) return notFound(c);
+  try {
+    const stored = await readTryOnMedia(publicId, "output");
+    return imageResponse(c, publicId, "output", await tryOnOutputForDisplay(stored));
   } catch {
     return notFound(c);
   }

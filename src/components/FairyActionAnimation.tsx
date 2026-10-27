@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FAIRY_ACTIONS, FAIRY_ACTION_ORDER, type FairyAction } from '@/components/fairyActions';
+import { FAIRY_ACTIONS, FAIRY_ALL_ACTIONS, type FairyAction } from '@/components/fairyActions';
 
 /**
  * 同左上角 logo 一樣用真 alpha 動畫 WebP：poster 先頂住，目前動作 load 完先即時切換。
@@ -27,9 +27,9 @@ export default function FairyActionAnimation({
   const showAnimation = animate && readyAction === action && failedAction !== action;
   const posterAction = loadedPosters.has(action) ? action : posterFallback;
 
-  // 動畫由開局預載；poster 則用下面固定 src 嘅四個 img 預載及追蹤真正 onLoad。
+  // 動畫由開局預載（閒置循環＋指引 point＋拖曳 scared）；poster 則用下面固定 src 嘅 img 預載及追蹤真正 onLoad。
   useEffect(() => {
-    const preloads = FAIRY_ACTION_ORDER.map((name) => {
+    const preloads = FAIRY_ALL_ACTIONS.map((name) => {
       const image = new Image();
       image.src = FAIRY_ACTIONS[name].animation;
       return image;
@@ -65,7 +65,7 @@ export default function FairyActionAnimation({
 
   return (
     <>
-      {FAIRY_ACTION_ORDER.map((name) => (
+      {FAIRY_ALL_ACTIONS.map((name) => (
         <img
           key={name}
           className="fairy-action-poster"

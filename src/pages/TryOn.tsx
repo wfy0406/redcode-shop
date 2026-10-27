@@ -213,6 +213,9 @@ export default function TryOn() {
   const [searchParams] = useSearchParams();
   const preselectProductId = Number(searchParams.get('productId'));
   const preselectPhotoIndex = Number(searchParams.get('photoIndex') ?? 0);
+  const requestedRecord = searchParams.get('record');
+  const recordPublicId = requestedRecord && /^[0-9a-f-]{36}$/i.test(requestedRecord) ? requestedRecord : null;
+  const purchaseRequested = searchParams.get('purchase') === '1';
 
   const [jobState, setJobState] = useState<{ userId: number | null; publicId: string | null }>({
     userId: null,
@@ -311,6 +314,17 @@ export default function TryOn() {
     },
   );
   const job = jobQuery.data;
+  // 次要 WhatsApp／連結分享用 24 小時分享頁；主要分享按鈕會直接傳 PNG 相檔。
+  const shareLinkQuery = trpc.tryon.getShareLink.useQuery(
+    { publicId: currentPublicId ?? '00000000-0000-0000-0000-000000000000' },
+    {
+      enabled: Boolean(user && currentPublicId && job?.status === 'completed' && job.outputUrl && !job.mediaDeleted),
+      retry: false,
+      staleTime: 60_000,
+      gcTime: 0,
+      refetchOnWindowFocus: false,
+    },
+  );
 
   const createMutation = trpc.tryon.create.useMutation();
   const deleteMutation = trpc.tryon.deleteMedia.useMutation();
@@ -359,6 +373,13 @@ export default function TryOn() {
     }
     const currentKey = currentJobStorageKey(userId);
     const batchKey = batchPlanStorageKey(userId);
+    if (recordPublicId) {
+      // 由「我嘅試穿」明確揀咗邊一步，只能經 owner-scope getJob 讀；唔係信任 URL 畀權限。
+      setJobState({ userId, publicId: recordPublicId });
+      setSavedJobPublicId(recordPublicId);
+      window.sessionStorage.removeItem(batchKey);
+      return;
+    }
     const saved = window.sessionStorage.getItem(currentKey);
     setSavedJobPublicId(saved);
     if (navigationType === 'POP' && saved) {
@@ -373,7 +394,7 @@ export default function TryOn() {
       // fresh navigation 取消未提交嘅後續生成；已完成工作及 current id 保留作明確「繼續舊造型」。
       window.sessionStorage.removeItem(batchKey);
     }
-  }, [navigationType, userId, stopCamera]);
+  }, [navigationType, userId, stopCamera, recordPublicId]);
 
   useEffect(() => {
     if (!userId || jobState.userId !== userId || !jobState.publicId) return;
@@ -414,10 +435,25 @@ export default function TryOn() {
       if (job.status === 'failed') notify('今次生成失敗，個人每日額度已按規則處理；可以重試');
       if (job.status === 'completed' || job.status === 'failed') {
         void utils.tryon.getMyAccess.invalidate();
+        void utils.tryon.listMyRecords.invalidate();
       }
     }
     previousJobStatusRef.current = { publicId: job.publicId, status: job.status };
   }, [job, notify, utils]);
+
+  useEffect(() => {
+    if (!purchaseRequested || !recordPublicId || job?.publicId !== recordPublicId || job.status !== 'completed') return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>('[data-testid="tryon-purchase"]');
+      if (!target) return;
+      target.scrollIntoView({
+        block: 'start',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      });
+      target.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [job, purchaseRequested, recordPublicId]);
 
   // 私人 signed URL 有時限（約 10 分鐘）；完成頁長開後 img 會 broken。
   // onError 時做有限制 refetch 攞新 signed URL：每個 job 最多 3 次、最少隔 10 秒，避免無限 loop。
@@ -796,6 +832,7 @@ export default function TryOn() {
     setActionError(null);
     try {
       await deleteMutation.mutateAsync({ publicId: job.publicId });
+      await utils.tryon.listMyRecords.invalidate();
       const parentId = job.sourcePublicId;
       applyBatchPlan(null);
       await utils.tryon.getJob.reset({ publicId: job.publicId });
@@ -808,7 +845,7 @@ export default function TryOn() {
         if (userId) window.sessionStorage.removeItem(currentJobStorageKey(userId));
       }
       setDeleteArmed(false);
-      notify(parentId ? '呢一步私人圖片已刪除，並返回上一步' : '呢次原相同結果已即時刪除');
+      notify(parentId ? '呢一步前台圖片及分享存取已刪除，並返回上一步' : '呢次前台原相、結果及分享存取已即時刪除');
     } catch (error) {
       setActionError(error instanceof Error ? error.message : '刪除失敗，請再試');
     }
@@ -817,7 +854,9 @@ export default function TryOn() {
   const freshCompletedJob = async (): Promise<TryOnJob> => {
     if (!job) throw new Error('搵唔到試穿工作');
     const refreshed = await jobQuery.refetch();
-    const latest = refreshed.data ?? job;
+    // refetch 失敗時 React Query 可能仍保留舊 data；絕唔可以用舊結果绕过刪除／到期重核。
+    if (refreshed.error || !refreshed.data) throw new Error('重新核實結果失敗，請稍後再試');
+    const latest = refreshed.data;
     if (latest.status !== 'completed' || !latest.outputUrl || latest.mediaDeleted) {
       throw new Error('結果圖已刪除、到期或暫時不可用');
     }
@@ -855,23 +894,37 @@ export default function TryOn() {
     }
   };
 
-  const nativeShare = async () => {
+  const shareResult = async () => {
     if (!job || busyAction) return;
     setBusyAction('share');
     setActionError(null);
     try {
+      // 分享前重核 owner、完成狀態、刪除及 24 小時到期，再讀最新 signed output。
       const latest = await freshCompletedJob();
       const productsToShare = shareProductsForJob(latest);
       if (!productsToShare.length) throw new Error('未有成功商品可以分享');
       const text = buildTryOnShareText(productsToShare, window.location.origin);
       const blob = await outputBlob(latest);
-      const file = new File([blob], `RedCode-AI試穿-${latest.productSku}.png`, { type: 'image/png' });
-      if (!navigator.share || !navigator.canShare?.({ files: [file] })) {
-        throw new Error('呢個裝置未能直接分享效果圖；請下載 PNG，再用 WhatsApp 文字分享後附加圖片');
+      const filename = `RedCode-AI試穿-${latest.productSku}-第${latest.stepNumber}件.png`;
+      const file = new File([blob], filename, { type: 'image/png' });
+
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        // 最新用戶指定：主要分享直接經系統分享面板傳 PNG 相檔，唔係只傳連結。
+        await navigator.share({ title: 'RedCode AI 試穿預覽', text, files: [file] });
+        notify('已分享 AI 試穿 PNG 效果圖同商品資料');
+      } else {
+        // 桌面／舊瀏覽器冇文件分享：實際下載同一張 PNG，唔好假稱已經分享成功。
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+        notify('呢個裝置唔支援直接分享相檔；PNG 已下載，請喺相簿或檔案夾分享');
       }
-      await navigator.share({ title: 'RedCode AI 試穿預覽', text, files: [file] });
-      notify('已分享 AI 試穿效果圖同商品資料');
-      // 小精靈導覽：await share 成功先記；用戶取消（AbortError）／失敗會行 catch，唔記
+      // await 系統分享或 PNG 下載真的開始先記；AbortError／失敗唔記。
       emitTryOnGuideAction('share');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -882,11 +935,15 @@ export default function TryOn() {
   };
 
   const nativeShareAvailable = useMemo(supportsNativeFileShare, []);
+
   const whatsAppUrl = useMemo(() => {
-    if (!job || job.status !== 'completed' || !job.outputUrl || job.mediaDeleted) return null;
+    const sharePath = shareLinkQuery.data?.url;
+    if (!sharePath || !job || job.status !== 'completed' || !job.outputUrl || job.mediaDeleted) return null;
     const productsToShare = shareProductsForJob(job);
-    return productsToShare.length ? buildTryOnWhatsAppUrl(productsToShare, window.location.origin) : null;
-  }, [job]);
+    if (!productsToShare.length) return null;
+    const shareUrl = new URL(sharePath, window.location.origin).toString();
+    return buildTryOnWhatsAppUrl(productsToShare, window.location.origin, shareUrl);
+  }, [job, shareLinkQuery.data?.url]);
 
   const creditsPerGeneration = access?.creditsPerGeneration ?? 3;
   const selectionCount = selections.length;
@@ -1108,6 +1165,7 @@ export default function TryOn() {
             <div>
               <p className="tryon-kicker">{isStaff ? 'STAFF PREVIEW' : 'MEMBER ACCESS'}</p>
               <h2>{user.name}，{access?.allowed ? '可以開始' : '暫時未能生成'}</h2>
+              <Link to="/try-on/history" className="tryon-text-button"><Images size={16} />我嘅試穿紀錄</Link>
             </div>
             {accessQuery.isLoading ? (
               <p className="tryon-quota"><LoaderCircle className="tryon-spin" size={18} />讀取額度中…</p>
@@ -1525,42 +1583,32 @@ export default function TryOn() {
                   </figure>
 
                   <div className="tryon-result-meta">
-                    <div><Clock3 size={17} /><p>私人圖片保留至 <strong>{expiryLabel(job.expiresAt)}</strong>（香港時間），逾期或即時刪除後唔可以再下載。</p></div>
+                    <div><Clock3 size={17} /><p>你嘅前台原相、結果圖同分享連結保留至 <strong>{expiryLabel(job.expiresAt)}</strong>（香港時間），逾期或即時刪除後唔可以再開啟。主管／管理員為品質及爭議處理另留後台副本，由生成時間起最多保留 30 日，前台刪除唔會令呢個副本即時消失。</p></div>
                     <div><Shirt size={17} /><p>今次商品：<strong>{job.productName}</strong> · {job.productSku} · {money(job.productDiscountPrice ?? job.productPrice)}（生成時快照）</p></div>
                   </div>
 
                   <TryOnPurchase key={`${job.lookId}:${job.stepNumber}`} job={job} />
 
                   <div className="tryon-share-box">
-                    <div><p className="tryon-kicker">DOWNLOAD &amp; SHARE</p><h3>帶走效果，講清楚係 AI 試穿</h3><p>頁面、下載 PNG 及支援嘅 Web Share 圖片都帶右上角 RedCode 透明水印。分享文案會列晒成功加入嘅商品：品名、貨號、生成時價錢及公開商品網址；兩件就兩組，三件就三組。</p></div>
+                    <div><p className="tryon-kicker">DOWNLOAD &amp; SHARE</p><h3>帶走效果，講清楚係 AI 試穿</h3><p>下載或分享嘅 PNG 都帶右上角 RedCode 透明水印。主要分享會直接經系統分享面板傳出 <strong>PNG 相檔</strong>，並附商品品名、貨號、生成時價錢同公開商品網址；WhatsApp 文字分享就用次要嘅 24 小時效果連結。</p></div>
                     <div className="tryon-share-actions" data-fairy-target="share">
                       <button type="button" className="tryon-secondary-button" onClick={() => void downloadResult()} disabled={!job.outputUrl || job.mediaDeleted || busyAction !== null}>
                         {busyAction === 'download' ? <LoaderCircle className="tryon-spin" size={18} /> : <Download size={18} />}下載 PNG
                       </button>
-                      {nativeShareAvailable ? (
-                        <button type="button" className="tryon-primary-button" onClick={() => void nativeShare()} disabled={!job.outputUrl || job.mediaDeleted || busyAction !== null}>
-                          {busyAction === 'share' ? <LoaderCircle className="tryon-spin" size={18} /> : <Share2 size={18} />}分享效果圖＋商品資料
-                        </button>
-                      ) : whatsAppUrl ? (
-                        <a
-                          className="tryon-primary-button"
-                          href={whatsAppUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={() => emitTryOnGuideAction('share')}
-                        ><MessageCircle size={18} />WhatsApp 分享商品資料</a>
-                      ) : null}
-                      {nativeShareAvailable && whatsAppUrl && (
+                      <button type="button" className="tryon-primary-button" onClick={() => void shareResult()} disabled={!job.outputUrl || job.mediaDeleted || busyAction !== null}>
+                        {busyAction === 'share' ? <LoaderCircle className="tryon-spin" size={18} /> : <Share2 size={18} />}
+                        {nativeShareAvailable ? '分享 PNG 效果圖' : '下載 PNG 去分享'}
+                      </button>
+                      {whatsAppUrl && (
                         <a
                           className="tryon-text-button"
                           href={whatsAppUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          onClick={() => emitTryOnGuideAction('share')}
-                        ><MessageCircle size={16} />只用 WhatsApp 文字</a>
+                        ><MessageCircle size={16} />WhatsApp 分享 24 小時連結＋商品資料</a>
                       )}
                     </div>
-                    <p className="tryon-share-note">Web Share 支援時會分享 PNG＋文字；WhatsApp／wa.me 只帶公開商品資料及網址，<strong>唔會自動附加私人結果圖</strong>。你可以先下載 PNG，再喺 WhatsApp 自行附加。私人 signed URL 不會寫入分享文案。</p>
+                    <p className="tryon-share-note">主要分享流程會<strong>直接傳出 PNG 相檔</strong>，唔會附上你嘅原相或會員資料；裝置唔支援文件分享時，會改為下載 PNG 等你自行分享。24 小時期限只適用於網站紀錄同分享頁連結；<strong>已下載或經系統分享出去嘅 PNG 一經離開系統就無法撤回</strong>。</p>
                   </div>
                 </>
               )}
@@ -1571,10 +1619,10 @@ export default function TryOn() {
 
               <div className="tryon-delete-zone">
                 <p><Images size={16} />要刪除較早步驟，可先喺上面造型紀錄揀返嗰一步。呢度只刪目前步驟，唔會假稱成套已刪。</p>
-                {job.canDelete && !deleteArmed && <button type="button" className="tryon-text-button" onClick={() => setDeleteArmed(true)} disabled={deleteMutation.isPending || createMutation.isPending || batchActionPending}><Trash2 size={16} />即時刪除呢步私人圖片</button>}
+                {job.canDelete && !deleteArmed && <button type="button" className="tryon-text-button" onClick={() => setDeleteArmed(true)} disabled={deleteMutation.isPending || createMutation.isPending || batchActionPending}><Trash2 size={16} />即時刪除呢步前台圖片</button>}
                 {deleteArmed && (
                   <div className="tryon-delete-confirm" role="alert">
-                    <span>確定刪除第 {job.stepNumber} 步嘅輸入及結果？呢個動作不能復原。</span>
+                    <span>確定刪除第 {job.stepNumber} 步嘅前台輸入、結果及分享存取？呢個動作不能復原；後台品質及爭議處理副本會按最多 30 日保留期另行清除。</span>
                     <button type="button" onClick={() => void deleteCurrentMedia()} disabled={deleteMutation.isPending || createMutation.isPending || batchActionPending}>{deleteMutation.isPending ? '刪除中…' : createMutation.isPending || batchActionPending ? '工作建立中…' : '確認刪除'}</button>
                     <button type="button" onClick={() => setDeleteArmed(false)}>取消</button>
                   </div>

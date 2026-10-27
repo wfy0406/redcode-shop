@@ -244,7 +244,7 @@ export default function TryOnPurchase({ job }: { job: TryOnJob }) {
   if (completedItems.length === 0) return null;
 
   return (
-    <section className="tryon-purchase" aria-labelledby="tryon-purchase-title" data-testid="tryon-purchase" data-fairy-target="purchase">
+    <section className="tryon-purchase" aria-labelledby="tryon-purchase-title" data-testid="tryon-purchase" data-fairy-target="purchase" tabIndex={-1}>
       <style>{TRYON_PURCHASE_CSS}</style>
       <header className="tryon-purchase-heading">
         <div>

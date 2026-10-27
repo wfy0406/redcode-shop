@@ -30,6 +30,8 @@ const GuestCheckout = lazy(() => import('@/pages/GuestCheckout')); // 2026-10-09
 const GuestPayment = lazy(() => import('@/pages/GuestPayment')); // 2026-10-09：訪客付款／狀態頁（倒數＋Airwallex 回跳）
 const WalletTopup = lazy(() => import('@/pages/WalletTopup')); // v2.5.0：會員購物金充值（套票＋批核入帳）
 const TryOn = lazy(() => import('@/pages/TryOn')); // AI 試穿／Mix & Match 私人工作枱
+const TryOnHistory = lazy(() => import('@/pages/TryOnHistory')); // 客戶專屬 24 小時試穿紀錄
+const TryOnShared = lazy(() => import('@/pages/TryOnShared')); // 有時限分享頁（只回生成圖及公開商品資料）
 const LuckyResults = lazy(() => import('@/pages/LuckyResults')); // v2.5.8：公開中獎公告頁（唔使登入）
 
 /**
@@ -100,6 +102,8 @@ export default function App() {
             <Route path="payment" element={<Payment />} />
             <Route path="wallet-topup" element={<WalletTopup />} />
             <Route path="try-on" element={<TryOn />} />
+            <Route path="try-on/history" element={<TryOnHistory />} />
+            <Route path="try-on/shared/:publicId" element={<TryOnShared />} />
             <Route path="lucky-results" element={<LuckyResults />} />
             <Route path="lucky-results/:eventId" element={<LuckyResults />} />
             <Route path="receipt/:orderId" element={<Receipt />} />

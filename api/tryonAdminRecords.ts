@@ -1,6 +1,12 @@
+import { TRPCError } from "@trpc/server";
 import { and, count, desc, eq, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { products, tryOnJobs, users } from "@db/schema";
+import { env } from "./lib/env";
+import {
+  signTryOnAdminArchiveUrl,
+  tryOnAdminArchiveAvailable,
+} from "./tryonAdminArchive";
 
 /**
  * 後台 AI 試穿紀錄查詢（supervisor / admin 專用，2026-10-26）
@@ -9,10 +15,12 @@ import { products, tryOnJobs, users } from "@db/schema";
  * 資料全部來自 tryOnJobs 真實工作列（leftJoin users／products），冇示範假數據。
  *
  * 私隱紅線（同 serializeTryOnJob 一致原則，最小必要）：
- * - 絕對唔回傳 inputImagePath／outputImagePath／productImagePath、任何圖片 URL、
- *   storage key、signed URL、provider／providerJobId、generationMode／resolution、
- *   prompt、credits／成本、idempotencyKey／requestHash、failureMessage 等內部技術欄位
- * - mediaDeletedAt 只轉 boolean（媒體已刪／過期），時間戳唔外傳
+ * - 列表絕對唔回傳 inputImagePath／outputImagePath、私人 storage key、私人 signed URL、
+ *   provider／providerJobId、generationMode／resolution、prompt、credits／成本、
+ *   idempotencyKey／requestHash、failureMessage 等內部技術欄位
+ * - 只回建立試穿時嘅公開商品圖 snapshot；私人原相／生成圖要再經 supervisor-only
+ *   getAdminRecordMedia 即場簽發，並由獨立 HTTP route 逐次覆核 HMAC、DB role 及 30 日期限
+ * - mediaDeletedAt／expiresAt 只轉 boolean（客戶媒體已刪／過期），時間戳唔外傳
  * - 會員識別只回 id＋名＋電話（同 membersRouter 後台列表一致嘅最少欄位）
  *
  * 商品品名／貨號：tryOnJobs.productName／productSku 係建立嗰刻嘅 snapshot（NOT NULL），
@@ -64,8 +72,14 @@ export interface TryOnAdminRecordItem {
     currentName: string | null;
     currentSku: string | null;
   };
-  /** 私人媒體已刪除或過保留期（只出 boolean，絕唔出路徑／URL／時間戳） */
+  /** 客戶私人媒體已刪除或過 24 小時保留期（唔代表後台 30 日副本已刪） */
   mediaDeleted: boolean;
+  media: {
+    /** 後台副本只按 createdAt＋30 日計算；唔會因客戶刪除或 24 小時到期而提早消失 */
+    archiveAvailable: boolean;
+    /** 建立試穿時所選商品圖嘅公開 URL／path snapshot；唔係私人客戶圖片 */
+    productImageUrl: string | null;
+  };
   createdAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
@@ -131,6 +145,7 @@ export async function listTryOnAdminRecords(
       status: tryOnJobs.status,
       failureCode: tryOnJobs.failureCode,
       mediaDeletedAt: tryOnJobs.mediaDeletedAt,
+      expiresAt: tryOnJobs.expiresAt,
       createdAt: tryOnJobs.createdAt,
       startedAt: tryOnJobs.startedAt,
       completedAt: tryOnJobs.completedAt,
@@ -142,6 +157,7 @@ export async function listTryOnAdminRecords(
       productSku: tryOnJobs.productSku,
       productCategory: tryOnJobs.productCategory,
       tryOnKind: tryOnJobs.tryOnKind,
+      productImagePath: tryOnJobs.productImagePath,
       currentProductName: products.name,
       currentProductSku: products.sku,
     })
@@ -155,6 +171,7 @@ export async function listTryOnAdminRecords(
     .offset((page - 1) * pageSize);
 
   const total = Number(totalRow?.value ?? 0);
+  const mappedAt = Date.now();
   const items: TryOnAdminRecordItem[] = rows.map((row) => ({
     jobId: row.jobId,
     publicId: row.publicId,
@@ -179,7 +196,11 @@ export async function listTryOnAdminRecords(
       currentName: row.currentProductName,
       currentSku: row.currentProductSku,
     },
-    mediaDeleted: Boolean(row.mediaDeletedAt),
+    mediaDeleted: Boolean(row.mediaDeletedAt) || row.expiresAt.getTime() <= mappedAt,
+    media: {
+      archiveAvailable: tryOnAdminArchiveAvailable(row.createdAt, mappedAt),
+      productImageUrl: row.productImagePath ?? null,
+    },
     createdAt: row.createdAt,
     startedAt: row.startedAt,
     completedAt: row.completedAt,
@@ -191,5 +212,36 @@ export async function listTryOnAdminRecords(
     page,
     pageSize,
     totalPages: Math.ceil(total / pageSize),
+  };
+}
+
+/**
+ * 主管／管理員撳「查看圖片」後先即場簽發；列表絕不批量暴露私人 URL。
+ * 呢度只睇後台副本嘅 createdAt＋30 日，唔睇客戶 expiresAt／mediaDeletedAt。
+ * 實際讀圖時 HTTP route 會再驗 HMAC、Bearer、DB 最新 role、期限及檔案。
+ */
+export async function getTryOnAdminRecordMedia(publicId: string): Promise<{
+  inputUrl: string | null;
+  outputUrl: string | null;
+}> {
+  const db = getDb();
+  const [job] = await db
+    .select({
+      status: tryOnJobs.status,
+      inputImagePath: tryOnJobs.inputImagePath,
+      outputImagePath: tryOnJobs.outputImagePath,
+      createdAt: tryOnJobs.createdAt,
+    })
+    .from(tryOnJobs)
+    .where(eq(tryOnJobs.publicId, publicId))
+    .limit(1);
+  if (!job || !tryOnAdminArchiveAvailable(job.createdAt)) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "後台圖片不存在或已過 30 日保留期" });
+  }
+  const sign = (kind: "input" | "output") =>
+    signTryOnAdminArchiveUrl({ publicId, kind, secret: env.appSecret });
+  return {
+    inputUrl: job.inputImagePath ? sign("input") : null,
+    outputUrl: job.status === "completed" && job.outputImagePath ? sign("output") : null,
   };
 }

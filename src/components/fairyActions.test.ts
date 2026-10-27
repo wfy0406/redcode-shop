@@ -5,6 +5,9 @@ import sharp from 'sharp';
 import {
   FAIRY_ACTIONS,
   FAIRY_ACTION_ORDER,
+  FAIRY_ALL_ACTIONS,
+  FAIRY_GUIDE_ACTIONS,
+  isFairyIdleAction,
   nextFairyAction,
   type FairyAction,
 } from './fairyActions';
@@ -29,8 +32,15 @@ function riffFrameDurations(buffer: Buffer): number[] {
 }
 
 describe('Glo Glo 真動作透明動畫素材', () => {
-  it('四套動作順序完整循環，唔係一個表情當完成', () => {
+  it('四套閒置動作順序完整循環，唔係一個表情當完成', () => {
     expect(FAIRY_ACTION_ORDER).toEqual(['wave', 'dance', 'shy', 'play']);
+    expect(FAIRY_GUIDE_ACTIONS).toEqual(['point', 'scared']);
+    expect(FAIRY_ALL_ACTIONS).toEqual(['wave', 'dance', 'shy', 'play', 'point', 'scared']);
+    for (const guided of FAIRY_GUIDE_ACTIONS) {
+      expect((FAIRY_ACTION_ORDER as readonly string[]).includes(guided)).toBe(false);
+      expect(isFairyIdleAction(guided)).toBe(false);
+    }
+    expect(isFairyIdleAction('shy')).toBe(true);
     let action: FairyAction = 'wave';
     for (const expected of ['dance', 'shy', 'play', 'wave'] as const) {
       action = nextFairyAction(action);
@@ -38,15 +48,23 @@ describe('Glo Glo 真動作透明動畫素材', () => {
     }
     for (const name of FAIRY_ACTION_ORDER) {
       const spec = FAIRY_ACTIONS[name];
-      expect(spec.frames).toBe(30);
+      expect(spec.frames).toBe(60);
       expect(spec.frameDurationMs).toBe(40);
+      expect(spec.cycleMs).toBe(2400);
       expect(spec.cycleMs).toBe(spec.frames * spec.frameDurationMs);
       expect(spec.holdMs % spec.cycleMs).toBe(0);
-      expect(spec.holdMs / spec.cycleMs).toBeGreaterThanOrEqual(2);
+      // 每個完整動作停留 7200ms（3 個完整循環）；只加長停留，唔拖慢動作速度。
+      expect(spec.holdMs).toBe(7200);
+      expect(spec.holdMs / spec.cycleMs).toBe(3);
     }
+    // 指引 point／拖曳 scared 由狀態即時切入切出，hold 只保底一個完整循環。
+    expect(FAIRY_ACTIONS.point.holdMs).toBe(2400);
+    expect(FAIRY_ACTIONS.scared.holdMs).toBe(2400);
+    expect(FAIRY_ACTIONS.point.cycleMs).toBe(2400);
+    expect(FAIRY_ACTIONS.scared.cycleMs).toBe(2400);
   });
 
-  it.each(FAIRY_ACTION_ORDER)('%s：30 個已編碼畫面全部唔同，逐幀都有真 alpha', async (action) => {
+  it.each(FAIRY_ALL_ACTIONS)('%s：60 個已編碼畫面全部唔同，逐幀都有真 alpha', async (action) => {
     const spec = FAIRY_ACTIONS[action];
     const encoded = readFileSync(asset(action));
     expect(riffFrameDurations(encoded)).toEqual(Array(spec.frames).fill(spec.frameDurationMs));

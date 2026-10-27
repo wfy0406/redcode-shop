@@ -2,10 +2,24 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 
 /**
- * 付款截圖燈箱 —— §P9：click 開燈箱 1:1 睇，--space-0 罩底
- * Esc 或點罩底關閉。
+ * 通用圖片燈箱 —— §P9：click 開燈箱 1:1 睇，--space-0 罩底；Esc 或點罩底關閉。
+ * 原本為付款截圖而設；label／alt 係向後兼容 optional props（預設維持付款截圖文案，
+ * ApprovalCenter／OrderList／ProofSection／WalletPanel 等現有呼叫唔使改），
+ * 試穿紀錄三圖（TryOnRecordMedia）會傳入每張圖嘅描述。
  */
-export default function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+export default function Lightbox({
+  src,
+  onClose,
+  label = '付款截圖大圖',
+  alt = '付款截圖原圖',
+}: {
+  src: string;
+  onClose: () => void;
+  /** dialog aria-label（唔傳 → 「付款截圖大圖」） */
+  label?: string;
+  /** 大圖 alt 文字（唔傳 → 「付款截圖原圖」） */
+  alt?: string;
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -21,7 +35,7 @@ export default function Lightbox({ src, onClose }: { src: string; onClose: () =>
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="付款截圖大圖"
+      aria-label={label}
     >
       <button
         type="button"
@@ -33,7 +47,7 @@ export default function Lightbox({ src, onClose }: { src: string; onClose: () =>
       </button>
       <img
         src={src}
-        alt="付款截圖原圖"
+        alt={alt}
         className="max-h-[92vh] max-w-[92vw] rounded-xl border object-contain"
         style={{ borderColor: 'var(--glass-border)' }}
         onClick={(e) => e.stopPropagation()}

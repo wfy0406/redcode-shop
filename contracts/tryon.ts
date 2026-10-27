@@ -74,8 +74,8 @@ function hkd(value: number): string {
   return `HK$${String(rounded).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 }
 
-/** 只分享公開商品資料及網址；私人原相、生成結果 signed URL 絕對唔放入文案。 */
-export function buildTryOnShareText(products: TryOnShareProduct[], origin: string): string {
+/** 分享公開商品資料；可另附 24 小時分享頁 URL。私人原相、生成結果 signed media URL 絕對唔放入文案。 */
+export function buildTryOnShareText(products: TryOnShareProduct[], origin: string, shareUrl?: string): string {
   if (products.length < 1 || products.length > 3) throw new Error("分享商品數量必須係 1 至 3 件");
   const base = origin.replace(/\/+$/, "");
   const lines = ["✨ RedCode AI 試穿預覽", "", `我試咗以下 ${products.length} 件商品嘅 AI 穿著效果：`];
@@ -90,6 +90,7 @@ export function buildTryOnShareText(products: TryOnShareProduct[], origin: strin
       `商品網址：${base}/products/${product.productId}`,
     );
   });
+  if (shareUrl) lines.push("", `效果圖（24 小時內有效）：${shareUrl}`);
   lines.push(
     "",
     "以上係 AI 試穿視覺預覽，唔代表實際尺碼、鬆緊、合身程度或舒適度；尺寸以商品尺寸表及實物為準。",
@@ -97,7 +98,7 @@ export function buildTryOnShareText(products: TryOnShareProduct[], origin: strin
   return lines.join("\n");
 }
 
-/** wa.me 只能帶公開文字及商品網址；私人結果圖由用戶下載後自行附加，或用支援嘅 Web Share files。 */
-export function buildTryOnWhatsAppUrl(products: TryOnShareProduct[], origin: string): string {
-  return `https://wa.me/?text=${encodeURIComponent(buildTryOnShareText(products, origin))}`;
+/** wa.me 帶公開商品資料及可選 24 小時分享頁；唔帶私人原相或私人 signed media URL。 */
+export function buildTryOnWhatsAppUrl(products: TryOnShareProduct[], origin: string, shareUrl?: string): string {
+  return `https://wa.me/?text=${encodeURIComponent(buildTryOnShareText(products, origin, shareUrl))}`;
 }

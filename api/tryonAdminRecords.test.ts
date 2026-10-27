@@ -107,7 +107,8 @@ vi.mock("./tryonService", () => ({
 }));
 
 import { tryonRouter } from "./tryonRouter";
-import { listTryOnAdminRecords } from "./tryonAdminRecords";
+import { getTryOnAdminRecordMedia, listTryOnAdminRecords } from "./tryonAdminRecords";
+import { TRYON_ADMIN_ARCHIVE_RETENTION_MS } from "./tryonAdminArchive";
 import { users } from "@db/schema";
 
 h.state.userRoleColumn = users.role;
@@ -149,6 +150,7 @@ function makeRawRow(overrides: Record<string, any> = {}): Record<string, any> {
     status: "completed",
     failureCode: null,
     mediaDeletedAt: null,
+    expiresAt: new Date("2026-10-26T10:00:00Z"),
     createdAt: now,
     startedAt: now,
     completedAt: new Date("2026-10-25T10:01:00Z"),
@@ -363,11 +365,13 @@ describe("listTryOnAdminRecords 資料內容", () => {
         "member",
         "product",
         "mediaDeleted",
+        "media",
         "createdAt",
         "startedAt",
         "completedAt",
       ].sort(),
     );
+    expect(Object.keys(item.media).sort()).toEqual(["archiveAvailable", "productImageUrl"].sort());
     expect(Object.keys(item.product).sort()).toEqual(
       ["id", "name", "sku", "category", "tryOnKind", "exists", "changed", "currentName", "currentSku"].sort(),
     );
@@ -400,5 +404,99 @@ describe("listTryOnAdminRecords 資料內容", () => {
     expect(json).not.toContain("secret-output-bbb");
     expect(json).not.toContain("fashn-job-999");
     expect(json).not.toContain("供應商內部錯誤原文");
+  });
+});
+
+// ───────────────────────── 30 日後台副本 availability ─────────────────────────
+
+describe("30 日後台副本 availability（只按 createdAt，唔掛客戶 expiresAt／mediaDeletedAt）", () => {
+  it("30 日內仍然 archiveAvailable=true；過咗 30 日係 false（精準 boundary 由 tryonAdminArchive pure helper 測試鎖定）", async () => {
+    const now = Date.now();
+    // 呢度係 service 層整合測試（Date.now() 喺 test 同 service 之間會行）；
+    // 用 1 秒緩衝驗兩邊，亞毫秒精準 boundary 由 tryonAdminArchiveAvailable／adminMedia handler 測試覆蓋。
+    const justInside = makeRawRow({
+      jobId: 31,
+      createdAt: new Date(now - TRYON_ADMIN_ARCHIVE_RETENTION_MS + 1000),
+      expiresAt: new Date(now + 60_000),
+    });
+    const exactBoundary = makeRawRow({
+      jobId: 32,
+      publicId: "423e4567-e89b-42d3-a456-426614174000",
+      createdAt: new Date(now - TRYON_ADMIN_ARCHIVE_RETENTION_MS - 1000),
+      expiresAt: new Date(now + 60_000),
+    });
+    queuePage(2, [justInside, exactBoundary]);
+    const res = await listTryOnAdminRecords({ page: 1, pageSize: 20 });
+    expect(res.items.find((i) => i.jobId === 31)?.media.archiveAvailable).toBe(true);
+    expect(res.items.find((i) => i.jobId === 32)?.media.archiveAvailable).toBe(false);
+  });
+
+  it("客戶私人媒體已刪／24 小時已過期：mediaDeleted=true 但後台副本仍 available", async () => {
+    const now = Date.now();
+    const row = makeRawRow({
+      jobId: 33,
+      createdAt: new Date(now - 10 * 24 * 60 * 60 * 1000), // 10 日前建立（30 日內）
+      mediaDeletedAt: new Date(now - 9 * 24 * 60 * 60 * 1000), // 客戶早已刪除
+      expiresAt: new Date(now - 9 * 24 * 60 * 60 * 1000), // 24 小時保留早已過
+    });
+    queuePage(1, [row]);
+    const res = await listTryOnAdminRecords({ page: 1, pageSize: 20 });
+    expect(res.items[0]?.mediaDeleted).toBe(true);
+    expect(res.items[0]?.media.archiveAvailable).toBe(true);
+  });
+});
+
+// ───────────────────────── getTryOnAdminRecordMedia 即場簽發 ─────────────────────────
+
+describe("getTryOnAdminRecordMedia 即場簽發後台圖片 URL", () => {
+  const makeMediaJob = (overrides: Record<string, any> = {}) => ({
+    status: "completed",
+    inputImagePath: "x/input.jpg",
+    outputImagePath: "x/output.png",
+    createdAt: new Date(Date.now() - 60_000),
+    ...overrides,
+  });
+
+  it("completed job：input＋output 都簽到 /api/admin/tryon-media/... URL（不含 userId）", async () => {
+    h.state.queue.push([makeMediaJob()]);
+    const res = await getTryOnAdminRecordMedia("123e4567-e89b-42d3-a456-426614174000");
+    for (const url of [res.inputUrl, res.outputUrl]) {
+      expect(url).toBeTruthy();
+      const parsed = new URL(url!, "https://redcode.red");
+      expect(parsed.pathname).toMatch(/^\/api\/admin\/tryon-media\/123e4567-e89b-42d3-a456-426614174000\/(input|output)$/);
+      expect(parsed.searchParams.get("e")).toBeTruthy();
+      expect(parsed.searchParams.get("s")).toBeTruthy();
+      expect(parsed.searchParams.get("u")).toBeNull();
+    }
+  });
+
+  it("未完成 job 唔簽 output；冇 input 紀錄唔簽 input", async () => {
+    h.state.queue.push([makeMediaJob({ status: "processing", outputImagePath: null })]);
+    const res = await getTryOnAdminRecordMedia("123e4567-e89b-42d3-a456-426614174000");
+    expect(res.inputUrl).toBeTruthy();
+    expect(res.outputUrl).toBeNull();
+  });
+
+  it("30 日已到（createdAt+30d ≤ now）→ NOT_FOUND，唔會簽任何 URL", async () => {
+    h.state.queue.push([
+      makeMediaJob({ createdAt: new Date(Date.now() - TRYON_ADMIN_ARCHIVE_RETENTION_MS - 1) }),
+    ]);
+    await expect(getTryOnAdminRecordMedia("123e4567-e89b-42d3-a456-426614174000")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("job 唔存在 → NOT_FOUND", async () => {
+    h.state.queue.push([]);
+    await expect(getTryOnAdminRecordMedia("123e4567-e89b-42d3-a456-426614174000")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+
+  it("客戶已刪除私人媒體嘅 job 仍然簽到後台副本 URL", async () => {
+    h.state.queue.push([makeMediaJob({ mediaDeletedAt: new Date() })]);
+    const res = await getTryOnAdminRecordMedia("123e4567-e89b-42d3-a456-426614174000");
+    expect(res.inputUrl).toBeTruthy();
+    expect(res.outputUrl).toBeTruthy();
   });
 });
