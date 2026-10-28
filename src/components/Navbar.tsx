@@ -80,6 +80,18 @@ function fmtLiveMonth(d: string): string {
   return `${d.slice(0, 4)}年${Number(d.slice(4, 6))}月`;
 }
 
+/**
+ * 直播日期／場次連結（v2026.10.28.2）：保留而家嘅類別篩選——
+ * 切換直播篩選唔准清走 category；冇 category 時 URL 同舊格式一樣。
+ */
+function liveHref(liveDate: string, liveSession: string | null, category: string): string {
+  const p = new URLSearchParams();
+  if (category) p.set('category', category);
+  p.set('liveDate', liveDate);
+  if (liveSession) p.set('liveSession', liveSession);
+  return `/products?${p.toString()}`;
+}
+
 type LiveDayGroup = { liveDate: string; sessions: string[] };
 type LiveMonthGroup = { key: string; label: string; days: LiveDayGroup[]; sessionCount: number };
 
@@ -351,14 +363,33 @@ export default function Navbar() {
                               </span>
                             </button>
                             {liveMonthOpen === m.key &&
-                              m.days.map((g) => (
+                              m.days.map((g) => {
+                                // v2026.10.28.2：日期由 span 改 Link（全日篩選）；
+                                // 全日 active＝同日期且無 liveSession；場次 active＝同日期同場次
+                                const allDayActive =
+                                  pathname === '/products' &&
+                                  currentLiveDate === g.liveDate &&
+                                  !currentLiveSession;
+                                return (
                                 <div
                                   key={g.liveDate}
                                   className="flex flex-wrap items-center gap-x-2 gap-y-1.5 py-1.5 pl-6 pr-2"
                                 >
-                                  <span className="w-11 shrink-0 font-mono text-[11px] font-bold" style={{ color: 'var(--gold)' }}>
+                                  <Link
+                                    to={liveHref(g.liveDate, null, currentCat)}
+                                    aria-current={allDayActive ? 'page' : undefined}
+                                    aria-label={`${Number(g.liveDate.slice(6, 8))}日全日直播商品`}
+                                    title="全日"
+                                    className={cn(
+                                      'w-11 shrink-0 font-mono text-[11px] font-bold transition-colors',
+                                      allDayActive
+                                        ? 'text-pink-soft underline underline-offset-4'
+                                        : 'hover:text-txt-1',
+                                    )}
+                                    style={allDayActive ? undefined : { color: 'var(--gold)' }}
+                                  >
                                     {Number(g.liveDate.slice(6, 8))}日
-                                  </span>
+                                  </Link>
                                   {g.sessions.map((s) => {
                                     const active =
                                       pathname === '/products' &&
@@ -367,7 +398,7 @@ export default function Navbar() {
                                     return (
                                       <Link
                                         key={s}
-                                        to={`/products?liveDate=${g.liveDate}&liveSession=${encodeURIComponent(s)}`}
+                                        to={liveHref(g.liveDate, s, currentCat)}
                                         className={cn(
                                           'rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-bold transition-colors',
                                           active ? 'text-pink-soft' : 'text-txt-2 hover:text-txt-1',
@@ -379,7 +410,8 @@ export default function Navbar() {
                                     );
                                   })}
                                 </div>
-                              ))}
+                                );
+                              })}
                           </div>
                         ))}
                       </>
@@ -786,14 +818,30 @@ export default function Navbar() {
                                   className="mb-2 ml-1 flex flex-col border-l pl-4"
                                   style={{ borderColor: 'rgba(245,197,24,0.16)' }}
                                 >
-                                  {m.days.map((g) => (
+                                  {m.days.map((g) => {
+                                    // v2026.10.28.2：日期由 span 改 Link（全日篩選），按後關 menu；
+                                    // 全日 active＝同日期且無 liveSession；44px 觸控目標
+                                    const allDayActive =
+                                      pathname === '/products' &&
+                                      currentLiveDate === g.liveDate &&
+                                      !currentLiveSession;
+                                    return (
                                     <div key={g.liveDate} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-1.5">
-                                      <span
-                                        className="w-10 shrink-0 font-mono text-[13px] font-bold"
-                                        style={{ color: 'var(--gold)' }}
+                                      <Link
+                                        to={liveHref(g.liveDate, null, currentCat)}
+                                        onClick={() => setMenuOpen(false)}
+                                        aria-current={allDayActive ? 'page' : undefined}
+                                        aria-label={`${Number(g.liveDate.slice(6, 8))}日全日直播商品`}
+                                        className={cn(
+                                          'flex min-h-11 min-w-11 shrink-0 items-center font-mono text-[13px] font-bold transition-colors',
+                                          allDayActive
+                                            ? 'text-pink-soft underline underline-offset-4'
+                                            : 'hover:text-txt-1',
+                                        )}
+                                        style={allDayActive ? undefined : { color: 'var(--gold)' }}
                                       >
                                         {Number(g.liveDate.slice(6, 8))}日
-                                      </span>
+                                      </Link>
                                       {g.sessions.map((s) => {
                                         const activeChip =
                                           pathname === '/products' &&
@@ -802,10 +850,10 @@ export default function Navbar() {
                                         return (
                                           <Link
                                             key={s}
-                                            to={`/products?liveDate=${g.liveDate}&liveSession=${encodeURIComponent(s)}`}
+                                            to={liveHref(g.liveDate, s, currentCat)}
                                             onClick={() => setMenuOpen(false)}
                                             className={cn(
-                                              'rounded-full border px-3.5 py-1.5 font-mono text-[13px] font-bold transition-colors',
+                                              'inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border px-3.5 py-1.5 font-mono text-[13px] font-bold transition-colors',
                                               activeChip ? 'text-pink-soft' : 'text-txt-2 hover:text-txt-1',
                                             )}
                                             style={{ borderColor: activeChip ? 'var(--pink)' : 'var(--glass-border)' }}
@@ -815,7 +863,8 @@ export default function Navbar() {
                                         );
                                       })}
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>

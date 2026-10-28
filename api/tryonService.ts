@@ -202,6 +202,9 @@ export async function listTryOnProducts() {
       discountPrice: products.discountPrice,
       listedDate: products.listedDate,
       stock: products.stock,
+      // 公開直播場次 metadata（2026-10-28 節目冊篩選）：只係日期＋場次編號，唔含任何私人資料。
+      liveDate: products.liveDate,
+      liveSession: products.liveSession,
     })
     .from(products)
     .where(

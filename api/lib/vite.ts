@@ -142,7 +142,16 @@ export function serveStaticFiles(app: App) {
       const { injectRouteMeta } = await import("./og");
       const normPath = reqPath.length > 1 ? reqPath.replace(/\/+$/, "") : reqPath;
       const pageSeo = ROUTE_SEO[normPath];
-      if (pageSeo) {
+      if (normPath === "/products") {
+        // v2026.10.28.2 直播節目頁 OG：/products?liveDate=YYYYMMDD[&liveSession=N]
+        // 有效日期＋場次 → 注入全日／單場專屬 title/description/og:url/canonical
+        // （og:image 保留 index.html 預設嗰張）；無效參數 liveRouteMeta 回 null →
+        // 通用 /products meta，絕對唔反射 raw 輸入。
+        const { liveRouteMeta } = await import("./liveSeo");
+        const q = new URL(c.req.url).searchParams;
+        const liveMeta = liveRouteMeta(q.get("liveDate"), q.get("liveSession"));
+        content = injectRouteMeta(content, liveMeta ?? { ...ROUTE_SEO["/products"], path: "/products" });
+      } else if (pageSeo) {
         content = injectRouteMeta(content, { ...pageSeo, path: normPath });
       } else if (
         NOINDEX_EXACT.includes(normPath) ||

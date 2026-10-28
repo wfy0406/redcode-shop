@@ -44,6 +44,18 @@ import {
   type TryOnProductSelection,
 } from './tryonSelection';
 import { getTryOnCoverCrop, tryOnCameraVideoConstraints } from './tryonCamera';
+import {
+  changeTryOnLiveDate,
+  countTryOnLiveMatches,
+  deriveTryOnLiveDates,
+  filterTryOnProducts,
+  formatTryOnLiveDate,
+  parseTryOnLiveSession,
+  tryOnEmptyReason,
+  tryOnLiveSessionLabel,
+  tryOnLiveSessionsForDate,
+  type TryOnListedSort,
+} from './tryonFilters';
 import { emitTryOnGuideAction } from '@/components/globalFairyGuide';
 import TryOnPurchase from './TryOnPurchase';
 
@@ -240,6 +252,12 @@ export default function TryOn() {
   const [batchActionPending, setBatchActionPending] = useState(false);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<'all' | TryOnProductKind>('all');
+  // 直播節目冊篩選（2026-10-28）：只影響商品清單顯示，已揀商品 selections 永遠保留。
+  const [liveFilter, setLiveFilter] = useState<{ liveDate: string | null; liveSession: number | null }>({
+    liveDate: null,
+    liveSession: null,
+  });
+  const [listedSort, setListedSort] = useState<TryOnListedSort>('newest');
   const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [cameraMessage, setCameraMessage] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<FacingMode>('user');
@@ -643,14 +661,50 @@ export default function TryOn() {
   );
   const jobActive = Boolean(job && ACTIVE_STATUSES.has(job.status));
 
-  const filteredProducts = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase('zh-HK');
-    return products.filter((product) => {
-      if (kindFilter !== 'all' && product.tryOnKind !== kindFilter) return false;
-      if (!needle) return true;
-      return `${product.name} ${product.sku}`.toLocaleLowerCase('zh-HK').includes(needle);
-    });
-  }, [kindFilter, products, search]);
+  // 日期／場次選項只由實際合資格試穿商品衍生，唔會混入全店空日期。
+  const liveDateOptions = useMemo(() => deriveTryOnLiveDates(products), [products]);
+  const liveSessionOptions = useMemo(
+    () => tryOnLiveSessionsForDate(liveDateOptions, liveFilter.liveDate),
+    [liveDateOptions, liveFilter.liveDate],
+  );
+
+  // 換日期必須重設場次；換任何篩選都唔會清走已揀商品。
+  const selectLiveDate = useCallback((date: string | null) => {
+    setLiveFilter((current) => changeTryOnLiveDate(current, date));
+  }, []);
+  const selectLiveSession = useCallback((session: number | null) => {
+    setLiveFilter((current) => ({ ...current, liveSession: session }));
+  }, []);
+  const clearProductFilters = useCallback(() => {
+    setSearch('');
+    setKindFilter('all');
+    setLiveFilter({ liveDate: null, liveSession: null });
+    setListedSort('newest');
+  }, []);
+
+  const filteredProducts = useMemo(
+    () =>
+      filterTryOnProducts(products, {
+        search,
+        kind: kindFilter,
+        liveDate: liveFilter.liveDate,
+        liveSession: liveFilter.liveSession,
+        sort: listedSort,
+      }),
+    [kindFilter, liveFilter, listedSort, products, search],
+  );
+  // 只計直播日期／場次條件：用嚟分清「呢場本身冇貨」定「搜尋／部位組合冇結果」。
+  const liveMatchCount = useMemo(
+    () => countTryOnLiveMatches(products, liveFilter.liveDate, liveFilter.liveSession),
+    [liveFilter, products],
+  );
+  const emptyReason = filteredProducts.length
+    ? null
+    : tryOnEmptyReason({
+        totalEligible: products.length,
+        liveFilterActive: Boolean(liveFilter.liveDate),
+        liveMatchCount,
+      });
 
   const generateFor = useCallback(
     async (product: TryOnProduct, productPhotoIndex: number, fixedIdempotencyKey?: string): Promise<TryOnJob | null> => {
@@ -1340,23 +1394,81 @@ export default function TryOn() {
             <section className="tryon-product-panel" aria-labelledby="tryon-product-title">
               <div className="tryon-panel-heading">
                 <div><p className="tryon-kicker">02 · REAL PRODUCTS</p><h2 id="tryon-product-title">揀一件或兩件，一次確認</h2></div>
-                <span className="tryon-count">{products.length} 件合資格</span>
+                <span className="tryon-count">符合篩選 {filteredProducts.length}／合資格 {products.length} 件</span>
               </div>
               <p className="tryon-product-intro">第一次生成前可即場揀齊兩件不同穿著部位，各自揀商品相片及調換次序。兩件仍係兩次生成、各用 1 次額度及 {creditsPerGeneration} credits；只揀一件就只做一次。每套最多 {access?.maxMixSteps ?? 3} 件，未確認唔會自動追加。</p>
 
-              <label className="tryon-search">
-                <Search size={18} aria-hidden="true" />
-                <span className="tryon-sr-only">搜尋商品名或貨號</span>
-                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜尋品名／貨號" />
-                {search && <button type="button" onClick={() => setSearch('')} aria-label="清除搜尋"><X size={16} /></button>}
-              </label>
-              <div className="tryon-kind-filters" aria-label="穿著部位篩選">
-                <button type="button" data-active={kindFilter === 'all'} onClick={() => setKindFilter('all')}>全部</button>
-                {TRYON_PRODUCT_KINDS.map((kind) => (
-                  <button key={kind} type="button" data-active={kindFilter === kind} onClick={() => setKindFilter(kind)}>
-                    {tryOnProductKindLabel(kind)}
-                  </button>
-                ))}
+              <div className="tryon-programme" aria-label="商品篩選及直播節目">
+                <div className="tryon-programme-head">
+                  <p className="tryon-kicker">LIVE PROGRAMME · 篩選</p>
+                  <p className="tryon-programme-count" role="status">
+                    符合目前篩選 <strong>{filteredProducts.length}</strong> 件／合資格總數 <strong>{products.length}</strong> 件
+                  </p>
+                </div>
+                <label className="tryon-search">
+                  <Search size={18} aria-hidden="true" />
+                  <span className="tryon-sr-only">搜尋商品名或貨號</span>
+                  <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜尋品名／貨號" />
+                  {search && <button type="button" onClick={() => setSearch('')} aria-label="清除搜尋"><X size={16} /></button>}
+                </label>
+                <div className="tryon-programme-groups">
+                  <div className="tryon-filter-group" role="group" aria-label="穿著部位">
+                    <span className="tryon-filter-label">部位</span>
+                    <div className="tryon-filter-options">
+                      <button type="button" data-active={kindFilter === 'all'} aria-pressed={kindFilter === 'all'} onClick={() => setKindFilter('all')}>全部</button>
+                      {TRYON_PRODUCT_KINDS.map((kind) => (
+                        <button key={kind} type="button" data-active={kindFilter === kind} aria-pressed={kindFilter === kind} onClick={() => setKindFilter(kind)}>
+                          {tryOnProductKindLabel(kind)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {liveDateOptions.length > 0 && (
+                    <div className="tryon-filter-group" role="group" aria-label="直播日期">
+                      <span className="tryon-filter-label">直播日期</span>
+                      <div className="tryon-filter-options">
+                        <button type="button" data-active={liveFilter.liveDate === null} aria-pressed={liveFilter.liveDate === null} onClick={() => selectLiveDate(null)}>全部日期</button>
+                        {liveDateOptions.map((option) => (
+                          <button
+                            key={option.date}
+                            type="button"
+                            data-active={liveFilter.liveDate === option.date}
+                            aria-pressed={liveFilter.liveDate === option.date}
+                            onClick={() => selectLiveDate(option.date)}
+                          >
+                            <i aria-hidden="true" /><b>{option.date.slice(0, 4)}</b>{formatTryOnLiveDate(option.date, 'short')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {liveFilter.liveDate && liveSessionOptions.length > 0 && (
+                    <div className="tryon-filter-group" role="group" aria-label="直播場次">
+                      <span className="tryon-filter-label">場次</span>
+                      <div className="tryon-filter-options">
+                        <button type="button" data-active={liveFilter.liveSession === null} aria-pressed={liveFilter.liveSession === null} onClick={() => selectLiveSession(null)}>全日</button>
+                        {liveSessionOptions.map((session) => (
+                          <button
+                            key={session}
+                            type="button"
+                            data-active={liveFilter.liveSession === session}
+                            aria-pressed={liveFilter.liveSession === session}
+                            onClick={() => selectLiveSession(session)}
+                          >
+                            {tryOnLiveSessionLabel(session)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="tryon-filter-group" role="group" aria-label="上架次序">
+                    <span className="tryon-filter-label">上架次序</span>
+                    <div className="tryon-filter-options">
+                      <button type="button" data-active={listedSort === 'newest'} aria-pressed={listedSort === 'newest'} onClick={() => setListedSort('newest')}>最新上架</button>
+                      <button type="button" data-active={listedSort === 'oldest'} aria-pressed={listedSort === 'oldest'} onClick={() => setListedSort('oldest')}>最早上架</button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {productsQuery.isLoading ? (
@@ -1395,6 +1507,14 @@ export default function TryOn() {
                         </span>
                         <strong>{product.name}</strong>
                         <small>{product.sku}</small>
+                        {product.liveDate && (
+                          <small className="tryon-product-live">
+                            直播 {formatTryOnLiveDate(product.liveDate, 'short')}
+                            {parseTryOnLiveSession(product.liveSession) !== null
+                              ? ` · ${tryOnLiveSessionLabel(parseTryOnLiveSession(product.liveSession)!)}`
+                              : ''}
+                          </small>
+                        )}
                         <span className="tryon-product-price">{money(product.discountPrice ?? product.price)}</span>
                         {blockReason && <em>{blockReason}</em>}
                       </button>
@@ -1402,7 +1522,19 @@ export default function TryOn() {
                   })}
                 </div>
               ) : (
-                <div className="tryon-empty-products"><Shirt size={32} /><p>{products.length ? '搵唔到符合篩選嘅商品' : '暫時冇合資格商品；生活用品、護膚品及不明飾品唔會出現喺度。'}</p></div>
+                <div className="tryon-empty-products">
+                  <Shirt size={32} />
+                  <p>
+                    {emptyReason === 'no-eligible'
+                      ? '暫時冇合資格商品；生活用品、護膚品及不明飾品唔會出現喺度。'
+                      : emptyReason === 'no-live-products'
+                        ? '呢個直播日期／場次暫時冇合資格試穿商品；可以揀返全部日期，或睇吓其他場次。'
+                        : '搵唔到符合搜尋／部位組合嘅商品；試吓改關鍵字，或清除部位篩選。'}
+                  </p>
+                  {emptyReason && emptyReason !== 'no-eligible' && (
+                    <button type="button" className="tryon-text-button" onClick={clearProductFilters}>清除所有篩選</button>
+                  )}
+                </div>
               )}
 
               {selectedItems.length > 0 && (
@@ -2021,6 +2153,41 @@ const TRYON_CSS = /* css */ `
     .tryon-delete-zone { flex-direction: column; }
     .tryon-delete-confirm { justify-content: flex-start; }
     .tryon-delete-confirm span { text-align: left; }
+  }
+  /* ===== 2026-10-28 直播節目冊篩選（SPEC 色板：暖奶油 #f6f5ee／純黑 opacity／深紅 #c00000；日期桃色標記 #ffb57d）=====
+     編排感來自細黑線、serif 組題同文字底線層次，唔做玻璃 pill；動效只有 200ms ease-out 顏色／底線。 */
+  .tryon-programme { margin-top: 6px; padding: 18px 16px 10px; background: #f6f5ee; border-top: 2px solid #000; border-bottom: 1px solid rgba(0,0,0,.16); }
+  .tryon-programme-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 18px; padding-bottom: 12px; border-bottom: 1px solid rgba(0,0,0,.24); }
+  .tryon-programme-head .tryon-kicker { color: #c00000; }
+  .tryon-programme-count { margin: 0; font-size: 12px; color: rgba(0,0,0,.56); }
+  .tryon-programme-count strong { font-family: 'DM Mono', 'Noto Sans TC', monospace; font-size: 15px; font-weight: 700; color: #000; }
+  .tryon-programme .tryon-search { border-bottom-color: rgba(0,0,0,.85); }
+  .tryon-programme .tryon-search input { color: #000; }
+  .tryon-programme .tryon-search input::placeholder { color: rgba(0,0,0,.42); }
+  .tryon-programme .tryon-search > svg, .tryon-programme .tryon-search button { color: rgba(0,0,0,.68); }
+  .tryon-programme-groups { margin-top: 4px; }
+  .tryon-filter-group { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 0 14px; align-items: start; padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,.1); }
+  .tryon-filter-group:last-child { border-bottom: 0; }
+  .tryon-filter-label { padding-top: 13px; font-family: 'Noto Serif TC', serif; font-size: 15px; font-weight: 700; line-height: 1.4; color: #000; }
+  .tryon-filter-options { display: flex; flex-wrap: wrap; gap: 0 18px; }
+  .tryon-filter-options button { position: relative; min-width: 44px; min-height: 44px; padding: 0 2px; border: 0; background: none; color: rgba(0,0,0,.5); font-size: 13px; cursor: pointer; transition: color .2s ease-out; }
+  .tryon-filter-options button::after { content: ''; position: absolute; left: 0; right: 100%; bottom: 8px; height: 2px; background: #c00000; transition: right .2s ease-out; }
+  .tryon-filter-options button:hover { color: #000; }
+  .tryon-filter-options button[data-active='true'] { color: #000; font-weight: 700; }
+  .tryon-filter-options button[data-active='true']::after { right: 0; }
+  .tryon-filter-options button > i { display: inline-block; width: 7px; height: 7px; margin-right: 7px; background: #ffb57d; vertical-align: 1px; transition: background-color .2s ease-out; }
+  .tryon-filter-options button[data-active='true'] > i { background: #c00000; }
+  /* 日期掣年／月日分層：年份細 mono 灰黑，月日跟隨按鈕主色 */
+  .tryon-filter-options button > b { margin-right: 6px; font-family: 'DM Mono', 'Noto Sans TC', monospace; font-size: 10px; font-weight: 500; letter-spacing: .08em; color: rgba(0,0,0,.38); transition: color .2s ease-out; }
+  .tryon-filter-options button[data-active='true'] > b, .tryon-filter-options button:hover > b { color: #c00000; }
+  .tryon-product-live { display: block; margin-top: 3px; color: #c00000; font-family: 'DM Mono', 'Noto Sans TC', monospace; font-size: 10px; }
+  .tryon-empty-products > .tryon-text-button { margin-top: 2px; }
+  @media (max-width: 560px) {
+    .tryon-programme { padding: 16px 12px 8px; }
+    .tryon-programme-head { flex-direction: column; align-items: flex-start; }
+    .tryon-filter-group { grid-template-columns: 1fr; gap: 0; padding: 10px 0; }
+    .tryon-filter-label { padding-top: 0; }
+    .tryon-filter-options { gap: 0 16px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .tryon-spin, .tryon-generation-bars i, .tryon-toast, .tryon-result-frame::before, .tryon-result-spark { animation: none; }

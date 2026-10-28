@@ -173,6 +173,28 @@ describe("injectRouteMeta — canonical／noindex", () => {
     expect(out.match(/rel="canonical"/g)).toHaveLength(1);
   });
 
+  it("直播節目頁 path 帶 query：canonical／og:url 正確 escape（& → &amp;），淨係一條 canonical", () => {
+    // v2026.10.28.2：/products?liveDate=...&liveSession=... 嘅 self canonical
+    const out = injectRouteMeta(TEMPLATE, {
+      title: "2026年10月28日 第2場直播商品｜RedCode Fashion Design",
+      description: "RedCode 2026年10月28日 第2場直播商品——即睇直播商品。",
+      path: "/products?liveDate=20261028&liveSession=2",
+    });
+    expect(out).toContain(
+      '<link rel="canonical" href="https://redcode.red/products?liveDate=20261028&amp;liveSession=2" />',
+    );
+    expect(out).toContain(
+      '<meta property="og:url" content="https://redcode.red/products?liveDate=20261028&amp;liveSession=2" />',
+    );
+    expect(out).toContain(
+      "<title>2026年10月28日 第2場直播商品｜RedCode Fashion Design</title>",
+    );
+    expect(out.match(/rel="canonical"/g)).toHaveLength(1);
+    // raw & 唔准喺 canonical／og:url 入面（HTML 屬性一定要 escape）
+    const canonicalTag = out.match(/<link\s+rel="canonical"[^>]*\/>/)?.[0] ?? "";
+    expect(canonicalTag).not.toContain("&liveSession");
+  });
+
   it("noindex：robots meta 由 index,follow 改 noindex,nofollow（私人頁用）", () => {
     const out = injectRouteMeta(TEMPLATE, { noindex: true });
     expect(out).toContain('<meta name="robots" content="noindex, nofollow" />');

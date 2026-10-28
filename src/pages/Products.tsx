@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { keepPreviousData } from '@tanstack/react-query';
-import { Search, X } from 'lucide-react';
+import { Facebook, Link2, MessageCircle, Search, Share2, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import {
+  facebookShareUrl,
+  isValidLiveDate,
+  isValidLiveSession,
+  liveShareText,
+  liveShareTitle,
+  liveShareUrl,
+  normalizeLiveShare,
+  whatsappShareUrl,
+} from '@/lib/liveShare';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/shop/WishingStar';
 import { toCardProduct, demoShopProducts } from '@/components/shop/shop-utils';
@@ -97,15 +107,20 @@ export default function Products() {
   }, [searchParams]);
   // 直播場次同網址 ?liveDate=&liveSession= 雙向同步（2026-09-29 F8）：
   // Navbar「📺 直播場次」連結／直接貼網址都篩到嗰場貨。liveSession 一定要配 liveDate。
+  // v2026.10.28.2：日期要係真實日曆日期、場次要係正整數，無效輸入絕不反射落 UI。
   const [liveDate, setLiveDate] = useState(() => {
     const d = searchParams.get('liveDate') ?? '';
-    return /^\d{8}$/.test(d) ? d : '';
+    return isValidLiveDate(d) ? d : '';
   });
-  const [liveSession, setLiveSession] = useState(() => searchParams.get('liveSession') ?? '');
+  const [liveSession, setLiveSession] = useState(() => {
+    const s = searchParams.get('liveSession') ?? '';
+    return isValidLiveSession(s) ? s : '';
+  });
   useEffect(() => {
     const d = searchParams.get('liveDate') ?? '';
-    const validD = /^\d{8}$/.test(d) ? d : '';
-    const validS = validD ? (searchParams.get('liveSession') ?? '') : '';
+    const validD = isValidLiveDate(d) ? d : '';
+    const s = validD ? (searchParams.get('liveSession') ?? '') : '';
+    const validS = isValidLiveSession(s) ? s : '';
     setLiveDate((cur) => (cur === validD ? cur : validD));
     setLiveSession((cur) => (cur === validS ? cur : validS));
   }, [searchParams]);
@@ -165,9 +180,17 @@ export default function Products() {
     for (const p of (listQuery.data ?? []) as ShopProduct[]) merged.set(p.id, p);
     if (kw) {
       const lower = kw.toLowerCase();
-      for (const p of (allQuery.data ?? []) as ShopProduct[]) {
+      // ShopProduct 型冇 live 欄位，但 server list 實際有回；補漏合併時要用埋佢
+      type WithLive = ShopProduct & { liveDate?: string | null; liveSession?: string | null };
+      for (const p of (allQuery.data ?? []) as WithLive[]) {
         if (!merged.has(p.id) && p.sku.toLowerCase().includes(lower)) {
-          if (category === 'all' || p.category === category) merged.set(p.id, p);
+          if (category !== 'all' && p.category !== category) continue;
+          // v2026.10.28.2：直播篩選生效時，SKU 補漏都要同 liveDate/liveSession 對得上
+          // （同 listInput 語義一致），否則其他日子／場次嘅貨會經貨號搜尋漏入嚟
+          if (liveDate && (p.liveDate !== liveDate || (liveSession !== '' && p.liveSession !== liveSession))) {
+            continue;
+          }
+          merged.set(p.id, p);
         }
       }
     }
@@ -197,6 +220,89 @@ export default function Products() {
     setSearchParams(category !== 'all' ? { category } : {}, { replace: true });
   };
 
+  // v2026.10.28.2 直播節目冊：當日場次切換——用 Navbar 同一份 liveSessions 目錄
+  // （60s stale，導航嗰次通常已打過，呢度係 cache hit），搵唔到嗰日就唔出切換掣。
+  const liveSessionsQuery = trpc.products.liveSessions.useQuery(undefined, {
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const daySessions = useMemo<string[]>(() => {
+    if (!liveDate) return [];
+    return liveSessionsQuery.data?.find((g) => g.liveDate === liveDate)?.sessions ?? [];
+  }, [liveSessionsQuery.data, liveDate]);
+
+  // 切換直播日期／場次：保留 category；本地 keyword 絕對唔放入 URL
+  const setLiveFilter = (date: string, session: string | null) => {
+    const params: Record<string, string> = {};
+    if (category !== 'all') params.category = category;
+    params.liveDate = date;
+    if (session) params.liveSession = session;
+    setSearchParams(params, { replace: true });
+  };
+
+  // 分享當前全日／單場（liveDate 有效先會有 panel，normalize 係雙重保險）
+  const shareTarget = liveDate ? normalizeLiveShare(liveDate, liveSession || null) : null;
+  const shareUrl = shareTarget ? liveShareUrl(window.location.origin, shareTarget) : '';
+  const shareText = shareTarget ? liveShareText(shareTarget) : '';
+  // 系統分享淨係支援時先出掣；失敗／取消要誠實，唔准假稱已分享
+  const [canSystemShare] = useState(
+    () => typeof navigator !== 'undefined' && typeof navigator.share === 'function',
+  );
+  const [shareNote, setShareNote] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const onSystemShare = async () => {
+    if (!shareTarget) return;
+    if (!canSystemShare) {
+      setShareNote('呢個瀏覽器唔支援系統分享，可以改用 Facebook／WhatsApp／複製連結。');
+      return;
+    }
+    try {
+      await navigator.share({
+        title: liveShareTitle(shareTarget),
+        text: shareText,
+        url: shareUrl,
+      });
+      setShareNote('');
+    } catch (err) {
+      // 客人自己取消（AbortError）唔係失敗，靜靜雞唔出訊息
+      if (err instanceof Error && err.name === 'AbortError') return;
+      setShareNote('系統分享未能完成，可以改用 Facebook／WhatsApp／複製連結。');
+    }
+  };
+
+  const onCopyLink = async () => {
+    if (!shareTarget) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setShareNote('');
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // 舊瀏覽器冇 clipboard API：textarea + execCommand fallback；都唔得先誠實報失敗
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = shareUrl;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        if (ok) {
+          setCopied(true);
+          setShareNote('');
+          window.setTimeout(() => setCopied(false), 2000);
+        } else {
+          setShareNote(`複製唔成功，請手動複製網址：${shareUrl}`);
+        }
+      } catch {
+        setShareNote(`複製唔成功，請手動複製網址：${shareUrl}`);
+      }
+    }
+  };
+
   return (
     <section className="mx-auto max-w-[1280px] px-5 py-16 md:px-8 md:py-24 xl:px-12">
       {/* 頁首：H1 + 花體副標（§P2；F-C 由 siteSettings CMS 讀，fallback 預設文案） */}
@@ -207,31 +313,143 @@ export default function Products() {
         </h1>
       </header>
 
-      {/* 📺 直播場次 banner（2026-09-29 F8）：URL 有 liveDate 先顯示，附「睇全部商品」清除制 */}
+      {/* 📺 直播節目冊（v2026.10.28.2）：深色頁面上嘅暖奶油標題板形成強烈對比。
+          日期／節目（全日↔場次切換）／行動（分享＋清除）三欄；手機直向堆疊，唔硬擠三欄。
+          主色：暖奶油 #f6f5ee、黑（opacity 層次）、深紅 #c00000；桃色 #ffb57d 做日期標記。 */}
       {liveDate && (
-        <div
-          className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5"
-          style={{
-            background: 'var(--glass-bg)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            borderColor: 'var(--purple-text)',
-          }}
-          role="status"
+        <section
+          aria-label="直播節目冊"
+          className="mt-6 rounded-2xl px-5 py-6 text-black md:px-8 md:py-7"
+          style={{ background: '#f6f5ee' }}
         >
-          <p className="font-serif-tc text-[17px] font-semibold text-txt-1">
-            📺 {liveDateLabel}
-            {liveSession ? ` · 第${liveSession}場` : ''} 直播商品
-          </p>
-          <button
-            type="button"
-            onClick={clearLiveFilter}
-            className="rounded-full border px-4 py-1.5 text-[13px] font-bold text-txt-2 transition-colors hover:border-pink-soft hover:text-txt-1"
-            style={{ borderColor: 'var(--glass-border)' }}
-          >
-            睇全部商品
-          </button>
-        </div>
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:gap-10">
+            {/* 日期欄：桃色圓點標記 + serif 大日期 + 全日／第 N 場；完整日期唔甩字 */}
+            <div className="flex items-start gap-3 xl:w-64 xl:shrink-0">
+              <span
+                aria-hidden="true"
+                className="mt-2 h-3 w-3 shrink-0 rounded-full"
+                style={{ background: '#ffb57d' }}
+              />
+              <div>
+                <p className="font-mono text-[10px] font-bold tracking-[0.3em] text-black/50">
+                  LIVE 直播節目冊
+                </p>
+                <p className="mt-1.5 whitespace-nowrap font-serif-tc text-[26px] font-bold leading-[1.15] md:text-3xl">
+                  {liveDateLabel}
+                </p>
+                <p className="mt-1 text-[13px] font-bold" style={{ color: '#c00000' }}>
+                  {liveSession ? `第 ${liveSession} 場` : '全日'} 直播商品
+                </p>
+              </div>
+            </div>
+
+            {/* 節目欄：全日 ↔ 各場次切換（保留 category；本地 keyword 唔入 URL） */}
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] leading-relaxed text-black/60">
+                而家睇緊{liveSession ? `第 ${liveSession} 場` : '全日全部場次'}嘅直播商品
+                {daySessions.length > 0 ? `——呢日共 ${daySessions.length} 場，可以即切場次` : ''}
+              </p>
+              {daySessions.length > 0 && (
+                <div
+                  className="mt-3 flex flex-wrap gap-2"
+                  role="group"
+                  aria-label="切換直播場次"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setLiveFilter(liveDate, null)}
+                    aria-pressed={!liveSession}
+                    className="flex min-h-11 items-center rounded-full border px-4 text-[13px] font-bold transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c00000]"
+                    style={
+                      !liveSession
+                        ? { background: '#c00000', borderColor: '#c00000', color: '#f6f5ee' }
+                        : { borderColor: 'rgba(0,0,0,0.3)', color: 'rgba(0,0,0,0.75)' }
+                    }
+                  >
+                    全日
+                  </button>
+                  {daySessions.map((s) => {
+                    const active = liveSession === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setLiveFilter(liveDate, s)}
+                        aria-pressed={active}
+                        className="flex min-h-11 items-center rounded-full border px-4 font-mono text-[13px] font-bold transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c00000]"
+                        style={
+                          active
+                            ? { background: '#c00000', borderColor: '#c00000', color: '#f6f5ee' }
+                            : { borderColor: 'rgba(0,0,0,0.3)', color: 'rgba(0,0,0,0.75)' }
+                        }
+                      >
+                        第{s}場
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* 行動欄：分享（系統／Facebook／WhatsApp／複製）＋清除直播篩選 */}
+            {shareTarget && (
+              <div className="flex flex-col gap-2.5 xl:items-end">
+                <div className="flex flex-wrap items-center gap-2" role="group" aria-label="分享直播節目">
+                  {canSystemShare && (
+                    <button
+                      type="button"
+                      onClick={onSystemShare}
+                      className="flex min-h-11 items-center gap-1.5 rounded-full border border-black/30 px-4 text-[13px] font-bold text-black/80 transition-colors duration-200 hover:border-black hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c00000]"
+                    >
+                      <Share2 size={15} aria-hidden="true" />
+                      系統分享
+                    </button>
+                  )}
+                  <a
+                    href={facebookShareUrl(shareUrl)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="分享到 Facebook"
+                    className="flex min-h-11 items-center gap-1.5 rounded-full border border-black/30 px-4 text-[13px] font-bold text-black/80 transition-colors duration-200 hover:border-black hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c00000]"
+                  >
+                    <Facebook size={15} aria-hidden="true" />
+                    Facebook
+                  </a>
+                  <a
+                    href={whatsappShareUrl(shareText, shareUrl)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="分享到 WhatsApp"
+                    className="flex min-h-11 items-center gap-1.5 rounded-full border border-black/30 px-4 text-[13px] font-bold text-black/80 transition-colors duration-200 hover:border-black hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c00000]"
+                  >
+                    <MessageCircle size={15} aria-hidden="true" />
+                    WhatsApp
+                  </a>
+                  <button
+                    type="button"
+                    onClick={onCopyLink}
+                    className="flex min-h-11 items-center gap-1.5 rounded-full border border-black/30 px-4 text-[13px] font-bold text-black/80 transition-colors duration-200 hover:border-black hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c00000]"
+                  >
+                    <Link2 size={15} aria-hidden="true" />
+                    {copied ? '已複製！' : '複製連結'}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearLiveFilter}
+                  className="self-start text-[13px] font-bold text-black/60 underline underline-offset-4 transition-colors duration-200 hover:text-black xl:self-end"
+                >
+                  睇全部商品（清除直播篩選）
+                </button>
+                {shareNote && (
+                  <p role="status" className="max-w-xs text-[12px] leading-relaxed" style={{ color: '#c00000' }}>
+                    {shareNote}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
       {/* 玻璃工具列：搜尋框 + 排序 */}
@@ -301,7 +519,14 @@ export default function Products() {
               type="button"
               onClick={() => {
                 setCategory(c.value);
-                setSearchParams(c.value === 'all' ? {} : { category: c.value }, { replace: true });
+                // v2026.10.28.2：切換類別保留 liveDate/liveSession（之前會清走直播篩選）
+                const params: Record<string, string> = {};
+                if (c.value !== 'all') params.category = c.value;
+                if (liveDate) {
+                  params.liveDate = liveDate;
+                  if (liveSession) params.liveSession = liveSession;
+                }
+                setSearchParams(params, { replace: true });
               }}
               aria-pressed={active}
               className={cn(
@@ -432,14 +657,18 @@ export default function Products() {
             {kw
               ? `搵唔到同「${kw}」相關嘅商品`
               : liveDate
-                ? '呢場暫未上架商品'
+                ? liveSession
+                  ? '呢場直播暫未上架商品'
+                  : '呢日直播暫未上架商品'
                 : filtering
                   ? '呢個篩選組合暫時冇商品'
                   : '暫時未有商品上架'}
           </p>
           <p className="max-w-sm text-sm text-txt-3">
             {liveDate
-              ? '呢場直播嘅貨仲未上好，遲啲再嚟睇下。'
+              ? liveSession
+                ? '呢場直播嘅貨仲未上好，可以試下切返全日或者其他場次。'
+                : '呢日直播嘅貨仲未上好，遲啲再嚟睇下。'
               : kw || filtering
                 ? '試下其他關鍵字，或者清除篩選睇返全部商品。'
                 : '遲啲再嚟睇下，Glo Glo 會繼續上架新貨。'}
@@ -452,7 +681,9 @@ export default function Products() {
                 setCategory('all');
                 setDateFilter('all');
                 setPickedDate('');
-                clearLiveFilter();
+                // v2026.10.28.2：一次過清空 URL（唔經 clearLiveFilter——佢閉包揸住
+                // 舊 category，會將啱啱清走嘅類別寫返落網址）
+                setSearchParams({}, { replace: true });
               }}
               className="btn btn-secondary mt-2 !py-2.5 text-sm"
             >
@@ -467,7 +698,7 @@ export default function Products() {
             {kw ? `（關鍵字「${kw}」）` : ''}
             {category !== 'all' ? `（${PRODUCT_CATEGORIES.find((c) => c.value === category)?.label ?? ''}）` : ''}
             {pickedDate ? `（${pickedDate} 上架）` : ''}
-            {liveDate ? `（📺 ${liveDateLabel}${liveSession ? ` 第${liveSession}場` : ''}）` : ''}
+            {liveDate ? `（📺 ${liveDateLabel}${liveSession ? ` 第${liveSession}場` : ' 全日'}）` : ''}
           </p>
 
           {/* 商品格網 §4.1：4 / 3 / 2 欄；篩選時 300ms opacity 過渡 */}

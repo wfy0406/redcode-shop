@@ -169,6 +169,57 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(canonicalHref(html)).toBe("https://redcode.red/about");
   });
 
+  it("(7) /products?liveDate=20261028（有效全日）→ 全日專屬 title/description/canonical", async () => {
+    const res = await makeApp().request("/products?liveDate=20261028");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>2026年10月28日 全日直播商品｜RedCode Fashion Design</title>");
+    expect(html).toContain("全日全部場次");
+    expect(canonicalHref(html)).toBe("https://redcode.red/products?liveDate=20261028");
+    // og:image 保留 index.html 預設嗰張（直播頁冇專屬圖）
+    expect(html).toContain('<meta property="og:image" content="https://redcode.red/og-image.jpg" />');
+    expect(html.match(/rel="canonical"/g)).toHaveLength(1);
+  });
+
+  it("(8) /products?liveDate=20261028&liveSession=2（有效單場）→ 單場 meta＋escaped canonical", async () => {
+    const res = await makeApp().request("/products?liveDate=20261028&liveSession=2");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      "<title>2026年10月28日 第2場直播商品｜RedCode Fashion Design</title>",
+    );
+    expect(html).toContain("即睇直播商品");
+    expect(canonicalHref(html)).toBe(
+      "https://redcode.red/products?liveDate=20261028&amp;liveSession=2",
+    );
+    // og:url 同 canonical 一致（都要 escape）
+    expect(html).toContain(
+      '<meta property="og:url" content="https://redcode.red/products?liveDate=20261028&amp;liveSession=2" />',
+    );
+  });
+
+  it("(9) 無效日期 /products?liveDate=20261340 → 通用 /products meta，絕不反射輸入", async () => {
+    const res = await makeApp().request("/products?liveDate=20261340");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>全部貨品｜RedCode Fashion Design</title>");
+    expect(canonicalHref(html)).toBe("https://redcode.red/products");
+    // canonical／og:title／title 全部唔准出現無效日期
+    const canonicalTag = html.match(/<link\s+rel="canonical"[^>]*\/>/)?.[0] ?? "";
+    expect(canonicalTag).not.toContain("20261340");
+    expect(html).not.toContain("2026年13月40日");
+  });
+
+  it("(10) 無效場次 /products?liveDate=20261028&liveSession=abc → 通用 /products，abc 唔入 meta", async () => {
+    const res = await makeApp().request("/products?liveDate=20261028&liveSession=abc");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>全部貨品｜RedCode Fashion Design</title>");
+    expect(canonicalHref(html)).toBe("https://redcode.red/products");
+    expect(html).not.toContain("liveSession=abc");
+    expect(html).not.toContain("第abc場");
+  });
+
   it("(6) DB 查詢故障 → 商品頁照回 200 原 HTML，在架商品唔會被誤當 404", async () => {
     queryError = new Error("connection refused");
     const res = await makeApp().request("/products/85", { headers: PROXY_HEADERS });
