@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ScrollText } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { LoadingBlock } from './WishingStar';
+import { AUDIT_FILTERS, filterAuditRowsByAction } from './auditLogFilters';
 
 /**
  * 操作日誌（admin only）—— trpc.audit.list
@@ -61,6 +62,7 @@ const ACTION_LABEL: Record<string, string> = {
   // 2026-10-10（Wave 4 老闆指示）：日誌保留期 / 清除
   'audit.purge': '清除舊日誌',
   'audit.retention': '改日誌保留期',
+  'tryon.create': '開始 AI 試穿',
 };
 
 const ROLE_META: Record<string, { label: string; color: string }> = {
@@ -70,16 +72,6 @@ const ROLE_META: Record<string, { label: string; color: string }> = {
   member: { label: '會員', color: 'var(--starlight)' },
   system: { label: '系統', color: 'var(--text-3)' },
 };
-
-const FILTERS: { key: string; label: string; match: (a: string) => boolean }[] = [
-  { key: 'all', label: '全部', match: () => true },
-  { key: 'order', label: '訂單', match: (a) => a.startsWith('order.') },
-  { key: 'member', label: '會員', match: (a) => a.startsWith('member.') },
-  { key: 'product', label: '商品', match: (a) => a.startsWith('product.') },
-  { key: 'staff', label: '帳號', match: (a) => a.startsWith('staff.') },
-  { key: 'approval', label: '審批', match: (a) => a.startsWith('approval.') },
-  { key: 'other', label: '其他', match: (a) => /^(promo|praise|setting|station|audit)\./.test(a) },
-];
 
 function fmtTime(d: Date | string): string {
   const dt = new Date(d);
@@ -91,8 +83,7 @@ export default function AuditLog() {
   const [filter, setFilter] = useState('all');
   const listQuery = trpc.audit.list.useQuery(undefined, { refetchOnWindowFocus: false });
   const rows = useMemo(() => (listQuery.data ?? []) as AuditRow[], [listQuery.data]);
-  const active = FILTERS.find((f) => f.key === filter) ?? FILTERS[0];
-  const filtered = useMemo(() => rows.filter((r) => active.match(r.action)), [rows, active]);
+  const filtered = useMemo(() => filterAuditRowsByAction(rows, filter), [rows, filter]);
 
   return (
     <section
@@ -117,7 +108,7 @@ export default function AuditLog() {
 
       {/* 篩選 chips */}
       <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="按類型篩選">
-        {FILTERS.map((f) => {
+        {AUDIT_FILTERS.map((f) => {
           const on = filter === f.key;
           return (
             <button

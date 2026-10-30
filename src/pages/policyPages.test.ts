@@ -28,8 +28,8 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 describe("政策頁更新日期", () => {
-  it("兩頁都註明 2026 年 10 月 28 日", () => {
-    expect(privacySrc).toContain("最近更新：2026 年 10 月 28 日");
+  it("私隱政策同服務條款各自註明最近更新日期", () => {
+    expect(privacySrc).toContain("最近更新：2026 年 10 月 31 日");
     expect(termsSrc).toContain("最近更新：2026 年 10 月 28 日");
   });
 });
@@ -67,12 +67,12 @@ describe("私隱政策：AI 試穿披露（第 2.6 節及相關節）", () => {
     expect(privacySrc).not.toContain("最多保留 24 小時");
   });
 
-  it("分清後台 30 日圖片副本同較長期無圖業務紀錄；前台刪圖唔會即時刪走副本", () => {
-    expect(privacySrc).toContain("主管／管理員後台副本（最多 30 日）");
-    expect(privacySrc).toContain("只限獲授權嘅主管及管理員查閱");
-    expect(privacySrc).toContain("唔會令呢個後台副本即時消失");
+  it("刪除 30 日後台圖片副本及人員查閱表述，保留無圖業務紀錄說明", () => {
+    expect(privacySrc).not.toMatch(/30\s*[日天]/);
+    expect(privacySrc).not.toMatch(/主管|管理員/);
+    expect(privacySrc).not.toContain("只限獲授權嘅人員查閱");
+    expect(privacySrc).not.toContain("唔會令呢個後台副本即時消失");
     expect(privacySrc).toContain("刪圖唔等於刪晒所有紀錄");
-    expect(privacySrc).toContain("除上述最多 30 日");
     expect(privacySrc).toContain("邊位會員、邊件商品、狀態、時間");
     expect(privacySrc).toContain("唔包括你嘅圖片");
   });

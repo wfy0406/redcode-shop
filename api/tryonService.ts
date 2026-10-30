@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sum } from "drizzle-orm";
 import { getDb } from "./queries/connection";
+import { logAudit } from "./audit";
 import { products, siteSettings, tryOnJobs, users, type TryOnJob } from "@db/schema";
 import {
   latestTryOnAttemptsByStep,
@@ -513,6 +514,16 @@ export async function createTryOnGeneration(args: {
     });
     throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "私人圖片暫存失敗，請稍後再試" });
   }
+  // 只記新建立而且私人 input 已寫成功嘅工作；deduped retry 唔會重複入日誌。
+  // 詳情只放公開商品及步驟資料，絕唔放原相、生成圖、私人 path 或 signed URL。
+  await logAudit({
+    actorId: args.user.userId,
+    actorRole: args.user.role,
+    action: "tryon.create",
+    targetType: "tryon",
+    targetId: reserved.job.publicId,
+    detail: `開始 AI 試穿：${reserved.job.productName}（貨號 ${reserved.job.productSku}）· 第 ${reserved.job.stepNumber} 件`,
+  });
   // 客戶原相寫成功即刻備一份入 30 日後台 archive（best-effort；失敗只留警示，唔反轉已成立嘅工作）。
   // 之後客戶刪除／24 小時到期清理都郁唔到呢份副本。
   await archiveTryOnMediaBestEffort(publicId, "input");

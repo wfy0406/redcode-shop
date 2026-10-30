@@ -16,9 +16,11 @@ const mocks = vi.hoisted(() => ({
   deleteTryOnMedia: vi.fn(),
   archiveTryOnMediaCopy: vi.fn(),
   deleteTryOnAdminArchive: vi.fn(),
+  logAudit: vi.fn(),
 }));
 
 vi.mock("./queries/connection", () => ({ getDb: mocks.getDb }));
+vi.mock("./audit", () => ({ logAudit: mocks.logAudit }));
 vi.mock("./lib/env", () => ({
   env: { appSecret: "unit-test-secret", appId: "unit-test", databaseUrl: "", isProduction: false },
 }));
@@ -167,6 +169,7 @@ beforeEach(() => {
   mocks.inspectTryOnModelImage.mockResolvedValue({ width: 512, height: 512, meanLuma: 128, faceLuma: 140, faceCount: 1 });
   mocks.writeTryOnMedia.mockResolvedValue("123e4567-e89b-42d3-a456-426614174000/output.png");
   mocks.deleteTryOnMedia.mockResolvedValue(undefined);
+  mocks.logAudit.mockResolvedValue(undefined);
 });
 
 describe("背景生成失敗結算", () => {
@@ -353,6 +356,7 @@ interface TryOnDbOptions {
   sourceJob?: TryOnJob | null;
   lineageRows?: Array<Record<string, unknown>>;
   activeJob?: TryOnJob | null;
+  existingJob?: TryOnJob | null;
 }
 
 function makeTryOnDb(options: TryOnDbOptions = {}) {
@@ -367,7 +371,10 @@ function makeTryOnDb(options: TryOnDbOptions = {}) {
     if (table === users) return [identity];
     if (table === products) return options.product ? [options.product] : [];
     // tryOnJobs：db 無 selection 係 sourcePublicId 查找；tx 無 selection 係 idempotency 重複檢查
-    if (!selection) return !fromTx && options.sourceJob ? [options.sourceJob] : [];
+    if (!selection) {
+      if (fromTx) return options.existingJob ? [options.existingJob] : [];
+      return options.sourceJob ? [options.sourceJob] : [];
+    }
     if ("value" in selection) return [{ value: 0 }]; // usage count / sum
     if ("activePublicId" in selection) return options.activeJob ? [options.activeJob] : [];
     if (fromTx) return options.lineageRows ?? [];
@@ -636,6 +643,90 @@ describe("createTryOnGeneration 後台 archive 接線", () => {
     expect(result.status).toBe("queued");
     expect(inserted).toHaveLength(1);
     expect(mocks.archiveTryOnMediaCopy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createTryOnGeneration 官網試穿日誌", () => {
+  const savedKey = process.env.FASHN_API_KEY;
+  beforeEach(() => {
+    process.env.FASHN_API_KEY = "test-fashn-key";
+  });
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env.FASHN_API_KEY;
+    else process.env.FASHN_API_KEY = savedKey;
+  });
+
+  const baseInput = {
+    user: { userId: 7, role: "staff" as const },
+    productId: 101,
+    photoIndex: 0,
+    idempotencyKey: "operation-1",
+    modelImage: "data:image/png;base64,iVBORw0KGgo=",
+  };
+
+  it("新工作喺私人 input 寫成功後記一次，只含操作者、商品及步驟資料", async () => {
+    const createdJob = makeJob({
+      id: 99,
+      status: "queued",
+      providerJobId: null,
+      startedAt: null,
+      productName: "短款外套",
+    });
+    const { db } = makeTryOnDb({ product: makeProduct(), createdJob });
+    mocks.getDb.mockReturnValue(db);
+
+    const result = await createTryOnGeneration(baseInput);
+    expect(mocks.logAudit).toHaveBeenCalledTimes(1);
+    const entry = mocks.logAudit.mock.calls[0]![0] as Record<string, unknown>;
+    expect(entry).toEqual({
+      actorId: 7,
+      actorRole: "staff",
+      action: "tryon.create",
+      targetType: "tryon",
+      targetId: result.publicId,
+      detail: "開始 AI 試穿：短款外套（貨號 TOP-101）· 第 1 件",
+    });
+    expect(mocks.logAudit.mock.invocationCallOrder[0]!).toBeGreaterThan(
+      mocks.writeTryOnMedia.mock.invocationCallOrder[0]!,
+    );
+
+    const serialized = JSON.stringify(entry);
+    expect(serialized).not.toContain("data:image");
+    expect(serialized).not.toContain("/uploads/");
+    expect(serialized).not.toContain("inputImagePath");
+    expect(serialized).not.toContain("outputImagePath");
+    expect(serialized).not.toContain("signature=");
+    expect(serialized).not.toMatch(/https?:\/\//);
+  });
+
+  it("同一 idempotency key 重試直接回原工作，唔會重複寫日誌或私人 input", async () => {
+    const first = makeTryOnDb({ product: makeProduct() });
+    mocks.getDb.mockReturnValue(first.db);
+    await createTryOnGeneration(baseInput);
+    expect(mocks.logAudit).toHaveBeenCalledTimes(1);
+    const requestHash = first.inserted[0]!.requestHash as string;
+
+    const existingJob = makeJob({ id: 99, status: "queued", providerJobId: null, startedAt: null, requestHash });
+    const retry = makeTryOnDb({ product: makeProduct(), existingJob });
+    mocks.getDb.mockReturnValue(retry.db);
+    const result = await createTryOnGeneration(baseInput);
+
+    expect(result.publicId).toBe(existingJob.publicId);
+    expect(retry.inserted).toHaveLength(0);
+    expect(mocks.writeTryOnMedia).toHaveBeenCalledTimes(1);
+    expect(mocks.logAudit).toHaveBeenCalledTimes(1);
+  });
+
+  it("私人 input 寫檔失敗唔會留下假成功日誌", async () => {
+    const { db } = makeTryOnDb({ product: makeProduct() });
+    mocks.getDb.mockReturnValue(db);
+    mocks.writeTryOnMedia.mockRejectedValue(new Error("disk full"));
+
+    await expect(createTryOnGeneration(baseInput)).rejects.toMatchObject({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "私人圖片暫存失敗，請稍後再試",
+    });
+    expect(mocks.logAudit).not.toHaveBeenCalled();
   });
 });
 
