@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Download, Share, X } from 'lucide-react';
+import { isIos, promptPwaInstall, usePwaInstall } from '@/lib/pwaInstall';
 
 /**
  * PWA 安裝提示 banner（2026-10）——原位可收起，唔係全屏彈窗。
@@ -13,31 +14,6 @@ import { Download, Share, X } from 'lucide-react';
 
 const DISMISS_KEY = 'rc_install_banner_dismissed_at';
 const DISMISS_MS = 14 * 24 * 60 * 60 * 1000;
-
-/** beforeinstallprompt 係 Chromium 專有事件，TS 冇型別，自己定 */
-type BeforeInstallPromptEvent = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-};
-
-function isIos(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent;
-  // iPadOS 13+ 扮 Mac，用 touch 點數分辨
-  return (
-    /iphone|ipod/i.test(ua) ||
-    (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1) ||
-    /ipad/i.test(ua)
-  );
-}
-
-function isStandalone(): boolean {
-  if (typeof window === 'undefined') return false;
-  return (
-    window.matchMedia('(display-mode: standalone)').matches ||
-    (navigator as Navigator & { standalone?: boolean }).standalone === true
-  );
-}
 
 function dismissedRecently(): boolean {
   try {
@@ -59,61 +35,30 @@ function rememberDismiss(): void {
 }
 
 export default function InstallBanner() {
-  // 'android'（攔到 beforeinstallprompt）/ 'ios'（Safari 指引）/ null（唔顯示）
-  const [mode, setMode] = useState<'android' | 'ios' | null>(null);
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const { canInstall, installed } = usePwaInstall();
+  const [dismissed, setDismissed] = useState(dismissedRecently);
+  const [iosDelayPassed, setIosDelayPassed] = useState(false);
 
   useEffect(() => {
-    if (isStandalone() || dismissedRecently()) return;
-
-    const onBeforeInstallPrompt = (e: Event) => {
-      // 阻止瀏覽器預設迷你提示，改用自己嘅原位 banner
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-      setMode('android');
-    };
-    window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
-
-    // iOS 冇 beforeinstallprompt：靜候一拍都冇攔到、又係 iOS，先出 Safari 指引
-    const iosTimer = window.setTimeout(() => {
-      setMode((prev) => (prev === null && isIos() ? 'ios' : prev));
-    }, 1500);
-
-    // 安裝完成後即刻收 banner
-    const onInstalled = () => setMode(null);
-    window.addEventListener('appinstalled', onInstalled);
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', onInstalled);
-      window.clearTimeout(iosTimer);
-    };
+    // iOS 冇 beforeinstallprompt：保留原本一拍延遲，避免同 Chromium 提示閃切。
+    const iosTimer = window.setTimeout(() => setIosDelayPassed(true), 1500);
+    return () => window.clearTimeout(iosTimer);
   }, []);
-
-  if (mode === null) return null;
 
   const dismiss = () => {
     rememberDismiss();
-    setMode(null);
-    setDeferredPrompt(null);
+    setDismissed(true);
   };
 
   const install = async () => {
-    if (!deferredPrompt) return;
-    try {
-      await deferredPrompt.prompt();
-      const choice = await deferredPrompt.userChoice;
-      if (choice.outcome === 'accepted') {
-        setMode(null); // 裝咗就唔使再記 dismiss
-      } else {
-        dismiss(); // 用戶喺系統彈窗揀取消 → 當「暫時唔使」處理
-      }
-    } catch {
-      dismiss();
-    } finally {
-      setDeferredPrompt(null); // 每個 deferred prompt 只可以用一次
-    }
+    const outcome = await promptPwaInstall();
+    // 接受後由共用 installed 狀態收起；取消／失敗沿用原本 14 日唔再煩客人嘅做法。
+    if (outcome !== 'accepted') dismiss();
   };
+
+  if (installed || dismissed) return null;
+  const mode = canInstall ? 'android' : iosDelayPassed && isIos() ? 'ios' : null;
+  if (mode === null) return null;
 
   return (
     <div

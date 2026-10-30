@@ -58,6 +58,7 @@ import {
 } from './tryonFilters';
 import { emitTryOnGuideAction } from '@/components/globalFairyGuide';
 import TryOnPurchase from './TryOnPurchase';
+import AiTryOnTutorial from '@/components/AiTryOnTutorial';
 
 type RouterOutputs = inferRouterOutputs<AppRouter>;
 type TryOnProduct = RouterOutputs['tryon']['listProducts'][number];
@@ -1161,6 +1162,9 @@ export default function TryOn() {
             前鏡自拍、後鏡拍攝或相簿揀相都得。拍一張頭到腳清晰入鏡嘅全身相，揀商品後提交；
             系統會異步生成 AI 視覺預覽，唔係實時布料 AR，亦唔會為遷就衣服而改你嘅樣貌或身形。
           </p>
+          <div className="tryon-hero-actions">
+            <AiTryOnTutorial />
+          </div>
         </div>
         <div className="tryon-hero-side">
           <span className="tryon-status-pill">
@@ -1802,6 +1806,7 @@ const TRYON_CSS = /* css */ `
   .tryon-hero h1 { margin: 22px 0 0; max-width: 850px; font-family: 'Noto Serif TC', serif; font-size: clamp(44px, 6.4vw, 90px); font-weight: 700; line-height: 1.12; letter-spacing: -.045em; }
   .tryon-hero h1 span { color: var(--studio-pink); }
   .tryon-hero-copy { max-width: 690px; margin: 28px 0 0; color: var(--studio-muted); font-size: 15px; line-height: 1.9; }
+  .tryon-hero-actions { margin-top: 20px; }
   .tryon-hero-side { border-top: 1px solid var(--studio-ink); padding-top: 18px; }
   .tryon-status-pill { display: inline-flex; align-items: center; gap: 9px; min-height: 34px; font-size: 12px; font-weight: 700; letter-spacing: .06em; }
   .tryon-status-pill > span { width: 8px; height: 8px; border-radius: 50%; background: var(--studio-pink); }

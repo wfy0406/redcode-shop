@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router';
+import AppInstallGuide from '@/components/AppInstallGuide';
+import { AI_TRYON_TUTORIAL_POSTER, AI_TRYON_TUTORIAL_SRC } from '@/components/AiTryOnTutorial';
 
 /**
  * 常見問題 FAQ /faq
- * 兩大區塊：
+ * 四大區塊：
  *   1) 接收通知教學（id="notify-tutorial" 錨點）——裝置偵測預設 iPhone/Android tab，
  *      兩條教學片 /faq/notify-iphone.mp4、/faq/notify-android.mp4（public/faq/）。
- *   2) Q&A 手風琴——常見問題，禮賓清單式 hairline 分隔，同時只開一條。
+ *   2) AI 試穿教學（id="ai-tryon-tutorial"）——70 秒原片，客人撳播放先睇。
+ *   3) APP 安裝教學（id="app-install"）——共用全站 PWA 安裝事件，附 iPhone/Android 步驟。
+ *   4) Q&A 手風琴——常見問題，禮賓清單式 hairline 分隔，同時只開一條。
  *      除購物／通知問題外，亦包括 PWA 安裝、AI 試穿流程、Mix & Match、
  *      尺碼免責、鏡頭權限、上載故障、WhatsApp 分享私隱。
  * Design brief：深紫底 #0A0614、金 #F5C518、香檳 #F7D774；重點標記兩級 .key / .mark；
@@ -129,12 +133,9 @@ const FAQ_ITEMS: FaqItem[] = [
       <>
         可以！我哋係 <span className="faq-key">PWA 網頁應用</span>，直接用瀏覽器安裝就得，
         <span className="faq-mark">唔係 App Store／Google Play 上架嘅 app</span>，唔使去商店搵。
-        iPhone 用 Safari 開我哋網站 → 撳<span className="faq-key">「分享」</span>掣 →
-        揀<span className="faq-key">「加入主畫面」</span>；Android 用 Chrome 開 →
-        撳右上角<span className="faq-key">選單（⋮）</span>→
-        揀<span className="faq-key">「安裝應用程式」／「加到主畫面」</span>。
-        如果你喺其他 app 內置瀏覽器（WebView）睇緊、搵唔到安裝選項，
-        請先用<span className="faq-mark">系統瀏覽器（Safari／Chrome）開返個網站</span>再裝。
+        詳細 iPhone／Android 步驟同真正安裝掣，請睇
+        <a href="#app-install" className="faq-link">「安裝 APP 教學」</a>。
+        如果你喺其他 app 內置瀏覽器睇緊，請先用系統瀏覽器（Safari／Chrome）開返個網站再裝。
       </>
     ),
   },
@@ -142,6 +143,7 @@ const FAQ_ITEMS: FaqItem[] = [
     q: 'AI 試穿點玩？',
     a: (
       <>
+        想跟住片做，可以先睇<a href="#ai-tryon-tutorial" className="faq-link">70 秒 AI 試穿教學</a>。
         成個流程好簡單：先<span className="faq-key">登入會員</span>，去
         <Link to="/try-on" className="faq-link">AI 試穿</Link>頁，準備一張
         <span className="faq-key">全身相</span>（<span className="faq-mark">前鏡自拍、後鏡拍攝或相簿揀相都得</span>；
@@ -258,11 +260,12 @@ export default function Faq() {
   const [tab, setTab] = useState<'iphone' | 'android'>(detectDefaultTab);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
-  // 由首頁「接收通知教學」連結入嚟（/faq#notify-tutorial）→ 自動碌去教學區
+  // 首頁／問答內嘅教學錨點，入到嚟自動碌去指定區塊。
   useEffect(() => {
-    if (hash !== '#notify-tutorial') return;
+    const targetId = hash.slice(1);
+    if (!['notify-tutorial', 'ai-tryon-tutorial', 'app-install'].includes(targetId)) return;
     const t = setTimeout(() => {
-      document.getElementById('notify-tutorial')?.scrollIntoView({ block: 'start' });
+      document.getElementById(targetId)?.scrollIntoView({ block: 'start' });
     }, 0);
     return () => clearTimeout(t);
   }, [hash]);
@@ -345,7 +348,44 @@ export default function Faq() {
         </p>
       </section>
 
-      {/* ===== 第二區：Q&A 手風琴 ===== */}
+      {/* ===== 第二區：AI 試穿原片教學；FAQ 內按需播放，唔會自動播 ===== */}
+      <section id="ai-tryon-tutorial" className="faq-section" aria-labelledby="ai-tryon-tutorial-title">
+        <p className="faq-kicker">
+          <span className="faq-kicker-latin">AI TRY-ON · 7 STEPS</span>
+          <span className="faq-kicker-cn" id="ai-tryon-tutorial-title">AI 試穿教學</span>
+        </p>
+        <span aria-hidden="true" className="faq-section-line" />
+        <div className="faq-videos">
+          <figure className="faq-video-panel" data-active="true">
+            <video
+              className="faq-video"
+              src={AI_TRYON_TUTORIAL_SRC}
+              poster={AI_TRYON_TUTORIAL_POSTER}
+              controls
+              playsInline
+              preload="metadata"
+              aria-label="70 秒 AI 試穿七步教學影片"
+            />
+            <figcaption>
+              <p className="faq-video-title">70 秒跟住做 · 有聲教學</p>
+              <p className="faq-video-desc">由揀衫、影全身相、生成對照到購買，七步完整示範；撳播放先會開始。</p>
+              <Link to="/try-on" className="faq-primary-link">去 AI 試穿</Link>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      {/* ===== 第三區：PWA 安裝教學＋真正安裝掣 ===== */}
+      <section id="app-install" className="faq-section" aria-labelledby="app-install-title">
+        <p className="faq-kicker">
+          <span className="faq-kicker-latin">APP INSTALL</span>
+          <span className="faq-kicker-cn" id="app-install-title">安裝 APP 教學</span>
+        </p>
+        <span aria-hidden="true" className="faq-section-line" />
+        <AppInstallGuide />
+      </section>
+
+      {/* ===== 第四區：Q&A 手風琴 ===== */}
       <section className="faq-section" aria-label="常見問題">
         <p className="faq-kicker">
           <span className="faq-kicker-latin">Q &amp; A</span>
@@ -523,6 +563,55 @@ const FAQ_CSS = /* css */ `
   .faq-video-desc { font-size: 14px; color: #9488B3; margin: 0; line-height: 1.8; }
 
   .faq-note { margin: 32px 0 0; font-size: 14px; line-height: 1.9; color: #9488B3; }
+  .faq-primary-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    margin-top: 20px;
+    padding: 0 22px;
+    border: 1px solid #F5C518;
+    background: #F5C518;
+    color: #0A0614;
+    font-size: 14px;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  /* ---------- APP 安裝：原廠圖示＋單一主掣＋分機三步，唔造假下載 ---------- */
+  .faq-install-guide { max-width: 640px; }
+  .faq-install-intro { display: flex; align-items: center; gap: 18px; padding-bottom: 24px; border-bottom: 1px solid rgb(247 215 116 / 0.22); }
+  .faq-install-intro > img { width: 58px; height: 58px; flex: 0 0 auto; border-radius: 14px; }
+  .faq-install-intro h3 { margin: 0 0 7px; font-family: 'Noto Serif TC', serif; font-size: 22px; font-weight: 600; }
+  .faq-install-intro p { margin: 0; color: #CFC4E4; font-size: 14px; line-height: 1.8; }
+  .faq-install-button {
+    appearance: none;
+    width: 100%;
+    min-height: 50px;
+    margin-top: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    border: 1px solid #F5C518;
+    border-radius: 0;
+    background: #F5C518;
+    color: #0A0614;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .faq-install-button:disabled { cursor: default; opacity: .68; }
+  .faq-install-button:focus-visible, .faq-primary-link:focus-visible { outline: 2px solid #F7D774; outline-offset: 4px; }
+  .faq-install-hint { margin: 10px 0 0; color: #9488B3; font-size: 12px; line-height: 1.7; text-align: center; }
+  .faq-install-status { margin: 18px 0 0; padding: 12px 14px; border-left: 2px solid #F5C518; background: rgb(245 197 24 / 0.08); color: #F7D774; font-size: 14px; line-height: 1.75; }
+  .faq-install-tabs { margin-top: 26px; margin-bottom: 4px; }
+  .faq-install-steps { list-style: none; margin: 0; padding: 0; }
+  .faq-install-steps li { display: flex; align-items: flex-start; gap: 15px; padding: 18px 0; border-bottom: 1px solid rgb(247 215 116 / 0.16); color: #CFC4E4; font-size: 15px; line-height: 1.8; }
+  .faq-install-steps li > b { flex: 0 0 auto; padding-top: 2px; color: #F5C518; font-family: 'Marcellus', 'Noto Serif TC', serif; font-size: 13px; font-weight: 400; }
+  .faq-install-steps strong { color: #F5F1FA; font-weight: 600; }
+  .faq-install-steps svg { display: inline-block; vertical-align: -4px; color: #F7D774; }
 
   /* ---------- 手風琴：禮賓清單（hairline 分隔，唔准卡片/圓角/陰影） ---------- */
   .faq-item { border-bottom: 1px solid rgb(247 215 116 / 0.22); }
