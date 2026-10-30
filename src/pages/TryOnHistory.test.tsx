@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAbsoluteShareUrl,
+  buildRecordProductShareText,
   buildRecordShareText,
   currentPrice,
   hasDiscount,
@@ -71,6 +72,24 @@ describe('TryOnHistory 純輔助', () => {
     const discounted = buildRecordShareText({ productName: '針織上衣', productSku: 'TOP-01', productPrice: 599, productDiscountPrice: 499 });
     expect(discounted).toContain('HK$499');
     expect(discounted).toContain('原價');
+  });
+
+  it('PNG 分享文字補公開商品網址，保留品名貨號價錢且不帶私人媒體 URL', () => {
+    const record = {
+      productId: 123,
+      productName: '針織上衣',
+      productSku: 'TOP-01',
+      productPrice: 599,
+      productDiscountPrice: 499,
+      outputUrl: 'https://private.example/signed-try-on.png?signature=secret',
+    };
+    const text = buildRecordProductShareText(record, 'https://redcode.example/');
+    expect(text).toContain('針織上衣');
+    expect(text).toContain('TOP-01');
+    expect(text).toContain('HK$499');
+    expect(text).toContain('商品網址：https://redcode.example/products/123');
+    expect(text).not.toContain('private.example');
+    expect(text).not.toContain('signature=');
   });
 
   it('recordDownloadFilename：跟試穿頁命名規則', () => {

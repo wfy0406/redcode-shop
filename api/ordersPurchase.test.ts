@@ -95,6 +95,7 @@ vi.mock("./vip", () => ({
   getShippingRules: vi.fn(),
   normalizeDeliveryMethod: (value?: string | null) => value === "sf_station" || value === "sf_locker" ? value : "address",
   normalizeRegion: (value?: string | null) => value === "MO" || value === "OVERSEAS" ? value : "HK",
+  toContractMethod: (value: string) => value === "sf_station" ? "SF_STATION" : value === "sf_locker" ? "SF_LOCKER" : "HOME",
   recomputeVipTierInBackground: vi.fn(),
 }));
 vi.mock("./promoRouter", () => ({ resolvePromoDiscount: vi.fn() }));
@@ -124,10 +125,13 @@ vi.mock("./airwallex", () => ({ getAirwallexConfig: vi.fn(async () => null) }));
 vi.mock("./wmsMemberSync", () => ({ notifyWmsGuestClaimed: vi.fn() }));
 
 import { ordersRouter } from "./ordersRouter";
-import { cartItems, orderItems, orders } from "@db/schema";
+import { cartItems, orderItems, orders, products } from "@db/schema";
 import { computeWalletSplit } from "./wallet";
 import { forwardOrderToWms } from "./wmsSync";
+import { getAirwallexConfig } from "./airwallex";
+import { getShippingRules } from "./vip";
 import {
+  sendGuestOrderEmail,
   sendOrderPaidOnlineEmail,
   sendOrderPendingEmail,
   sendOrderReviewAlertEmail,
@@ -253,6 +257,49 @@ function callCreate(input?: Record<string, unknown>) {
   });
 }
 
+type CreateGuestHandler = (args: {
+  input: Record<string, unknown>;
+  ctx: { req: Request };
+}) => Promise<any>;
+const createGuestOrder = ordersRouter.createGuest as unknown as CreateGuestHandler;
+const GUEST_DIRECT_INPUT = {
+  items: [{ productId: 123, size: "M", quantity: 1 }],
+  name: "測試客",
+  phone: "91234567",
+  email: "Guest@Example.com",
+  deliveryMethod: "address",
+  address: "香港測試地址 1 號",
+  requestId: REQUEST_ID,
+};
+let guestCallSequence = 0;
+
+function existingGuestDirectOrder(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 601,
+    orderNo: "RC-GUEST-EXISTING-601",
+    userId: null,
+    guestPhone: "91234567",
+    guestEmail: "guest@example.com",
+    guestToken: "original-guest-token",
+    total: 399,
+    expiresAt: new Date("2026-10-30T12:30:00.000Z"),
+    items: [{ productId: 123, size: "M", quantity: 1 }],
+    ...overrides,
+  };
+}
+
+function callCreateGuest(overrides: Record<string, unknown> = {}) {
+  guestCallSequence += 1;
+  return createGuestOrder({
+    input: { ...GUEST_DIRECT_INPUT, ...overrides },
+    ctx: {
+      req: new Request("http://test.local/api/trpc/orders.createGuest", {
+        headers: { "x-real-ip": `192.0.2.${guestCallSequence}` },
+      }),
+    },
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.state.queue = [];
@@ -263,6 +310,12 @@ beforeEach(() => {
   h.state.updates = [];
   h.state.deletes = [];
   mocks.quote.mockImplementation(async () => quoteShape());
+  vi.mocked(getAirwallexConfig).mockResolvedValue(null);
+  vi.mocked(getShippingRules).mockResolvedValue({
+    freeMethods: [],
+    freeThresholdCents: 35000,
+    goldVipFreeMethods: [],
+  });
   vi.mocked(computeWalletSplit).mockReturnValue({ walletApplied: 0, cashDue: 0 });
   vi.mocked(forwardOrderToWms).mockResolvedValue({
     status: "disabled",
@@ -601,5 +654,61 @@ describe("AI 試穿即買 orders.create 分流", () => {
       });
     expect(h.state.txCount).toBe(1);
     expect(h.state.inserts).toHaveLength(0);
+  });
+});
+
+describe("AI 試穿分享訪客即買 orders.createGuest 冪等", () => {
+  it("同一 requestId 重試直接返原訪客單：不重查商品、不扣庫存、不寄新通知", async () => {
+    h.state.queue = [existingGuestDirectOrder()];
+
+    const result = await callCreateGuest();
+
+    expect(result).toEqual({
+      orderId: 601,
+      orderNo: "RC-GUEST-EXISTING-601",
+      guestToken: "original-guest-token",
+      total: 399,
+      expiresAt: "2026-10-30T12:30:00.000Z",
+    });
+    expect(getAirwallexConfig).not.toHaveBeenCalled();
+    expect(sendGuestOrderEmail).not.toHaveBeenCalled();
+    expect(h.state.txCount).toBe(0);
+    expect(h.state.inserts).toHaveLength(0);
+    expect(h.state.updates).toHaveLength(0);
+  });
+
+  it("同一 requestId 但電話或 Email 對唔上：CONFLICT，唔會洩漏原單付款 token", async () => {
+    h.state.queue = [existingGuestDirectOrder()];
+    await expect(callCreateGuest({ phone: "87654321" })).rejects.toMatchObject({ code: "CONFLICT" });
+
+    h.state.queue = [existingGuestDirectOrder()];
+    await expect(callCreateGuest({ email: "other@example.com" })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(h.state.txCount).toBe(0);
+    expect(sendGuestOrderEmail).not.toHaveBeenCalled();
+  });
+
+  it("commit 成功但 DB 回應遺失：catch 恢復同一張訪客單，唔會再開單或再寄信", async () => {
+    vi.mocked(getAirwallexConfig).mockResolvedValue({} as Awaited<ReturnType<typeof getAirwallexConfig>>);
+    h.state.postCommitError = new Error("simulated guest response loss after commit");
+    h.state.queue = [
+      null,
+      [product(123, 399, null, "GUEST-DIRECT")],
+      [{ id: 123 }],
+      [{ id: 601 }],
+      [],
+      existingGuestDirectOrder(),
+    ];
+
+    const result = await callCreateGuest();
+
+    expect(result).toMatchObject({
+      orderId: 601,
+      orderNo: "RC-GUEST-EXISTING-601",
+      guestToken: "original-guest-token",
+    });
+    expect(h.state.txCount).toBe(1);
+    expect(h.state.inserts.filter((entry) => entry.table === orders)).toHaveLength(1);
+    expect(h.state.updates.filter((entry) => entry.table === products)).toHaveLength(1);
+    expect(sendGuestOrderEmail).not.toHaveBeenCalled();
   });
 });

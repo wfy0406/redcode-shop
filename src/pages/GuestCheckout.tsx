@@ -10,7 +10,7 @@
  * - 錯誤 persist 喺欄位下面（唔准 toast），全部 role="alert"
  */
 import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import { getGuestCart, clearGuestCart, type GuestCartItem } from '@/lib/guestCart';
@@ -19,6 +19,7 @@ import GloCutout from '@/components/GloCutout';
 import { StrokeCheck, PROMO_STYLES, BlurThumb } from '@/components/shop/form-bits';
 import { WishStarSpinner } from '@/components/cart/WishingStar';
 import { formatHKD } from '@/components/cart/format';
+import { clearTryOnCheckoutDraft, readTryOnCheckoutDraft } from './tryonPurchase';
 
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 
@@ -53,9 +54,16 @@ interface StockIssue {
 export default function GuestCheckout() {
   const { user, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const directMode = searchParams.get('source') === 'try-on';
 
-  // 訪客購物車（localStorage）＋商品資料對照
-  const [cartItems] = useState<GuestCartItem[]>(() => getGuestCart());
+  // 分享頁即買只讀獨立 session draft；絕不 fallback 或混合 localStorage 原購物車。
+  const [directDraft] = useState(() => directMode
+    ? readTryOnCheckoutDraft(window.sessionStorage, 'guest')
+    : null);
+  const [cartItems] = useState<GuestCartItem[]>(() => directMode
+    ? (directDraft?.items ?? [])
+    : getGuestCart());
   const productsQuery = trpc.products.list.useQuery();
   const rulesQuery = trpc.vip.getPublicVipConfig.useQuery(undefined, { staleTime: 60_000 });
 
@@ -140,9 +148,12 @@ export default function GuestCheckout() {
         address: mode === 'address' ? address.trim() : undefined,
         stationId: mode === 'sf' ? stationId : undefined,
         note: note.trim() || undefined,
+        // 同一份即買草稿重試沿用 requestId；server 會找回已建立嘅原單，唔會再扣一次庫存。
+        requestId: directDraft?.requestId,
       });
-      // 落單成功：清訪客車 → 去付款狀態頁（倒數＋立即付款喺嗰邊）
-      clearGuestCart();
+      // 普通訪客單先清原購物車；分享即買只清今次草稿，原購物車完整保留。
+      if (directMode) clearTryOnCheckoutDraft(window.sessionStorage, 'guest');
+      else clearGuestCart();
       void navigate(`/guest-payment?orderNo=${encodeURIComponent(result.orderNo)}&token=${encodeURIComponent(result.guestToken)}`);
     } catch (e) {
       const err = e as { data?: { code?: string }; message?: string };
@@ -154,6 +165,13 @@ export default function GuestCheckout() {
       }
       if (code === 'TOO_MANY_REQUESTS') {
         setSubmitError('太快手啦，唞一陣再試（10 分鐘內最多 5 張訪客單）');
+        return;
+      }
+      if (code === 'CONFLICT' && directMode) {
+        // 原 requestId 已對應其他聯絡資料嘅訂單；清走失效草稿，下次即買先會有新 requestId。
+        // 只清 session draft，localStorage 原有購物車絕對唔郁。
+        clearTryOnCheckoutDraft(window.sessionStorage, 'guest');
+        setSubmitError('今次即買清單已安全重設。請返回分享頁再撳「立即購買」，原有購物車唔會受影響。');
         return;
       }
       if (code === 'BAD_REQUEST' && /唔夠貨|賣晒|庫存/.test(msg)) {
@@ -176,6 +194,19 @@ export default function GuestCheckout() {
     return (
       <section className="mx-auto flex min-h-[calc(100dvh-60px)] w-full max-w-[1280px] items-center justify-center px-5 py-24">
         <WishStarSpinner size={32} />
+      </section>
+    );
+  }
+
+  /* ---------- 分享即買草稿失效：唔准靜靜雞改用原購物車 ---------- */
+  if (directMode && cartItems.length === 0) {
+    return (
+      <section className="mx-auto flex min-h-[calc(100dvh-60px)] w-full max-w-[640px] flex-col items-center justify-center gap-5 px-5 py-24 text-center">
+        <h1 className="font-serif-tc text-2xl font-semibold text-txt-1">搵唔到今次即買清單</h1>
+        <p role="alert" className="max-w-md text-[15px] leading-relaxed text-txt-2">
+          清單可能已過期、被清除或已完成落單。請返回分享頁重新撳「立即購買」；唔會自動改用你原有購物車。
+        </p>
+        <Link to="/products" className="btn btn-secondary">去商品頁</Link>
       </section>
     );
   }

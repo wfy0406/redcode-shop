@@ -91,6 +91,27 @@ describe('試穿即買清單', () => {
     expect(readTryOnCheckoutDraft(storage, 7)).toBeNull();
   });
 
+  it('訪客分享即買用獨立草稿；清除訪客草稿唔會郁會員草稿', () => {
+    const storage = new MemoryStorage();
+    expect(saveTryOnCheckoutDraft(storage, 7, 'look-1', [
+      { productId: 101, size: 'M', quantity: 1 },
+    ])).toBe(true);
+    expect(saveTryOnCheckoutDraft(storage, 'guest', 'shared-public-1', [
+      { productId: 202, size: 'L', quantity: 1 },
+    ])).toBe(true);
+
+    expect(readTryOnCheckoutDraft(storage, 'guest')?.items).toEqual([
+      { productId: 202, size: 'L', quantity: 1 },
+    ]);
+    expect(readTryOnCheckoutDraft(storage, 7)?.items).toEqual([
+      { productId: 101, size: 'M', quantity: 1 },
+    ]);
+
+    clearTryOnCheckoutDraft(storage, 'guest');
+    expect(readTryOnCheckoutDraft(storage, 'guest')).toBeNull();
+    expect(readTryOnCheckoutDraft(storage, 7)).not.toBeNull();
+  });
+
   it('同一造型同一清單重用 requestId；換商品或成功清草稿後先建立新請求', () => {
     const storage = new MemoryStorage();
     const firstItems = [{ productId: 101, size: 'M', quantity: 1 }] as const;

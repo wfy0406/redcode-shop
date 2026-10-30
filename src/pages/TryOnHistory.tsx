@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -39,6 +40,7 @@ export type TryOnHistoryRecord = {
 };
 export type TryOnShareLink = { url: string; expiresAt: Date };
 export type TryOnSharedRecord = {
+  productId: number;
   productName: string;
   productSku: string;
   productPrice: number;
@@ -148,6 +150,19 @@ export function buildRecordShareText(record: {
   return `RedCode AI 試穿預覽：${record.productName}（貨號 ${record.productSku}）· ${priceLine}`;
 }
 
+/** PNG 系統分享只加入公開商品頁；私人／限時 signed media URL 絕不放入文字。 */
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildRecordProductShareText(record: {
+  productId: number;
+  productName: string;
+  productSku: string;
+  productPrice: number;
+  productDiscountPrice: number | null;
+}, origin: string): string {
+  const productUrl = buildAbsoluteShareUrl(origin, `/products/${record.productId}`);
+  return `${buildRecordShareText(record)}\n商品網址：${productUrl}`;
+}
+
 export function recordDownloadFilename(record: { productSku: string; stepNumber: number }): string {
   return `RedCode-AI試穿-${record.productSku}-第${record.stepNumber}件.png`;
 }
@@ -250,7 +265,7 @@ export default function TryOnHistory() {
       const blob = await response.blob();
       const filename = recordDownloadFilename(latest);
       const file = new File([blob], filename, { type: 'image/png' });
-      const text = buildRecordShareText(latest);
+      const text = buildRecordProductShareText(latest, window.location.origin);
 
       if (navigator.share && navigator.canShare?.({ files: [file] })) {
         // 主要流程只傳 PNG 相檔同公開商品資料，唔將私人 signed media URL 放入分享 payload。
@@ -297,7 +312,7 @@ export default function TryOnHistory() {
         if (res.error || !link?.url) throw new Error('未能建立 24 小時分享連結，請稍後再試');
         const absoluteUrl = buildAbsoluteShareUrl(window.location.origin, link.url);
         const record = recordsRef.current.find((item) => item.publicId === publicId);
-        const text = record ? buildRecordShareText(record) : 'RedCode AI 試穿預覽';
+        const text = record ? buildRecordProductShareText(record, window.location.origin) : 'RedCode AI 試穿預覽';
         setShareResult({ publicId, url: absoluteUrl, text, expiresAt: link.expiresAt ?? null });
         notify('24 小時分享連結已顯示喺紀錄下方');
       } catch (error) {
@@ -536,7 +551,7 @@ export default function TryOnHistory() {
         </>
       )}
 
-      {viewer && (
+      {viewer && createPortal(
         <div
           className="tryon-viewer"
           role="dialog"
@@ -548,15 +563,27 @@ export default function TryOnHistory() {
           }}
         >
           <div className="tryon-viewer-bar">
-            <p>{viewer.productName} · 第 {viewer.stepNumber} 件 · 按 Esc 或右上掣關閉</p>
-            <button type="button" className="tryon-viewer-close" onClick={() => setViewer(null)} aria-label="關閉放大預覽">
-              <X size={22} />
+            <p>{viewer.productName} · 第 {viewer.stepNumber} 件 · 按 Esc 或圖片外背景關閉</p>
+            <button
+              type="button"
+              className="tryon-viewer-close"
+              onClick={() => setViewer(null)}
+              aria-label="關閉放大預覽，返回試穿紀錄"
+            >
+              <X size={20} aria-hidden="true" />
+              <span>返回試穿紀錄</span>
             </button>
           </div>
-          <div className="tryon-viewer-stage">
+          <div
+            className="tryon-viewer-stage"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setViewer(null);
+            }}
+          >
             <img src={viewer.outputUrl} alt={`${viewer.productName} AI 試穿視覺預覽（放大）`} />
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {notice && <div className="tryon-history-toast" role="status"><Check size={17} />{notice}</div>}

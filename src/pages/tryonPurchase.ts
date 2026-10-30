@@ -5,6 +5,8 @@ import {
 } from '@contracts/purchase';
 import type { CartLine, CartLineProduct } from '@/components/cart/types';
 
+export type TryOnCheckoutOwner = number | 'guest';
+
 export interface TryOnCheckoutDraftItem {
   productId: number;
   size: string | null;
@@ -13,7 +15,7 @@ export interface TryOnCheckoutDraftItem {
 
 export interface TryOnCheckoutDraft {
   version: 1;
-  userId: number;
+  userId: TryOnCheckoutOwner;
   lookId: string;
   /** 同一份草稿重試必須沿用；server 用它找回已 commit 但回應遺失嘅訂單。 */
   requestId: string;
@@ -34,11 +36,11 @@ export interface TryOnCheckoutStorage {
   removeItem(key: string): void;
 }
 
-function storageKey(userId: number): string {
+function storageKey(userId: TryOnCheckoutOwner): string {
   return `rc_tryon_checkout_${userId}`;
 }
 
-function validDraft(value: unknown, userId: number): value is TryOnCheckoutDraft {
+function validDraft(value: unknown, userId: TryOnCheckoutOwner): value is TryOnCheckoutDraft {
   if (!value || typeof value !== 'object') return false;
   const draft = value as Partial<TryOnCheckoutDraft>;
   if (
@@ -96,15 +98,14 @@ function sameItems(a: readonly TryOnCheckoutDraftItem[], b: readonly TryOnChecko
 /** Buy-now 同購物車分開保存，所以原有購物車唔會被混合或清空。 */
 export function saveTryOnCheckoutDraft(
   storage: TryOnCheckoutStorage,
-  userId: number,
+  userId: TryOnCheckoutOwner,
   lookId: string,
   items: readonly TryOnPurchaseItem[],
   options: TryOnCheckoutOptions = {},
 ): boolean {
   const promoCode = options.promoCode?.trim().toUpperCase() || undefined;
   if (
-    !Number.isInteger(userId) ||
-    userId <= 0 ||
+    (userId !== 'guest' && (!Number.isInteger(userId) || userId <= 0)) ||
     items.length < 1 ||
     items.length > TRYON_PURCHASE_MAX_ITEMS ||
     items.some((item) => item.quantity !== 1) ||
@@ -147,7 +148,7 @@ export function saveTryOnCheckoutDraft(
 
 export function readTryOnCheckoutDraft(
   storage: TryOnCheckoutStorage,
-  userId: number,
+  userId: TryOnCheckoutOwner,
 ): TryOnCheckoutDraft | null {
   try {
     const raw = storage.getItem(storageKey(userId));
@@ -161,7 +162,7 @@ export function readTryOnCheckoutDraft(
   }
 }
 
-export function clearTryOnCheckoutDraft(storage: TryOnCheckoutStorage, userId: number): void {
+export function clearTryOnCheckoutDraft(storage: TryOnCheckoutStorage, userId: TryOnCheckoutOwner): void {
   try {
     storage.removeItem(storageKey(userId));
   } catch {

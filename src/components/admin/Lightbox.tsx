@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 /**
@@ -28,7 +29,9 @@ export default function Lightbox({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  // 後台卡片常用 backdrop-filter；inline fixed 會被祖先當成 containing block 而錯位。
+  // 搬到 body 底下先可以保證 inset-0 對準 viewport，其他付款截圖燈箱亦沿用同一修正。
+  return createPortal(
     <div
       className="fixed inset-0 z-[80] flex items-center justify-center overflow-auto p-4"
       style={{ background: 'rgba(7, 3, 15, 0.94)' }}
@@ -52,6 +55,7 @@ export default function Lightbox({
         style={{ borderColor: 'var(--glass-border)' }}
         onClick={(e) => e.stopPropagation()}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }

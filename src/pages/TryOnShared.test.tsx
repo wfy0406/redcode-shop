@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSharedParams } from './TryOnShared';
+import { parseSharedParams, resolveSharedPurchase } from './TryOnShared';
 
 /** 模擬 URLSearchParams 嘅最小介面 */
 function queryOf(entries: Record<string, string>) {
@@ -43,5 +43,33 @@ describe('TryOnShared parseSharedParams（分享連結格式 /try-on/shared/:pub
     expect(parseSharedParams(VALID_ID, queryOf({ e: '0', s: 'sig' })).paramsValid).toBe(false);
     expect(parseSharedParams(VALID_ID, queryOf({ e: '-5', s: 'sig' })).paramsValid).toBe(false);
     expect(parseSharedParams(VALID_ID, queryOf({ e: '', s: 'sig' })).paramsValid).toBe(false);
+  });
+});
+
+describe('TryOnShared 最新商品購買檢查', () => {
+  const product = {
+    id: 123,
+    name: '針織上衣',
+    stock: 3,
+    sizeEnabled: true,
+    sizes: 'S, M, L',
+  };
+
+  it('有尺寸商品必須揀最新選項；有效尺寸會帶去加車／即買', () => {
+    expect(resolveSharedPurchase(product, 'M')).toEqual({ productId: 123, size: 'M' });
+    expect(() => resolveSharedPurchase(product, null)).toThrow('揀返有效尺寸');
+    expect(() => resolveSharedPurchase(product, 'XXL')).toThrow('揀返有效尺寸');
+  });
+
+  it('售罄即擋住；唔需要尺寸嘅商品可買一件', () => {
+    expect(() => resolveSharedPurchase({ ...product, stock: 0 }, 'M')).toThrow('暫時售罄');
+    expect(resolveSharedPurchase({ ...product, sizeEnabled: false }, null)).toEqual({
+      productId: 123,
+      size: null,
+    });
+    expect(resolveSharedPurchase({ ...product, sizes: null }, null)).toEqual({
+      productId: 123,
+      size: null,
+    });
   });
 });

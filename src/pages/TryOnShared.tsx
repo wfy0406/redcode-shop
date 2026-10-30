@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   AlertTriangle,
   Check,
@@ -8,7 +8,9 @@ import {
   Link2,
   LoaderCircle,
   Shirt,
+  ShoppingCart,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import {
   currentPrice,
@@ -20,6 +22,11 @@ import {
   tryOnHistoryApi,
   type TryOnSharedRecord,
 } from './TryOnHistory';
+import { trpc } from '@/providers/trpc';
+import { useAuth } from '@/hooks/useAuth';
+import { parseSizes } from '@/components/shop/shop-utils';
+import { addToGuestCart } from '@/lib/guestCart';
+import { saveTryOnCheckoutDraft } from './tryonPurchase';
 import './tryOnHistory.css';
 
 export type SharedLinkParams = {
@@ -48,6 +55,31 @@ export function parseSharedParams(
   return { publicId, expires, signature, paramsValid };
 }
 
+export type SharedPurchaseProduct = {
+  id: number;
+  name: string;
+  stock: number;
+  sizeEnabled: boolean;
+  sizes: string | null | undefined;
+};
+
+/** 每次購買都用剛重查嘅商品驗證；唔接受試穿生成時嘅舊庫存或尺寸快照。 */
+// eslint-disable-next-line react-refresh/only-export-components
+export function resolveSharedPurchase(
+  product: SharedPurchaseProduct,
+  selectedSize: string | null,
+): { productId: number; size: string | null } {
+  if (product.stock <= 0) throw new Error(`《${product.name}》暫時售罄，請去商品頁睇其他款式`);
+  const options = parseSizes(product.sizes);
+  if (product.sizeEnabled && options.length > 0) {
+    if (!selectedSize || !options.includes(selectedSize)) {
+      throw new Error(`請先為《${product.name}》揀返有效尺寸`);
+    }
+    return { productId: product.id, size: selectedSize };
+  }
+  return { productId: product.id, size: null };
+}
+
 /**
  * 公開分享頁：朋友撳分享連結入嚟，淨係見到生成圖＋公開商品資料。
  * 唔會回原相、會員資料或任何私人內容；連結過期／簽名無效會見到友善說明。
@@ -61,11 +93,34 @@ export default function TryOnShared() {
     { publicId, expires, signature },
     { enabled: paramsValid, retry: false, refetchOnWindowFocus: false },
   );
+  const { user, isLoading: authLoading } = useAuth();
+  // 商品重查會 await；分流時要讀最新登入狀態，唔好用點擊一刻嘅舊 closure。
+  const authRef = useRef(user);
+  authRef.current = user;
+  const navigate = useNavigate();
+  const utils = trpc.useUtils();
+  const record = sharedQuery.data ?? null;
+  const expired = record ? isRecordExpired(record) : false;
+  const productQuery = trpc.products.byId.useQuery(
+    { id: record?.productId ?? 0 },
+    {
+      enabled: Boolean(record) && !expired,
+      retry: false,
+      staleTime: 0,
+      refetchOnWindowFocus: false,
+    },
+  );
+  const product = productQuery.data ?? null;
+  const sizes = useMemo(() => parseSizes(product?.sizes), [product?.sizes]);
+  const needSize = Boolean(product?.sizeEnabled) && sizes.length > 0;
+  const addCart = trpc.cart.add.useMutation();
 
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [selectedSize, setSelectedSize] = useState<string | null>(null);
+  const [purchaseAction, setPurchaseAction] = useState<'cart' | 'buy' | null>(null);
   // 圖片載入失敗次數：第 1 次自動 refetch 拎新 signed URL，再失敗先顯示手動重試
   const [imageErrors, setImageErrors] = useState(0);
   const imageFailed = imageErrors >= 2;
@@ -114,8 +169,50 @@ export default function TryOnShared() {
     }
   };
 
-  const record = sharedQuery.data ?? null;
-  const expired = record ? isRecordExpired(record) : false;
+  const purchase = async (action: 'cart' | 'buy') => {
+    if (!record || purchaseAction || authLoading) return;
+    setPurchaseAction(action);
+    setActionError(null);
+    try {
+      // 唔信首次 query 或生成時快照：每次撳掣都即時向 server 重查商品。
+      const refreshed = await productQuery.refetch();
+      if (refreshed.error || !refreshed.data) {
+        throw new Error('目前商品資料未能更新，可能已下架或網絡不穩，請稍後再試');
+      }
+      const selection = resolveSharedPurchase(refreshed.data, selectedSize);
+      const currentUser = authRef.current;
+
+      if (action === 'buy') {
+        const owner = currentUser?.id ?? 'guest';
+        const saved = saveTryOnCheckoutDraft(
+          window.sessionStorage,
+          owner,
+          `shared:${publicId}`,
+          [{ productId: selection.productId, size: selection.size ?? undefined, quantity: 1 }],
+        );
+        if (!saved) throw new Error('瀏覽器未能保留今次即買清單，請檢查瀏覽器設定後再試');
+        void navigate(currentUser ? '/checkout?source=try-on' : '/guest-checkout?source=try-on');
+        return;
+      }
+
+      if (currentUser) {
+        await addCart.mutateAsync({
+          productId: selection.productId,
+          size: selection.size ?? undefined,
+          quantity: 1,
+        });
+        void utils.cart.list.invalidate();
+      } else {
+        addToGuestCart(selection.productId, selection.size, 1);
+      }
+      notify('已加入購物車，原有商品會保留');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '操作失敗，請再試');
+    } finally {
+      setPurchaseAction(null);
+    }
+  };
+
   // 後端會直接報錯（retry:false）；本地時間過咗都當過期，唔好用戶白等
   const invalid = !paramsValid || sharedQuery.isError || expired;
 
@@ -199,6 +296,68 @@ export default function TryOnShared() {
             <p>分享有效至：<strong>{hkDateTimeLabel(record.expiresAt)}</strong>（香港時間）</p>
           </section>
 
+          <section className="tryon-shared-purchase" aria-label="購買呢件商品">
+            <div className="tryon-shared-purchase-head">
+              <h2>買呢件商品</h2>
+              <p>撳掣時會重查最新售價、尺寸及庫存；立即購買只結帳呢一件，唔會清空你原有購物車。</p>
+            </div>
+
+            {productQuery.isLoading ? (
+              <p className="tryon-shared-purchase-status" role="status">
+                <LoaderCircle className="tryon-history-spin" size={17} aria-hidden="true" />正在讀取最新商品資料…
+              </p>
+            ) : productQuery.isError || !product ? (
+              <div className="tryon-shared-purchase-status" role="alert">
+                <span>商品可能已下架，或暫時未能讀取最新資料。</span>
+                <button type="button" className="tryon-history-text" onClick={() => void productQuery.refetch()}>
+                  重新載入
+                </button>
+              </div>
+            ) : product.stock <= 0 ? (
+              <p className="tryon-shared-purchase-status" role="alert">呢件商品暫時售罄，未能加入購物車或立即購買。</p>
+            ) : (
+              <>
+                {needSize && (
+                  <label className="tryon-shared-size">
+                    <span>尺寸（必選）</span>
+                    <select
+                      value={selectedSize ?? ''}
+                      onChange={(event) => setSelectedSize(event.target.value || null)}
+                      disabled={purchaseAction !== null || authLoading}
+                    >
+                      <option value="">請揀尺寸</option>
+                      {sizes.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </label>
+                )}
+                <div className="tryon-shared-purchase-actions">
+                  <button
+                    type="button"
+                    className="tryon-history-secondary"
+                    onClick={() => void purchase('cart')}
+                    disabled={purchaseAction !== null || authLoading}
+                  >
+                    {purchaseAction === 'cart'
+                      ? <LoaderCircle className="tryon-history-spin" size={17} aria-hidden="true" />
+                      : <ShoppingCart size={17} aria-hidden="true" />}
+                    {purchaseAction === 'cart' ? '加入中…' : '加入購物車'}
+                  </button>
+                  <button
+                    type="button"
+                    className="tryon-history-primary"
+                    onClick={() => void purchase('buy')}
+                    disabled={purchaseAction !== null || authLoading}
+                  >
+                    {purchaseAction === 'buy'
+                      ? <LoaderCircle className="tryon-history-spin" size={17} aria-hidden="true" />
+                      : <Zap size={17} aria-hidden="true" />}
+                    {purchaseAction === 'buy' ? '準備結帳…' : '立即購買'}
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+
           <div className="tryon-shared-actions">
             <button
               type="button"
@@ -209,7 +368,7 @@ export default function TryOnShared() {
               {downloading ? <LoaderCircle className="tryon-history-spin" size={17} /> : <Download size={17} />}
               {downloading ? '準備中…' : '下載效果圖'}
             </button>
-            <Link to="/products" className="tryon-history-secondary"><Shirt size={17} />去商品頁</Link>
+            <Link to={`/products/${record.productId}`} className="tryon-history-secondary"><Shirt size={17} />去商品頁</Link>
           </div>
 
           <p className="tryon-shared-note">

@@ -32,7 +32,7 @@ import {
   memberPhoneMatches,
   normalizeGuestPhone,
 } from "./guestUtils";
-import { tryOnPurchaseItemsSchema, tryOnPurchaseRequestIdSchema, type TryOnPurchaseItem } from "@contracts/purchase";
+import { tryOnPurchaseItemsSchema, tryOnPurchaseRequestIdSchema } from "@contracts/purchase";
 import { loadTryOnPurchaseItems, resolveTryOnPurchaseItems } from "./purchase";
 
 const orderStatusEnum = z.enum([
@@ -131,7 +131,7 @@ async function guestOrderPayload(
   };
 }
 
-function generateTryOnOrderNo(userId: number, requestId: string): string {
+function generateTryOnOrderNo(userId: number | "guest", requestId: string): string {
   // 穩定、不可預測兼不受 server 日期／重啟影響；RC + 30 hex = 現有 varchar(32) 上限。
   // 唔另加 DB 欄位或 migration；現有 orderNo unique constraint 就係跨 process 冪等鎖。
   const digest = createHash("sha256")
@@ -143,7 +143,7 @@ function generateTryOnOrderNo(userId: number, requestId: string): string {
 
 function sameTryOnOrderItems(
   existing: readonly { productId: number; size: string | null; quantity: number }[],
-  requested: readonly TryOnPurchaseItem[],
+  requested: readonly { productId: number; size?: string | null; quantity: number }[],
 ): boolean {
   const normalize = (lines: readonly { productId: number; size?: string | null; quantity: number }[]) =>
     lines.map((line) => ({
@@ -790,6 +790,8 @@ export const ordersRouter = createRouter({
         address: z.string().max(500).optional(),
         stationId: z.string().trim().max(64).optional(),
         note: z.string().max(500).optional(),
+        // AI 試穿分享即買：同一草稿重試沿用同一 UUID；普通訪客購物車維持原流程。
+        requestId: tryOnPurchaseRequestIdSchema.optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -800,15 +802,7 @@ export const ordersRouter = createRouter({
           message: "落單太頻密，請幾分鐘後再試",
         });
       }
-      // ② 訪客單只收即時付款：Airwallex 未配置就唔開得單（唔准落手動單）
-      const cfg = await getAirwallexConfig();
-      if (!cfg) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "即時付款暫時未能使用，請稍後再試",
-        });
-      }
-      // ③ 電話 normalize（純 8 位）；格式唔啱即擋
+      // ② 電話 normalize（純 8 位）；格式唔啱即擋
       const phone = normalizeGuestPhone(input.phone);
       if (!phone) {
         throw new TRPCError({
@@ -818,6 +812,52 @@ export const ordersRouter = createRouter({
       }
       const email = input.email.trim().toLowerCase();
       const db = getDb();
+      const isTryOnDirect = input.requestId !== undefined;
+      let orderNo = isTryOnDirect
+        ? generateTryOnOrderNo("guest", input.requestId!)
+        : generateOrderNo();
+
+      // 同一份即買草稿如已 commit，重試直接返原單；唔再讀商品、扣庫存或寄新通知。
+      // 訪客冇會員 ID，所以除咗商品外，必須對返已 normalize 嘅電話同 email 先可以返付款 token。
+      const loadExistingTryOnOrder = async () => {
+        if (!isTryOnDirect) return null;
+        const existing = await db.query.orders.findFirst({
+          where: eq(orders.orderNo, orderNo),
+          with: { items: true },
+        });
+        if (!existing) return null;
+        if (
+          existing.userId !== null ||
+          existing.guestPhone !== phone ||
+          existing.guestEmail !== email ||
+          !existing.guestToken ||
+          !existing.expiresAt ||
+          !sameTryOnOrderItems(existing.items, input.items)
+        ) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "呢個即買請求編號已對應另一張訂單，請返回分享頁重新建立購買清單",
+          });
+        }
+        return {
+          orderId: existing.id,
+          orderNo: existing.orderNo,
+          guestToken: existing.guestToken,
+          total: existing.total,
+          expiresAt: existing.expiresAt.toISOString(),
+        };
+      };
+      const recovered = await loadExistingTryOnOrder();
+      if (recovered) return recovered;
+
+      // ③ 訪客單只收即時付款：Airwallex 未配置就唔開新單；已成功嘅原單仍可恢復。
+      const cfg = await getAirwallexConfig();
+      if (!cfg) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "即時付款暫時未能使用，請稍後再試",
+        });
+      }
 
       // ④ 取貨方式校驗：上門要地址；自取要有效站點（存在＋active＋HK 區）
       const deliveryMethod = input.deliveryMethod;
@@ -872,18 +912,21 @@ export const ordersRouter = createRouter({
       const rules = await getShippingRules();
       const shipping = decideGuestShipping(rules, deliveryMethod, subtotal * 100);
 
-      // ⑦ 單號（RC+日期+4 位隨機，撞號重生）＋ 30 分鐘付款死線 ＋ 查單 token
-      let orderNo = generateOrderNo();
-      for (let i = 0; i < 10; i++) {
-        const dup = await db.query.orders.findFirst({ where: eq(orders.orderNo, orderNo) });
-        if (!dup) break;
-        orderNo = generateOrderNo();
+      // ⑦ 普通訪客單號撞號重生；即買單號已由 requestId 穩定衍生。另設 30 分鐘付款死線＋查單 token。
+      if (!isTryOnDirect) {
+        for (let i = 0; i < 10; i++) {
+          const dup = await db.query.orders.findFirst({ where: eq(orders.orderNo, orderNo) });
+          if (!dup) break;
+          orderNo = generateOrderNo();
+        }
       }
       const guestToken = randomUUID();
       const expiresAt = new Date(Date.now() + GUEST_ORDER_TTL_MS);
 
       // ⑧ transaction：逐項 conditional 扣庫存（防超賣）＋insert order＋items
-      const orderId = await db.transaction(async (tx) => {
+      let orderId: number;
+      try {
+        orderId = await db.transaction(async (tx) => {
         for (const item of input.items) {
           const deducted = await tx
             .update(products)
@@ -944,7 +987,18 @@ export const ordersRouter = createRouter({
           }),
         );
         return id;
-      });
+        });
+      } catch (cause) {
+        // unique 競爭，或 commit 成功但回應遺失：同一 requestId 只恢復原訪客單。
+        let recoveredAfterError: Awaited<ReturnType<typeof loadExistingTryOnOrder>> = null;
+        try {
+          recoveredAfterError = await loadExistingTryOnOrder();
+        } catch {
+          throw cause;
+        }
+        if (recoveredAfterError) return recoveredAfterError;
+        throw cause;
+      }
 
       // ⑨ 訪客確認信（never-throw）：呢封信係訪客嘅命根——魔法連結直達付款頁；
       // 寄失敗唔阻落單，結果寫入 audit detail 方便後台排查
