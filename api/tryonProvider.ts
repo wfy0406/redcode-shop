@@ -8,18 +8,22 @@ export interface TryOnSubmitInput {
 }
 
 const PLACEMENT: Record<TryOnProductKind, string> = {
-  top: "as the upper-body garment",
-  pants: "as the lower-body garment",
-  dress: "as the dress",
-  shoes: "as the shoes on the feet",
-  ring: "as a ring on a suitable finger, never as another accessory type",
-  necklace: "as a necklace around the neck, never as another accessory type",
-  earrings: "as earrings on the ears, never as another accessory type",
-  bracelet: "as a bracelet or bangle on the wrist, never as another accessory type",
+  top: "on the original person's upper body as the replacement upper-body garment",
+  pants: "on the original person's lower body as the replacement lower-body garment",
+  dress: "on the original person as the replacement dress",
+  shoes: "on the original person's feet as the replacement shoes",
+  ring: "on a suitable visible finger of the original person's hand",
+  necklace: "around the original person's neck, following the existing neckline",
+  earrings: "at the original person's natural ear positions",
+  bracelet: "around a suitable visible wrist of the original person",
 };
 
+/**
+ * 簡短、正面嘅局部修改指示：原圖人物、場景及商品細節優先。
+ * 唔用否定式或疊加 generic quality 字眼，避免生成服務將請求理解成重新設計成張相。
+ */
 function fixedPrompt(kind: TryOnProductKind): string {
-  return `Place the exact product from product_image ${PLACEMENT[kind]}. Preserve its design, color, pattern, material appearance, logos and details. Do not substitute another product. Preserve the model's identity, facial features, hair, body shape and pose. Use only natural placement, scale and realistic folds where applicable.`;
+  return `Edit model_image itself while keeping the same person, face, hair, body shape, pose, framing, camera angle, lighting and original background. Place product_image ${PLACEMENT[kind]}, preserving its design, color, pattern, material appearance, logos and details. Keep all other clothing, accessories and scene elements unchanged.`;
 }
 
 export interface TryOnProvider {

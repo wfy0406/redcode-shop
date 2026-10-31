@@ -15,7 +15,7 @@ const INPUT = {
 };
 
 describe("FASHN Try-On Max server adapter", () => {
-  it("固定 tryon-max／quality／1k／一張 PNG，商品及人物 preservation prompt 不變", async () => {
+  it("固定 tryon-max／quality／1k／一張 PNG，並以原圖局部修改及保留人物場景為優先", async () => {
     const fetchImpl = vi.fn(async (_input: string | URL, _init?: RequestInit) => jsonResponse({ id: "job-123" }));
     const provider = new FashnTryOnProvider("unit-test-key", { fetchImpl });
     await expect(provider.submit(INPUT)).resolves.toEqual({ id: "job-123" });
@@ -37,22 +37,36 @@ describe("FASHN Try-On Max server adapter", () => {
       return_base64: true,
       seed: 42,
     });
-    expect(payload.inputs.prompt).toContain("ring on a suitable finger");
-    expect(payload.inputs.prompt).toContain("Preserve its design, color, pattern, material appearance");
-    expect(payload.inputs.prompt).toContain("Preserve the model's identity, facial features, hair, body shape and pose");
+    expect(payload.inputs.prompt).toContain("on a suitable visible finger of the original person's hand");
+    expect(payload.inputs.prompt).toContain("Edit model_image itself");
+    expect(payload.inputs.prompt).toContain(
+      "same person, face, hair, body shape, pose, framing, camera angle, lighting and original background",
+    );
+    expect(payload.inputs.prompt).toContain("preserving its design, color, pattern, material appearance, logos and details");
+    expect(payload.inputs.prompt).toContain("Keep all other clothing, accessories and scene elements unchanged");
+    expect(payload.inputs.prompt).not.toMatch(/\b(?:do not|never)\b/i);
   });
 
-  it("耳環同手鏈使用各自 placement，唔係籠統 accessory", async () => {
-    const prompts: string[] = [];
+  it.each([
+    ["top", "on the original person's upper body as the replacement upper-body garment"],
+    ["pants", "on the original person's lower body as the replacement lower-body garment"],
+    ["dress", "on the original person as the replacement dress"],
+    ["shoes", "on the original person's feet as the replacement shoes"],
+    ["ring", "on a suitable visible finger of the original person's hand"],
+    ["necklace", "around the original person's neck, following the existing neckline"],
+    ["earrings", "at the original person's natural ear positions"],
+    ["bracelet", "around a suitable visible wrist of the original person"],
+  ] as const)("%s 使用原人物嘅正確穿戴位置", async (productKind, placement) => {
+    let prompt = "";
     const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      prompts.push(JSON.parse(String(init?.body)).inputs.prompt);
+      prompt = JSON.parse(String(init?.body)).inputs.prompt;
       return jsonResponse({ id: "job-123" });
     });
     const provider = new FashnTryOnProvider("unit-test-key", { fetchImpl });
-    await provider.submit({ ...INPUT, productKind: "earrings" });
-    await provider.submit({ ...INPUT, productKind: "bracelet" });
-    expect(prompts[0]).toContain("earrings on the ears");
-    expect(prompts[1]).toContain("bracelet or bangle on the wrist");
+    await provider.submit({ ...INPUT, productKind });
+    expect(prompt).toContain(placement);
+    expect(prompt).toContain("original background");
+    expect(prompt).toContain("all other clothing, accessories and scene elements unchanged");
   });
 
   it.each(["starting", "in_queue", "processing"])("供應商狀態 %s 會繼續等待", async (status) => {

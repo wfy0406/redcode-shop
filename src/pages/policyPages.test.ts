@@ -67,14 +67,16 @@ describe("私隱政策：AI 試穿披露（第 2.6 節及相關節）", () => {
     expect(privacySrc).not.toContain("最多保留 24 小時");
   });
 
-  it("刪除 30 日後台圖片副本及人員查閱表述，保留無圖業務紀錄說明", () => {
+  it("刪除 30 日後台圖片副本、人員查閱及指定無圖句子，保留業務紀錄說明", () => {
     expect(privacySrc).not.toMatch(/30\s*[日天]/);
     expect(privacySrc).not.toMatch(/主管|管理員/);
     expect(privacySrc).not.toContain("只限獲授權嘅人員查閱");
     expect(privacySrc).not.toContain("唔會令呢個後台副本即時消失");
     expect(privacySrc).toContain("刪圖唔等於刪晒所有紀錄");
     expect(privacySrc).toContain("邊位會員、邊件商品、狀態、時間");
-    expect(privacySrc).toContain("唔包括你嘅圖片");
+    expect(privacySrc).toContain("狀態、時間同所用額度。");
+    expect(privacySrc).not.toContain("呢啲較長期業務紀錄");
+    expect(privacySrc).not.toContain("唔包括你嘅圖片");
   });
 
   it("寫明主要分享直接傳 PNG、由客人主動發送；離開系統後無法撤回", () => {
