@@ -3,46 +3,17 @@ import type { HttpBindings } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import fs from "fs";
 import path from "path";
+import {
+  injectPublicSeoContent,
+  LUCKY_EVENT_SEO,
+  PUBLIC_PAGES,
+  stripPublicSeoContent,
+} from "./publicSeo";
 
 type App = Hono<{ Bindings: HttpBindings }>;
 
-// v2.2.21（E2）逐頁 SEO：BrowserRouter 遷移後每條路由係真 URL，server 喺 notFound
-// fallback 出 index.html 前按頁面注入專屬 title/description/og:url/canonical。
-// 文案同 src/lib/seo.ts PAGE_SEO 保持一致（嗰邊係前端轉頁後嘅動態更新；
-// 呢邊係 server 首口 HTML，crawler 唔行 JS 全靠佢）。
-const ROUTE_SEO: Record<string, { title: string; description: string }> = {
-  "/products": {
-    title: "全部貨品｜RedCode Fashion Design",
-    description:
-      "RedCode 直播精選女裝全部貨品，直播優惠價發售，順豐站/自提點/智能櫃自取，香港女裝網購。",
-  },
-  "/live": {
-    title: "直播重溫｜RedCode Fashion Design",
-    description: "錯過直播唔緊要，RedCode 直播重溫隨時睇，直播優惠繼續生效，睇中即刻落單。",
-  },
-  "/about": {
-    title: "關於我們｜RedCode Fashion Design",
-    // 2026-10-27（老闆批准文案）：AI 試穿賣點入公開 SEO copy（網站本身有 /try-on 功能，屬實）
-    description:
-      "RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。",
-  },
-  "/vip": {
-    title: "VIP 會員｜RedCode Fashion Design",
-    description: "RedCode VIP 會員專享折扣同禮遇，消費累積升級，直播粉絲專屬福利。",
-  },
-  "/sf-stations": {
-    title: "順豐自取點｜RedCode Fashion Design",
-    description: "搜尋全港順豐站、自提點同智能櫃，落單揀最近嘅自取點，香港女裝網購取貨更方便。",
-  },
-  "/privacy": {
-    title: "私隱政策｜RedCode Fashion Design",
-    description: "RedCode Fashion Design 私隱政策——我哋點樣收集、使用同保障你嘅個人資料。",
-  },
-  "/terms": {
-    title: "服務條款｜RedCode Fashion Design",
-    description: "RedCode Fashion Design 服務條款——購物、退換貨同會員制度嘅使用細則。",
-  },
-};
+// 公開頁 meta／無 JS 內容統一由 publicSeo.ts 提供；server 首口 HTML 同 sitemap
+// 使用同一路由事實來源，避免 canonical、sitemap 同實際頁面互相打架。
 
 // 私人/工具頁：唔入搜尋索引，robots 改 noindex, nofollow（title/description 照預設）
 const NOINDEX_EXACT = [
@@ -54,6 +25,10 @@ const NOINDEX_EXACT = [
   "/login",
   "/register",
   "/vip-verify",
+  "/guest-checkout",
+  "/guest-payment",
+  "/wallet-topup",
+  "/try-on/history",
 ];
 
 export function serveStaticFiles(app: App) {
@@ -66,6 +41,10 @@ export function serveStaticFiles(app: App) {
   // Vite build 出嚟嘅 /assets/* 檔名帶內容 hash，名唔變即內容唔變，安心 immutable 長 cache。
   app.use("*", async (c, next) => {
     await next();
+    // llms.txt 係輔助內容地圖，唔係要出現喺搜尋結果嘅文件。
+    if (c.req.path === "/llms.txt") {
+      c.header("X-Robots-Tag", "noindex");
+    }
     if (c.req.path === "/sw.js") {
       // Service Worker 更新唔可以等 heuristic cache；每次都同 server 對版。
       c.header("Cache-Control", "no-cache, must-revalidate");
@@ -110,6 +89,8 @@ export function serveStaticFiles(app: App) {
     // → JS/CSS 404 → 全白頁。加 <base href="/"> 令相對路徑由根目錄起計；
     // 淨係改 server 出嘅 HTML，source index.html 唔郁，static preview 唔受影響。
     content = content.replace("<head>", `<head>\n    <base href="/" />`);
+    // index.html 自帶首頁無 JS 摘要；落入路由 fallback 就先移除，再按實際頁面注入。
+    content = stripPublicSeoContent(content);
     // 2026-07-29 商品分享 OG：App 係 HashRouter（#/products/123），但 Facebook 等
     // crawler 收唔到 hash 後面嘅嘢，所以分享連結用正式路徑 /products/123。
     // 喺度見到呢條 path 就注入該商品嘅 OG meta；人類訪客入到嚟，
@@ -137,29 +118,46 @@ export function serveStaticFiles(app: App) {
       }
       content = injected;
     } else {
-      // v2.2.21（E2）逐頁 SEO：公開頁注入專屬 meta；私人/工具頁 noindex；
-      // 其他未知路徑照舊派預設 index.html
+      // 公開頁注入專屬 meta＋無 JS 內容；私人／有時限分享頁 noindex；
+      // 未知路徑回真 404，避免任何字串都變成首頁嘅軟 404。
       const { injectRouteMeta } = await import("./og");
       const normPath = reqPath.length > 1 ? reqPath.replace(/\/+$/, "") : reqPath;
-      const pageSeo = ROUTE_SEO[normPath];
+      const isLuckyEvent = /^\/lucky-results\/\d+$/.test(normPath);
+      const publicPath = isLuckyEvent ? "/lucky-results" : normPath;
+      const pageSeo = isLuckyEvent ? LUCKY_EVENT_SEO : PUBLIC_PAGES[publicPath];
       if (normPath === "/products") {
-        // v2026.10.28.2 直播節目頁 OG：/products?liveDate=YYYYMMDD[&liveSession=N]
-        // 有效日期＋場次 → 注入全日／單場專屬 title/description/og:url/canonical
-        // （og:image 保留 index.html 預設嗰張）；無效參數 liveRouteMeta 回 null →
-        // 通用 /products meta，絕對唔反射 raw 輸入。
+        // 直播節目頁保留有效日期／場次嘅專屬 canonical；無效參數唔反射入 HTML。
         const { liveRouteMeta } = await import("./liveSeo");
         const q = new URL(c.req.url).searchParams;
         const liveMeta = liveRouteMeta(q.get("liveDate"), q.get("liveSession"));
-        content = injectRouteMeta(content, liveMeta ?? { ...ROUTE_SEO["/products"], path: "/products" });
+        content = injectRouteMeta(content, liveMeta ?? { ...PUBLIC_PAGES["/products"], path: "/products" });
+        content = injectPublicSeoContent(content, "/products");
+        if (!liveMeta) {
+          try {
+            const { injectPublicCatalog, listPublicCatalog } = await import("./catalogSeo");
+            content = injectPublicCatalog(content, await listPublicCatalog());
+          } catch {
+            // DB 一時故障照出通用公開摘要；唔好將在架商品頁誤報做空目錄或 404。
+          }
+        }
       } else if (pageSeo) {
         content = injectRouteMeta(content, { ...pageSeo, path: normPath });
+        content = injectPublicSeoContent(content, publicPath);
       } else if (
         NOINDEX_EXACT.includes(normPath) ||
         normPath.startsWith("/receipt/") ||
+        /^\/try-on\/shared\/[^/]+$/.test(normPath) ||
         normPath === "/admin" ||
         normPath.startsWith("/admin/")
       ) {
         content = injectRouteMeta(content, { noindex: true });
+      } else {
+        content = injectRouteMeta(content, {
+          title: "搵唔到呢頁｜RedCode Fashion Design",
+          description: "呢個網址唔存在，返回 RedCode 首頁或去全部貨品睇最新直播精選女裝。",
+          noindex: true,
+        });
+        return c.html(content, 404);
       }
     }
     return c.html(content);

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router';
+import { formatLiveDateLabel, normalizeLiveShare } from './liveShare';
 
 /**
  * SEO（v2.2.20）：逐頁 title / description 管理。
@@ -42,6 +43,11 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     title: '順豐自取點｜RedCode Fashion Design',
     description: '搜尋全港順豐站、自提點同智能櫃，落單揀最近嘅自取點，香港女裝網購取貨更方便。',
   },
+  '/faq': {
+    title: '常見問題｜RedCode Fashion Design',
+    description:
+      'RedCode 常見問題——訪客結帳、付款、出貨、退換貨、順豐自取、AI 試穿、手機 APP 安裝及開播通知教學。',
+  },
   '/login': {
     title: '會員登入｜RedCode Fashion Design',
     description: '登入 RedCode 會員帳戶，睇訂單、追蹤 VIP 進度、享受直播專屬優惠。',
@@ -69,6 +75,31 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   '/payment': {
     title: '訂單付款｜RedCode Fashion Design',
     description: 'RedCode 訂單付款頁——上傳付款截圖或網上即時付款。',
+  },
+  '/guest-checkout': {
+    title: '訪客快速結帳｜RedCode Fashion Design',
+    description: 'RedCode 訪客快速結帳——填寫收件資料，完成網上付款。',
+  },
+  '/guest-payment': {
+    title: '訪客訂單付款｜RedCode Fashion Design',
+    description: 'RedCode 訪客訂單付款及狀態查詢。',
+  },
+  '/wallet-topup': {
+    title: '購物金充值｜RedCode Fashion Design',
+    description: 'RedCode 會員購物金充值及入帳紀錄。',
+  },
+  '/try-on': {
+    title: 'AI 試穿｜RedCode Fashion Design',
+    description:
+      'RedCode AI 試穿——上載全身相，揀選 RedCode 商品，生成 AI 穿著效果預覽，支援前後對照、下載及分享；會員登入後使用。',
+  },
+  '/try-on/history': {
+    title: '我嘅 AI 試穿紀錄｜RedCode Fashion Design',
+    description: 'RedCode 會員私人 AI 試穿紀錄、下載及分享管理。',
+  },
+  '/try-on/shared/:publicId': {
+    title: 'AI 試穿分享｜RedCode Fashion Design',
+    description: 'RedCode 有時限 AI 試穿效果分享及公開商品資料。',
   },
   '/privacy': {
     title: '私隱政策｜RedCode Fashion Design',
@@ -111,23 +142,71 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   },
 };
 
-/** 按 pathname 攞 SEO；未知路由 fallback 首頁（export 俾測試驗路由→meta 對應） */
-export function resolveSeo(pathname: string): { title: string; description: string } {
+export const NOT_FOUND_SEO = {
+  title: '搵唔到呢頁｜RedCode Fashion Design',
+  description: '呢個網址唔存在，返回 RedCode 首頁或去全部貨品睇最新直播精選女裝。',
+};
+
+/** 按 pathname＋有效直播 query 攞 SEO；未知路由要有自己嘅 404 文案，唔再冒充首頁。 */
+export function resolveSeo(pathname: string, search = ''): { title: string; description: string } {
+  if (pathname === '/products') {
+    const params = new URLSearchParams(search);
+    const live = normalizeLiveShare(params.get('liveDate') ?? '', params.get('liveSession'));
+    if (live) {
+      const date = formatLiveDateLabel(live.liveDate);
+      return {
+        title: live.liveSession
+          ? `${date} 第${live.liveSession}場直播商品｜RedCode Fashion Design`
+          : `${date} 全日直播商品｜RedCode Fashion Design`,
+        description: live.liveSession
+          ? `RedCode ${date} 第${live.liveSession}場直播商品——呢一場主播推介嘅女裝款式即睇直播商品、睇中即刻落單，直播優惠價發售，順豐站自取。`
+          : `RedCode ${date} 直播全日全部場次嘅精選女裝，一頁睇晒當日所有直播商品，直播優惠價發售，順豐站自取。`,
+      };
+    }
+  }
   if (/^\/products\/\d+/.test(pathname)) return PAGE_SEO['/products/:id'];
   if (/^\/receipt\//.test(pathname)) return PAGE_SEO['/receipt/:orderId'];
   if (/^\/lucky-results\/\d+/.test(pathname)) return PAGE_SEO['/lucky-results/:eventId'];
-  return PAGE_SEO[pathname] ?? PAGE_SEO['/'];
+  if (/^\/try-on\/shared\/[^/]+/.test(pathname)) return PAGE_SEO['/try-on/shared/:publicId'];
+  return PAGE_SEO[pathname] ?? NOT_FOUND_SEO;
 }
 
-/** 掛喺 Router 之下（App.tsx），每次轉頁即時更新 title 同 description */
+const PUBLIC_EXACT_PATHS = new Set([
+  '/',
+  '/products',
+  '/live',
+  '/about',
+  '/vip',
+  '/sf-stations',
+  '/faq',
+  '/returns',
+  '/try-on',
+  '/lucky-results',
+  '/privacy',
+  '/terms',
+]);
+
+/** 私人、有時限分享、後台及未知路由一律 noindex；公開動態商品／活動頁例外。 */
+export function isNoIndexPath(pathname: string): boolean {
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  if (PUBLIC_EXACT_PATHS.has(normalized)) return false;
+  if (/^\/products\/\d+$/.test(normalized)) return false;
+  if (/^\/lucky-results\/\d+$/.test(normalized)) return false;
+  return true;
+}
+
+/** 掛喺 Router 之下，每次轉頁或更改有效直播篩選即時更新 title、description 同 robots。 */
 export function SeoManager() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   useEffect(() => {
-    const seo = resolveSeo(pathname);
+    const seo = resolveSeo(pathname, search);
     document.title = seo.title;
     document
       .querySelector('meta[name="description"]')
       ?.setAttribute('content', seo.description);
-  }, [pathname]);
+    document
+      .querySelector('meta[name="robots"]')
+      ?.setAttribute('content', isNoIndexPath(pathname) ? 'noindex, nofollow' : 'index, follow');
+  }, [pathname, search]);
   return null;
 }

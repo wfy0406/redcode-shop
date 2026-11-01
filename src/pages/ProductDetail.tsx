@@ -130,6 +130,15 @@ export default function ProductDetail() {
   // demo 貨 description 係 null → 用通用句兜底，唔好 set 到「undefined」。
   // unmount 唔使 reset：轉頁時 SeoManager 會按新 pathname 接管。
   useEffect(() => {
+    const robots = document.querySelector('meta[name="robots"]');
+    if (product === null) {
+      document.title = '搵唔到呢件商品｜RedCode Fashion Design';
+      document
+        .querySelector('meta[name="description"]')
+        ?.setAttribute('content', '呢件商品可能已經賣晒或落架，去全部貨品睇最新直播精選女裝。');
+      robots?.setAttribute('content', 'noindex, nofollow');
+      return;
+    }
     if (!product) return;
     document.title = `${product.name}｜RedCode Fashion Design`;
     const plain = (product.description ?? '').replace(/\s+/g, ' ').trim();
@@ -139,6 +148,7 @@ export default function ProductDetail() {
         : plain
       : `${product.name}——RedCode 香港女裝直播精選，直播優惠價發售，順豐站自取。`;
     document.querySelector('meta[name="description"]')?.setAttribute('content', desc);
+    robots?.setAttribute('content', 'index, follow');
   }, [product]);
 
   const handleAdd = () => {

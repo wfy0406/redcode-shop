@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { products } from "@db/schema";
+import { stripPublicSeoContent } from "./publicSeo";
 
 /** HTML attribute escape：品名/描述入面嘅 & " < > 會整爛 meta tag */
 function esc(s: string): string {
@@ -18,7 +19,7 @@ function esc(s: string): string {
  * og:title / og:description / og:image。 crawler 唔行 JS，一定要 server 出。
  *
  * 回傳值三種情況（2026-10-27 Search Console 軟 404 根治）：
- * ─ 商品存在 → 注入後嘅 HTML（title/description/canonical/OG/JSON-LD/noscript 全文）
+ * ─ 商品存在 → 注入後嘅 HTML（title/description/canonical/OG/JSON-LD/真 HTML 商品摘要）
  * ─ DB 查詢成功但商品**唔存在** → null（caller 要回真 404；例如已刪嘅 /products/94
  *   之前回 200＋首頁 title/canonical，Google 當軟 404 / alternate page 處理）
  * ─ DB 出錯／注入出錯 → 原封不動回 html（一時 DB 故障唔可以令在架商品被當 404 踢出索引）
@@ -139,7 +140,9 @@ export async function injectProductOg(
     ].join("\n    ");
 
     // 抽走 index.html 入面嘅預設 og:/twitter: meta（首頁通用版），換上呢件商品嘅
-    let out = html.replace(/[ \t]*<meta\s+(?:property|name)="(?:og:|twitter:)[^>]*\/>\s*\n?/g, "");
+    let out = stripPublicSeoContent(
+      html.replace(/[ \t]*<meta\s+(?:property|name)="(?:og:|twitter:)[^>]*\/>\s*\n?/g, ""),
+    );
     out = out.replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`);
     // SEO（2026-10-27）：meta description 都要換做呢件商品專屬嗰條（之前漏咗，
     // 全部商品頁出同一條首頁 description，係 near-duplicate 嘅主要訊號之一）
@@ -154,20 +157,17 @@ export async function injectProductOg(
     );
     out = out.replace("</head>", `    ${tags}\n  </head>`);
 
-    // SEO（2026-10-27）：server-rendered crawlable content——SPA 嘅 #root 出貨時係空，
-    // raw HTML 除咗 meta 乜都冇，件件商品頁近乎一樣。喺 <body> 尾加 <noscript>
-    // 商品摘要（名＋價＋描述純文字＋全部貨品連結）：唔行 JS 嘅 crawler 讀到真內容；
-    // 開咗 JS 嘅瀏覽器/Google 渲染後唔顯示，UI 一字唔郁。
-    // ⚠️ 唔好放落 #root 入面：index.html 白屏自救 script 靠 root.childNodes 判斷
-    // JS 有冇行到，塞嘢入去會整熄自救；React mount 時亦會清走 #root 原有內容。
-    const noscriptDesc =
+    // 首口 HTML 直接放商品名、價錢、描述同購物支援連結，唔再只放 noscript。
+    // 區塊放喺 #root 外，白屏自救仍可靠 root.childNodes；React mount 後統一移除。
+    const prerenderDesc =
       (descPlain.length > 300 ? `${descPlain.slice(0, 297)}…` : descPlain) || desc;
-    const noscript =
-      `<noscript><h1>${esc(p.name)}</h1>` +
+    const prerender =
+      `<main id="redcode-product-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8"><h1>${esc(p.name)}</h1>` +
+      `${p.sku ? `<p>貨號：${esc(p.sku)}</p>` : ""}` +
       `<p>HK$${price}</p>` +
-      `<p>${esc(noscriptDesc)}</p>` +
-      `<p><a href="/products">全部貨品</a></p></noscript>`;
-    out = out.replace("</body>", `    ${noscript}\n  </body>`);
+      `<p>${esc(prerenderDesc)}</p>` +
+      `<nav aria-label="購物相關頁面"><ul><li><a href="/products">全部貨品</a></li><li><a href="/try-on">AI 試穿</a></li><li><a href="/returns">退換貨政策</a></li></ul></nav></main>`;
+    out = out.replace("</body>", `    ${prerender}\n  </body>`);
 
     // SEO（v2.2.20）：順手注入 Product JSON-LD（放 </head> 前）。
     // 價錢注意：products 表 price/discountPrice 係整數港元（唔係 cents——

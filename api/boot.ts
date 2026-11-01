@@ -36,6 +36,7 @@ import { recheckUserRole } from "./middleware";
 import { tryOnPrivateMedia, tryOnSharedMedia } from "./tryonHttp";
 import { tryOnAdminMedia } from "./tryonAdminMedia";
 import { startTryOnMediaSweeper } from "./tryonService";
+import { SITEMAP_STATIC_PATHS } from "./lib/publicSeo";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -519,9 +520,8 @@ app.get("/sitemap.xml", async (c) => {
   const maskForLog = (msg: string) =>
     msg.replace(/https?:\/\/[^\s)】]+/gi, "〈網址已遮罩〉").slice(0, 300);
   const homeUrl = `<url><loc>https://redcode.red/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`;
-  // v2.2.21（項目 F1）：公開靜態頁——weekly 0.6；首頁＋產品頁現有邏輯唔郁
-  // 2026-10-06：加 /returns（退換貨政策頁，Google Merchant Center 審批會睇）
-  const staticUrls = ["/products", "/live", "/about", "/vip", "/sf-stations", "/privacy", "/terms", "/returns"].map(
+  // 公開靜態頁同首口 HTML 使用同一路由清單：只放 canonical、可收錄網址。
+  const staticUrls = SITEMAP_STATIC_PATHS.map(
     (path) =>
       `<url><loc>https://redcode.red${path}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>`,
   );

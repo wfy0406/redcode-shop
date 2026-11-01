@@ -35,6 +35,8 @@
     <meta name="twitter:description" content="香港女裝直播，主播 Glo Glo 每晚為你揀選星空下最閃嘅衫。直播專屬優惠，VIP 會員尊享禮遇。" />
     <meta name="twitter:image" content="https://redcode.red/og-image.jpg" />
     <link rel="canonical" href="https://redcode.red/" />
+    <!-- 輔助 AI agent 搵公開內容；Google 排名唔依賴呢個檔。 -->
+    <link rel="describedby" type="text/plain" href="/llms.txt" />
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -43,6 +45,7 @@
           "@type": "Organization",
           "@id": "https://redcode.red/#org",
           "name": "RedCode Fashion Design",
+          "alternateName": ["RedCode", "Red Code HK直播台", "redcodexhk"],
           "legalName": "RedCode HK Limited",
           "url": "https://redcode.red/",
           "logo": {
@@ -63,7 +66,7 @@
           "@id": "https://redcode.red/#website",
           "url": "https://redcode.red/",
           "name": "RedCode Fashion Design",
-          "alternateName": "RedCode",
+          "alternateName": ["RedCode", "Red Code HK直播台", "redcodexhk"],
           "inLanguage": "zh-HK",
           "publisher": { "@id": "https://redcode.red/#org" }
         }
@@ -79,6 +82,7 @@
   </head>
   <body>
     <div id="root"></div>
+    <main id="redcode-public-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8"><h1>RedCode Fashion Design｜香港女裝直播網店</h1><p>RedCode Fashion Design（Red Code HK直播台，@redcodexhk）係香港女裝直播網店，提供直播精選女裝、直播重溫、AI 試穿、順豐自取及 VIP 會員禮遇。</p><section><h2>直播選購同 AI 試穿</h2><p>你可以瀏覽最新商品、睇直播重溫，或者登入會員上載全身相，生成 RedCode 商品嘅 AI 穿著效果預覽。</p></section><nav aria-label="相關公開頁面"><ul><li><a href="/products">全部貨品</a></li><li><a href="/try-on">AI 試穿</a></li><li><a href="/live">直播重溫</a></li><li><a href="/faq">常見問題</a></li><li><a href="/about">關於我們</a></li></ul></nav></main>
     <script>
       // 2026-08-04 部署換版白屏自救：
       // 舊快取 HTML 會指向舊版 JS bundle（檔名帶 hash，部署後舊檔喺 server 消失），

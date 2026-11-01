@@ -6,7 +6,7 @@
  *    /products/85、/products/95 呢類短名商品被 Google 當 near-duplicate。
  * 2) 唔存在嘅商品（例如已刪嘅 /products/94）之前回 200＋首頁 title/canonical（軟 404），
  *    而家 injectProductOg 回 null → vite.ts 回真 404＋noindex；DB 故障仍回 200 原 HTML。
- * 3) 商品頁 raw HTML 加咗 <noscript> 商品摘要（名/價/描述），唔行 JS 嘅 crawler 有真內容讀。
+ * 3) 商品頁 raw HTML 有真商品摘要（名/價/描述），唔行 JS 嘅 crawler 都直接讀到。
  *
  * 做法：vi.mock 假 getDb（chainable stub 模擬 drizzle select().from().where().limit()），
  * HTML fixture 直接用 repo 真 index.html（順便防止正則同模板漂移）。
@@ -117,15 +117,19 @@ describe("injectProductOg — 商品存在", () => {
     expect(html).not.toContain('content="A"B');
   });
 
-  it("noscript 商品摘要：名／價（折扣價優先）／描述／全部貨品連結", async () => {
+  it("真 HTML 商品摘要：名／貨號／價錢／描述／購物支援連結，#root 保持空", async () => {
     mockRows = [makeProduct()];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
-    expect(html).toContain("<noscript><h1>067</h1>");
+    expect(html).toContain('<main id="redcode-product-seo" data-redcode-prerender');
+    expect(html).toContain("<h1>067</h1>");
+    expect(html).toContain("<p>貨號：SKU-067</p>");
     expect(html).toContain("<p>HK$199</p>");
     expect(html).toContain("<p>星空閃石上衣，直播限定色，S/M/L 碼齊。</p>");
-    expect(html).toContain('<a href="/products">全部貨品</a></p></noscript>');
-    // noscript 喺 </body> 前、唔喺 #root 入面（白屏自救 script 靠 root 空唔空判斷）
-    expect(html.indexOf("<noscript>")).toBeGreaterThan(html.indexOf('id="root"'));
+    expect(html).toContain('<a href="/products">全部貨品</a>');
+    expect(html).toContain('<a href="/returns">退換貨政策</a>');
+    expect(html).not.toContain("<noscript");
+    // 商品摘要喺 </body> 前、唔喺 #root 入面（白屏自救 script 靠 root 空唔空判斷）
+    expect(html.indexOf('id="redcode-product-seo"')).toBeGreaterThan(html.indexOf('id="root"'));
     expect(html).toMatch(/<div id="root"><\/div>/);
   });
 

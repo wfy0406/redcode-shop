@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { Routes, Route } from 'react-router';
 import Layout from '@/components/Layout';
 import Home from '@/pages/Home';
@@ -33,6 +33,7 @@ const TryOn = lazy(() => import('@/pages/TryOn')); // AI 試穿／Mix & Match �
 const TryOnHistory = lazy(() => import('@/pages/TryOnHistory')); // 客戶專屬 24 小時試穿紀錄
 const TryOnShared = lazy(() => import('@/pages/TryOnShared')); // 有時限分享頁（只回生成圖及公開商品資料）
 const LuckyResults = lazy(() => import('@/pages/LuckyResults')); // v2.5.8：公開中獎公告頁（唔使登入）
+const NotFound = lazy(() => import('@/pages/NotFound')); // 未知網址：人類用戶 404 頁
 
 /**
  * Lazy 頁載入中嘅全屏 fallback：品牌色底 #0A0614＋粉紅 #FE017E「載入中…」，
@@ -76,6 +77,12 @@ function PageLoading() {
  * SeoManager 要喺 HashRouter 之下（main.tsx 包咗），每次轉頁更新 title/description。
  */
 export default function App() {
+  useEffect(() => {
+    // Server 首口 HTML 嘅公開內容只係無 JS／crawler fallback；React 成功 mount 先移除，
+    // 避免同正式頁面重複。#root 自始至終由 React 管理，白屏自救唔受影響。
+    document.querySelectorAll('[data-redcode-prerender]').forEach((node) => node.remove());
+  }, []);
+
   return (
     <>
       <SeoManager />
@@ -111,6 +118,7 @@ export default function App() {
             <Route path="terms" element={<Terms />} />
             <Route path="returns" element={<Returns />} />
             <Route path="admin" element={<Admin />} />
+            <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
       </Suspense>

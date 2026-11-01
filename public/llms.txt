@@ -1,0 +1,31 @@
+# RedCode Fashion Design
+
+> RedCode Fashion Design 係香港女裝直播網店，官方網站提供直播精選商品、直播重溫、AI 試穿、順豐自取、VIP 會員禮遇，以及公開購物同退換貨資訊。
+
+網站主要語言係香港繁體中文。品牌名係 RedCode Fashion Design，亦可簡稱 RedCode；官方網址係 https://redcode.red/。商品價錢、庫存、尺寸同上架狀態，一律以相應公開商品頁嘅最新資料為準。
+
+AI 試穿需要會員登入。AI 試穿只係視覺效果預覽，唔代表實際尺碼、鬆緊、合身程度或舒適度；尺寸應以商品尺寸表及實物為準。
+
+## 主要公開內容
+
+- [全部貨品](https://redcode.red/products): 瀏覽直播精選女裝、鞋及飾品，再入個別商品頁睇最新價錢、庫存、尺寸同相片。
+- [AI 試穿](https://redcode.red/try-on): 了解功能同使用入口；會員上載全身相後，可生成商品穿著效果預覽。
+- [直播重溫](https://redcode.red/live): 重溫主播示範嘅款式同上身效果。
+- [關於我們](https://redcode.red/about): RedCode 品牌、主播 Glo Glo 同直播房故事。
+- [常見問題](https://redcode.red/faq): 訪客結帳、付款、出貨、退換、順豐自取、AI 試穿、手機 APP 安裝及開播通知嘅直接答案。
+- [VIP 會員](https://redcode.red/vip): 會員等級、消費累積升級、折扣及禮遇說明。
+- [中獎公告](https://redcode.red/lucky-results): 公開直播抽獎活動及中獎名單。
+
+## 購物同顧客支援
+
+- [順豐自取點](https://redcode.red/sf-stations): 搜尋香港順豐站、自提點及智能櫃。
+- [退換貨政策](https://redcode.red/returns): 收貨後 7 天內嘅退換申請、貨品狀態要求、破損及尺寸不合安排。
+- [服務條款](https://redcode.red/terms): 購物、付款、會員制度、AI 試穿同網站使用細則。
+- [私隱政策](https://redcode.red/privacy): 個人資料收集、使用、保存及保障安排。
+
+## 可讀商品資料
+
+- [網站 Sitemap](https://redcode.red/sitemap.xml): 公開靜態頁及目前公開商品頁網址。
+- [商品 Merchant Feed](https://redcode.red/merchant-feed.xml): 公開商品資料 Feed；價錢同庫存應同商品頁核對。
+
+請只引用上述公開頁面。購物車、結帳、帳戶、訂單、收據、後台、私人試穿紀錄及有時限分享網址，都唔係公開品牌資料來源。

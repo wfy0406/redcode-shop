@@ -9,7 +9,8 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { PAGE_SEO, resolveSeo } from "./seo";
+import { liveRouteMeta } from "../../api/lib/liveSeo";
+import { isNoIndexPath, NOT_FOUND_SEO, PAGE_SEO, resolveSeo } from "./seo";
 
 const PHRASE_TRYON = "影張相即刻試穿";
 const PHRASE_EFFECT = "即刻睇到著上身效果";
@@ -24,8 +25,8 @@ describe("PAGE_SEO 文案", () => {
     expect(PAGE_SEO["/about"].description).toContain(PHRASE_TRYON);
     expect(PAGE_SEO["/about"].description).toContain(PHRASE_EFFECT);
     // server 首口 HTML（crawler 睇）同 client 轉頁後嘅 meta 必須一致，唔係會有兩個版本
-    const viteSrc = readFileSync(new URL("../../api/lib/vite.ts", import.meta.url), "utf8");
-    expect(viteSrc).toContain(PAGE_SEO["/about"].description);
+    const serverSeoSrc = readFileSync(new URL("../../api/lib/publicSeo.ts", import.meta.url), "utf8");
+    expect(serverSeoSrc).toContain(PAGE_SEO["/about"].description);
   });
 
   it("index.html 預設 description 同 PAGE_SEO['/'] 一致", () => {
@@ -58,7 +59,53 @@ describe("resolveSeo 路由對應", () => {
     expect(resolveSeo("/products").title).toBe("全部貨品｜RedCode Fashion Design");
   });
 
-  it("未知路由 fallback 首頁", () => {
-    expect(resolveSeo("/no-such-page").title).toBe(PAGE_SEO["/"].title);
+  it("有效直播日期／場次喺 React mount 後仍同 server 首口 title、description 一致", () => {
+    for (const [date, session] of [["20261028", "2"], ["20261101", null]] as const) {
+      const search = `?liveDate=${date}${session ? `&liveSession=${session}` : ""}`;
+      const server = liveRouteMeta(date, session);
+      expect(server).not.toBeNull();
+      expect(resolveSeo("/products", search)).toEqual({
+        title: server!.title,
+        description: server!.description,
+      });
+    }
+  });
+
+  it("無效直播 query 唔反射入 title，照用通用商品頁 SEO", () => {
+    for (const search of [
+      "?liveDate=2026-11-01&liveSession=2",
+      "?liveDate=20260230",
+      "?liveDate=20261101&liveSession=0",
+      "?liveDate=%3Cscript%3E",
+    ]) {
+      expect(resolveSeo("/products", search)).toEqual(PAGE_SEO["/products"]);
+    }
+  });
+
+  it("未知路由用自己嘅 404 文案，唔再冒充首頁", () => {
+    expect(resolveSeo("/no-such-page")).toEqual(NOT_FOUND_SEO);
+  });
+
+  it("FAQ、AI 試穿及有時限分享都有對應前端 meta", () => {
+    expect(resolveSeo("/faq")).toEqual(PAGE_SEO["/faq"]);
+    expect(resolveSeo("/try-on")).toEqual(PAGE_SEO["/try-on"]);
+    expect(resolveSeo("/try-on/shared/abc123")).toEqual(PAGE_SEO["/try-on/shared/:publicId"]);
+  });
+
+  it("robots：公開頁可收錄；私人、分享、後台及未知頁 noindex", () => {
+    for (const path of ["/", "/faq", "/returns", "/try-on", "/products/85", "/lucky-results/12"]) {
+      expect(isNoIndexPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/account",
+      "/guest-checkout",
+      "/wallet-topup",
+      "/try-on/history",
+      "/try-on/shared/abc123",
+      "/admin",
+      "/no-such-page",
+    ]) {
+      expect(isNoIndexPath(path), path).toBe(true);
+    }
   });
 });

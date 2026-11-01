@@ -11,7 +11,7 @@
  *    rows 唔空＝商品存在；空＝查詢成功但唔存在；queryError 唔 null＝DB 故障。
  *
  * 覆蓋（對應交付驗收六項）：
- * (1) 在架商品 /products/85 → 200＋self canonical＋專屬 description＋noscript
+ * (1) 在架商品 /products/85 → 200＋self canonical＋專屬 description＋真 HTML 商品摘要
  * (2) 已刪商品 /products/94 → 真 404 狀態＋noindex＋「搵唔到呢件商品」title
  * (3) 私人頁 /account、/cart → 200＋robots noindex, nofollow
  * (4) /products?category=top → canonical 係 /products，query 唔入 canonical
@@ -39,6 +39,9 @@ vi.mock("../queries/connection", () => ({
       from: () => ({
         where: () => ({
           limit: () => (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)),
+          orderBy: () => ({
+            limit: () => (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)),
+          }),
         }),
       }),
     }),
@@ -114,9 +117,11 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
       '<meta name="description" content="星空閃石上衣，直播限定色，S/M/L 碼齊。" />',
     );
     expect(html).toContain("<title>067｜RedCode Fashion Design</title>");
-    // server-rendered noscript 商品摘要（唔行 JS 嘅 crawler 讀到真內容）
-    expect(html).toContain("<noscript><h1>067</h1>");
+    // server-rendered 真 HTML 商品摘要（唔行 JS 嘅 crawler 都直接讀到）
+    expect(html).toContain('<main id="redcode-product-seo" data-redcode-prerender');
+    expect(html).toContain("<h1>067</h1>");
     expect(html).toContain("<p>HK$199</p>");
+    expect(html).not.toContain('id="redcode-public-seo"');
   });
 
   it("(2) 已刪商品 /products/94 → 真 404＋noindex＋搵唔到商品 title（軟 404 根治）", async () => {
@@ -128,7 +133,7 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("<title>搵唔到呢件商品｜RedCode Fashion Design</title>");
     expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
     // 唔准有商品專屬內容／self canonical（軟 404 訊號清零）
-    expect(html).not.toContain("<noscript>");
+    expect(html).not.toContain("data-redcode-prerender");
     expect(canonicalHref(html)).toBe("https://redcode.red/");
   });
 
@@ -157,6 +162,24 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(tag).not.toContain("?");
     // 淨係一條 canonical
     expect(html.match(/rel="canonical"/g)).toHaveLength(1);
+  });
+
+  it("(4b) /products 首口 HTML 有真公開商品目錄；DB 故障保留通用摘要", async () => {
+    mockRows = [makeProduct({ name: 'A"B & <C>' })];
+    const res = await makeApp().request("/products");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(html).toContain('id="redcode-catalog-seo"');
+    expect(html).toContain('<a href="/products/85"><strong>A&quot;B &amp; &lt;C&gt;</strong></a>');
+    expect(html).toContain("（貨號 SKU-067）");
+    expect(html).toContain("HK$199；有貨");
+    expect(html).toContain('<div id="root"></div>');
+    expect(html).not.toContain("<noscript");
+
+    queryError = new Error("connection refused");
+    const fallback = await (await makeApp().request("/products")).text();
+    expect(fallback).toContain('id="redcode-public-seo"');
+    expect(fallback).not.toContain('id="redcode-catalog-seo"');
   });
 
   it("(5) /about 首口 HTML 有批准文案「影張相即刻試穿」「即刻睇到著上身效果」", async () => {
@@ -218,6 +241,72 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(canonicalHref(html)).toBe("https://redcode.red/products");
     expect(html).not.toContain("liveSession=abc");
     expect(html).not.toContain("第abc場");
+  });
+
+  it("(11) /faq → 獨立 meta／self canonical＋19 條無 JS 問答同內部連結", async () => {
+    const res = await makeApp().request("/faq");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>常見問題｜RedCode Fashion Design</title>");
+    expect(canonicalHref(html)).toBe("https://redcode.red/faq");
+    expect(html).toContain('id="redcode-public-seo"');
+    expect(html).toContain("AI 試穿點玩？");
+    expect(html).toContain("用 WhatsApp 分享試穿結果安全嗎？");
+    expect(html).toContain('<a href="/try-on">AI 試穿</a>');
+    expect(html).toContain("index, follow");
+  });
+
+  it("(12) /returns 同 /try-on → 各自 self canonical，唔再指向首頁", async () => {
+    for (const path of ["/returns", "/try-on"]) {
+      const res = await makeApp().request(path);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(canonicalHref(html)).toBe(`https://redcode.red${path}`);
+      expect(html).toContain('id="redcode-public-seo"');
+      expect(html).toContain("index, follow");
+    }
+    const tryOn = await makeApp().request("/try-on");
+    expect(await tryOn.text()).toContain("<title>AI 試穿｜RedCode Fashion Design</title>");
+  });
+
+  it("(13) 有時限試穿分享同私人工具頁 → noindex，query token 唔反射入 HTML", async () => {
+    for (const path of [
+      "/try-on/shared/private-id?e=2099999999&s=secret-token",
+      "/try-on/history",
+      "/guest-checkout",
+      "/guest-payment",
+      "/wallet-topup",
+    ]) {
+      const res = await makeApp().request(path);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+      expect(html).not.toContain("secret-token");
+      expect(html).not.toContain('id="redcode-public-seo"');
+    }
+  });
+
+  it("(14) 未知路由 → 真 404＋noindex＋NotFound 文案，唔再回 200 首頁", async () => {
+    const res = await makeApp().request("/seo-audit-nonexistent-20261101");
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("<title>搵唔到呢頁｜RedCode Fashion Design</title>");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(html).not.toContain('id="redcode-public-seo"');
+  });
+
+  it("(15) /lucky-results/12 → 單場標題、self canonical＋公開摘要", async () => {
+    const res = await makeApp().request("/lucky-results/12");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>中獎名單｜RedCode Fashion Design</title>");
+    expect(canonicalHref(html)).toBe("https://redcode.red/lucky-results/12");
+    expect(html).toContain("RedCode 直播抽獎中獎公告");
+  });
+
+  it("(16) /llms.txt 回應帶 X-Robots-Tag: noindex（静态檔存在與否由部署驗收）", async () => {
+    const res = await makeApp().request("/llms.txt");
+    expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
   });
 
   it("(6) DB 查詢故障 → 商品頁照回 200 原 HTML，在架商品唔會被誤當 404", async () => {
