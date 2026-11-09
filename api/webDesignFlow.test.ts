@@ -275,18 +275,41 @@ describe("createOrder 輸入驗證＋server 計價閘", () => {
     h.state.queue = [[{ ...WD_ORDER }], []];
     const r = await caller().createOrder({
       plan: "front_only",
-      itemKeys: ["seo_meta"], // 180
+      itemKeys: ["seo_package"], // 1240
       name: "陳大文",
       phone: "91234567",
       total: 1, // 惡意／錯誤金額——zod strip，server 重計
     } as any);
-    expect(r.total).toBe(1450 + 180); // server 價，唔係 1
-    expect(r.oneOffTotal).toBe(1630);
+    expect(r.total).toBe(1668 + 1240); // server 價，唔係 1
+    expect(r.oneOffTotal).toBe(2908);
     const orderIns = h.state.inserts.find((i) => i.table === webDesignOrders);
-    expect(orderIns?.values.total).toBe(1630);
+    expect(orderIns?.values.total).toBe(2908);
     const itemIns = h.state.inserts.find((i) => i.table === webDesignOrderItems);
-    expect(itemIns?.values).toHaveLength(2); // 方案行＋seo_meta
-    expect(itemIns?.values.map((v: any) => v.itemKey)).toEqual(["plan_front_only", "seo_meta"]);
+    expect(itemIns?.values).toHaveLength(2); // 方案行＋seo_package
+    expect(itemIns?.values.map((v: any) => v.itemKey)).toEqual(["plan_front_only", "seo_package"]);
+  });
+
+  it("舊 seo_* key 落新單 → BAD_REQUEST（已併入 SEO 套票），零產圖零寫入", async () => {
+    await expect(
+      caller().createOrder({ plan: "front_only", itemKeys: ["seo_meta"], name: "陳大文", phone: "91234567" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("seo_package") });
+    expect(genImage).not.toHaveBeenCalled();
+    expect(h.state.inserts).toHaveLength(0);
+  });
+
+  it("front_only＋seo_package＋hosting 落單：total＝3541（一次性 2908＋首月 633）", async () => {
+    h.state.queue = [[{ ...WD_ORDER }], []];
+    const r = await caller().createOrder({
+      plan: "front_only",
+      itemKeys: ["seo_package", "hosting_monthly"],
+      name: "陳大文",
+      phone: "91234567",
+    });
+    expect(r.oneOffTotal).toBe(1668 + 1240);
+    expect(r.monthlyTotal).toBe(633);
+    expect(r.total).toBe(3541);
+    const orderIns = h.state.inserts.find((i) => i.table === webDesignOrders);
+    expect(orderIns?.values).toMatchObject({ oneOffTotal: 2908, monthlyTotal: 633, total: 3541 });
   });
 
   it("front_only 揀 full_stack-only 功能 → server 閘 BAD_REQUEST，零產圖零寫入", async () => {

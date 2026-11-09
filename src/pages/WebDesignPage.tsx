@@ -1,12 +1,13 @@
 'use client';
 
 /**
- * WebDesignPage —— RedCode 網頁設計服務單頁（四段向下滾動）
+ * WebDesignPage —— RedCode 網頁設計服務單頁（五段向下滾動）
  *
  * ① 服務：front_only（純展示）vs full_stack（自己改內容）＋專屬查單原位展開
- * ② 價錢：市場價／RedCode 價／慳幾多／幾多折；SEO 逐項；雲端＋domain＋月費解釋
+ * ② 價錢：市場價／RedCode 價／慳幾多／幾多折；單一 SEO 套票；雲端＋domain＋月費解釋
  * ③ AI 協作：更靚／功能更多／AI agent 分工慳人手（唔寫模型、供應商、虛假案例）
- * ④ WhatsApp／留言／購物車＋結帳（原位 aside，唔係全屏 modal）
+ * ④ 示範網頁：RedCode／bDog Tokyo 真網站
+ * ⑤ WhatsApp／留言／購物車＋結帳（原位 aside，唔係全屏 modal）
  *
  * 設計：Musepool 24-col editorial＋Motion Sites 直片 stage；scoped CSS（wd- 前綴）。
  * SEO：單一 H1、語義 sections、真實 Service JSON-LD（無虛假評分／案例）。
@@ -20,6 +21,7 @@ import {
   type WebDesignPlan,
 } from '@contracts/webDesign';
 import SuitScroll from '@/components/web-design/SuitScroll';
+import AiScene from '@/components/web-design/AiScene';
 import ShinyText from '@/components/web-design/ShinyText';
 import Magnet from '@/components/web-design/Magnet';
 import Reveal from '@/components/web-design/Reveal';
@@ -40,7 +42,7 @@ import '@/components/web-design/webDesign.css';
 const WHATSAPP_URL = `https://wa.me/85254835368?text=${encodeURIComponent('你好，我想查詢網頁設計需求')}`;
 
 const CATEGORY_TITLE: Record<WebDesignCatalogItem['category'], string> = {
-  seo: 'SEO 逐項設定',
+  seo: 'SEO 技術優化套票',
   feature: '進階功能',
   service: '託管及服務',
 };
@@ -293,22 +295,28 @@ export default function WebDesignPage() {
     <main className="wd-page" id="wd-top">
       {/* ===== ① Hero（直片 stage）＋ 服務 ===== */}
       <section className="wd-hero" aria-label="RedCode 網頁設計服務簡介">
-        <SuitScroll spacerVh={240} />
+        <SuitScroll spacerVh={250} />
         <div className="wd-hero-overlay">
           <div className="wd-hero-content wd-container">
             <div className="wd-hero-inner">
-              <p className="wd-kicker">RedCode · Web Design</p>
+              <p className="wd-kicker">RedCode® · Digital Atelier</p>
               <h1 className="wd-h1 wd-hero-title">
-                一件好西裝，
+                你嘅生意，
                 <br />
-                一個<span className="wd-accent">好網站</span>。
+                值得一個
+                <br />
+                <span className="wd-accent">好網站。</span>
               </h1>
               <p className="wd-hero-sub">
-                度身訂造嘅公司網站：設計、開發、SEO 設定、雲端託管一條龍。
-                明碼實價，逐項列明，唔收唔明唔白嘅錢。
+                由品牌門面到真正好用嘅管理系統，設計、開發、SEO 同雲端託管一次過理順。
+                你專心做生意，網站交俾我哋整到似樣、用得順。
               </p>
+              <div className="wd-hero-actions">
+                <a className="wd-cta" href="#wd-services">揀選方案 <span aria-hidden="true">↘</span></a>
+                <a className="wd-hero-text-link" href="#wd-demos">睇示範網頁 <span aria-hidden="true">↗</span></a>
+              </div>
               <div className="wd-hero-meta">
-                <span>一頁式 HK$1,450 起</span>
+                <span>一頁式 {fmtHKD(catalog.frontOnlyPrice)} 起</span>
                 <span>逐項明細</span>
                 <span>香港團隊跟進</span>
               </div>
@@ -350,7 +358,7 @@ export default function WebDesignPage() {
                 </p>
                 <ul className="wd-plan-points">
                   <li>一頁式設計，手機電腦都啱睇</li>
-                  <li>可加逐項 SEO 設定（見下）</li>
+                  <li>可加成套 SEO 技術優化（見下）</li>
                   <li>改內容由我哋代勞</li>
                 </ul>
                 <span className="wd-plan-cta">
@@ -416,14 +424,14 @@ export default function WebDesignPage() {
               <h2 className="wd-h2" id="wd-pricing-h">
                 <ShinyText
                   text="明碼實價，逐項計清"
-                  color="#1b1712"
-                  shineColor="#e05a17"
+                  color="#0b0b0b"
+                  shineColor="#ff5a1f"
                   speed={3}
                   trigger="view"
                 />
               </h2>
             </div>
-            <p className="wd-section-note">全部價錢後台可改，以下為現時收費</p>
+            <p className="wd-section-note">方案及加購項目逐項列明，落單前睇清總價</p>
           </header>
 
           <Reveal>
@@ -570,61 +578,78 @@ export default function WebDesignPage() {
         </div>
       </section>
 
-      {/* ===== ③ AI 協作 ===== */}
+      {/* ===== ③ AI 協作：未來 HUD 滾動工作流 ===== */}
       <section className="wd-section wd-solid wd-ai" id="wd-ai" aria-labelledby="wd-ai-h">
         <div className="wd-container">
-          <div className="wd-ai-grid">
-            <div className="wd-ai-intro">
-              <p className="wd-kicker">03 · AI 協作</p>
-              <h2 className="wd-h2" id="wd-ai-h">
-                點解可以又靚
-                <br />
-                又平？
-              </h2>
-              <p className="wd-lede" style={{ marginTop: 18 }}>
-                我哋用 AI 協作流程做網站：唔係「AI 一撳出貨」，
-                而係大量 AI agent 各司其職，人類負責把關同驗收。
-                慳返嘅人手時間，直接變成你睇到嘅價錢。
-              </p>
+          <header className="wd-ai-header">
+            <div>
+              <span className="wd-section-no" aria-hidden="true">03</span>
+              <p className="wd-kicker">AI 協作</p>
+              <h2 className="wd-h2" id="wd-ai-h">AI 加速，<br />唔係 AI 求其。</h2>
             </div>
-            <div className="wd-ai-stack">
-              <article className="wd-ai-card">
-                <span className="wd-ai-num">更靚</span>
-                <h3 className="wd-h3">設計水準唔會因為平而縮水</h3>
-                <p>
-                  排版、字體、留白、動效逐項對照高價網站做法，
-                  再由人逐頁睇實際效果。你收到嘅係度身訂造，
-                  唔係模板改名。
-                </p>
-              </article>
-              <article className="wd-ai-card">
-                <span className="wd-ai-num">功能更多</span>
-                <h3 className="wd-h3">同價位做到人哋做唔到嘅嘢</h3>
-                <p>
-                  後台內容管理、留言跟進、權限同操作紀錄呢啲以往係
-                  五位數報價先有嘅功能，而家幾千蚊做到——因為開發
-                  時間真係慳咗，唔係因為偷減料。
-                </p>
-              </article>
-              <article className="wd-ai-card">
-                <span className="wd-ai-num">慳人手</span>
-                <h3 className="wd-h3">大量 AI agent 分工，人類把關</h3>
-                <p>
-                  設計、寫碼、檢查、測試由唔同嘅 AI agent 分工處理，
-                  每一步有清單核對；最後由人類驗收先交貨。
-                  人手時間跌咗，你嘅單價先可以跌。
-                </p>
-              </article>
-            </div>
-          </div>
+            <p className="wd-lede">
+              設計、開發同檢查由唔同 AI agent 分工推進，真人負責決策同最終驗收。
+              你畀嘅係度身訂造嘅成品，唔係一撳生成嘅模板。
+            </p>
+          </header>
         </div>
+        <AiScene />
       </section>
 
-      {/* ===== ④ WhatsApp／留言／購物車 ===== */}
-      <section className="wd-section wd-solid" id="contact" aria-labelledby="wd-contact-h">
+      {/* ===== ④ 示範網頁：真網站、真截圖 ===== */}
+      <section className="wd-section wd-solid wd-demos" id="wd-demos" aria-labelledby="wd-demos-h">
         <div className="wd-container">
           <header className="wd-section-head">
             <span className="wd-section-no" aria-hidden="true">04</span>
+            <div className="wd-section-title">
+              <p className="wd-kicker">示範網頁</p>
+              <h2 className="wd-h2" id="wd-demos-h">唔同生意，應該有唔同樣。</h2>
+            </div>
+            <p className="wd-section-note">以下係已上線網站，可即刻入去睇實際效果</p>
+          </header>
+
+          <div className="wd-demo-grid">
+            <Reveal>
+              <article className="wd-demo-card">
+                <a className="wd-demo-visual" href="https://redcode.red" target="_blank" rel="noopener noreferrer" aria-label="開啟 RedCode 官方網站（新分頁）">
+                  <div className="wd-demo-browser" aria-hidden="true"><span><i /><i /><i /></span><b>redcode.red</b></div>
+                  <img src="/web-design/demo-redcode.webp" alt="RedCode 官方網站首頁真實截圖" width="1381" height="1120" loading="lazy" />
+                  <span className="wd-demo-open">前往網站 ↗</span>
+                </a>
+                <div className="wd-demo-copy">
+                  <p className="wd-kicker">LIVE COMMERCE / REDCODE</p>
+                  <h3 className="wd-h3">品牌、直播同購物，一個網站串連。</h3>
+                  <p>以品牌視覺為主導，將商品、直播內容同會員購物流程整合，桌面同手機都有完整體驗。</p>
+                  <ul className="wd-demo-features"><li>品牌首頁</li><li>商品展示</li><li>直播內容</li><li>會員購物</li></ul>
+                </div>
+              </article>
+            </Reveal>
+
+            <Reveal>
+              <article className="wd-demo-card wd-demo-card--offset">
+                <a className="wd-demo-visual" href="https://bdog.pet" target="_blank" rel="noopener noreferrer" aria-label="開啟 bDog Tokyo 網站（新分頁）">
+                  <div className="wd-demo-browser" aria-hidden="true"><span><i /><i /><i /></span><b>bdog.pet</b></div>
+                  <img src="/web-design/demo-bdog.webp" alt="bDog Tokyo 網站首頁真實截圖" width="1428" height="1133" loading="lazy" />
+                  <span className="wd-demo-open">前往網站 ↗</span>
+                </a>
+                <div className="wd-demo-copy">
+                  <p className="wd-kicker">SERVICE & BOOKING / BDOG TOKYO</p>
+                  <h3 className="wd-h3">服務介紹之外，客人仲可以即刻行動。</h3>
+                  <p>將店舖服務、網上預約同會員功能放喺清晰路徑，並提供多語切換，方便唔同客人使用。</p>
+                  <ul className="wd-demo-features"><li>服務介紹</li><li>網上預約</li><li>會員中心</li><li>多語切換</li></ul>
+                </div>
+              </article>
+            </Reveal>
+          </div>
+          <p className="wd-demo-note">畫面為網站首頁真實截圖；實際內容及功能以各網站現時版本為準。</p>
+        </div>
+      </section>
+
+      {/* ===== ⑤ WhatsApp／留言／購物車 ===== */}
+      <section className="wd-section wd-solid" id="contact" aria-labelledby="wd-contact-h">
+        <div className="wd-container">
+          <header className="wd-section-head">
+            <span className="wd-section-no" aria-hidden="true">05</span>
             <div className="wd-section-title">
               <p className="wd-kicker">開始</p>
               <h2 className="wd-h2" id="wd-contact-h">傾兩句，或者即刻落單</h2>
@@ -679,6 +704,16 @@ export default function WebDesignPage() {
           </div>
         </div>
       </section>
+
+      <footer className="wd-footer">
+        <div className="wd-container wd-footer-inner">
+          <div>
+            <p className="wd-kicker">YOUR NEXT CHAPTER</p>
+            <p className="wd-footer-title">由一個真正屬於你嘅網站開始。</p>
+          </div>
+          <a className="wd-glass-home" href="/"><span aria-hidden="true">←</span> 返回 RedCode 官網</a>
+        </div>
+      </footer>
 
       {/* 真實 Service JSON-LD（無虛假評分／案例／客戶） */}
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />

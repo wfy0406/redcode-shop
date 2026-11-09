@@ -139,6 +139,10 @@ export default function LookupPanel({
                 </div>
                 <dl>
                   <div>
+                    <dt>今次應付</dt>
+                    <dd>{fmtHKD(o.total)}</dd>
+                  </div>
+                  <div>
                     <dt>一次性</dt>
                     <dd>{fmtHKD(o.oneOffTotal)}</dd>
                   </div>

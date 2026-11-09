@@ -73,8 +73,12 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
 
   it("網站設計首口 HTML 有專屬 OG 圖、Service JSON-LD 同真內容，唔寫排名保證", () => {
     const page = PUBLIC_PAGES["/web-design"];
+    // v2026.11.09.1：SEO 六項合併做套票，title 唔再「逐項 SEO」
+    expect(page.title).toBe("香港網站設計｜前台、後台及 SEO 套票｜RedCode");
+    expect(page.title).not.toContain("逐項 SEO");
     const template = `<html><head><title>舊標題</title><meta property="og:image" content="https://redcode.red/old.png" /><meta name="twitter:image" content="https://redcode.red/old.png" /></head><body><div id="root"></div></body></html>`;
     const html = injectRouteMeta(template, { ...page, path: "/web-design" });
+    expect(html).toContain("<title>香港網站設計｜前台、後台及 SEO 套票｜RedCode</title>");
     expect(html).toContain('<meta property="og:image" content="https://redcode.red/web-design/suit-poster.webp" />');
     expect(html).toContain('<meta name="twitter:image" content="https://redcode.red/web-design/suit-poster.webp" />');
     expect(html).toContain('data-redcode-route-schema');

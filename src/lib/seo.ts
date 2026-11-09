@@ -32,7 +32,7 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
       'RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。',
   },
   '/web-design': {
-    title: '香港網站設計｜前台、後台及逐項 SEO｜RedCode',
+    title: '香港網站設計｜前台、後台及 SEO 套票｜RedCode',
     description:
       'RedCode 網站設計：一頁式前台或前台＋後台，逐項列明香港市場對照價、折扣及 SEO 驗證項目；可網上落單、上載付款截圖及自助查詢進度。',
   },

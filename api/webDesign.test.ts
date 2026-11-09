@@ -6,7 +6,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WEB_DESIGN_CATALOG,
+  LEGACY_SEO_ITEM_KEYS,
   WEB_DESIGN_CATALOG_SETTING_KEY,
+  type WebDesignCatalogItem,
 } from "@contracts/webDesign";
 import {
   WEB_DESIGN_LOOKUP_FAIL_MESSAGE,
@@ -28,6 +30,86 @@ import {
 import { ORDER_IMAGE_HEIGHT, ORDER_IMAGE_WIDTH, buildOrderImageSvg } from "./webDesignImage";
 
 const CATALOG = DEFAULT_WEB_DESIGN_CATALOG;
+
+/** 舊版逐項 SEO item（v2026.11.09 前嘅 DB 存量會係呢啲 key） */
+function legacySeoItem(key: (typeof LEGACY_SEO_ITEM_KEYS)[number], sortOrder: number): WebDesignCatalogItem {
+  return {
+    key,
+    name: `舊逐項 ${key}`,
+    description: "舊版逐項 SEO",
+    category: "seo",
+    price: 180,
+    marketPrice: 643,
+    requiredPlan: "front_only",
+    billing: "one_off",
+    selectable: true,
+    active: true,
+    sortOrder,
+    priceNote: "一次性",
+  };
+}
+
+describe("catalog 預設內容（v2026.11.09 改價＋SEO 套票）", () => {
+  it("六個舊 seo_* 合併做單一 seo_package 套票", () => {
+    const seoItems = CATALOG.items.filter((i) => i.category === "seo");
+    expect(seoItems).toHaveLength(1);
+    const pkg = seoItems[0];
+    expect(pkg).toMatchObject({
+      key: "seo_package",
+      name: "SEO 技術優化套票",
+      price: 1240,
+      marketPrice: 4429,
+      requiredPlan: "front_only",
+      billing: "one_off",
+      selectable: true,
+      active: true,
+      sortOrder: 10,
+      priceNote: "一次性｜完整套票",
+    });
+    for (const key of LEGACY_SEO_ITEM_KEYS) {
+      expect(CATALOG.items.find((i) => i.key === key), key).toBeUndefined();
+    }
+    // 描述列齊套票內容同唔承諾排名
+    for (const s of ["title", "description", "canonical", "robots", "sitemap", "Open Graph", "Service", "Organization", "H1–H3", "alt", "效能檢查", "驗證報告", "唔承諾搜尋排名"]) {
+      expect(pkg.description, s).toContain(s);
+    }
+  });
+
+  it("非 SEO 現價 +15% 四捨五入；marketPrice、domain_at_cost 全部不變", () => {
+    expect(CATALOG.frontOnlyPrice).toBe(1668); // 1450×1.15＝1667.5
+    expect(CATALOG.frontOnlyMarketPrice).toBe(5179);
+    expect(CATALOG.fullStackPrice).toBe(4428); // 3850×1.15＝4427.5
+    expect(CATALOG.fullStackMarketPrice).toBe(13750);
+    const byKey = new Map(CATALOG.items.map((i) => [i.key, i]));
+    expect(byKey.get("catalog_admin")).toMatchObject({ price: 1127, marketPrice: 3500 });
+    expect(byKey.get("enquiry_admin")).toMatchObject({ price: 1012, marketPrice: 3143 });
+    expect(byKey.get("staff_audit")).toMatchObject({ price: 1472, marketPrice: 4571 });
+    expect(byKey.get("hosting_monthly")).toMatchObject({ price: 633, marketPrice: 1964 }); // 550×1.15＝632.5
+    expect(byKey.get("domain_at_cost")).toMatchObject({ price: 0, marketPrice: 0, billing: "at_cost", selectable: false });
+    // SEO 套票唔加 15%
+    expect(byKey.get("seo_package")?.price).toBe(1240);
+  });
+
+  it("新增四個唔需代客申請 API 嘅項目", () => {
+    const byKey = new Map(CATALOG.items.map((i) => [i.key, i]));
+    expect(byKey.get("ecard")).toMatchObject({
+      name: "電子名片 e-Card", price: 690, marketPrice: 3500,
+      requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 140,
+    });
+    expect(byKey.get("multilingual")).toMatchObject({
+      name: "全網多語言版本", price: 1840, marketPrice: 8000,
+      requiredPlan: "front_only", billing: "one_off", selectable: true, active: true, sortOrder: 150,
+    });
+    expect(byKey.get("progress_lookup")).toMatchObject({
+      name: "客戶進度查詢專區", price: 3450, marketPrice: 9000,
+      requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 160,
+    });
+    expect(byKey.get("followup_reminders")).toMatchObject({
+      name: "跟進提醒系統", price: 2760, marketPrice: 3500,
+      requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 170,
+    });
+  });
+});
 
 describe("catalog 合併預設（getCatalog 口徑）", () => {
   it("setting key 係 web_design_catalog", () => {
@@ -67,6 +149,43 @@ describe("catalog 合併預設（getCatalog 口徑）", () => {
     });
     expect(merged.items[0].sortOrder).toBeLessThanOrEqual(merged.items[1].sortOrder);
   });
+
+  it("legacy DB 正規化：舊六項 seo_* → 單一 seo_package（用官方預設套票定義）", () => {
+    const merged = mergeCatalogWithDefaults({
+      frontOnlyPrice: 1450, // 舊價照保留（後台自訂欄唔郁）
+      items: [
+        ...LEGACY_SEO_ITEM_KEYS.map((k, i) => legacySeoItem(k, (i + 1) * 10)),
+        CATALOG.items.find((i) => i.key === "hosting_monthly")!,
+      ],
+    });
+    expect(merged.frontOnlyPrice).toBe(1450);
+    expect(merged.items.some((i) => LEGACY_SEO_ITEM_KEYS.includes(i.key as never))).toBe(false);
+    const pkgs = merged.items.filter((i) => i.key === "seo_package");
+    expect(pkgs).toHaveLength(1);
+    expect(pkgs[0]).toMatchObject({ name: "SEO 技術優化套票", price: 1240, marketPrice: 4429 });
+    expect(merged.items.some((i) => i.key === "hosting_monthly")).toBe(true);
+  });
+
+  it("已有 seo_package（後台自訂內容／價錢）→ 保留佢，唔用預設冚；舊 key 照 drop", () => {
+    const customPkg: WebDesignCatalogItem = {
+      ...CATALOG.items.find((i) => i.key === "seo_package")!,
+      name: "老闆自訂 SEO 套票",
+      price: 999,
+      description: "後台改過嘅描述",
+    };
+    const merged = mergeCatalogWithDefaults({
+      items: [customPkg, legacySeoItem("seo_meta", 10), legacySeoItem("seo_report", 60)],
+    });
+    const pkgs = merged.items.filter((i) => i.key === "seo_package");
+    expect(pkgs).toHaveLength(1);
+    expect(pkgs[0]).toMatchObject({ name: "老闆自訂 SEO 套票", price: 999, description: "後台改過嘅描述" });
+    expect(merged.items.some((i) => LEGACY_SEO_ITEM_KEYS.includes(i.key as never))).toBe(false);
+  });
+
+  it("淨係舊 key 其中一兩項都觸發正規化（唔使六項齊）", () => {
+    const merged = mergeCatalogWithDefaults({ items: [legacySeoItem("seo_schema", 40)] });
+    expect(merged.items.map((i) => i.key)).toEqual(["seo_package"]);
+  });
 });
 
 describe("validateCatalog（setCatalog 嚴格驗證）", () => {
@@ -82,19 +201,38 @@ describe("validateCatalog（setCatalog 嚴格驗證）", () => {
       validateCatalog({ ...CATALOG, items: [CATALOG.items[0], CATALOG.items[0]] }),
     ).toBeNull();
   });
+
+  it("舊六項 seo_* key 一律拒收（就算結構合法）：要用 seo_package 套票", () => {
+    for (const key of LEGACY_SEO_ITEM_KEYS) {
+      expect(
+        validateCatalog({ ...CATALOG, items: [...CATALOG.items, legacySeoItem(key, 10)] }),
+        key,
+      ).toBeNull();
+    }
+    // 純舊 key catalog 都拒
+    expect(
+      validateCatalog({
+        frontOnlyPrice: 1450,
+        frontOnlyMarketPrice: 5179,
+        fullStackPrice: 3850,
+        fullStackMarketPrice: 13750,
+        items: LEGACY_SEO_ITEM_KEYS.map((k, i) => legacySeoItem(k, (i + 1) * 10)),
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("server 計價（priceOrder）", () => {
-  it("front_only 基本價＋一次性 SEO 項＋月費 hosting：total＝一次性＋首月", () => {
-    const r = priceOrder(CATALOG, "front_only", ["seo_meta", "seo_index", "hosting_monthly"]);
+  it("front_only 基本價＋SEO 套票＋月費 hosting：total＝一次性＋首月＝3541", () => {
+    const r = priceOrder(CATALOG, "front_only", ["seo_package", "hosting_monthly"]);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.oneOffTotal).toBe(1450 + 180 + 220);
-    expect(r.monthlyTotal).toBe(550);
-    expect(r.total).toBe(1450 + 180 + 220 + 550);
+    expect(r.oneOffTotal).toBe(1668 + 1240);
+    expect(r.monthlyTotal).toBe(633);
+    expect(r.total).toBe(3541);
     // 第一行係方案基本價快照行
     expect(r.items[0].itemKey).toBe("plan_front_only");
-    expect(r.items[0].price).toBe(1450);
+    expect(r.items[0].price).toBe(1668);
   });
 
   it("方案依賴：front_only 揀 full_stack 功能 → 擋", () => {
@@ -105,11 +243,40 @@ describe("server 計價（priceOrder）", () => {
   });
 
   it("full_stack 可以揀任何功能", () => {
-    const r = priceOrder(CATALOG, "full_stack", ["catalog_admin", "seo_meta", "hosting_monthly"]);
+    const r = priceOrder(CATALOG, "full_stack", ["catalog_admin", "seo_package", "hosting_monthly"]);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.oneOffTotal).toBe(3850 + 980 + 180);
-    expect(r.monthlyTotal).toBe(550);
+    expect(r.oneOffTotal).toBe(4428 + 1127 + 1240);
+    expect(r.monthlyTotal).toBe(633);
+  });
+
+  it("新落單用舊 seo_* key → 擋（就算傳入嘅 catalog 係舊版未正規化都擋）", () => {
+    expect(priceOrder(CATALOG, "front_only", ["seo_meta"]).ok).toBe(false);
+    const staleCatalog = {
+      ...CATALOG,
+      items: [...CATALOG.items, legacySeoItem("seo_meta", 10)],
+    };
+    const r = priceOrder(staleCatalog, "front_only", ["seo_meta"]);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain("seo_package");
+  });
+
+  it("新增四項 server 計價：full_stack 全揀；front_only 只揀到 multilingual", () => {
+    const r = priceOrder(CATALOG, "full_stack", ["ecard", "multilingual", "progress_lookup", "followup_reminders"]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.oneOffTotal).toBe(4428 + 690 + 1840 + 3450 + 2760);
+    expect(r.monthlyTotal).toBe(0);
+    // multilingual 係 front_only 可揀
+    const r2 = priceOrder(CATALOG, "front_only", ["multilingual"]);
+    expect(r2.ok).toBe(true);
+    if (!r2.ok) return;
+    expect(r2.total).toBe(1668 + 1840);
+    // 其餘三項要 full_stack
+    for (const key of ["ecard", "progress_lookup", "followup_reminders"]) {
+      expect(priceOrder(CATALOG, "front_only", [key]).ok, key).toBe(false);
+    }
   });
 
   it("未知 key／唔揀得（at_cost 展示項）／下架項 → 擋", () => {
@@ -118,20 +285,20 @@ describe("server 計價（priceOrder）", () => {
     expect(r2.ok).toBe(false); // selectable:false
     const disabledCatalog = {
       ...CATALOG,
-      items: CATALOG.items.map((i) => (i.key === "seo_meta" ? { ...i, active: false } : i)),
+      items: CATALOG.items.map((i) => (i.key === "seo_package" ? { ...i, active: false } : i)),
     };
-    expect(priceOrder(disabledCatalog, "front_only", ["seo_meta"]).ok).toBe(false);
+    expect(priceOrder(disabledCatalog, "front_only", ["seo_package"]).ok).toBe(false);
   });
 
   it("重複 key 當一次；空 itemKeys ＝ 淨方案基本價", () => {
-    const r = priceOrder(CATALOG, "front_only", ["seo_meta", "seo_meta"]);
+    const r = priceOrder(CATALOG, "front_only", ["seo_package", "seo_package"]);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.oneOffTotal).toBe(1450 + 180);
+    expect(r.oneOffTotal).toBe(1668 + 1240);
     const bare = priceOrder(CATALOG, "full_stack", []);
     expect(bare.ok).toBe(true);
     if (!bare.ok) return;
-    expect(bare.total).toBe(3850);
+    expect(bare.total).toBe(4428);
     expect(bare.monthlyTotal).toBe(0);
   });
 

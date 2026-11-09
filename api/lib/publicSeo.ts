@@ -94,7 +94,7 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
     ],
   },
   "/web-design": {
-    title: "香港網站設計｜前台、後台及逐項 SEO｜RedCode",
+    title: "香港網站設計｜前台、後台及 SEO 套票｜RedCode",
     description:
       "RedCode 網站設計：一頁式前台或前台＋後台，逐項列明香港市場對照價、折扣及 SEO 驗證項目；可網上落單、上載付款截圖及自助查詢進度。",
     heading: "香港網站設計，由展示到自行管理",

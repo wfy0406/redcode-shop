@@ -1,46 +1,54 @@
 {
   "generated": "2026-11-09",
-  "note": "All assets produced locally with non-generative processing only (ffmpeg / Pillow): trimming, HDR-to-SDR tone mapping, scaling, mild exposure/contrast/white-balance/sharpening and light noise reduction. No AI generation, no face retouching or re-rendering. No AI model was used.",
-  "assets": {
-    "suit-scroll.mp4": {
-      "source": "20261109_133951.mp4",
-      "sourceSegment": "17.0s-29.5s (contiguous: front pose -> walks toward camera -> turns to side)",
-      "width": 720,
-      "height": 1280,
-      "orientation": "portrait (source recorded 1920x1080 with -90 rotation; decoded upright 1080x1920, kept portrait to avoid distortion or head/shoe cropping)",
-      "fps": 24,
-      "durationSeconds": 12.542,
-      "codec": "h264 (High profile)",
-      "pixFmt": "yuv420p",
-      "audio": "none (silent)",
-      "faststart": true,
-      "bitRate": 1250981,
-      "bytes": 1961226,
-      "processing": "HDR HLG (bt2020/arib-std-b67) tone-mapped to SDR bt709 via zscale+hable; light denoise hqdn3d 1.5:1.5:6:6; eq brightness +0.02, contrast 1.06, saturation 1.05; lanczos scale to 720x1280; libx264 crf 23 preset slow; moov faststart"
+  "version": "v2026.11.09.1",
+  "note": "首屏角色按用戶提供嘅相片以 AI 輔助重建，再輸出透明背景 WebP；兩段西裝影片只作樣貌、身形、服裝及動作參考，冇嵌入頁面、冇剪作播放素材，亦冇喺頁面播放。頁面唔披露模型或技術供應商。",
+  "redesignAssets": {
+    "character-hero.webp": {
+      "width": 864,
+      "height": 1350,
+      "bytes": 91792,
+      "background": "透明",
+      "pose": "站立",
+      "usage": "首屏起始姿勢"
     },
-    "suit-poster.webp": {
-      "source": "1000320798.jpg",
-      "width": 901,
-      "height": 1600,
-      "bytes": 123476,
-      "processing": "EXIF upright, mild gray-world white balance (25%), brightness x1.02, contrast x1.05, saturation x1.04, sharpen x1.08, lanczos resize to fit 1600px, WebP q92. No cropping: full body head-to-shoes preserved."
+    "character-motion.webp": {
+      "width": 864,
+      "height": 1350,
+      "bytes": 84850,
+      "background": "透明",
+      "pose": "行步",
+      "usage": "桌面滾動時同起始姿勢 crossfade"
     },
-    "suit-portrait.webp": {
-      "source": "1000320794.jpg",
-      "width": 788,
-      "height": 1400,
-      "bytes": 85142,
-      "processing": "Same mild non-generative adjustments as poster; lanczos resize to fit 1400px, WebP q90. Front full body, no crop."
+    "demo-redcode.webp": {
+      "width": 1381,
+      "height": 1120,
+      "bytes": 129986,
+      "source": "用戶提供嘅 RedCode 官方網站首頁真實截圖",
+      "usage": "第 04 段示範網頁"
     },
-    "suit-detail.webp": {
-      "source": "1000320800.jpg",
-      "width": 788,
-      "height": 1400,
-      "bytes": 173942,
-      "processing": "Same mild non-generative adjustments as poster; lanczos resize to fit 1400px, WebP q90. Suit/tie/fabric close-up, editorial crop as-shot."
+    "demo-bdog.webp": {
+      "width": 1428,
+      "height": 1133,
+      "bytes": 81112,
+      "source": "用戶提供嘅 bDog Tokyo 官方網站首頁真實截圖",
+      "usage": "第 04 段示範網頁"
     }
   },
-  "unusedInputs": [
-    "20261109_133834.mp4 (reviewed; 133951 had the better contiguous front-to-side/walk-in take)"
-  ]
+  "legacyAssetsNotReferencedByPage": [
+    "suit-scroll.mp4",
+    "suit-portrait.webp",
+    "suit-detail.webp"
+  ],
+  "legacyAssetsUsedOnlyForSeo": {
+    "suit-poster.webp": "只保留作 Open Graph／Twitter 分享預覽圖；唔會喺頁面內容顯示。"
+  },
+  "contentIntegrity": {
+    "demoSites": [
+      "https://redcode.red",
+      "https://bdog.pet"
+    ],
+    "fictionalTestimonials": false,
+    "fictionalResults": false,
+    "fictionalPerformanceMetrics": false
+  }
 }

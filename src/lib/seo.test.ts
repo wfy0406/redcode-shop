@@ -30,6 +30,9 @@ describe("PAGE_SEO 文案", () => {
   });
 
   it("網站設計頁前端同 server 首口 SEO 一致，而且可公開收錄", () => {
+    // v2026.11.09.1：SEO 六項合併做套票，title 用「SEO 套票」唔再「逐項 SEO」
+    expect(PAGE_SEO["/web-design"].title).toBe("香港網站設計｜前台、後台及 SEO 套票｜RedCode");
+    expect(PAGE_SEO["/web-design"].title).not.toContain("逐項 SEO");
     const serverSeoSrc = readFileSync(new URL("../../api/lib/publicSeo.ts", import.meta.url), "utf8");
     expect(serverSeoSrc).toContain(PAGE_SEO["/web-design"].title);
     expect(serverSeoSrc).toContain(PAGE_SEO["/web-design"].description);

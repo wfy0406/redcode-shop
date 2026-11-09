@@ -6,6 +6,7 @@
 import { randomInt } from "node:crypto";
 import {
   DEFAULT_WEB_DESIGN_CATALOG,
+  LEGACY_SEO_ITEM_KEYS,
   WEB_DESIGN_PLANS,
   planAllows,
   planLabel,
@@ -69,6 +70,16 @@ export function validateLookupInput(
 const CATEGORIES = new Set(["seo", "feature", "service"]);
 const BILLINGS = new Set(["one_off", "monthly", "at_cost"]);
 
+/** 舊六項 seo_* 已併入 seo_package 套票（契約常量的 Set 版，內部用） */
+const LEGACY_SEO_KEY_SET = new Set<string>(LEGACY_SEO_ITEM_KEYS);
+
+/** 預設 catalog 入面嘅 seo_package 套票定義（legacy 正規化時照用呢份） */
+function defaultSeoPackage(): WebDesignCatalogItem {
+  const pkg = DEFAULT_WEB_DESIGN_CATALOG.items.find((i) => i.key === "seo_package");
+  if (!pkg) throw new Error("預設 catalog 缺 seo_package");
+  return { ...pkg };
+}
+
 function isNonNegInt(n: unknown): n is number {
   return typeof n === "number" && Number.isInteger(n) && n >= 0;
 }
@@ -102,6 +113,8 @@ function validateItem(raw: unknown): WebDesignCatalogItem | null {
  * siteSettings JSON → 完整 catalog（合併預設）：
  * 四個方案價逐個驗，唔啱／缺就落預設；items 逐項驗，壞項 drop（唔好成個 catalog 報廢）；
  * 完全 parse 唔到 → 成個預設 catalog。
+ * 舊六項 seo_* 正規化：冇 seo_package → 自動補預設套票；有 seo_package → 保留後台自訂
+ * 內容同價錢；無論如何舊 seo_* 項一律 drop（舊訂單 items snapshot 係成交紀錄，唔經呢度）。
  */
 export function mergeCatalogWithDefaults(raw: unknown): WebDesignCatalog {
   const d = DEFAULT_WEB_DESIGN_CATALOG;
@@ -110,12 +123,22 @@ export function mergeCatalogWithDefaults(raw: unknown): WebDesignCatalog {
   const itemsRaw = Array.isArray(r.items) ? r.items : [];
   const seen = new Set<string>();
   const items: WebDesignCatalogItem[] = [];
+  let sawLegacySeo = false;
+  let sawSeoPackage = false;
   for (const it of itemsRaw) {
     const v = validateItem(it);
     if (!v || items.length >= 200) continue;
+    if (LEGACY_SEO_KEY_SET.has(v.key)) {
+      sawLegacySeo = true; // 舊逐項 SEO：唔再放行，落喺單一套票
+      continue;
+    }
     if (seen.has(v.key)) continue; // key 重複：留第一個
     seen.add(v.key);
+    if (v.key === "seo_package") sawSeoPackage = true;
     items.push(v);
+  }
+  if (sawLegacySeo && !sawSeoPackage && items.length < 200) {
+    items.push(defaultSeoPackage()); // 舊 catalog 升級：補返官方套票定義
   }
   items.sort((a, b) => a.sortOrder - b.sortOrder);
   return {
@@ -131,7 +154,7 @@ export function mergeCatalogWithDefaults(raw: unknown): WebDesignCatalog {
   };
 }
 
-/** adminCatalog/setCatalog 用：完整結構驗證（setCatalog 唔接受壞 payload 落 DB） */
+/** adminCatalog/setCatalog 用：完整結構驗證（setCatalog 唔接受壞 payload 落 DB；舊 seo_* 逐項 key 一律拒收，要用 seo_package 套票） */
 export function validateCatalog(raw: unknown): WebDesignCatalog | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
@@ -143,6 +166,7 @@ export function validateCatalog(raw: unknown): WebDesignCatalog | null {
   for (const it of r.items) {
     const v = validateItem(it);
     if (!v) return null; // 後台落貨要嚴：任何一項壞都成個拒收
+    if (LEGACY_SEO_KEY_SET.has(v.key)) return null; // 舊逐項 SEO key 已廢，唔准再落 DB
     if (seen.has(v.key)) return null;
     seen.add(v.key);
     items.push(v);
@@ -218,6 +242,10 @@ export function priceOrder(
     const key = String(rawKey);
     if (seen.has(key)) continue; // 重複 key 當一次
     seen.add(key);
+    // 舊六項 seo_* 已併入套票：就算傳入嘅 catalog 未正規化都唔准用舊 key 落新單
+    if (LEGACY_SEO_KEY_SET.has(key)) {
+      return { ok: false, error: `功能「${key}」已併入「SEO 技術優化套票」，請揀 seo_package` };
+    }
     const item = byKey.get(key);
     if (!item) return { ok: false, error: `功能「${key}」唔存在` };
     if (!item.active) return { ok: false, error: `功能「${item.name}」已下架` };
