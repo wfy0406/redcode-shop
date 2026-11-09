@@ -28,6 +28,7 @@
  * - M5：adminSetEventArchived 行 DB transaction＋EVENT_LOCK_NS(845120) event 雙 key 鎖
  *   （execute SQL params 精確斷言）→ 鎖內重讀 → 先 update；歸檔/取消歸檔同一把鎖，同抽獎互斥。
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
 // ───────────────────────── mock 基礎設施（hoisted）─────────────────────────
@@ -1870,7 +1871,7 @@ describe("adminEventWinners 每場活動中獎名單（內部跟進資料）", (
 // ───────────────────────── v2.5.8：公開中獎公告 ─────────────────────────
 
 describe("publicEventResults 公開中獎公告（唔使登入）", () => {
-  const EVENT_PUB = { id: 7, name: "雙十一．壓軸狂歡", createdAt: new Date(), scheduledDrawDate: "20261111" };
+  const EVENT_PUB = { id: 7, name: "雙十一．壓軸狂歡", createdAt: new Date(), scheduledDrawDate: "20261111", maxWinsPerPerson: 2, winnersPublic: true };
 
   it("唔使登入都睇到（reset(null)）；活動唔存在或已刪除 → NOT_FOUND", async () => {
     reset(null);
@@ -1891,8 +1892,9 @@ describe("publicEventResults 公開中獎公告（唔使登入）", () => {
     ];
     const r = await caller().publicEventResults({ eventId: 7 });
     expect(r.event).toMatchObject({ id: 7, name: "雙十一．壓軸狂歡", scheduledDrawDate: "20261111" });
-    // 活動物件白名單：淨係 id/name/createdAt/scheduledDrawDate（唔放 createdBy／限中／歸檔內部欄）
-    expect(Object.keys(r.event).sort()).toEqual(["createdAt", "id", "name", "scheduledDrawDate"]);
+    // 活動物件白名單：淨係 id/name/createdAt/scheduledDrawDate/maxWinsPerPerson/winnersPublic
+    // （唔放 createdBy／歸檔等內部欄）
+    expect(Object.keys(r.event).sort()).toEqual(["createdAt", "id", "maxWinsPerPerson", "name", "scheduledDrawDate", "winnersPublic"]);
     expect(r.winners).toHaveLength(2);
     expect(r.winners[0].name).toBe("陳小明（直播暱稱）"); // 快照優先
     expect(r.winners[1].name).toBe("王小虎"); // 舊紀錄 fallback
@@ -1949,5 +1951,505 @@ describe("publicEvents 公開公告總頁（唔使登入）", () => {
     h.state.queue = [[]];
     const r = await caller().publicEvents();
     expect(r).toEqual([]);
+  });
+});
+
+// ───────────────────────── v2026.11.08：公告開關／手動名單／批量刪除／公開查劵 ─────────────────────────
+
+const EV7 = { id: 7, name: "週年慶", archivedAt: null };
+const ENTRY_A = { id: 11, eventId: 7, holderName: "陳小明", normalizedName: "陳小明", ticketCount: 2, createdBy: null, createdByName: null, createdAt: new Date() };
+const ENTRY_B = { id: 12, eventId: 7, holderName: "王小虎", normalizedName: "王小虎", ticketCount: 3, createdBy: null, createdByName: null, createdAt: new Date() };
+/** PG error（drizzle 直出 .code；收埋 cause 嘅同款 pgErrorCode 都認） */
+const pgError = (code: string) => Object.assign(new Error(`pg ${code}`), { code });
+
+describe("v2026.11.08 權限：staff/member 唔准手動加／改劵／批量刪／切換公告", () => {
+  it("staff＋member → FORBIDDEN；未登入 → UNAUTHORIZED（四個新 endpoint 全部 supervisor 級）", async () => {
+    for (const u of [{ userId: 3, role: "staff" }, { userId: 4, role: "member" }]) {
+      reset(u);
+      await expect(caller().adminSetEventWinnersPublic({ eventId: 7, winnersPublic: false })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "甲", ticketCount: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 5 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(caller().adminDeleteEventEntries({ eventId: 7, entryIds: [11] })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+    reset(null);
+    await expect(caller().adminSetEventWinnersPublic({ eventId: 7, winnersPublic: false })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "甲", ticketCount: 1 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 5 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller().adminDeleteEventEntries({ eventId: 7, entryIds: [11] })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(h.state.txCount).toBe(0);
+    expect(h.state.inserts).toHaveLength(0);
+    expect(h.state.updates).toHaveLength(0);
+    expect(h.state.deletes).toHaveLength(0);
+  });
+});
+
+describe("adminSetEventWinnersPublic 公告開關（event 鎖內重讀＋audit）", () => {
+  it("關閉：transaction 內 EVENT_LOCK_NS 雙 key 鎖 → 鎖內重讀 → update winnersPublic:false；回 {ok,winnersPublic}", async () => {
+    h.state.queue = [
+      {}, // tx execute：event 雙 key 鎖
+      [{ id: 7, name: "週年慶" }], // 鎖內重讀活動
+      [], // update luckyDrawEvents
+    ];
+    const r = await caller().adminSetEventWinnersPublic({ eventId: 7, winnersPublic: false });
+    expect(r).toEqual({ ok: true, winnersPublic: false });
+    expect(h.state.txCount).toBe(1);
+    expect(h.state.executeCount).toBe(1);
+    const lock = pgDialect.sqlToQuery(h.state.executes[0]);
+    expect(lock.sql).toContain("pg_advisory_xact_lock");
+    expect(lock.params).toEqual([845120, 7]); // 同歸檔／改名／抽獎／匯入同一把 event 鎖
+    const upd = h.state.updates.filter((u) => u.table === luckyDrawEvents);
+    expect(upd).toHaveLength(1);
+    expect(upd[0].set).toEqual({ winnersPublic: false }); // 淨係郁公告開關
+    expectWhere(upd[0].where, ['"id" = $1'], [7]);
+    // 鎖先於 update，中間要有鎖內重讀 select（唔信 transaction 外快照）
+    const lockIdx = h.state.ops.findIndex((o) => o.op === "execute");
+    const updIdx = h.state.ops.findIndex((o) => o.op === "update" && o.table === luckyDrawEvents);
+    expect(updIdx).toBeGreaterThan(lockIdx);
+    expect(h.state.ops.slice(lockIdx + 1, updIdx).filter((o) => o.op === "select").length).toBeGreaterThanOrEqual(1);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.setEventWinnersPublic",
+      targetType: "luckyDrawEvent",
+      targetId: "7",
+      detail: expect.stringContaining("關閉"),
+    }));
+  });
+
+  it("開啟：winnersPublic:true 照寫＋audit 寫「公開」", async () => {
+    h.state.queue = [{}, [{ id: 7, name: "週年慶" }], []];
+    const r = await caller().adminSetEventWinnersPublic({ eventId: 7, winnersPublic: true });
+    expect(r).toEqual({ ok: true, winnersPublic: true });
+    expect(h.state.updates.filter((u) => u.table === luckyDrawEvents)[0].set).toEqual({ winnersPublic: true });
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.setEventWinnersPublic",
+      detail: expect.stringContaining("公開"),
+    }));
+  });
+
+  it("hardening：鎖內重讀發現活動啱啱俾人刪咗 → NOT_FOUND，唔 update", async () => {
+    h.state.queue = [{}, []];
+    await expect(caller().adminSetEventWinnersPublic({ eventId: 7, winnersPublic: false })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.state.executeCount).toBe(1);
+    expect(h.state.updates).toHaveLength(0);
+  });
+});
+
+describe("adminAddEventEntry 手動新增／同名加劵（event 鎖內重讀＋每人/全活動上限＋audit）", () => {
+  it("新姓名 → 新增一列（created:true）：normalizeListName 落庫、回 contract {ok,created,entry,addedTickets}", async () => {
+    h.state.queue = [
+      [{ name: "Boss" }], // actorName
+      {}, // tx event lock
+      [EV7], // 鎖內重讀活動
+      [ENTRY_A], // 鎖內重讀現有 entries
+      [ENTRY_B], // insert returning
+    ];
+    const r = await caller().adminAddEventEntry({ eventId: 7, holderName: "王小虎", ticketCount: 3 });
+    expect(r.ok).toBe(true);
+    expect(r.created).toBe(true);
+    expect(r.addedTickets).toBe(3);
+    expect(r.entry).toMatchObject({ id: 12, holderName: "王小虎", ticketCount: 3 });
+    const ins = insertsOf(luckyDrawEventEntries);
+    expect(ins).toHaveLength(1);
+    expect(ins[0].values).toMatchObject({
+      eventId: 7, holderName: "王小虎", normalizedName: "王小虎", ticketCount: 3,
+      createdBy: 1, createdByName: "Boss",
+    });
+    expect(h.state.executeCount).toBe(1);
+    const lock = pgDialect.sqlToQuery(h.state.executes[0]);
+    expect(lock.params).toEqual([845120, 7]);
+    // 鎖先於 insert，中間有鎖內重讀（活動＋entries）
+    const lockIdx = h.state.ops.findIndex((o) => o.op === "execute");
+    const insIdx = h.state.ops.findIndex((o) => o.op === "insert" && o.table === luckyDrawEventEntries);
+    expect(insIdx).toBeGreaterThan(lockIdx);
+    expect(h.state.ops.slice(lockIdx + 1, insIdx).filter((o) => o.op === "select").length).toBeGreaterThanOrEqual(2);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.addEventEntry",
+      targetType: "luckyDrawEvent",
+      targetId: "7",
+      detail: expect.stringContaining("手動新增劵持有人：王小虎（3 張）"),
+    }));
+  });
+
+  it("同名 case/space 精確重複（normalizeListName）→ 加劵唔開新列（created:false）", async () => {
+    const existing = { ...ENTRY_A, holderName: "Chan Siu Ming", normalizedName: "chan siu ming", ticketCount: 2 };
+    h.state.queue = [
+      [{ name: "Boss" }],
+      {},
+      [EV7],
+      [existing],
+      [{ ...existing, ticketCount: 5 }], // update returning
+    ];
+    const r = await caller().adminAddEventEntry({ eventId: 7, holderName: "  CHAN SIU MING  ", ticketCount: 3 });
+    expect(r.ok).toBe(true);
+    expect(r.created).toBe(false);
+    expect(r.addedTickets).toBe(3);
+    expect(r.entry.ticketCount).toBe(5);
+    expect(insertsOf(luckyDrawEventEntries)).toHaveLength(0); // 唔准開第二列
+    const upd = h.state.updates.filter((u) => u.table === luckyDrawEventEntries);
+    expect(upd).toHaveLength(1);
+    expect(upd[0].set).toEqual({ ticketCount: 5 });
+    expectWhere(upd[0].where, ['"id" = $1', '"eventId" = $2'], [11, 7]);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.addEventEntry",
+      detail: expect.stringContaining("同人加劵"),
+    }));
+  });
+
+  it("每人上限：鎖內重讀後加完超過 10000 → CONFLICT，零寫入", async () => {
+    h.state.queue = [
+      [{ name: "Boss" }], {}, [EV7],
+      [{ ...ENTRY_A, ticketCount: 9999 }], // 鎖內重讀：現有 9999 張
+    ];
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "陳小明", ticketCount: 2 })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(h.state.updates.filter((u) => u.table === luckyDrawEventEntries)).toHaveLength(0);
+    expect(insertsOf(luckyDrawEventEntries)).toHaveLength(0);
+  });
+
+  it("全活動上限：鎖內重讀總數＋新劵超過 10,000,000 → CONFLICT，零寫入", async () => {
+    h.state.queue = [
+      [{ name: "Boss" }], {}, [EV7],
+      [{ ...ENTRY_A, ticketCount: 9_999_995 }], // 鎖內重讀總數 9,999,995
+    ];
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "新人", ticketCount: 10 })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(insertsOf(luckyDrawEventEntries)).toHaveLength(0);
+  });
+
+  it("活動已歸檔 → CONFLICT 擋寫；活動鎖內重讀唔存在 → NOT_FOUND", async () => {
+    h.state.queue = [[{ name: "Boss" }], {}, [{ ...EV7, archivedAt: new Date() }]];
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "新人", ticketCount: 1 })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(h.state.updates.filter((u) => u.table === luckyDrawEventEntries)).toHaveLength(0);
+    expect(insertsOf(luckyDrawEventEntries)).toHaveLength(0);
+
+    reset(); // 清 queue/ops（audit mock 由 beforeEach 唔會清，呢度唔斷 audit）
+    h.state.queue = [[{ name: "Boss" }], {}, []];
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "新人", ticketCount: 1 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.state.executeCount).toBe(1); // 確實入咗鎖先重讀
+    expect(insertsOf(luckyDrawEventEntries)).toHaveLength(0);
+  });
+
+  it("hardening：unique 23505（並發同名插入，最後防線）→ 可見 CONFLICT", async () => {
+    h.state.queue = [
+      [{ name: "Boss" }], {}, [EV7],
+      [], // 鎖內重讀：冇同名
+      pgError("23505"), // insert 撞 unique index
+    ];
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "新人", ticketCount: 1 })).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("input 擋：空名／ticketCount 0／超過每人上限 10000 → 拒絕，零 DB 寫", async () => {
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "  ", ticketCount: 1 })).rejects.toThrow();
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "甲", ticketCount: 0 })).rejects.toThrow();
+    await expect(caller().adminAddEventEntry({ eventId: 7, holderName: "甲", ticketCount: 10001 })).rejects.toThrow();
+    expect(h.state.inserts).toHaveLength(0);
+    expect(h.state.txCount).toBe(0);
+  });
+});
+
+describe("adminSetEventEntryTicketCount 改總劵數（先定位 event → 同一把 event 鎖鎖內重讀）", () => {
+  it("成功：定位 entry → event 鎖 → 鎖內重讀活動＋entry＋總數 → update 淨係郁 ticketCount；回 {ok,entry}", async () => {
+    h.state.queue = [
+      [ENTRY_A], // transaction 外定位 entry（攞 eventId=7）
+      {}, // tx event lock
+      [EV7], // 鎖內重讀活動
+      [ENTRY_A], // 鎖內重讀 entry
+      [{ total: 12 }], // 鎖內全活動總劵數
+      [{ ...ENTRY_A, ticketCount: 9 }], // update returning
+    ];
+    const r = await caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 9 });
+    expect(r.ok).toBe(true);
+    expect(r.entry).toMatchObject({ id: 11, ticketCount: 9 });
+    expect(h.state.txCount).toBe(1);
+    const lock = pgDialect.sqlToQuery(h.state.executes[0]);
+    expect(lock.params).toEqual([845120, 7]); // 鎖嘅係 entry 所屬活動
+    const upd = h.state.updates.filter((u) => u.table === luckyDrawEventEntries);
+    expect(upd).toHaveLength(1);
+    expect(upd[0].set).toEqual({ ticketCount: 9 }); // 唔准改名
+    expectWhere(upd[0].where, ['"id" = $1', '"eventId" = $2'], [11, 7]);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.setEventEntryTicketCount",
+      targetType: "luckyDrawEventEntry",
+      targetId: "11",
+      detail: expect.stringContaining("2 → 9"),
+    }));
+  });
+
+  it("entry 唔存在 → NOT_FOUND（唔入鎖零寫）", async () => {
+    h.state.queue = [[]];
+    await expect(caller().adminSetEventEntryTicketCount({ entryId: 99, ticketCount: 5 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.state.txCount).toBe(0);
+    expect(h.state.executeCount).toBe(0);
+    expect(h.state.updates).toHaveLength(0);
+  });
+
+  it("hardening：audit 舊值用鎖內重讀嘅 cur.ticketCount（唔係 transaction 外過期快照）", async () => {
+    // transaction 外定位快照 ticketCount=2，但鎖內重讀發現並發已改做 7 —— audit 要寫「7 → 9」
+    h.state.queue = [
+      [ENTRY_A], // 外層快照：2 張（過期）
+      {}, // tx event lock
+      [EV7],
+      [{ ...ENTRY_A, ticketCount: 7 }], // 鎖內重讀：其實係 7 張
+      [{ total: 17 }],
+      [{ ...ENTRY_A, ticketCount: 9 }], // update returning
+    ];
+    const r = await caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 9 });
+    expect(r.ok).toBe(true);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.setEventEntryTicketCount",
+      detail: expect.stringContaining("7 → 9"),
+    }));
+    expect(logAudit).not.toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.stringContaining("2 → 9"),
+    }));
+  });
+
+  it("活動已歸檔 → CONFLICT 擋寫，唔 update", async () => {
+    h.state.queue = [[ENTRY_A], {}, [{ ...EV7, archivedAt: new Date() }]];
+    await expect(caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 5 })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(h.state.updates.filter((u) => u.table === luckyDrawEventEntries)).toHaveLength(0);
+  });
+
+  it("hardening：鎖內重讀發現 entry 啱啱俾人刪咗 → NOT_FOUND，唔 update", async () => {
+    h.state.queue = [[ENTRY_A], {}, [EV7], []];
+    await expect(caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 5 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.state.executeCount).toBe(1); // 確實入咗鎖先重讀
+    expect(h.state.updates.filter((u) => u.table === luckyDrawEventEntries)).toHaveLength(0);
+  });
+
+  it("全活動上限：改完總數超過 10,000,000 → CONFLICT，零寫入", async () => {
+    h.state.queue = [
+      [ENTRY_A], {}, [EV7], [ENTRY_A],
+      [{ total: 10_000_000 }], // 鎖內總數 10,000,000 − 舊值 2 ＋ 新值 5 ＝超標
+    ];
+    await expect(caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 5 })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(h.state.updates.filter((u) => u.table === luckyDrawEventEntries)).toHaveLength(0);
+  });
+
+  it("input 擋：ticketCount 0／超過每人上限 10000 → 拒絕，零 DB 寫", async () => {
+    await expect(caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 0 })).rejects.toThrow();
+    await expect(caller().adminSetEventEntryTicketCount({ entryId: 11, ticketCount: 10001 })).rejects.toThrow();
+    expect(h.state.updates).toHaveLength(0);
+    expect(h.state.txCount).toBe(0);
+  });
+});
+
+describe("adminDeleteEventEntries 批量刪除（event 鎖＋同活動驗證＋中獎保護＋audit 名單摘要）", () => {
+  it("成功：重複 id 去重 → event 鎖內確認同活動 → 無中獎參照 → 整批刪；回 deletedCount/deletedEntryIds/ticketCount", async () => {
+    h.state.queue = [
+      {}, // tx event lock
+      [{ id: 7, name: "週年慶" }], // 鎖內重讀活動
+      [ENTRY_A, ENTRY_B], // 鎖內重讀 entries（11、12 都屬活動 7）
+      [], // 中獎參照：冇
+      [ENTRY_A, ENTRY_B], // delete returning
+    ];
+    const r = await caller().adminDeleteEventEntries({ eventId: 7, entryIds: [11, 12, 11] }); // 重複 id 要去重
+    expect(r).toEqual({ ok: true, deletedCount: 2, deletedEntryIds: [11, 12], ticketCount: 5 });
+    expect(h.state.txCount).toBe(1);
+    expect(h.state.executeCount).toBe(1);
+    const lock = pgDialect.sqlToQuery(h.state.executes[0]);
+    expect(lock.params).toEqual([845120, 7]);
+    const del = h.state.deletes.filter((d) => d.table === luckyDrawEventEntries);
+    expect(del).toHaveLength(1);
+    expectWhere(del[0].where, ['"eventId" = $1', /"id" in \(/], [7, 11, 12]);
+    // audit 名單摘要：逐人列名＋劵數
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.deleteEventEntries",
+      targetType: "luckyDrawEvent",
+      targetId: "7",
+      detail: expect.stringContaining("陳小明（2 張）"),
+    }));
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      detail: expect.stringContaining("王小虎（3 張）"),
+    }));
+  });
+
+  it("跨活動／唔存在 id → 整批拒絕（BAD_REQUEST），一個都唔刪", async () => {
+    h.state.queue = [
+      {},
+      [{ id: 7, name: "週年慶" }],
+      [ENTRY_A], // 鎖內重讀：12 唔屬呢個活動/唔存在
+    ];
+    await expect(caller().adminDeleteEventEntries({ eventId: 7, entryIds: [11, 12] })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(h.state.deletes).toHaveLength(0); // 唔准靜默部份刪除
+  });
+
+  it("任何 entry 有中獎參照（不論狀態）→ 整批 CONFLICT，錯誤列受保護姓名，零刪除", async () => {
+    h.state.queue = [
+      {},
+      [{ id: 7, name: "週年慶" }],
+      [ENTRY_A, ENTRY_B],
+      [{ eventEntryId: 11 }], // 甲有中獎紀錄參照
+    ];
+    const p = caller().adminDeleteEventEntries({ eventId: 7, entryIds: [11, 12] });
+    await expect(p).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(p).rejects.toThrow(/「陳小明」/);
+    await expect(p).rejects.toThrow(/整批唔准刪/);
+    expect(h.state.deletes).toHaveLength(0);
+  });
+
+  it("hardening：實刪少過鎖內核實數（並發改變）→ CONFLICT 整批 rollback，唔准回成功但少刪", async () => {
+    h.state.queue = [
+      {},
+      [{ id: 7, name: "週年慶" }],
+      [ENTRY_A, ENTRY_B],
+      [],
+      [ENTRY_A], // delete returning 淨返 1 行
+    ];
+    await expect(caller().adminDeleteEventEntries({ eventId: 7, entryIds: [11, 12] })).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("活動唔存在（鎖內重讀）→ NOT_FOUND，零刪除", async () => {
+    h.state.queue = [{}, []];
+    await expect(caller().adminDeleteEventEntries({ eventId: 7, entryIds: [11] })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.state.deletes).toHaveLength(0);
+  });
+
+  it("input 擋：空 array／超過 500 個 id → 拒絕，零 DB", async () => {
+    await expect(caller().adminDeleteEventEntries({ eventId: 7, entryIds: [] })).rejects.toThrow();
+    await expect(
+      caller().adminDeleteEventEntries({ eventId: 7, entryIds: Array.from({ length: 501 }, (_, i) => i + 1) }),
+    ).rejects.toThrow();
+    expect(h.state.txCount).toBe(0);
+    expect(h.state.deletes).toHaveLength(0);
+  });
+});
+
+describe("adminDeleteEventEntry 逐個刪（保留兼容；中獎紀錄 FK 保護唔變）", () => {
+  it("成功刪除＋audit（現有呼叫唔受批量 endpoint 影響）", async () => {
+    h.state.queue = [[ENTRY_A]];
+    const r = await caller().adminDeleteEventEntry({ entryId: 11 });
+    expect(r).toEqual({ ok: true });
+    const del = h.state.deletes.filter((d) => d.table === luckyDrawEventEntries);
+    expect(del).toHaveLength(1);
+    expectWhere(del[0].where, ['"id" = $1'], [11]);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.deleteEventEntry",
+      targetId: "11",
+    }));
+  });
+
+  it("有中獎紀錄參照（FK 23503）→ CONFLICT，唔靜默刪", async () => {
+    h.state.queue = [pgError("23503")];
+    await expect(caller().adminDeleteEventEntry({ entryId: 11 })).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+  it("唔存在 → NOT_FOUND", async () => {
+    h.state.queue = [[]];
+    await expect(caller().adminDeleteEventEntry({ entryId: 99 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("publicTicketEvent 公開查劵活動資料（唔受 winnersPublic 公告開關影響）", () => {
+  it("公告關閉（winnersPublic:false）都照回 metadata；白名單欄位，唔放名單／總劵數", async () => {
+    reset(null);
+    h.state.queue = [
+      [{ id: 7, name: "週年慶", scheduledDrawDate: "20261201", maxWinsPerPerson: 2, winnersPublic: false }],
+    ];
+    const r = await caller().publicTicketEvent({ eventId: 7 });
+    expect(r.event).toMatchObject({
+      id: 7, name: "週年慶", scheduledDrawDate: "20261201", maxWinsPerPerson: 2, winnersPublic: false,
+    });
+    // 白名單：淨係呢五個欄（唔放參加者數／總劵數／createdBy／歸檔內部欄）
+    expect(Object.keys(r.event).sort()).toEqual(["id", "maxWinsPerPerson", "name", "scheduledDrawDate", "winnersPublic"]);
+    expect(JSON.stringify(r)).not.toMatch(/phone|email|address|holderName|entryId/i);
+  });
+
+  it("scheduledDrawDate null＝待公佈 如實輸出；活動唔存在/已刪除 → NOT_FOUND", async () => {
+    reset(null);
+    h.state.queue = [[{ id: 7, name: "週年慶", scheduledDrawDate: null, maxWinsPerPerson: 1, winnersPublic: true }]];
+    const r = await caller().publicTicketEvent({ eventId: 7 });
+    expect(r.event.scheduledDrawDate).toBeNull();
+    h.state.queue = [[]];
+    await expect(caller().publicTicketEvent({ eventId: 99 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("publicLookupEventTicket 公開查劵（mutation POST＋完整姓名 exact match）", () => {
+  it("源碼級別：一定要係 mutation（POST）——查詢輸入係個人資料，唔准入 GET query/log", () => {
+    const src = readFileSync(new URL("./luckyDrawRouter.ts", import.meta.url), "utf8");
+    const block = src.match(/publicLookupEventTicket:\s*publicProcedure[\s\S]*?\.mutation\(/);
+    expect(block, "publicLookupEventTicket 必須用 .mutation 定義").toBeTruthy();
+  });
+
+  it("完整姓名成功：只回 found:true＋ticketCount（唔含 entry id／holderName／其他參加者）", async () => {
+    reset(null);
+    h.state.queue = [[{ id: 7 }], [{ ticketCount: 4 }]];
+    const r = await caller().publicLookupEventTicket({ eventId: 7, holderName: "陳小明" });
+    expect(r).toEqual({ found: true, ticketCount: 4 });
+    expect(Object.keys(r).sort()).toEqual(["found", "ticketCount"]);
+    expect(JSON.stringify(r)).not.toContain("陳小明");
+    // exact match 守衛 SQL：eventId＋normalizedName 雙條件（唔係 like/wildcard）
+    const lookup = h.state.selects[h.state.selects.length - 1];
+    expectWhere(lookup.where, ['"eventId" = $1', '"normalizedName" = $2'], [7, "陳小明"]);
+  });
+
+  it("trim＋lowercase 正規化後 exact match（「  Chan Siu Ming 」→ chan siu ming）", async () => {
+    reset(null);
+    h.state.queue = [[{ id: 7 }], [{ ticketCount: 2 }]];
+    const r = await caller().publicLookupEventTicket({ eventId: 7, holderName: "  Chan Siu Ming  " });
+    expect(r).toEqual({ found: true, ticketCount: 2 });
+    const lookup = h.state.selects[h.state.selects.length - 1];
+    expectWhere(lookup.where, ['"normalizedName" = $2'], [7, "chan siu ming"]);
+  });
+
+  it("錯名／部份名 → 只回 found:false（唔回任何名單資料）", async () => {
+    reset(null);
+    h.state.queue = [[{ id: 7 }], []];
+    const r = await caller().publicLookupEventTicket({ eventId: 7, holderName: "陳小" }); // 部份名唔中
+    expect(r).toEqual({ found: false });
+    expect(Object.keys(r)).toEqual(["found"]);
+  });
+
+  it("空白姓名 → BAD_REQUEST（唔支援空白查詢），零 DB 查詢", async () => {
+    reset(null);
+    await expect(caller().publicLookupEventTicket({ eventId: 7, holderName: "   " })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(h.state.selects).toHaveLength(0);
+  });
+
+  it("活動已刪除 → NOT_FOUND（唔再查 entry）；歸檔活動仍可查歷史劵數", async () => {
+    reset(null);
+    h.state.queue = [[]];
+    await expect(caller().publicLookupEventTicket({ eventId: 7, holderName: "陳小明" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.state.selects).toHaveLength(1); // 活動唔存在就唔會再查 entry
+    // 歸檔唔擋查：event select 有 row 就照查（mock 層面 archived 唔影響呢條路徑）
+    h.state.queue = [[{ id: 7 }], [{ ticketCount: 6 }]];
+    const r = await caller().publicLookupEventTicket({ eventId: 7, holderName: "陳小明" });
+    expect(r).toEqual({ found: true, ticketCount: 6 });
+  });
+});
+
+describe("publicEvents／publicEventResults 公告開關過濾（v2026.11.08）", () => {
+  it("publicEvents：活動查詢帶 winnersPublic=true（關閉活動 SQL 層已隔，唔列出總頁）", async () => {
+    reset(null);
+    h.state.queue = [
+      [{ id: 8, name: "壓軸狂歡", createdAt: new Date(), scheduledDrawDate: "20261201" }],
+      [{ eventId: 8, n: 2 }],
+    ];
+    const r = await caller().publicEvents();
+    expect(r).toHaveLength(1);
+    const evSelect = h.state.selects[0];
+    expectWhere(evSelect.where, ['"winnersPublic" = $1'], [true]);
+  });
+
+  it("publicEventResults：公告關閉（winnersPublic:false）→ NOT_FOUND「中獎公告未公開或活動唔存在」，唔執行 winner query", async () => {
+    reset(null);
+    h.state.queue = [
+      [{ id: 7, name: "秘密場", createdAt: new Date(), scheduledDrawDate: "20261201", maxWinsPerPerson: 1, winnersPublic: false }],
+    ];
+    await expect(caller().publicEventResults({ eventId: 7 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "中獎公告未公開或活動唔存在",
+    });
+    // 只有 event select——winner query 絕唔執行（唔回活動名／winner rows）
+    expect(h.state.selects).toHaveLength(1);
+  });
+});
+
+describe("myPendingWin 排除活動劵中獎（v2026.11.08：活動中獎唔入官網會員確認彈窗）", () => {
+  it("where 帶 eventId IS NULL——活動劵中獎（adminDrawEvent 落 pending 待確定起單）唔回", async () => {
+    reset({ userId: 42, role: "member" });
+    h.state.queue = [[]];
+    const r = await caller().myPendingWin();
+    expect(r).toBeNull();
+    const sel = h.state.selects[h.state.selects.length - 1];
+    expectWhere(sel.where, ['"winnerUserId" = $1', '"status" = $2', '"eventId" is null'], [42, "pending"]);
   });
 });

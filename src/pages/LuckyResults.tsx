@@ -1,21 +1,7 @@
-import { useState } from 'react';
 import { Link, useParams } from 'react-router';
-import {
-  BadgeCheck,
-  Bell,
-  Copy,
-  Facebook,
-  Gift,
-  PartyPopper,
-  Share2,
-  Sparkles,
-  Trophy,
-} from 'lucide-react';
+import { Gift, PartyPopper, Sparkles, Trophy } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
-import { useAuth } from '@/hooks/useAuth';
-import PushPermissionGuide from '@/components/push/PushPermissionGuide';
-
-const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
+import { LuckyPublicActions } from '@/components/lucky/LuckyPublicActions';
 
 /**
  * LuckyResults（v2.5.8，老闆指令「公開抽獎公告要特別華麗動態引流」）
@@ -52,85 +38,6 @@ function fmtTimeHkt(iso: string | Date): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleTimeString('zh-HK', { timeZone: 'Asia/Hong_Kong', hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
-/* ---------- 直播開播通知 CTA（重用首頁 LivePushEntry 邏輯：未登入→/login；已訂閱→狀態 pill；否則開 PushPermissionGuide） ---------- */
-function LiveAlertCta() {
-  const { user } = useAuth();
-  const utils = trpc.useUtils();
-  const [showGuide, setShowGuide] = useState(false);
-  const statusQuery = trpc.push.myPushStatus.useQuery(undefined, {
-    enabled: !!user,
-    retry: false,
-  });
-  const subscribed = !!statusQuery.data?.optIn && (statusQuery.data?.activeDevices ?? 0) > 0;
-
-  if (!user) {
-    return (
-      <Link to="/login" className="lr-cta lr-cta-gold">
-        <Bell size={15} aria-hidden="true" className="shrink-0" />
-        <span className="lr-cta-label">
-          <span className="lr-cta-micro">LIVE ALERT</span>
-          <span className="lr-cta-title">接收直播開播通知</span>
-        </span>
-      </Link>
-    );
-  }
-  if (subscribed) {
-    return (
-      <span role="status" className="lr-cta lr-cta-status">
-        <span aria-hidden="true" className="lr-status-dot" />
-        <BadgeCheck size={15} aria-hidden="true" className="shrink-0 text-gold" />
-        <span className="lr-cta-label">
-          <span className="lr-cta-micro">LIVE ALERT ON</span>
-          <span className="lr-cta-title">已開啟通知</span>
-        </span>
-      </span>
-    );
-  }
-  return (
-    <>
-      <button type="button" onClick={() => setShowGuide(true)} className="lr-cta lr-cta-gold">
-        <Bell size={15} aria-hidden="true" className="shrink-0" />
-        <span className="lr-cta-label">
-          <span className="lr-cta-micro">LIVE ALERT</span>
-          <span className="lr-cta-title">接收直播開播通知</span>
-        </span>
-      </button>
-      <PushPermissionGuide
-        open={showGuide}
-        onClose={(ok) => {
-          setShowGuide(false);
-          if (ok) {
-            void utils.push.myPushStatus.invalidate();
-            void utils.auth.me.invalidate();
-          }
-        }}
-      />
-    </>
-  );
-}
-
-/** 複製公開連結（clipboard API 失敗 → textarea fallback；再失敗回 false 畀 UI 提示） */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand('copy');
-      ta.remove();
-      return ok;
-    } catch {
-      return false;
-    }
-  }
 }
 
 export default function LuckyResults() {
@@ -221,8 +128,6 @@ function LuckyResultsIndex() {
 function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
   const eventId = Number(eventIdRaw);
   const validId = Number.isInteger(eventId) && eventId > 0;
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
 
   const query = trpc.luckyDraw.publicEventResults.useQuery(
     { eventId: validId ? eventId : 0 },
@@ -237,16 +142,10 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
   const actualDrawDates = [...new Set((data?.winners ?? []).map((w) => w.drawDate))].sort();
   const notFound =
     query.isError &&
-    (query.error.message.includes('唔存在') || query.error.message.includes('已刪除'));
+    (query.error.message.includes('唔存在') ||
+      query.error.message.includes('已刪除') ||
+      query.error.message.includes('未公開'));
   const pageUrl = typeof window !== 'undefined' ? window.location.href : '';
-  const fbShareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(pageUrl)}`;
-
-  const onCopy = async () => {
-    const ok = await copyText(pageUrl);
-    setCopied(ok);
-    setCopyFailed(!ok);
-    if (ok) window.setTimeout(() => setCopied(false), 2000);
-  };
 
   return (
     <div className="lr-page">
@@ -288,9 +187,9 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
             notFound ? (
               <div className="lr-state" role="status">
                 <Gift size={20} aria-hidden="true" className="mx-auto mb-3 text-txt-3" />
-                <p className="font-serif-tc text-lg font-semibold text-txt-1">呢場抽獎活動唔存在或已刪除</p>
+                <p className="font-serif-tc text-lg font-semibold text-txt-1">呢場中獎公告暫時未能顯示</p>
                 <p className="mt-2 text-[13.5px] leading-relaxed text-txt-3">
-                  公告連結可能已過期或活動已移除。最新抽獎同直播消息，留意我哋 Facebook 專頁。
+                  公告連結可能未公開、已過期，或活動已移除。最新抽獎同直播消息，留意我哋 Facebook 專頁。
                 </p>
               </div>
             ) : (
@@ -322,6 +221,11 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
                     <p className="font-serif-tc text-lg font-semibold text-txt-1">中獎名單即將公佈</p>
                     <p className="mt-2 text-[13.5px] leading-relaxed text-txt-3">
                       呢場仲未開獎——撳實開播通知，直播即場抽出嚟嘅幸運兒會第一時間喺度公佈。
+                    </p>
+                    <p className="lr-lookup-cta-wrap">
+                      <Link to={`/lucky-tickets/${data.event.id}`} className="lr-lookup-link">
+                        🔍查看睇睇自己有幾張抽獎劵
+                      </Link>
                     </p>
                   </div>
                 </>
@@ -365,49 +269,9 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
           ) : null}
         </div>
 
-        {/* 引流 CTA 區（深色實心＋金邊；唔用透明 ghost） */}
+        {/* 引流 CTA 區（同查劵頁共用；保持原公告頁行為／文案） */}
         <div className="lr-enter mt-10" style={{ animationDelay: '0.5s' }}>
-          <p className="text-center font-mono text-[11px] uppercase tracking-[0.25em] text-txt-3">
-            下一個中獎嘅可能係你
-          </p>
-          <div className="mt-4 flex flex-wrap items-stretch justify-center gap-3">
-            <LiveAlertCta />
-            <Link to="/try-on" className="lr-cta lr-cta-pink">
-              <Sparkles size={15} aria-hidden="true" className="shrink-0" />
-              <span className="lr-cta-label">
-                <span className="lr-cta-micro">AI TRY-ON</span>
-                <span className="lr-cta-title">AI 試穿新衫</span>
-              </span>
-            </Link>
-            <a href={FACEBOOK_URL} target="_blank" rel="noopener noreferrer" className="lr-cta lr-cta-gold">
-              <Facebook size={15} aria-hidden="true" className="shrink-0" />
-              <span className="lr-cta-label">
-                <span className="lr-cta-micro">FOLLOW US</span>
-                <span className="lr-cta-title">追蹤 Facebook 專頁</span>
-              </span>
-            </a>
-          </div>
-          {/* 分享行：真 Facebook share URL＋複製公開連結 */}
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-3">
-            <a
-              href={fbShareUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="lr-cta lr-cta-share"
-            >
-              <Share2 size={14} aria-hidden="true" className="shrink-0" />
-              分享去 Facebook
-            </a>
-            <button type="button" onClick={() => void onCopy()} className="lr-cta lr-cta-share">
-              <Copy size={14} aria-hidden="true" className="shrink-0" />
-              {copied ? '已複製連結 ✓' : '複製公告連結'}
-            </button>
-          </div>
-          {copyFailed && (
-            <p className="mt-2 text-center text-[12px] text-pink-soft" role="alert">
-              複製唔到——請長按網址列手動複製。
-            </p>
-          )}
+          <LuckyPublicActions shareUrl={pageUrl} copyLabel="複製公告連結" />
           <p className="mt-4 text-center text-[12px] text-txt-3">
             <Link to="/" className="underline underline-offset-4 transition-opacity hover:opacity-75">
               返去 RedCode 首頁
@@ -520,68 +384,28 @@ function LuckyResultsStyles() {
           font-weight: 800; font-size: 14px;
         }
 
-        /* CTA：創意規矩——深色實心底＋金色描邊（唔用透明 ghost）；
-           hover 淨 transform；雙行標籤（拉丁 micro＋中文主標） */
-        .lr-cta {
-          position: relative;
-          display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-          border-radius: 9999px;
-          padding: 12px 22px;
-          font-size: 13px; font-weight: 600;
-          text-decoration: none; cursor: pointer;
-          transform: translateZ(0);
-          transition: transform 200ms ease-out;
+        /* 未開獎句子正下方嘅同場查劵入口：44px 觸控目標＋暖金實心框 */
+        .lr-lookup-cta-wrap { margin-top: 18px; text-align: center; }
+        .lr-lookup-link {
+          display: inline-flex; align-items: center; justify-content: center;
           min-height: 44px;
-        }
-        .lr-cta:hover { transform: translateY(-1px) translateZ(0); }
-        .lr-cta:active { transform: translateY(0) translateZ(0); }
-        .lr-cta-gold {
-          border: 1px solid var(--gold);
-          background: var(--space-1);
+          border-radius: 9999px;
+          border: 1px solid rgba(245,197,24,0.62);
+          background: rgba(245,197,24,0.12);
           color: var(--gold-soft);
-        }
-        .lr-cta-pink {
-          background: var(--pink);
-          color: var(--space-1);
-          font-weight: 800;
-          letter-spacing: 0.03em;
-        }
-        .lr-cta-share {
-          border: 1px solid var(--glass-border);
-          background: var(--space-1);
-          color: var(--text-1);
-          font-size: 12.5px;
           padding: 10px 18px;
+          font-size: 13px; font-weight: 700;
+          text-decoration: none;
+          transition: transform 200ms ease-out, border-color 200ms ease-out;
         }
-        .lr-cta-status {
-          border: 1px solid var(--space-line);
-          background: rgba(255,143,191,0.06);
-          color: var(--text-1);
-          cursor: default;
-        }
-        .lr-cta-label { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
-        .lr-cta-micro {
-          font-family: 'DM Mono', 'Noto Sans TC', monospace;
-          font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; line-height: 1.2;
-          color: var(--gold);
-        }
-        .lr-cta-pink .lr-cta-micro { color: rgba(10,6,20,0.62); }
-        .lr-cta-title { line-height: 1.35; }
-        .lr-status-dot {
-          width: 8px; height: 8px; border-radius: 9999px; background: var(--pink);
-          animation: lr-breathe 2.4s ease-in-out infinite alternate;
-        }
-        @keyframes lr-breathe {
-          from { transform: scale(1); opacity: 1; }
-          to { transform: scale(1.35); opacity: 0.45; }
-        }
+        .lr-lookup-link:hover { transform: translateY(-1px); border-color: rgba(245,197,24,0.9); }
 
         @media (prefers-reduced-motion: reduce) {
           .lr-enter { opacity: 1; animation: none; }
-          .lr-star, .lr-corner, .lr-card-shine, .lr-status-dot { animation: none; }
+          .lr-star, .lr-corner, .lr-card-shine { animation: none; }
           .lr-card-shine { display: none; }
-          .lr-cta { transition: none; }
-          .lr-cta:hover, .lr-cta:active { transform: translateZ(0); }
+          .lr-lookup-link { transition: none; }
+          .lr-lookup-link:hover { transform: none; }
         }
       `}</style>
   );

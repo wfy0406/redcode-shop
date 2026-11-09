@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Archive, ArchiveRestore, Copy, Facebook, ImageDown, Pencil, Plus, Share2, Ticket, Trash2, Trophy } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Archive, ArchiveRestore, Copy, Facebook, ImageDown, Pencil, Plus, Share2, Ticket, TicketCheck, Trash2, Trophy } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { fmtDateTime } from './format';
 import { LoadingBlock } from './WishingStar';
@@ -19,7 +19,11 @@ import { downloadAnnouncementPng } from '@/lib/luckyAnnouncementPng';
  *     （刪成個活動：中獎紀錄解綁留底，訂單唔受影響；確認＋mutation pending 防雙擊）；
  *   adminEventWinners（每場活動內部中獎名單＝真實抽獎結果＋跟進資料）；
  *   adminListEventEntries{eventId}→entries(+winCount)＋totalTickets；
- *   adminDeleteEventEntry（有中獎紀錄 FK 擋 → CONFLICT 原句彈出）。
+ *   adminDeleteEventEntry（有中獎紀錄 FK 擋 → CONFLICT 原句彈出）；
+ *   v2026.11.08：adminSetEventWinnersPublic（每場公告開關；關咗收埋公開公告 link／FB／預覽／PNG，
+ *     內部中獎名單主管照舊睇到）；adminAddEventEntry（手動新增姓名＋劵數，同名 server 加劵）；
+ *     adminSetEventEntryTicketCount（每列改總劵數）；adminDeleteEventEntries（批量刪除，
+ *     任何已中獎者整批拒絕）；查劵公開 link（/lucky-tickets/:eventId）永遠可複製／預覽／FB 分享。
  * Excel 匯入抽獎劵由 LuckyDrawExcelImport（kind="ticket"）處理。
  */
 
@@ -28,6 +32,8 @@ export type DrawEvent = {
   name: string;
   maxWinsPerPerson: number;
   scheduledDrawDate: string | null;
+  // v2026.11.08：每場公開中獎公告開關（true＝公開頁／總覽正常顯示；false＝公開收埋，內部照舊）
+  winnersPublic: boolean;
   entryCount: number;
   totalTickets: number;
   drawnCount: number;
@@ -36,6 +42,8 @@ export type DrawEvent = {
   createdAt: string | Date;
   createdByName: string | null;
 };
+
+const BATCH_DELETE_LIMIT = 500;
 
 type EventEntry = {
   id: number;
@@ -78,6 +86,13 @@ function winnerStatusLabel(status: string): string {
 function publicResultsUrl(eventId: number): string {
   const base = `${window.location.origin}${window.location.pathname}`;
   return `${base}#/lucky-results/${eventId}`;
+}
+
+/** v2026.11.08：公開查劵 URL（正式乾淨路徑 /lucky-tickets/:eventId）。
+ *  後台本身係 /admin：唔可以用 pathname＋hash，否則 FB crawler 只會見到 /admin。
+ *  server vite fallback 已支援呢條正式路徑；舊 #/ lucky link 仍由 main.tsx 收容。 */
+function publicTicketLookupUrl(eventId: number): string {
+  return `${window.location.origin}/lucky-tickets/${eventId}`;
 }
 
 /** YYYYMMDD → date input 格式 YYYY-MM-DD（null/唔啱格式 → 空串） */
@@ -143,6 +158,13 @@ export default function LuckyDrawEventPanel({
   const [showWinners, setShowWinners] = useState(false);
   const [pngBusy, setPngBusy] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  // v2026.11.08：查劵 link 複製回饋＋手動新增 entry＋每列改總劵數＋checkbox 批量刪除 state
+  const [ticketLinkCopied, setTicketLinkCopied] = useState(false);
+  const [addName, setAddName] = useState('');
+  const [addTickets, setAddTickets] = useState('1');
+  const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
+  const [entryTicketsValue, setEntryTicketsValue] = useState('');
+  const [checkedIds, setCheckedIds] = useState<ReadonlySet<number>>(new Set());
 
   const eventsQuery = trpc.luckyDraw.adminListEvents.useQuery(undefined, { refetchOnWindowFocus: false });
   const events = (eventsQuery.data ?? []) as DrawEvent[];
@@ -161,9 +183,35 @@ export default function LuckyDrawEventPanel({
   const entries = (entriesQuery.data?.entries ?? []) as EventEntry[];
   const totalTickets = entriesQuery.data?.totalTickets ?? 0;
 
+  // v2026.11.08：轉活動即清批量勾選＋每列編輯，避免將上一場嘅選取誤套到下一場。
+  useEffect(() => {
+    setCheckedIds(new Set());
+    setEditingEntryId(null);
+    setEntryTicketsValue('');
+  }, [selectedEventId]);
+  // 名單更新後剔走已唔存在嘅勾選（例如畀人刪咗／匯入重整）
+  useEffect(() => {
+    setCheckedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const alive = new Set(entries.map((e) => e.id));
+      const next = new Set([...prev].filter((id) => alive.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [entries]);
+
+  // v2026.11.08：已勾選嘅 entry（供批量刪除確認列人數／總劵數）
+  const checkedEntries = useMemo(() => entries.filter((e) => checkedIds.has(e.id)), [entries, checkedIds]);
+  const checkedTickets = useMemo(() => checkedEntries.reduce((s, e) => s + e.ticketCount, 0), [checkedEntries]);
+  // 已中獎者（winCount>0）受保護唔准勾選；可勾選先計全選
+  const selectableIds = useMemo(() => entries.filter((e) => e.winCount === 0).map((e) => e.id), [entries]);
+  // API 每批最多 500 人：大場全選只揀首 500 並明示分批，唔會送到 server 先彈 raw zod 錯。
+  const selectableBatchIds = useMemo(() => selectableIds.slice(0, BATCH_DELETE_LIMIT), [selectableIds]);
+
   const invalidateEvents = () => {
     void utils.luckyDraw.adminListEvents.invalidate();
     void utils.luckyDraw.adminListEventEntries.invalidate();
+    // 劵數／名單變動會影響獎品剩餘件數顯示口径，一併刷新
+    void utils.luckyDraw.adminListPrizes.invalidate();
   };
 
   const createMut = trpc.luckyDraw.adminCreateEvent.useMutation({
@@ -188,6 +236,53 @@ export default function LuckyDrawEventPanel({
   const deleteEntryMut = trpc.luckyDraw.adminDeleteEventEntry.useMutation({
     onSuccess: () => {
       toast('劵持有人已刪除', 'success');
+      invalidateEvents();
+    },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
+  // v2026.11.08：每場公開中獎公告開關（關咗公開頁即收，內部名單照舊；查劵頁唔受影響）
+  const winnersPublicMut = trpc.luckyDraw.adminSetEventWinnersPublic.useMutation({
+    onSuccess: (r) => {
+      toast(
+        r.winnersPublic
+          ? '公開中獎公告已開啟——公開公告頁／總覽即時顯示呢場'
+          : '公開中獎公告已關閉——公開公告頁／總覽即時收埋呢場；查劵 link 唔受影響，內部中獎名單主管照舊睇到',
+        'success',
+      );
+      invalidateEvents();
+    },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
+  // v2026.11.08：手動新增姓名＋劵數（同人 normalizedName 精確重複 → server 自動加劵）
+  const addEntryMut = trpc.luckyDraw.adminAddEventEntry.useMutation({
+    onSuccess: (r) => {
+      toast(
+        r.created
+          ? `已新增「${r.entry.holderName}」（${r.addedTickets} 張劵）`
+          : `「${r.entry.holderName}」本來已喺名單，已加多 ${r.addedTickets} 張（而家共 ${r.entry.ticketCount} 張）`,
+        'success',
+      );
+      setAddName('');
+      setAddTickets('1');
+      invalidateEvents();
+    },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
+  // v2026.11.08：每列改總劵數（只改劵數，唔改名；上限由 server 鎖內重檢）
+  const setTicketCountMut = trpc.luckyDraw.adminSetEventEntryTicketCount.useMutation({
+    onSuccess: (r) => {
+      toast(`「${r.entry.holderName}」嘅總劵數已改做 ${r.entry.ticketCount} 張`, 'success');
+      setEditingEntryId(null);
+      setEntryTicketsValue('');
+      invalidateEvents();
+    },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
+  // v2026.11.08：批量刪除（任何已中獎者 → server 整批 CONFLICT 拒絕，錯誤原句彈出）
+  const deleteEntriesMut = trpc.luckyDraw.adminDeleteEventEntries.useMutation({
+    onSuccess: (r) => {
+      toast(`已刪除 ${r.deletedCount} 位劵持有人（共 ${r.ticketCount} 張劵）`, 'success');
+      setCheckedIds(new Set());
       invalidateEvents();
     },
     onError: (e) => toast(fmtErr(e), 'error'),
@@ -256,7 +351,11 @@ export default function LuckyDrawEventPanel({
     deleteEntryMut.isPending ||
     renameMut.isPending ||
     drawDateMut.isPending ||
-    deleteEventMut.isPending;
+    deleteEventMut.isPending ||
+    winnersPublicMut.isPending ||
+    addEntryMut.isPending ||
+    setTicketCountMut.isPending ||
+    deleteEntriesMut.isPending;
 
   /** v2.5.8：改名提交（空名／無改動唔出 request） */
   const commitRename = () => {
@@ -317,6 +416,101 @@ export default function LuckyDrawEventPanel({
       window.setTimeout(() => setLinkCopied(false), 2000);
     } catch {
       window.prompt('複製公開公告連結：', url);
+    }
+  };
+
+  /** v2026.11.08：複製公開查劵連結（唔受公告開關影響，永遠可複製） */
+  const copyTicketLookupLink = async () => {
+    if (!selected) return;
+    const url = publicTicketLookupUrl(selected.id);
+    try {
+      await navigator.clipboard.writeText(url);
+      setTicketLinkCopied(true);
+      window.setTimeout(() => setTicketLinkCopied(false), 2000);
+    } catch {
+      window.prompt('複製公開查劵連結：', url);
+    }
+  };
+
+  /** v2026.11.08：公告開關（關閉有確認講明後果；mutation pending 防雙擊） */
+  const toggleWinnersPublic = () => {
+    if (!selected || winnersPublicMut.isPending) return;
+    const target = !selected.winnersPublic;
+    const ok = window.confirm(
+      target
+        ? `重新公開活動《${selected.name}》嘅中獎公告？\n\n公開公告頁同公告總覽會即時顯示呢場中獎名單。`
+        : `關閉活動《${selected.name}》嘅公開中獎公告？\n\n・公開公告頁同公告總覽會即時收埋呢場\n・抽獎劵查詢 link 唔受影響，客人照舊查到自己有幾多張劵\n・內部中獎名單主管照舊睇到`,
+    );
+    if (ok) winnersPublicMut.mutate({ eventId: selected.id, winnersPublic: target });
+  };
+
+  /** v2026.11.08：手動新增姓名＋劵數（同人重複 → server 自動加劵；歸檔活動 server 會擋） */
+  const addEntry = () => {
+    if (!selected || addEntryMut.isPending) return;
+    const holderName = addName.trim();
+    if (!holderName) {
+      toast('姓名唔准空', 'error');
+      return;
+    }
+    const raw = Number(addTickets);
+    if (!Number.isInteger(raw) || raw < 1 || raw > 10000) {
+      toast('劵數要係 1–10000（整數）', 'error');
+      return;
+    }
+    addEntryMut.mutate({ eventId: selected.id, holderName, ticketCount: raw });
+  };
+
+  /** v2026.11.08：每列改總劵數提交（無改動／pending 唔出 request） */
+  const commitEntryTickets = (en: EventEntry) => {
+    if (setTicketCountMut.isPending) return;
+    const raw = Number(entryTicketsValue);
+    if (!Number.isInteger(raw) || raw < 1 || raw > 10000) {
+      toast('劵數要係 1–10000（整數）', 'error');
+      return;
+    }
+    if (raw === en.ticketCount) {
+      setEditingEntryId(null);
+      setEntryTicketsValue('');
+      return;
+    }
+    setTicketCountMut.mutate({ entryId: en.id, ticketCount: raw });
+  };
+
+  /** v2026.11.08：批量刪除（確認列實際人數＋總劵數；已中獎者 server 整批拒絕） */
+  const batchDeleteEntries = () => {
+    if (!selected || checkedEntries.length === 0 || deleteEntriesMut.isPending) return;
+    if (checkedEntries.length > BATCH_DELETE_LIMIT) {
+      toast(`每次最多刪 ${BATCH_DELETE_LIMIT} 人，請分批揀選`, 'error');
+      return;
+    }
+    const ok = window.confirm(
+      `確定刪除已勾選嘅 ${checkedEntries.length} 位劵持有人（合共 ${checkedTickets} 張劵）？\n\n` +
+        `・刪咗唔返得轉\n` +
+        `・已中獎嘅人受保護：只要名單入面有任何人有中獎紀錄，成批都會被伺服器拒絕`,
+    );
+    if (ok) deleteEntriesMut.mutate({ eventId: selected.id, entryIds: checkedEntries.map((e) => e.id) });
+  };
+
+  /** v2026.11.08：勾選切換／當頁全選（已中獎受保護者唔喺全選範圍） */
+  const toggleChecked = (id: number) => {
+    if (!checkedIds.has(id) && checkedEntries.length >= BATCH_DELETE_LIMIT) {
+      toast(`每次最多揀 ${BATCH_DELETE_LIMIT} 人，請先刪除呢批再揀下一批`, 'error');
+      return;
+    }
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleSelectAll = () => {
+    setCheckedIds((prev) => {
+      const allSelected = selectableBatchIds.length > 0 && selectableBatchIds.every((id) => prev.has(id));
+      return allSelected ? new Set() : new Set(selectableBatchIds);
+    });
+    if (selectableIds.length > BATCH_DELETE_LIMIT) {
+      toast(`呢場有 ${selectableIds.length} 人可揀，已揀首 ${BATCH_DELETE_LIMIT} 人；請分批刪除`, 'success');
     }
   };
 
@@ -391,7 +585,7 @@ export default function LuckyDrawEventPanel({
               >
                 <span className="inline-block max-w-[200px] truncate align-middle">{ev.name}</span>
                 <span className="ml-1 font-mono text-[11px] text-txt-3">
-                  （{ev.entryCount} 人・{ev.totalTickets} 張{archived ? '・已歸檔' : ''}）
+                  （{ev.entryCount} 人・{ev.totalTickets} 張{archived ? '・已歸檔' : ''}{ev.winnersPublic === false ? '・公告關' : ''}）
                 </span>
               </button>
             );
@@ -673,54 +867,126 @@ export default function LuckyDrawEventPanel({
             )}
           </div>
 
-          {/* v2.5.8（老闆指令「公開抽獎公告」）：公開頁連結＋FB 分享＋公告 PNG */}
+          {/* v2.5.8（老闆指令「公開抽獎公告」）＋ v2026.11.08 每場公告開關：
+              關閉時收埋公開 link／FB／預覽／PNG，內部中獎名單（上面）主管照舊睇到 */}
           <div className="rounded-lg border px-2.5 py-2" style={{ borderColor: 'rgba(245,197,24,0.35)' }}>
-            <p className="text-[12px] font-semibold text-gold-soft">公開中獎公告（對外只放活動名＋抽獎時間＋中獎人名，唔放電話／會員編號／地址）</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="min-w-0 flex-1 text-[12px] font-semibold text-gold-soft">
+                公開中獎公告（對外只放活動名＋抽獎時間＋中獎人名，唔放電話／會員編號／地址）
+              </p>
+              {/* v2026.11.08：公告開關（每場獨立；關閉有確認講明後果） */}
+              <button
+                type="button"
+                onClick={toggleWinnersPublic}
+                disabled={busy}
+                aria-pressed={selected.winnersPublic}
+                title={selected.winnersPublic ? '撳一下關閉公開公告' : '撳一下重新公開公告'}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] font-bold transition-colors disabled:opacity-40"
+                style={
+                  selected.winnersPublic
+                    ? { borderColor: 'rgba(123,216,143,0.5)', color: '#7BD88F', background: 'rgba(123,216,143,0.10)' }
+                    : { borderColor: 'rgba(255,0,84,0.4)', color: 'var(--pink-soft)', background: 'rgba(255,0,84,0.08)' }
+                }
+              >
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ background: selected.winnersPublic ? '#7BD88F' : 'var(--pink-soft)' }}
+                />
+                {winnersPublicMut.isPending ? '切換緊…' : selected.winnersPublic ? '公告：公開中' : '公告：已關閉'}
+              </button>
+            </div>
+            {selected.winnersPublic ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyPublicLink()}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] text-txt-2 transition-colors hover:text-gold disabled:opacity-40"
+                  style={{ borderColor: 'var(--space-line)' }}
+                >
+                  <Copy size={11} aria-hidden="true" />
+                  {linkCopied ? '已複製 ✓' : '複製公開連結'}
+                </button>
+                <a
+                  href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(publicResultsUrl(selected.id))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] text-txt-2 transition-colors hover:text-gold"
+                  style={{ borderColor: 'var(--space-line)' }}
+                >
+                  <Share2 size={11} aria-hidden="true" />
+                  Facebook 分享
+                </a>
+                <a
+                  href={publicResultsUrl(selected.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] text-txt-2 transition-colors hover:text-gold"
+                  style={{ borderColor: 'var(--space-line)' }}
+                >
+                  <Facebook size={11} aria-hidden="true" />
+                  預覽公開頁
+                </a>
+                <button
+                  type="button"
+                  onClick={() => void downloadPng()}
+                  disabled={busy || pngBusy}
+                  className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold disabled:opacity-40"
+                  style={{ background: '#F5C518', color: '#241505' }}
+                >
+                  <ImageDown size={11} aria-hidden="true" />
+                  {pngBusy ? '整緊 PNG…' : '下載公告 PNG（1080×1350）'}
+                </button>
+              </div>
+            ) : (
+              <p className="mt-2 text-[11.5px] leading-relaxed text-txt-3">
+                公告已關閉：公開公告頁同公告總覽唔再顯示呢場，公開 link／Facebook 分享／預覽／公告 PNG 已收埋；上面嘅內部中獎名單主管照舊睇到。
+              </p>
+            )}
+          </div>
+
+          {/* v2026.11.08：公開查劵連結——永遠可複製／預覽／Facebook 分享，唔受公告開關影響 */}
+          <div className="rounded-lg border px-2.5 py-2" style={{ borderColor: 'var(--space-line)' }}>
+            <p className="text-[12px] font-semibold text-txt-2">
+              <TicketCheck size={12} aria-hidden="true" className="mr-1 inline-block text-gold" />
+              抽獎劵查詢連結（客人入完整姓名查自己有幾多張劵；唔受公告開關影響）
+            </p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => void copyPublicLink()}
+                onClick={() => void copyTicketLookupLink()}
                 disabled={busy}
-                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11.5px] text-txt-2 transition-colors hover:text-gold disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] text-txt-2 transition-colors hover:text-gold disabled:opacity-40"
                 style={{ borderColor: 'var(--space-line)' }}
               >
                 <Copy size={11} aria-hidden="true" />
-                {linkCopied ? '已複製 ✓' : '複製公開連結'}
+                {ticketLinkCopied ? '已複製 ✓' : '複製查劵連結'}
               </button>
               <a
-                href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(publicResultsUrl(selected.id))}`}
+                href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(publicTicketLookupUrl(selected.id))}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11.5px] text-txt-2 transition-colors hover:text-gold"
+                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] text-txt-2 transition-colors hover:text-gold"
                 style={{ borderColor: 'var(--space-line)' }}
               >
                 <Share2 size={11} aria-hidden="true" />
                 Facebook 分享
               </a>
               <a
-                href={publicResultsUrl(selected.id)}
+                href={publicTicketLookupUrl(selected.id)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11.5px] text-txt-2 transition-colors hover:text-gold"
+                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] text-txt-2 transition-colors hover:text-gold"
                 style={{ borderColor: 'var(--space-line)' }}
               >
                 <Facebook size={11} aria-hidden="true" />
-                預覽公開頁
+                預覽查劵頁
               </a>
-              <button
-                type="button"
-                onClick={() => void downloadPng()}
-                disabled={busy || pngBusy}
-                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11.5px] font-bold disabled:opacity-40"
-                style={{ background: '#F5C518', color: '#241505' }}
-              >
-                <ImageDown size={11} aria-hidden="true" />
-                {pngBusy ? '整緊 PNG…' : '下載公告 PNG（1080×1350）'}
-              </button>
             </div>
           </div>
 
-          {/* 劵名單（每人劵數＋已中次數） */}
+          {/* 劵名單（每人劵數＋已中次數）；v2026.11.08：手動新增／每列改總劵數／checkbox 批量刪除 */}
           <div className="rounded-lg border" style={{ borderColor: 'var(--space-line)' }}>
             <button
               type="button"
@@ -740,52 +1006,213 @@ export default function LuckyDrawEventPanel({
               </span>
             </button>
             {showEntries && (
-              entriesQuery.isLoading ? (
-                <p className="px-2.5 pb-2 text-[12px] text-txt-3">載入緊…</p>
-              ) : entriesQuery.isError ? (
-                <p className="px-2.5 pb-2 text-[12px] text-pink-soft" role="alert">
-                  載入失敗：{fmtErr(entriesQuery.error)}
-                  <button type="button" onClick={() => void entriesQuery.refetch()} className="ml-2 underline underline-offset-2">重試</button>
-                </p>
-              ) : entries.length === 0 ? (
-                <p className="px-2.5 pb-2 text-[12px] text-txt-3">仲未有劵——下面用 Excel 匯入</p>
-              ) : (
-                <ul className="max-h-[220px] space-y-1 overflow-y-auto px-2.5 pb-2 pr-1">
-                  {entries.map((en) => (
-                    <li
-                      key={en.id}
-                      className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[12.5px]"
+              <div className="px-2.5 pb-2">
+                {/* v2026.11.08：手動新增姓名＋劵數（同名 server 自動加劵；歸檔活動由 server 擋） */}
+                <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border p-2" style={{ borderColor: 'var(--space-line)' }}>
+                  <input
+                    value={addName}
+                    onChange={(e) => setAddName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') addEntry();
+                    }}
+                    placeholder="持有人姓名"
+                    maxLength={255}
+                    aria-label="新增持有人姓名"
+                    disabled={selected.archivedAt != null}
+                    className="min-w-0 flex-1 rounded-lg border bg-transparent px-2 py-1.5 text-[12.5px] text-txt-1 outline-none focus:border-lavender disabled:opacity-40"
+                    style={{ borderColor: 'var(--space-line)' }}
+                  />
+                  <span className="flex shrink-0 items-center gap-1 text-[11.5px] text-txt-3">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={addTickets}
+                      onChange={(e) => setAddTickets(e.target.value)}
+                      aria-label="新增劵數"
+                      disabled={selected.archivedAt != null}
+                      className="w-16 rounded-lg border bg-transparent px-2 py-1.5 text-center font-mono text-[12.5px] text-txt-1 outline-none focus:border-lavender disabled:opacity-40"
                       style={{ borderColor: 'var(--space-line)' }}
-                    >
-                      <span className="min-w-0 truncate text-txt-1" title={en.holderName}>
-                        {en.holderName}
-                        {en.winCount > 0 && (
-                          <span className="ml-1.5 rounded-full border px-1.5 py-px text-[10.5px] text-gold" style={{ borderColor: 'rgba(245,197,24,0.4)' }}>
-                            已中 {en.winCount}/{selected.maxWinsPerPerson}
-                          </span>
-                        )}
+                    />
+                    張
+                  </span>
+                  <button
+                    type="button"
+                    onClick={addEntry}
+                    disabled={busy || selected.archivedAt != null || !addName.trim()}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold disabled:opacity-40"
+                    style={{ background: '#F5C518', color: '#241505' }}
+                  >
+                    <Plus size={11} aria-hidden="true" />
+                    {addEntryMut.isPending ? '新增緊…' : '新增'}
+                  </button>
+                  <p className="w-full text-[10.5px] leading-relaxed text-txt-3">
+                    {selected.archivedAt != null
+                      ? '活動已歸檔，唔可以再新增／改劵數。'
+                      : '前後空格會去除、大小楷視作同一人；姓名中間空格要一致。同名會自動加劵落原有持有人，唔會開新行。'}
+                  </p>
+                </div>
+                {entriesQuery.isLoading ? (
+                  <p className="text-[12px] text-txt-3">載入緊…</p>
+                ) : entriesQuery.isError ? (
+                  <p className="text-[12px] text-pink-soft" role="alert">
+                    載入失敗：{fmtErr(entriesQuery.error)}
+                    <button type="button" onClick={() => void entriesQuery.refetch()} className="ml-2 underline underline-offset-2">重試</button>
+                  </p>
+                ) : entries.length === 0 ? (
+                  <p className="text-[12px] text-txt-3">仲未有劵——可手動新增或用 Excel 匯入</p>
+                ) : (
+                  <>
+                    {/* v2026.11.08：批量操作列——當頁全選＋已選統計＋批量刪除（已中獎者受保護唔准勾選） */}
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11.5px] text-txt-3">
+                      <label className="inline-flex items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={selectableBatchIds.length > 0 && selectableBatchIds.every((id) => checkedIds.has(id))}
+                          onChange={toggleSelectAll}
+                          disabled={busy || selectableIds.length === 0}
+                          aria-label="全選本頁可刪除嘅劵持有人"
+                          className="h-4 w-4 accent-[#F5C518]"
+                        />
+                        {selectableIds.length > BATCH_DELETE_LIMIT
+                          ? `全選首 ${BATCH_DELETE_LIMIT} 人（共 ${selectableIds.length} 人可揀，請分批）`
+                          : `全選（${selectableIds.length} 人可揀）`}
+                      </label>
+                      <span aria-live="polite">
+                        已揀 {checkedEntries.length} 人・共 {checkedTickets} 張
                       </span>
-                      <span className="flex shrink-0 items-center gap-2">
-                        <span className="font-mono text-[11.5px] text-txt-3">{en.ticketCount} 張</span>
-                        <button
-                          type="button"
-                          aria-label={`刪除劵持有人 ${en.holderName}`}
-                          disabled={busy}
-                          onClick={() => {
-                            if (window.confirm(`刪除「${en.holderName}」（${en.ticketCount} 張劵）？`)) {
-                              deleteEntryMut.mutate({ entryId: en.id });
-                            }
-                          }}
-                          className="rounded-md border p-1 text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-40"
-                          style={{ borderColor: 'var(--space-line)' }}
-                        >
-                          <Trash2 size={11} aria-hidden="true" />
-                        </button>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )
+                      <button
+                        type="button"
+                        onClick={batchDeleteEntries}
+                        disabled={busy || checkedEntries.length === 0}
+                        className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-bold text-pink-soft transition-colors hover:bg-white/5 disabled:opacity-40"
+                        style={{ borderColor: 'rgba(255,0,84,0.4)' }}
+                      >
+                        <Trash2 size={11} aria-hidden="true" />
+                        {deleteEntriesMut.isPending ? '刪除緊…' : `批量刪除（${checkedEntries.length} 人）`}
+                      </button>
+                    </div>
+                    <ul className="max-h-[220px] space-y-1 overflow-y-auto pr-1">
+                      {entries.map((en) => {
+                        const isProtected = en.winCount > 0;
+                        const editing = editingEntryId === en.id;
+                        return (
+                          <li
+                            key={en.id}
+                            className="flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[12.5px]"
+                            style={{ borderColor: 'var(--space-line)' }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checkedIds.has(en.id)}
+                              onChange={() => toggleChecked(en.id)}
+                              disabled={busy || isProtected}
+                              aria-label={`勾選劵持有人 ${en.holderName}`}
+                              title={isProtected ? '已中獎，受保護唔刪得' : `勾選 ${en.holderName}`}
+                              className="h-4 w-4 shrink-0 accent-[#F5C518] disabled:opacity-40"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-txt-1" title={en.holderName}>
+                              {en.holderName}
+                              {en.winCount > 0 && (
+                                <span className="ml-1.5 rounded-full border px-1.5 py-px text-[10.5px] text-gold" style={{ borderColor: 'rgba(245,197,24,0.4)' }}>
+                                  已中 {en.winCount}/{selected.maxWinsPerPerson}
+                                </span>
+                              )}
+                              {isProtected && (
+                                <span
+                                  className="ml-1.5 rounded-full border px-1.5 py-px text-[10.5px] text-txt-3"
+                                  style={{ borderColor: 'var(--space-line)' }}
+                                  title="有中獎紀錄嘅人受保護，唔可以刪除（紀錄要留底追溯）"
+                                >
+                                  受保護唔刪得
+                                </span>
+                              )}
+                            </span>
+                            <span className="flex shrink-0 items-center gap-1.5">
+                              {editing ? (
+                                <>
+                                  <input
+                                    autoFocus
+                                    type="number"
+                                    min={1}
+                                    max={10000}
+                                    value={entryTicketsValue}
+                                    onChange={(e) => setEntryTicketsValue(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') commitEntryTickets(en);
+                                      if (e.key === 'Escape') {
+                                        setEditingEntryId(null);
+                                        setEntryTicketsValue('');
+                                      }
+                                    }}
+                                    aria-label={`${en.holderName} 新總劵數`}
+                                    className="w-16 rounded-lg border bg-transparent px-2 py-1 text-center font-mono text-[12px] text-txt-1 outline-none focus:border-lavender"
+                                    style={{ borderColor: '#F5C518' }}
+                                  />
+                                  <span className="text-[11px] text-txt-3">張</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => commitEntryTickets(en)}
+                                    disabled={setTicketCountMut.isPending}
+                                    className="rounded-lg border px-2 py-1 text-[11px] font-bold text-gold disabled:opacity-40"
+                                    style={{ borderColor: 'rgba(245,197,24,0.5)' }}
+                                  >
+                                    {setTicketCountMut.isPending ? '改緊…' : '確定'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingEntryId(null);
+                                      setEntryTicketsValue('');
+                                    }}
+                                    className="rounded-lg border px-2 py-1 text-[11px] text-txt-3"
+                                    style={{ borderColor: 'var(--space-line)' }}
+                                  >
+                                    取消
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="font-mono text-[11.5px] text-txt-3">{en.ticketCount} 張</span>
+                                  <button
+                                    type="button"
+                                    aria-label={`修改 ${en.holderName} 嘅總劵數`}
+                                    title="改總劵數"
+                                    disabled={busy || selected.archivedAt != null}
+                                    onClick={() => {
+                                      setEditingEntryId(en.id);
+                                      setEntryTicketsValue(String(en.ticketCount));
+                                    }}
+                                    className="rounded-md border p-1.5 text-txt-3 transition-colors hover:text-gold disabled:opacity-40"
+                                    style={{ borderColor: 'var(--space-line)' }}
+                                  >
+                                    <Pencil size={11} aria-hidden="true" />
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                type="button"
+                                aria-label={`刪除劵持有人 ${en.holderName}`}
+                                title={isProtected ? '已中獎，受保護唔刪得' : `刪除 ${en.holderName}`}
+                                disabled={busy || isProtected}
+                                onClick={() => {
+                                  if (window.confirm(`刪除「${en.holderName}」（${en.ticketCount} 張劵）？`)) {
+                                    deleteEntryMut.mutate({ entryId: en.id });
+                                  }
+                                }}
+                                className="rounded-md border p-1.5 text-txt-3 transition-colors hover:text-pink-soft disabled:opacity-40"
+                                style={{ borderColor: 'var(--space-line)' }}
+                              >
+                                <Trash2 size={11} aria-hidden="true" />
+                              </button>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                )}
+              </div>
             )}
           </div>
 

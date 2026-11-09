@@ -345,3 +345,46 @@ describe("mock executor：fresh／existing／repeat", () => {
     expect(st.applied.filter((a) => a === "addvalue:role:supervisor")).toHaveLength(1);
   });
 });
+
+// ── v2026.11.08：luckyDrawEvents.winnersPublic（中獎公告公開開關）──────
+
+describe("winnersPublic 公告開關欄（v2026.11.08）", () => {
+  it("fresh CREATE TABLE 同舊庫 ALTER 都有 winnersPublic boolean NOT NULL DEFAULT true（預設公開＝保留舊行為）", () => {
+    // fresh 建表直接帶欄
+    expect(DDL).toMatch(
+      /CREATE TABLE IF NOT EXISTS "luckyDrawEvents" \([\s\S]*?"winnersPublic" boolean NOT NULL DEFAULT true/,
+    );
+    // 舊庫升級：IF NOT EXISTS ALTER（可重跑，唔郁舊參加者/中獎資料）
+    expect(DDL).toContain(
+      'ALTER TABLE "luckyDrawEvents" ADD COLUMN IF NOT EXISTS "winnersPublic" boolean NOT NULL DEFAULT true;',
+    );
+  });
+
+  it("ALTER 排喺 CREATE TABLE luckyDrawEvents 之後（fresh DB 順序安全）", () => {
+    const stmts = buildMigrationStatements().map(stripComments);
+    const iTable = stmts.findIndex((s) => /CREATE TABLE IF NOT EXISTS "luckyDrawEvents"/i.test(s));
+    const iAlter = stmts.findIndex((s) => /ALTER TABLE "luckyDrawEvents" ADD COLUMN IF NOT EXISTS "winnersPublic"/i.test(s));
+    expect(iTable).toBeGreaterThanOrEqual(0);
+    expect(iAlter).toBeGreaterThan(iTable);
+  });
+
+  it("fresh DB：luckyDrawEvents 有 winnersPublic；existing 舊庫（冇呢欄）升級補返；repeat 幂等零新動作", () => {
+    const st = newMockState();
+    expect(() => runMigration(st)).not.toThrow();
+    expect(st.tables.get("luckyDrawEvents")?.has("winnersPublic")).toBe(true);
+    // fresh CREATE TABLE 已帶欄 → ALTER 係 IF NOT EXISTS no-op（唔會重複 addcol）
+    expect(st.applied.filter((a) => a === "addcol:luckyDrawEvents.winnersPublic")).toHaveLength(0);
+
+    // 模擬舊版 DB：抽走呢欄再跑 → ALTER 補返（DEFAULT true＝舊活動保留原本公開行為）
+    st.tables.get("luckyDrawEvents")!.delete("winnersPublic");
+    st.applied = [];
+    expect(() => runMigration(st)).not.toThrow();
+    expect(st.tables.get("luckyDrawEvents")!.has("winnersPublic")).toBe(true);
+    expect(st.applied.filter((a) => a === "addcol:luckyDrawEvents.winnersPublic")).toHaveLength(1);
+
+    // repeat：再跑完全冇新動作
+    st.applied = [];
+    expect(() => runMigration(st)).not.toThrow();
+    expect(st.applied.filter((a) => a.includes("winnersPublic"))).toHaveLength(0);
+  });
+});

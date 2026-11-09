@@ -712,6 +712,10 @@ export const luckyDrawEvents = pgTable("luckyDrawEvents", {
   // nullable＝舊活動安全升級（null＝未定/待公佈）；新建立活動 API 層必填真實曆日。
   // 呢個係「預定」宣佈日期，唔係實際抽出日——實際抽出日睇 winner 嘅 luckyDraws.drawDate。
   scheduledDrawDate: varchar("scheduledDrawDate", { length: 8 }),
+  // v2026.11.08（老闆指令）：中獎公告公開開關——true＝publicEvents 列出＋publicEventResults 可查；
+  // false＝公開公告成場收埋（舊 direct URL 都 NOT_FOUND），但查劵（publicTicketEvent／publicLookupEventTicket）唔受影響。
+  // 預設 true＝保留現有活動原本公開行為（舊庫升級唔會靜默收埋公告）。
+  winnersPublic: boolean("winnersPublic").notNull().default(true),
   createdBy: bigint("createdBy", { mode: "number" }),
   createdByName: varchar("createdByName", { length: 255 }),
   createdAt: timestamp("createdAt").notNull().defaultNow(),

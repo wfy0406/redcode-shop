@@ -653,7 +653,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
         return;
       }
       if ((selectedEvent?.entryCount ?? 0) === 0) {
-        setTicketError('活動仲未有劵——喺右邊用 Excel 匯入先');
+        setTicketError('活動仲未有劵——喺右邊手動新增或用 Excel 匯入先');
         return;
       }
     }
@@ -1509,7 +1509,8 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
               </button>
             ) : null}
 
-            {/* 劵模式開獎結果卡：確定（出 0 元單）／重抽／取消——同手打名流程一致 */}
+            {/* 劵模式開獎結果卡：確定起單（出 0 元單）／重抽／取消——同手打名流程一致；
+                v2026.11.08：寫明抽中即上公告（如公告開啟），唔使會員確認，起單只係內部出 0 元單去 WMS */}
             {ticketPhase === 'revealed' && ticketResult && (
               <div
                 className="relative mt-5 w-full max-w-[520px] overflow-hidden rounded-2xl border p-5 text-center"
@@ -1549,7 +1550,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                   </div>
                 </div>
                 <p className="mt-3 text-[12px] text-txt-3">
-                  抽獎劵活動：確定後會即出 0 元訂單飛去 WMS 等審批；劵持有人唔會收到官網通知。
+                  抽中已即時上公告（如公告開啟），唔使會員確認；「確定起單」只係內部出 0 元單去 WMS 等審批，劵持有人唔會收到官網通知。
                 </p>
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                   <button
@@ -1559,7 +1560,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                     className="rounded-full px-5 py-2 text-[13.5px] font-bold disabled:opacity-40"
                     style={{ background: GOLD, color: '#241505' }}
                   >
-                    {confirmManualMut.isPending ? '起單緊…' : '✓ 確定中獎（出 0 元單去 WMS）'}
+                    {confirmManualMut.isPending ? '起單緊…' : '✓ 確定起單（出 0 元單去 WMS）'}
                   </button>
                   <button
                     type="button"

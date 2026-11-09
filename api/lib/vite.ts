@@ -15,6 +15,17 @@ type App = Hono<{ Bindings: HttpBindings }>;
 // 公開頁 meta／無 JS 內容統一由 publicSeo.ts 提供；server 首口 HTML 同 sitemap
 // 使用同一路由事實來源，避免 canonical、sitemap 同實際頁面互相打架。
 
+// v2026.11.08：公開查劵頁 /lucky-tickets/:eventId（BrowserRouter 乾淨路徑；#/lucky-tickets/:id
+// 會被 main.tsx replaceState 做呢條）。title/description 同 src/lib/seo.ts PAGE_SEO
+// ['/lucky-tickets/:eventId'] 逐字一致（嗰邊係前端 SPA 用，呢邊係 server 首口 HTML 用，
+// 兩邊要保持同步）。noindex：只供持有活動連結嘅客人自助查詢，唔入搜尋索引；
+// 唔加入 PUBLIC_PAGES／sitemap；**唔查 DB、唔注入活動名／參加者名單／winners**——
+// 呢啲資料只由 tRPC 喺頁內按需攞，server HTML 永遠唔帶。
+const LUCKY_TICKET_SEO = {
+  title: "抽獎劵查詢｜RedCode Fashion Design",
+  description: "RedCode 公開抽獎劵查詢——輸入完整姓名查自己有幾張抽獎劵；呢頁唔會公開參加者名單。",
+} as const;
+
 // 私人/工具頁：唔入搜尋索引，robots 改 noindex, nofollow（title/description 照預設）
 const NOINDEX_EXACT = [
   "/cart",
@@ -123,9 +134,14 @@ export function serveStaticFiles(app: App) {
       const { injectRouteMeta } = await import("./og");
       const normPath = reqPath.length > 1 ? reqPath.replace(/\/+$/, "") : reqPath;
       const isLuckyEvent = /^\/lucky-results\/\d+$/.test(normPath);
+      const isLuckyTicket = /^\/lucky-tickets\/\d+$/.test(normPath);
       const publicPath = isLuckyEvent ? "/lucky-results" : normPath;
       const pageSeo = isLuckyEvent ? LUCKY_EVENT_SEO : PUBLIC_PAGES[publicPath];
-      if (normPath === "/products") {
+      if (isLuckyTicket) {
+        // 公開查劵頁：200＋專屬 title/description＋self canonical＋noindex。
+        // 唔入 PUBLIC_PAGES／sitemap、唔查 DB、唔注入活動名／名單／winners（見 LUCKY_TICKET_SEO 註）。
+        content = injectRouteMeta(content, { ...LUCKY_TICKET_SEO, path: normPath, noindex: true });
+      } else if (normPath === "/products") {
         // 直播節目頁保留有效日期／場次嘅專屬 canonical；無效參數唔反射入 HTML。
         const { liveRouteMeta } = await import("./liveSeo");
         const q = new URL(c.req.url).searchParams;

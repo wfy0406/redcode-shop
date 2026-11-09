@@ -33,6 +33,7 @@ const TryOn = lazy(() => import('@/pages/TryOn')); // AI 試穿／Mix & Match �
 const TryOnHistory = lazy(() => import('@/pages/TryOnHistory')); // 客戶專屬 24 小時試穿紀錄
 const TryOnShared = lazy(() => import('@/pages/TryOnShared')); // 有時限分享頁（只回生成圖及公開商品資料）
 const LuckyResults = lazy(() => import('@/pages/LuckyResults')); // v2.5.8：公開中獎公告頁（唔使登入）
+const LuckyTicketLookup = lazy(() => import('@/pages/LuckyTicketLookup')); // 2026-11-08：公開抽獎劵查詢頁（noindex）
 const NotFound = lazy(() => import('@/pages/NotFound')); // 未知網址：人類用戶 404 頁
 
 /**
@@ -113,6 +114,7 @@ export default function App() {
             <Route path="try-on/shared/:publicId" element={<TryOnShared />} />
             <Route path="lucky-results" element={<LuckyResults />} />
             <Route path="lucky-results/:eventId" element={<LuckyResults />} />
+            <Route path="lucky-tickets/:eventId" element={<LuckyTicketLookup />} />
             <Route path="receipt/:orderId" element={<Receipt />} />
             <Route path="privacy" element={<Privacy />} />
             <Route path="terms" element={<Terms />} />

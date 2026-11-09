@@ -524,6 +524,7 @@ CREATE TABLE IF NOT EXISTS "luckyDrawEvents" (
   name varchar(128) NOT NULL,
   "maxWinsPerPerson" integer NOT NULL DEFAULT 1,
   "scheduledDrawDate" varchar(8),
+  "winnersPublic" boolean NOT NULL DEFAULT true,
   "createdBy" bigint,
   "createdByName" varchar(255),
   "createdAt" timestamp NOT NULL DEFAULT now(),
@@ -533,6 +534,10 @@ CREATE TABLE IF NOT EXISTS "luckyDrawEvents" (
 -- v2026.10.26.2（老闆指令）：活動級預定抽獎日（香港曆日 YYYYMMDD，nullable——舊活動安全升級，
 -- null＝抽獎日待公佈；新建立活動必填真實曆日）。預定日 ≠ 實際抽出日（實際睇 luckyDraws.drawDate）。
 ALTER TABLE "luckyDrawEvents" ADD COLUMN IF NOT EXISTS "scheduledDrawDate" varchar(8);
+-- v2026.11.08（老闆指令）：中獎公告公開開關——false＝publicEvents 唔列＋publicEventResults NOT_FOUND；
+-- 查劵路徑（publicTicketEvent／publicLookupEventTicket）唔受影響。
+-- DEFAULT true＝舊庫升級保留原本公開行為；可重跑（IF NOT EXISTS），唔刪表唔郁舊參加者/中獎資料。
+ALTER TABLE "luckyDrawEvents" ADD COLUMN IF NOT EXISTS "winnersPublic" boolean NOT NULL DEFAULT true;
 -- 活動劵持有人：每活動每人一列（eventId+normalizedName 唯一），ticketCount＝劵數（抽獎按劵等權加權）
 CREATE TABLE IF NOT EXISTS "luckyDrawEventEntries" (
   id serial PRIMARY KEY,

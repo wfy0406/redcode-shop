@@ -140,6 +140,12 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     title: '中獎名單｜RedCode Fashion Design',
     description: 'RedCode 直播抽獎中獎公告——即場抽出嘅真實幸運兒名單，下一個可能係你。',
   },
+  // 2026-11-08：公開查劵頁只供持有活動連結嘅客人自助查詢；resolveSeo 有 title/description，
+  // isNoIndexPath 保持預設 noindex/nofollow，唔加入公開收錄白名單。
+  '/lucky-tickets/:eventId': {
+    title: '抽獎劵查詢｜RedCode Fashion Design',
+    description: 'RedCode 公開抽獎劵查詢——輸入完整姓名查自己有幾張抽獎劵；呢頁唔會公開參加者名單。',
+  },
 };
 
 export const NOT_FOUND_SEO = {
@@ -167,6 +173,7 @@ export function resolveSeo(pathname: string, search = ''): { title: string; desc
   if (/^\/products\/\d+/.test(pathname)) return PAGE_SEO['/products/:id'];
   if (/^\/receipt\//.test(pathname)) return PAGE_SEO['/receipt/:orderId'];
   if (/^\/lucky-results\/\d+/.test(pathname)) return PAGE_SEO['/lucky-results/:eventId'];
+  if (/^\/lucky-tickets\/\d+/.test(pathname)) return PAGE_SEO['/lucky-tickets/:eventId'];
   if (/^\/try-on\/shared\/[^/]+/.test(pathname)) return PAGE_SEO['/try-on/shared/:publicId'];
   return PAGE_SEO[pathname] ?? NOT_FOUND_SEO;
 }

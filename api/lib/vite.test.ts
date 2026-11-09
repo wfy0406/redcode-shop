@@ -304,6 +304,45 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("RedCode 直播抽獎中獎公告");
   });
 
+  it("(17) /lucky-tickets/12 → 200＋專屬 title/description＋self canonical＋noindex；零參加者資料", async () => {
+    // mockRows 預設 []——呢條路由根本唔查 DB（唔存在查詢成功與否嘅分叉）
+    const res = await makeApp().request("/lucky-tickets/12");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/html");
+    const html = await res.text();
+    // title／description 同 src/lib/seo.ts PAGE_SEO['/lucky-tickets/:eventId'] 逐字一致
+    expect(html).toContain("<title>抽獎劵查詢｜RedCode Fashion Design</title>");
+    expect(html).toContain(
+      '<meta name="description" content="RedCode 公開抽獎劵查詢——輸入完整姓名查自己有幾張抽獎劵；呢頁唔會公開參加者名單。" />',
+    );
+    // self canonical 指返自己；noindex, nofollow（唔入搜尋索引）
+    expect(canonicalHref(html)).toBe("https://redcode.red/lucky-tickets/12");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(html).not.toContain("index, follow");
+    // 私隱邊界：唔注入公開摘要區塊／商品 prerender／任何活動名、參加者名單、winner 或劵數
+    expect(html).not.toContain('id="redcode-public-seo"');
+    expect(html).not.toContain("data-redcode-prerender");
+    expect(html).not.toMatch(/holderName|winnerName|ticketCount|winnersPublic/i);
+    expect(html.match(/rel="canonical"/g)).toHaveLength(1);
+  });
+
+  it("(17b) /lucky-tickets/12/（尾斜線）→ 一樣 200，canonical 唔帶尾斜線", async () => {
+    const res = await makeApp().request("/lucky-tickets/12/");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>抽獎劵查詢｜RedCode Fashion Design</title>");
+    expect(canonicalHref(html)).toBe("https://redcode.red/lucky-tickets/12");
+  });
+
+  it("(18) /lucky-tickets/abc（非數字 id）→ 真 404＋noindex，唔准變軟 404", async () => {
+    const res = await makeApp().request("/lucky-tickets/abc");
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("<title>搵唔到呢頁｜RedCode Fashion Design</title>");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(html).not.toContain("抽獎劵查詢");
+  });
+
   it("(16) /llms.txt 回應帶 X-Robots-Tag: noindex（静态檔存在與否由部署驗收）", async () => {
     const res = await makeApp().request("/llms.txt");
     expect(res.headers.get("X-Robots-Tag")).toBe("noindex");

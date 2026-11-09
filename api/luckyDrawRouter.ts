@@ -43,6 +43,25 @@
  *   publicEventResults——公開中獎公告（唔使登入）：只放活動名＋抽獎日期時間＋winner 對外顯示名＋
  *     獎品名；唔放電話／email／會員編號／地址／內部備註。沿用現行 pending+confirmed「已抽出」口径。
  *
+ * v2026.11.08（老闆指令：公告開關＋手動名單＋批量刪除＋公開查劵）：
+ *   adminSetEventWinnersPublic——每場中獎公告公開開關（winnersPublic，預設 true＝保留舊公開行為）；
+ *     event 雙 key 鎖內重讀先改，audit。關閉＝publicEvents 唔列、publicEventResults 一律 NOT_FOUND
+ *     （唔執行 winner query、唔回活動名）；內部 adminEventWinners 照常。
+ *   adminAddEventEntry／adminSetEventEntryTicketCount——手動新增姓名＋劵數（同 normalizedName 精確
+ *     重複＝加劵，否則新增）／只改總劵數；都喺 event 鎖內重讀活動（歸檔擋寫）＋entries，
+ *     每人 ≤10,000／全活動 ≤10,000,000（同 Excel commit 同一上限），23505 → 可見 CONFLICT，audit。
+ *   adminDeleteEventEntries——批量刪劵（1–500 個 id，去重）：event 鎖內確認全部屬同一活動，
+ *     任何 entry 有 luckyDraws 參照（不論狀態）→ 整批 CONFLICT rollback（錯誤列受保護姓名），
+ *     唔靜默部份刪除；成功回 deletedCount/deletedEntryIds/ticketCount＋audit 名單摘要。
+ *     舊 adminDeleteEventEntry 逐個刪保留兼容（一樣 FK 擋中獎紀錄）。
+ *   publicTicketEvent——公開查劵頁活動資料（唔受 winnersPublic 影響）：只回 id／活動名／
+ *     scheduledDrawDate／maxWinsPerPerson／winnersPublic；唔回參加者數、總劵數或任何名單。
+ *   publicLookupEventTicket——公開查劵（mutation POST）：eventId＋完整 holderName，trim/lowercase
+ *     後 exact match 單一 entry；成功只回 found:true＋ticketCount，找不到只回 found:false；
+ *     絕唔回名單／其他參加者／entry id／holderName；活動刪除 → NOT_FOUND；歸檔仍可查歷史劵數。
+ *   myPendingWin 排除 eventId 非 null 嘅活動劵中獎——活動中獎唔走入官網會員確認彈窗
+ *     （adminDrawEvent 維持 pending 作內部起單狀態，公開公告本來已計 pending+confirmed）。
+ *
  * 客人（authedProcedure）：
  *   myPendingWin——全域彈窗用：最新一筆 pending 中獎（＋獎品資料）
  *   respondWin——「多謝，請寄送」（preset 用會員預設順豐站／地址；station 揀新站點）
@@ -1994,6 +2013,44 @@ export const luckyDrawRouter = createRouter({
       return { ok: true as const, id: input.eventId, scheduledDrawDate: input.scheduledDrawDate };
     }),
 
+  /** v2026.11.08（老闆指令）：中獎公告公開開關——winnersPublic=false 即 publicEvents 唔列、
+   *  publicEventResults（包括舊 direct URL）一律 NOT_FOUND 兼唔執行 winner query；
+   *  查劵路徑（publicTicketEvent／publicLookupEventTicket）同內部 adminEventWinners 唔受影響。
+   *  同歸檔／改名／抽獎／匯入互鎖：event 雙 key 鎖內重讀先改（並發刪除 → NOT_FOUND）。 */
+  adminSetEventWinnersPublic: supervisorProcedure
+    .input(
+      z.object({
+        eventId: z.number().int().positive(),
+        winnersPublic: z.boolean(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      let eventName = "";
+      await db.transaction(async (tx) => {
+        // 鎖次序統一：冇 prize 參與，第一道就係 event 雙 key lock
+        await lockEventTx(tx, input.eventId);
+        // 鎖內重讀活動（唔信 transaction 外快照；順手攞名做 audit）
+        const [evNow] = await tx
+          .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name })
+          .from(luckyDrawEvents)
+          .where(eq(luckyDrawEvents.id, input.eventId))
+          .limit(1);
+        if (!evNow) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
+        eventName = evNow.name;
+        await tx
+          .update(luckyDrawEvents)
+          .set({ winnersPublic: input.winnersPublic })
+          .where(eq(luckyDrawEvents.id, input.eventId));
+      });
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.setEventWinnersPublic",
+        targetType: "luckyDrawEvent", targetId: String(input.eventId),
+        detail: `活動《${eventName}》中獎公告 → ${input.winnersPublic ? "公開" : "關閉（收埋公開公告，查劵不受影響）"}`,
+      });
+      return { ok: true as const, winnersPublic: input.winnersPublic };
+    }),
+
   /** v2.5.8（老闆指令）：刪除成個活動——確認後先郁手。
    *  鐵律：唔波及訂單或其他業務資料——呢個活動抽出嚟嘅 luckyDraws 中獎紀錄全部留底
    *  （eventId/eventEntryId 解綁 SET NULL，winnerName 快照、orderId、狀態全部唔郁），
@@ -2070,6 +2127,259 @@ export const luckyDrawRouter = createRouter({
         detail: `刪劵持有人：${row.holderName}（${row.ticketCount} 張，活動 #${row.eventId}）`,
       });
       return { ok: true };
+    }),
+
+  /** v2026.11.08（老闆指令）：手動新增劵持有人——同名（normalizeListName 精確重複）自動加劵，
+   *  否則新增一列。規矩同 Excel ticket commit 完全一致：event 雙 key 鎖內重讀活動（未歸檔先准寫）
+   *  ＋entries，每人 ≤MAX_TICKETS_PER_PERSON／全活動 ≤MAX_TOTAL_TICKETS（並發累加都計），
+   *  unique 23505 → 可見 CONFLICT；任何一步出錯全批 rollback。 */
+  adminAddEventEntry: supervisorProcedure
+    .input(
+      z.object({
+        eventId: z.number().int().positive(),
+        holderName: z.string().trim().min(1, "姓名唔准空").max(255),
+        ticketCount: z.number().int().min(1).max(MAX_TICKETS_PER_PERSON),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const normalizedName = normalizeListName(input.holderName);
+      const operator = await actorName(ctx.user.userId);
+      let result: {
+        created: boolean;
+        entry: typeof luckyDrawEventEntries.$inferSelect;
+        addedTickets: number;
+        eventName: string;
+      };
+      try {
+        result = await db.transaction(async (tx) => {
+          // 鎖次序統一：冇 prize 參與，第一道就係 event 雙 key lock（同抽獎／匯入／歸檔互鎖）
+          await lockEventTx(tx, input.eventId);
+          // 鎖內重讀活動（唔信 transaction 外快照）：刪咗 → NOT_FOUND；歸檔 → CONFLICT 擋寫
+          const [evNow] = await tx
+            .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name, archivedAt: luckyDrawEvents.archivedAt })
+            .from(luckyDrawEvents)
+            .where(eq(luckyDrawEvents.id, input.eventId))
+            .limit(1);
+          if (!evNow) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
+          if (evNow.archivedAt) throw new TRPCError({ code: "CONFLICT", message: "活動已歸檔，唔可以再改名單" });
+          // 鎖內重讀現有 entries（並發 merge／跨批累加都即時見到）
+          const curEntries = await tx
+            .select({
+              id: luckyDrawEventEntries.id,
+              holderName: luckyDrawEventEntries.holderName,
+              normalizedName: luckyDrawEventEntries.normalizedName,
+              ticketCount: luckyDrawEventEntries.ticketCount,
+            })
+            .from(luckyDrawEventEntries)
+            .where(eq(luckyDrawEventEntries.eventId, input.eventId));
+          const byName = new Map(curEntries.map((e) => [e.normalizedName, e]));
+          let totalAfter = curEntries.reduce((s, e) => s + e.ticketCount, 0) + input.ticketCount;
+          if (totalAfter > MAX_TOTAL_TICKETS) {
+            throw new TRPCError({ code: "CONFLICT", message: `全活動總劵數會超過上限 ${MAX_TOTAL_TICKETS}（並發/跨批累加），請刷新再試` });
+          }
+          const cur = byName.get(normalizedName);
+          if (cur) {
+            // 同人 normalizedName 精確重複 → 加劵（唔開第二列）
+            const after = cur.ticketCount + input.ticketCount;
+            if (after > MAX_TICKETS_PER_PERSON) {
+              throw new TRPCError({ code: "CONFLICT", message: `加完「${cur.holderName}」共 ${after} 張，超過每人上限 ${MAX_TICKETS_PER_PERSON}` });
+            }
+            const merged = await tx
+              .update(luckyDrawEventEntries)
+              .set({ ticketCount: after })
+              .where(and(eq(luckyDrawEventEntries.id, cur.id), eq(luckyDrawEventEntries.eventId, input.eventId)))
+              .returning();
+            if (merged.length !== 1) {
+              throw new TRPCError({ code: "CONFLICT", message: `「${cur.holderName}」嘅劵紀錄啱啱俾人改咗（並發），請刷新再試` });
+            }
+            return { created: false, entry: merged[0], addedTickets: input.ticketCount, eventName: evNow.name };
+          }
+          const [inserted] = await tx
+            .insert(luckyDrawEventEntries)
+            .values({
+              eventId: input.eventId,
+              holderName: input.holderName,
+              normalizedName,
+              ticketCount: input.ticketCount,
+              createdBy: ctx.user.userId,
+              createdByName: operator,
+            })
+            .returning();
+          return { created: true, entry: inserted, addedTickets: input.ticketCount, eventName: evNow.name };
+        });
+      } catch (e) {
+        if (pgErrorCode(e) === "23505") {
+          throw new TRPCError({ code: "CONFLICT", message: "有同名持有人啱啱俾人加咗（並發），請刷新再試" });
+        }
+        throw e;
+      }
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.addEventEntry",
+        targetType: "luckyDrawEvent", targetId: String(input.eventId),
+        detail: result.created
+          ? `活動《${result.eventName}》手動新增劵持有人：${result.entry.holderName}（${input.ticketCount} 張）`
+          : `活動《${result.eventName}》同人加劵：${result.entry.holderName} +${input.ticketCount} 張（共 ${result.entry.ticketCount} 張）`,
+      });
+      return { ok: true as const, created: result.created, entry: result.entry, addedTickets: result.addedTickets };
+    }),
+
+  /** v2026.11.08（老闆指令）：改劵持有人總劵數——只改 ticketCount，唔改名。
+   *  先定位 entry 攞 eventId，再用同一把 event 雙 key 鎖鎖內重讀（活動未歸檔先准改、
+   *  entry 重讀防並發刪除），重算全活動上限；每人上限由 input max 保證（新值 ≤MAX_TICKETS_PER_PERSON）。 */
+  adminSetEventEntryTicketCount: supervisorProcedure
+    .input(
+      z.object({
+        entryId: z.number().int().positive(),
+        ticketCount: z.number().int().min(1).max(MAX_TICKETS_PER_PERSON),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      // 先定位 entry → 攞 eventId 先知道鎖邊個活動
+      const [entry] = await db
+        .select()
+        .from(luckyDrawEventEntries)
+        .where(eq(luckyDrawEventEntries.id, input.entryId))
+        .limit(1);
+      if (!entry) throw new TRPCError({ code: "NOT_FOUND", message: "劵持有人唔存在" });
+      let updated: typeof luckyDrawEventEntries.$inferSelect | undefined;
+      let eventName = "";
+      // audit 用嘅舊劵數要係鎖內重讀嘅值（transaction 外快照可能已過期，並發改過會寫錯舊值）
+      let previousTicketCount = 0;
+      await db.transaction(async (tx) => {
+        await lockEventTx(tx, entry.eventId);
+        // 鎖內重讀活動（唔信 transaction 外快照）：刪咗 → NOT_FOUND；歸檔 → CONFLICT 擋寫
+        const [evNow] = await tx
+          .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name, archivedAt: luckyDrawEvents.archivedAt })
+          .from(luckyDrawEvents)
+          .where(eq(luckyDrawEvents.id, entry.eventId))
+          .limit(1);
+        if (!evNow) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
+        if (evNow.archivedAt) throw new TRPCError({ code: "CONFLICT", message: "活動已歸檔，唔可以再改名單" });
+        // 鎖內重讀 entry（並發刪除 → NOT_FOUND）
+        const [cur] = await tx
+          .select()
+          .from(luckyDrawEventEntries)
+          .where(eq(luckyDrawEventEntries.id, input.entryId))
+          .limit(1);
+        if (!cur || cur.eventId !== entry.eventId) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "劵持有人唔存在" });
+        }
+        previousTicketCount = cur.ticketCount;
+        // 全活動上限：總數 − 呢個人舊值 ＋ 新值（每人上限由 input max 保證）
+        const [{ total }] = await tx
+          .select({ total: sql<number>`coalesce(sum(${luckyDrawEventEntries.ticketCount}),0)::int` })
+          .from(luckyDrawEventEntries)
+          .where(eq(luckyDrawEventEntries.eventId, entry.eventId));
+        const totalAfter = Number(total) - cur.ticketCount + input.ticketCount;
+        if (totalAfter > MAX_TOTAL_TICKETS) {
+          throw new TRPCError({ code: "CONFLICT", message: `全活動總劵數會超過上限 ${MAX_TOTAL_TICKETS}（並發/跨批累加），請刷新再試` });
+        }
+        const rows = await tx
+          .update(luckyDrawEventEntries)
+          .set({ ticketCount: input.ticketCount })
+          .where(and(eq(luckyDrawEventEntries.id, input.entryId), eq(luckyDrawEventEntries.eventId, entry.eventId)))
+          .returning();
+        if (rows.length !== 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "劵紀錄啱啱俾人改咗（並發），請刷新再試" });
+        }
+        updated = rows[0];
+        eventName = evNow.name;
+      });
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.setEventEntryTicketCount",
+        targetType: "luckyDrawEventEntry", targetId: String(input.entryId),
+        detail: `活動《${eventName}》改總劵數：${updated!.holderName} ${previousTicketCount} → ${input.ticketCount} 張`,
+      });
+      return { ok: true as const, entry: updated! };
+    }),
+
+  /** v2026.11.08（老闆指令）：批量刪劵持有人（1–500 個 id，去重）。
+   *  event 雙 key 鎖內確認全部 id 屬同一活動（跨活動／唔存在 → 整批拒絕）；
+   *  任何 entry 已有 luckyDraws 參照（不論狀態）→ 整批 CONFLICT rollback，錯誤列受保護姓名，
+   *  唔靜默部份刪除；成功回 deletedCount/deletedEntryIds/ticketCount（被刪總劵數）＋audit 名單摘要。
+   *  FK 23503（鎖外極端並發新中獎）→ CONFLICT 兜底。 */
+  adminDeleteEventEntries: supervisorProcedure
+    .input(
+      z.object({
+        eventId: z.number().int().positive(),
+        entryIds: z.array(z.number().int().positive()).min(1).max(500),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const ids = [...new Set(input.entryIds)];
+      let eventName = "";
+      let deleted: (typeof luckyDrawEventEntries.$inferSelect)[] = [];
+      try {
+        await db.transaction(async (tx) => {
+          // 鎖次序統一：冇 prize 參與，第一道就係 event 雙 key lock（同抽獎／匯入／歸檔互鎖）
+          await lockEventTx(tx, input.eventId);
+          // 鎖內重讀活動（唔信 transaction 外快照）
+          const [evNow] = await tx
+            .select({ id: luckyDrawEvents.id, name: luckyDrawEvents.name })
+            .from(luckyDrawEvents)
+            .where(eq(luckyDrawEvents.id, input.eventId))
+            .limit(1);
+          if (!evNow) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
+          eventName = evNow.name;
+          // 鎖內確認全部 id 屬呢個活動（跨活動／唔存在 → 整批拒絕，一個都唔刪）
+          const rows = await tx
+            .select()
+            .from(luckyDrawEventEntries)
+            .where(and(eq(luckyDrawEventEntries.eventId, input.eventId), inArray(luckyDrawEventEntries.id, ids)));
+          if (rows.length !== ids.length) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "有劵持有人唔屬呢個活動或唔存在，整批唔准刪" });
+          }
+          // 中獎保護：任何 entry 有 luckyDraws 參照（不論狀態）→ 整批拒絕（紀錄要留底追溯）
+          const refs = await tx
+            .select({ eventEntryId: luckyDraws.eventEntryId })
+            .from(luckyDraws)
+            .where(inArray(luckyDraws.eventEntryId, ids))
+            .groupBy(luckyDraws.eventEntryId);
+          if (refs.length > 0) {
+            const protectedIds = new Set(refs.map((r) => r.eventEntryId));
+            const protectedRows = rows.filter((r) => protectedIds.has(r.id));
+            // 超長名單保護：只列首 20 個，其餘寫「等 N 人」（500 人唔會炸 audit/log）
+            const names = protectedRows.slice(0, 20).map((r) => `「${r.holderName}」`);
+            const suffix = protectedRows.length > 20 ? ` 等 ${protectedRows.length} 人` : "";
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `${names.join("、")}${suffix} 有中獎紀錄，整批唔准刪（紀錄要留底）`,
+            });
+          }
+          deleted = await tx
+            .delete(luckyDrawEventEntries)
+            .where(and(eq(luckyDrawEventEntries.eventId, input.eventId), inArray(luckyDrawEventEntries.id, ids)))
+            .returning();
+          // 鎖內重讀已確認 ids 全部屬呢個活動；實刪少過 → 並發改變，整批 rollback（唔准回成功但少刪）
+          if (deleted.length !== ids.length) {
+            throw new TRPCError({ code: "CONFLICT", message: "劵紀錄啱啱俾人改咗（並發），整批唔准刪，請刷新再試" });
+          }
+        });
+      } catch (e) {
+        if (pgErrorCode(e) === "23503") {
+          throw new TRPCError({ code: "CONFLICT", message: "有人啱啱中咗獎（並發），整批唔准刪（紀錄要留底），請刷新再試" });
+        }
+        throw e;
+      }
+      const ticketCount = deleted.reduce((s, r) => s + r.ticketCount, 0);
+      // audit 名單摘要：只列首 20 個，其餘寫「等 N 人」（500 人唔會超長）
+      const summary =
+        deleted.slice(0, 20).map((r) => `${r.holderName}（${r.ticketCount} 張）`).join("、") +
+        (deleted.length > 20 ? ` 等 ${deleted.length} 人` : "");
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.deleteEventEntries",
+        targetType: "luckyDrawEvent", targetId: String(input.eventId),
+        detail: `活動《${eventName}》批量刪劵持有人 ${deleted.length} 人（共 ${ticketCount} 張）：${summary}`,
+      });
+      return {
+        ok: true as const,
+        deletedCount: deleted.length,
+        deletedEntryIds: deleted.map((r) => r.id),
+        ticketCount,
+      };
     }),
 
   /** v2.5.8（老闆指令「每場活動有位置睇中獎人」）：單個活動嘅內部中獎名單——
@@ -2418,7 +2728,9 @@ export const luckyDrawRouter = createRouter({
   /** 公開公告總頁（唔使登入）：全部未刪除活動一覽（新→舊），
    *  連「企得硬」中獎數（pending+confirmed，同 adminListEvents drawnCount 同一口径）。
    *  只放活動名＋預定抽獎日（scheduledDrawDate，null＝待公佈）＋建立時間＋中獎數；
-   *  唔放任何參加者／中獎人資料（名單去逐場公告頁睇）。 */
+   *  唔放任何參加者／中獎人資料（名單去逐場公告頁睇）。
+   *  v2026.11.08：只回 winnersPublic=true 活動——關閉公告嘅活動唔會出現喺總頁，
+   *  但唔影響其他活動入口（逐場查劵 link 唔經呢度）。 */
   publicEvents: publicProcedure.query(async () => {
     const db = getDb();
     const events = await db
@@ -2429,6 +2741,7 @@ export const luckyDrawRouter = createRouter({
         scheduledDrawDate: luckyDrawEvents.scheduledDrawDate,
       })
       .from(luckyDrawEvents)
+      .where(eq(luckyDrawEvents.winnersPublic, true))
       .orderBy(desc(luckyDrawEvents.id))
       .limit(50);
     if (events.length === 0) return [];
@@ -2448,7 +2761,9 @@ export const luckyDrawRouter = createRouter({
    *  cancelled（後台取消，客人唔會再見到）同 declined（客人唔要、獎品已返池）唔當有效中獎——
    *  呢個係現有 adminListEvents drawnCount／限中計數嘅同一口径，唔係新加嘅展示過濾。
    *  活動唔存在／已刪除 → NOT_FOUND（公開頁顯示「活動唔存在或已刪除」）；
-   *  仲未抽獎 → winners 空陣列（公開頁顯示「中獎名單即將公佈」）。 */
+   *  仲未抽獎 → winners 空陣列（公開頁顯示「中獎名單即將公佈」）。
+   *  v2026.11.08：winnersPublic=false（公告關閉）一律 NOT_FOUND——同唔存在／已刪除完全同樣，
+   *  唔執行 winner query、唔回活動名或任何 winner rows（舊 direct URL 都收埋）。 */
   publicEventResults: publicProcedure
     .input(z.object({ eventId: z.number().int().positive() }))
     .query(async ({ input }) => {
@@ -2459,11 +2774,14 @@ export const luckyDrawRouter = createRouter({
           name: luckyDrawEvents.name,
           createdAt: luckyDrawEvents.createdAt,
           scheduledDrawDate: luckyDrawEvents.scheduledDrawDate,
+          maxWinsPerPerson: luckyDrawEvents.maxWinsPerPerson,
+          winnersPublic: luckyDrawEvents.winnersPublic,
         })
         .from(luckyDrawEvents)
         .where(eq(luckyDrawEvents.id, input.eventId))
         .limit(1);
-      if (!event) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在或已刪除" });
+      // 公告關閉同活動唔存在係同一個 NOT_FOUND——唔好俾人憑回應分辯到活動其實存在
+      if (!event || !event.winnersPublic) throw new TRPCError({ code: "NOT_FOUND", message: "中獎公告未公開或活動唔存在" });
       const rows = await db
         .select({
           id: luckyDraws.id,
@@ -2479,7 +2797,14 @@ export const luckyDrawRouter = createRouter({
         .where(and(eq(luckyDraws.eventId, input.eventId), inArray(luckyDraws.status, ["pending", "confirmed"])))
         .orderBy(asc(luckyDraws.id));
       return {
-        event: { id: event.id, name: event.name, createdAt: event.createdAt, scheduledDrawDate: event.scheduledDrawDate },
+        event: {
+          id: event.id,
+          name: event.name,
+          createdAt: event.createdAt,
+          scheduledDrawDate: event.scheduledDrawDate,
+          maxWinsPerPerson: event.maxWinsPerPerson,
+          winnersPublic: event.winnersPublic,
+        },
         winners: rows.map((r) => ({
           id: r.id,
           // 對外顯示名：快照優先（唔受會員改名影響）；舊紀錄冇快照先用會員顯示名
@@ -2491,9 +2816,74 @@ export const luckyDrawRouter = createRouter({
       };
     }),
 
+  // ───────────────────────── 公開：查抽獎劵（v2026.11.08）─────────────────────────
+
+  /** 公開查劵頁活動資料（唔使登入）：唔受 winnersPublic 公告開關影響——公告關閉只收埋中獎名單，
+   *  查劵係另一條獨立公開路徑（歸檔活動都可以查歷史資料；活動刪除 → NOT_FOUND）。
+   *  私隱鐵律：只回 id／活動名／預定抽獎日／每人限中次數／winnersPublic；
+   *  唔回參加者數、總劵數或任何名單。 */
+  publicTicketEvent: publicProcedure
+    .input(z.object({ eventId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      const [event] = await db
+        .select({
+          id: luckyDrawEvents.id,
+          name: luckyDrawEvents.name,
+          scheduledDrawDate: luckyDrawEvents.scheduledDrawDate,
+          maxWinsPerPerson: luckyDrawEvents.maxWinsPerPerson,
+          winnersPublic: luckyDrawEvents.winnersPublic,
+        })
+        .from(luckyDrawEvents)
+        .where(eq(luckyDrawEvents.id, input.eventId))
+        .limit(1);
+      if (!event) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在或已刪除" });
+      return { event };
+    }),
+
+  /** 公開查劵（唔使登入）：完整姓名 exact match——trim＋lowercase 後對 normalizedName，
+   *  同人唔會多過一列（eventId+normalizedName 唯一索引保證）。
+   *  必須 mutation（POST）：查詢輸入係個人資料，唔入 GET query string／access log／browser history。
+   *  私隱鐵律：成功只回 found:true＋ticketCount；找不到只回 found:false；
+   *  絕唔回名單／其他參加者／entry id／holderName；唔支援空白、部份名、wildcard、列表或自動建議。
+   *  活動刪除 → NOT_FOUND；歸檔仍可查歷史劵數（唔擋）。 */
+  publicLookupEventTicket: publicProcedure
+    .input(
+      z.object({
+        eventId: z.number().int().positive(),
+        holderName: z.string().max(255, "姓名太長"),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const normalized = normalizeListName(input.holderName);
+      if (!normalized) throw new TRPCError({ code: "BAD_REQUEST", message: "請輸入完整姓名" });
+      const [event] = await db
+        .select({ id: luckyDrawEvents.id })
+        .from(luckyDrawEvents)
+        .where(eq(luckyDrawEvents.id, input.eventId))
+        .limit(1);
+      if (!event) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在或已刪除" });
+      const [entry] = await db
+        .select({ ticketCount: luckyDrawEventEntries.ticketCount })
+        .from(luckyDrawEventEntries)
+        .where(
+          and(
+            eq(luckyDrawEventEntries.eventId, input.eventId),
+            eq(luckyDrawEventEntries.normalizedName, normalized),
+          ),
+        )
+        .limit(1);
+      if (!entry) return { found: false as const };
+      return { found: true as const, ticketCount: entry.ticketCount };
+    }),
+
   // ───────────────────────── 客人：中獎彈窗 ─────────────────────────
 
-  /** 全域彈窗用：最新一筆 pending 中獎（冇就 null） */
+  /** 全域彈窗用：最新一筆 pending 中獎（冇就 null）。
+   *  v2026.11.08：排除 eventId 非 null 嘅活動劵中獎——活動中獎係內部起單流程
+   *  （adminDrawEvent 落 pending＝待「確定起單」，唔係等客人確認；公開公告本來已計 pending+confirmed），
+   *  唔准走入官網會員確認彈窗。 */
   myPendingWin: authedProcedure.query(async ({ ctx }) => {
     const db = getDb();
     const rows = await db
@@ -2508,7 +2898,13 @@ export const luckyDrawRouter = createRouter({
       })
       .from(luckyDraws)
       .innerJoin(luckyPrizes, eq(luckyDraws.prizeId, luckyPrizes.id))
-      .where(and(eq(luckyDraws.winnerUserId, ctx.user.userId), eq(luckyDraws.status, "pending")))
+      .where(
+        and(
+          eq(luckyDraws.winnerUserId, ctx.user.userId),
+          eq(luckyDraws.status, "pending"),
+          isNull(luckyDraws.eventId), // 活動劵中獎唔入彈窗
+        ),
+      )
       .orderBy(desc(luckyDraws.id))
       .limit(1);
     return rows[0] ?? null;
