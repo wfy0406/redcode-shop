@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, Radio, ScanLine, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users, Wallet } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, PanelsTopLeft, Radio, ScanLine, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users, Wallet } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -29,6 +29,7 @@ import AuditLog from '@/components/admin/AuditLog';
 import WalletPanel from '@/components/admin/WalletPanel';
 import TryOnPanel from '@/components/admin/TryOnPanel';
 import TryOnRecordsPanel from '@/components/admin/TryOnRecordsPanel';
+import WebDesignAdminPanel from '@/components/admin/WebDesignAdminPanel';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
 
@@ -45,6 +46,7 @@ type ViewKey =
   | 'review'
   | 'approvals'
   | 'orders'
+  | 'webdesign'
   | 'purchase'
   | 'products'
   | 'tryon'
@@ -218,6 +220,7 @@ function AdminConsole() {
     // 審批中心（2026-08-06 三級制）：主管/管理員審批員工請求；員工睇自己嘅請求
     { key: 'approvals', label: '審批中心', icon: <ListChecks size={17} aria-hidden="true" /> },
     { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
+    { key: 'webdesign', label: '網站設計', icon: <PanelsTopLeft size={17} aria-hidden="true" /> },
     { key: 'purchase', label: '訂貨統計', icon: <ClipboardList size={17} aria-hidden="true" /> },
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
     // AI 試穿紀錄俾主管／管理員查閱；開放閘口、成本及統計配置仍然只限最高管理員
@@ -289,6 +292,13 @@ function AdminConsole() {
         onStatus={(oid, status) => void handleStatus(oid, status)}
         statusBusyId={statusBusyId}
         onOpenLightbox={setLightboxSrc}
+      />
+    ),
+    webdesign: (
+      <WebDesignAdminPanel
+        toast={pushToast}
+        canEditCatalog={isAdmin}
+        canReview={isSupervisorOrAdmin}
       />
     ),
     purchase: <PurchaseStats />,

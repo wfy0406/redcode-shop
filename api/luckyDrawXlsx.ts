@@ -6,8 +6,8 @@
  * 解析：parseXlsxRows 支援 sharedStrings（含富文本 <si><r><t> 多段）、inlineStr、
  *       數字 <v>；只支援本系統範本格式（xl/worksheets/sheet1.xml，第一個 sheet）。
  * 驗證：validateImportRows 逐行錯誤（錯欄／空名／非整數劵數／超上限／500+1 行）；
- *       planImport 處理重複（list 檔案內去重 skip；ticket duplicatePolicy=skip|merge，
- *       merge 加劵數，逐行報告，溢出檢查）。
+ *       planImport 處理重複（list 檔案內去重 skip；ticket 檔案內同名必累加，
+ *       活動已有同名先按 duplicatePolicy=skip|merge，逐行報告，溢出檢查）。
  * 上限：原始檔 2MB（router 驗）、500 數據行、每劵數 1–10000、每活動總劵數 10,000,000（int32 安全）。
  * 純函數為主（掂 DB 嘅 existing map 由 caller 傳入），方便單元測試。
  */
@@ -327,7 +327,7 @@ export type ImportPlan = {
 
 /** 重複處理計劃（純函數；existing 由 caller 喺 DB 讀，preview 都係咁做，保證 preview≡commit 結果）。
  *  list：檔案內同名（normalize 後）去重 skip，保留第一個原串；新名單唔會同 DB 撞（commit 開新 list），existing 傳空 Map。
- *  ticket：檔案內同名先按 policy 合併/skip；再同活動現有 entries 比——skip＝唔郁（逐行報告），
+ *  ticket：檔案內同名無論 policy 都必須累加劵數；policy 只控制活動現有 entries——skip＝唔郁（逐行報告），
  *  merge＝加劵數（逐行報告；加完超每人/總數上限 → 逐行錯誤阻 commit）。 */
 export function planImport(
   kind: ImportKind,
@@ -356,22 +356,7 @@ export function planImport(
       inserts.push(ins);
       continue;
     }
-    // ticket
-    if (policy === "skip") {
-      if (inFile) {
-        duplicates.push({ row: r.rowNo, name: r.name, action: "skip", detail: "檔案內重複姓名，已略過" });
-        continue;
-      }
-      if (inDb) {
-        duplicates.push({ row: r.rowNo, name: r.name, action: "skip", detail: `活動已有「${inDb.holderName}」（${inDb.ticketCount} 張劵），已略過` });
-        continue;
-      }
-      const ins: PlannedInsert = { name: r.name, normalizedName: r.normalizedName, ticketCount: r.ticketCount };
-      plannedByName.set(r.normalizedName, ins);
-      inserts.push(ins);
-      continue;
-    }
-    // ticket + merge：檔案內同名疊加；DB 已有 → 加劵數
+    // ticket：同一份檔案內同名必須累加；skip／merge 只控制「活動已有同名」。
     if (inFile) {
       const after = inFile.ticketCount + r.ticketCount;
       if (after > MAX_TICKETS_PER_PERSON) {
@@ -382,6 +367,17 @@ export function planImport(
       duplicates.push({ row: r.rowNo, name: r.name, action: "merge", detail: `檔案內重複，劵數已加埋（共 ${after} 張）` });
       continue;
     }
+    if (policy === "skip") {
+      if (inDb) {
+        duplicates.push({ row: r.rowNo, name: r.name, action: "skip", detail: `活動已有「${inDb.holderName}」（${inDb.ticketCount} 張劵），已略過` });
+        continue;
+      }
+      const ins: PlannedInsert = { name: r.name, normalizedName: r.normalizedName, ticketCount: r.ticketCount };
+      plannedByName.set(r.normalizedName, ins);
+      inserts.push(ins);
+      continue;
+    }
+    // ticket + merge：DB 已有 → 加劵數
     if (inDb) {
       const prev = merges.get(inDb.id);
       const alreadyAdded = prev?.addTickets ?? 0;

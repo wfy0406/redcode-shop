@@ -34,6 +34,7 @@ const TryOnHistory = lazy(() => import('@/pages/TryOnHistory')); // 客戶專屬
 const TryOnShared = lazy(() => import('@/pages/TryOnShared')); // 有時限分享頁（只回生成圖及公開商品資料）
 const LuckyResults = lazy(() => import('@/pages/LuckyResults')); // v2.5.8：公開中獎公告頁（唔使登入）
 const LuckyTicketLookup = lazy(() => import('@/pages/LuckyTicketLookup')); // 2026-11-08：公開抽獎劵查詢頁（noindex）
+const WebDesignPage = lazy(() => import('@/pages/WebDesignPage')); // 2026-11-09：獨立網站設計銷售頁（唔共用星空 Layout）
 const NotFound = lazy(() => import('@/pages/NotFound')); // 未知網址：人類用戶 404 頁
 
 /**
@@ -89,6 +90,7 @@ export default function App() {
       <SeoManager />
       <Suspense fallback={<PageLoading />}>
         <Routes>
+          <Route path="web-design" element={<WebDesignPage />} />
           <Route element={<Layout />}>
             <Route index element={<Home />} />
             <Route path="products" element={<Products />} />

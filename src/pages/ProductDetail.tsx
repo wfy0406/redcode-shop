@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { CalendarDays, Check, Heart, Minus, Plus, ScanLine, Share2, ShoppingBag, Tag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
-import { productCategoryLabel } from '@contracts/types';
+import { productCategoryLabel, productSeoDescription } from '@contracts/types';
 import { resolveTryOnProductKind } from '@contracts/tryon';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/admin/WishingStar';
@@ -19,6 +19,8 @@ import {
 import { useReveal } from '@/hooks/useReveal';
 import { useRevealDep } from '@/components/shop/useRevealDep';
 import { addToGuestCart } from '@/lib/guestCart';
+import { isProductNotFoundError } from '@/lib/productQuery';
+import { setCanonicalPath } from '@/lib/seo';
 
 /**
  * §P3 商品詳情 /product/:id —— trpc.products.byId
@@ -40,15 +42,19 @@ export default function ProductDetail() {
   );
   const relatedQuery = trpc.products.list.useQuery(undefined, { retry: 1 });
 
-  // API 失敗 → demo fallback（「睇緊示範款」橫額）
+  const productNotFound = isProductNotFoundError(productQuery.error);
+
+  // 只有網絡／server 故障先用 demo；明確 NOT_FOUND（已刪、人手或自動下架）必須顯示搵唔到＋noindex。
+  // 否則低 id 同示範貨相撞時，會將真 404 變返一件假商品兼 index,follow。
   const product = useMemo(() => {
     if (productQuery.data) return productQuery.data;
     if (productQuery.isError) {
+      if (productNotFound) return null;
       return demoShopProducts().find((p) => p.id === productId) ?? null;
     }
     return undefined; // loading
-  }, [productQuery.data, productQuery.isError, productId]);
-  const isDemo = productQuery.isError && product !== null;
+  }, [productQuery.data, productQuery.isError, productNotFound, productId]);
+  const isDemo = productQuery.isError && !productNotFound && product !== null;
 
   // AI 試穿入口資格：只限真 DB 商品（productQuery.data 先算；demo fallback / 載入中一律冇），
   // 並且 resolveTryOnProductKind 辨到明確穿戴部位——非穿著（lifestyle/skincare/other）、
@@ -137,18 +143,16 @@ export default function ProductDetail() {
         .querySelector('meta[name="description"]')
         ?.setAttribute('content', '呢件商品可能已經賣晒或落架，去全部貨品睇最新直播精選女裝。');
       robots?.setAttribute('content', 'noindex, nofollow');
+      setCanonicalPath(null);
       return;
     }
     if (!product) return;
     document.title = `${product.name}｜RedCode Fashion Design`;
-    const plain = (product.description ?? '').replace(/\s+/g, ' ').trim();
-    const desc = plain
-      ? plain.length > 120
-        ? `${plain.slice(0, 117)}…`
-        : plain
-      : `${product.name}——RedCode 香港女裝直播精選，直播優惠價發售，順豐站自取。`;
-    document.querySelector('meta[name="description"]')?.setAttribute('content', desc);
+    document
+      .querySelector('meta[name="description"]')
+      ?.setAttribute('content', productSeoDescription(product));
     robots?.setAttribute('content', 'index, follow');
+    setCanonicalPath(`/products/${product.id}`);
   }, [product]);
 
   const handleAdd = () => {

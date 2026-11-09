@@ -206,9 +206,10 @@ describe("validateImportRows 逐行錯誤", () => {
 });
 
 describe("planImport 重複處理", () => {
+  // ValidRow 係 validateImportRows 嘅輸出：姓名已 trim，normalizedName 已忽略前後空格同英文大小寫。
   const vr = (rowNo: number, name: string, ticketCount = 1): ValidRow => ({
     rowNo,
-    name,
+    name: name.trim(),
     normalizedName: name.trim().toLowerCase(),
     ticketCount,
   });
@@ -248,6 +249,43 @@ describe("planImport 重複處理", () => {
     expect(plan.duplicates[0].action).toBe("merge");
   });
 
+  it("ticket skip：檔案內 AL Ng 兩行各 1 張必須累加成 2 張，唔准略過", () => {
+    const plan = planImport("ticket", [vr(2, "AL Ng", 1), vr(3, "AL Ng", 1)], noExisting, "skip");
+    expect(plan.inserts).toEqual([{ name: "AL Ng", normalizedName: "al ng", ticketCount: 2 }]);
+    expect(plan.merges).toEqual([]);
+    expect(plan.duplicates).toEqual([
+      { row: 3, name: "AL Ng", action: "merge", detail: "檔案內重複，劵數已加埋（共 2 張）" },
+    ]);
+    expect(plan.errors).toEqual([]);
+  });
+
+  it("ticket skip：前後空格同英文大小寫視為同一人；姓名內部空格保持有分別", () => {
+    const plan = planImport(
+      "ticket",
+      [vr(2, " AL Ng ", 1), vr(3, "al ng", 2), vr(4, "AL  Ng", 4)],
+      noExisting,
+      "skip",
+    );
+    expect(plan.inserts).toEqual([
+      { name: "AL Ng", normalizedName: "al ng", ticketCount: 3 },
+      { name: "AL  Ng", normalizedName: "al  ng", ticketCount: 4 },
+    ]);
+    expect(plan.duplicates).toHaveLength(1);
+    expect(plan.duplicates[0]).toMatchObject({ row: 3, name: "al ng", action: "merge" });
+    expect(plan.duplicates[0].detail).toContain("共 3 張");
+  });
+
+  it("ticket skip：活動已有同名嘅多行仍然全部略過，唔會誤開新人", () => {
+    const existing = new Map<string, ExistingEntry>([
+      ["al ng", { id: 7, holderName: "AL Ng", ticketCount: 3 }],
+    ]);
+    const plan = planImport("ticket", [vr(2, "AL Ng", 1), vr(3, "al ng", 2)], existing, "skip");
+    expect(plan.inserts).toEqual([]);
+    expect(plan.merges).toEqual([]);
+    expect(plan.duplicates).toHaveLength(2);
+    expect(plan.duplicates.every((d) => d.action === "skip")).toBe(true);
+  });
+
   it("ticket merge：合併後超每人上限 → 逐行錯誤（阻 commit）", () => {
     const existing = new Map<string, ExistingEntry>([["陳小明", { id: 7, holderName: "陳小明", ticketCount: MAX_TICKETS_PER_PERSON - 1 }]]);
     const plan = planImport("ticket", [vr(2, "陳小明", 2)], existing, "merge");
@@ -256,10 +294,16 @@ describe("planImport 重複處理", () => {
     expect(plan.merges).toEqual([]);
   });
 
-  it("ticket skip：檔案內重複都係 skip 報告", () => {
-    const plan = planImport("ticket", [vr(2, "新客", 1), vr(3, "新客", 1)], noExisting, "skip");
-    expect(plan.inserts).toHaveLength(1);
-    expect(plan.duplicates).toEqual([{ row: 3, name: "新客", action: "skip", detail: "檔案內重複姓名，已略過" }]);
+  it.each(["skip", "merge"] as const)("ticket %s：檔案內同名累加超每人上限 → 逐行錯誤", (policy) => {
+    const plan = planImport(
+      "ticket",
+      [vr(2, "AL Ng", MAX_TICKETS_PER_PERSON), vr(3, "al ng", 1)],
+      noExisting,
+      policy,
+    );
+    expect(plan.errors).toHaveLength(1);
+    expect(plan.errors[0]).toMatchObject({ row: 3, field: "抽獎劵數" });
+    expect(plan.errors[0].message).toContain("超過每人上限");
   });
 });
 

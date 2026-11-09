@@ -805,6 +805,105 @@ export const tryOnJobs = pgTable(
   ],
 );
 
+// ===== 網站設計服務（v2026.11.09 web-design）=====
+// 獨立訂單鏈——絕不落入普通 orders／orderItems（交付凍結規格）。
+// status：received（已收單）→ in_production（製作中）→ completed（網站已完成）｜cancelled
+// paymentStatus（獨立於 status）：pending（未付款）→ review（已傳截圖待核實）→ paid｜rejected
+export const webDesignOrders = pgTable(
+  "webDesignOrders",
+  {
+    id: serial("id").primaryKey(),
+    // 單號：WD + YYYYMMDD + 隨機 4 位（WD 前綴＝WMS review/shipment callback 嘅分流鍵）
+    orderNo: varchar("orderNo", { length: 32 }).notNull().unique(),
+    plan: varchar("plan", { length: 16 }).notNull(), // 'front_only' | 'full_stack'
+    name: varchar("name", { length: 64 }).notNull(),
+    phone: varchar("phone", { length: 32 }).notNull(), // server normalize 做純 8 位數字
+    email: varchar("email", { length: 255 }), // 選填
+    requirements: text("requirements").notNull().default(""),
+    styleNotes: text("styleNotes").notNull().default(""),
+    status: varchar("status", { length: 16 }).notNull().default("received"),
+    paymentStatus: varchar("paymentStatus", { length: 16 }).notNull().default("pending"),
+    // 金額全部整數港元：oneOffTotal＝方案基本價＋一次性功能；monthlyTotal＝月費項（首月）；
+    // total＝今次應收＝oneOffTotal＋monthlyTotal（其後月費另行列明，唔喺今次收）
+    oneOffTotal: integer("oneOffTotal").notNull(),
+    monthlyTotal: integer("monthlyTotal").notNull().default(0),
+    total: integer("total").notNull(),
+    // server 生成嘅正式訂單圖（sharp PNG，隨機不可猜檔名）；新單產圖失敗會中止落單，nullable 只保留畀舊資料
+    orderImagePath: varchar("orderImagePath", { length: 512 }),
+    // 付款渠道：'manual'＝截圖待核實｜'airwallex'＝網上即時付款
+    paymentChannel: varchar("paymentChannel", { length: 16 }).notNull().default("manual"),
+    airwallexIntentId: varchar("airwallexIntentId", { length: 64 }),
+    paidAt: timestamp("paidAt"),
+    // WMS 同步欄：null＝未送出；'sent'／'failed'／'disabled'（未設 WMS_API_KEY）
+    wmsStatus: varchar("wmsStatus", { length: 16 }),
+    wmsError: text("wmsError"),
+    wmsWebhookOrderId: varchar("wmsWebhookOrderId", { length: 64 }),
+    completedAt: timestamp("completedAt"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (t) => [
+    // 專屬查單熱點：完整姓名＋電話（私隱查詢，率限喺 API 層）
+    index("webdesignorders_name_phone_idx").on(t.name, t.phone),
+    index("webdesignorders_created_idx").on(t.createdAt),
+  ],
+);
+
+// 落單嗰刻嘅功能快照（價錢／方案依賴／計費方式全部 freeze，日後改 catalog 唔影響歷史單）。
+// 第一行固定係方案基本價行（itemKey 'plan_front_only'／'plan_full_stack'）。
+export const webDesignOrderItems = pgTable("webDesignOrderItems", {
+  id: serial("id").primaryKey(),
+  orderId: bigint("orderId", { mode: "number" })
+    .notNull()
+    .references(() => webDesignOrders.id),
+  itemKey: varchar("itemKey", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  category: varchar("category", { length: 16 }).notNull().default("feature"),
+  // 快照：呢項要求嘅最低方案（'front_only'｜'full_stack'；方案基本價行＝訂單方案本身）
+  plan: varchar("plan", { length: 16 }).notNull(),
+  billing: varchar("billing", { length: 16 }).notNull(), // 'one_off'｜'monthly'｜'at_cost'
+  price: integer("price").notNull(),
+  marketPrice: integer("marketPrice").notNull().default(0),
+  priceNote: varchar("priceNote", { length: 255 }).notNull().default(""),
+  sortOrder: integer("sortOrder").notNull().default(0),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+}, (t) => [
+  index("webdesignorderitems_order").on(t.orderId),
+]);
+
+// 手動過數截圖（tokenless 三欄核實上傳；主管/管理員核實）
+export const webDesignPaymentProofs = pgTable("webDesignPaymentProofs", {
+  id: serial("id").primaryKey(),
+  orderId: bigint("orderId", { mode: "number" })
+    .notNull()
+    .references(() => webDesignOrders.id),
+  imagePath: varchar("imagePath", { length: 512 }).notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("pending"), // pending｜approved｜rejected
+  reviewedBy: bigint("reviewedBy", { mode: "number" }),
+  reviewNote: text("reviewNote"),
+  reviewedAt: timestamp("reviewedAt"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+}, (t) => [
+  index("webdesignpaymentproofs_order").on(t.orderId),
+]);
+
+// 網站設計留言／查詢（第四段留言表格）：DB 保存＋寄 service.support@ows.redcode.red
+export const webDesignInquiries = pgTable("webDesignInquiries", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 64 }).notNull(),
+  phone: varchar("phone", { length: 32 }).notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  message: text("message").notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("new"), // new｜handled
+  // 通知信寄出咗未（false＝DB 已保存但 email 失敗——API 會回明確部分成功）
+  emailSent: boolean("emailSent").notNull().default(false),
+  handledBy: varchar("handledBy", { length: 64 }),
+  handledAt: timestamp("handledAt"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+}, (t) => [
+  index("webdesigninquiries_status").on(t.status, t.createdAt),
+]);
+
 export type User = typeof users.$inferSelect;
 export type TryOnJob = typeof tryOnJobs.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
@@ -829,3 +928,7 @@ export type ListingBatchItem = typeof listingBatchItems.$inferSelect;
 export type SfStation = typeof sfStations.$inferSelect;
 export type PushSubscription = typeof pushSubscriptions.$inferSelect;
 export type PushCampaign = typeof pushCampaigns.$inferSelect;
+export type WebDesignOrder = typeof webDesignOrders.$inferSelect;
+export type WebDesignOrderItem = typeof webDesignOrderItems.$inferSelect;
+export type WebDesignPaymentProof = typeof webDesignPaymentProofs.$inferSelect;
+export type WebDesignInquiry = typeof webDesignInquiries.$inferSelect;

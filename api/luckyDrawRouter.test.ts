@@ -718,6 +718,73 @@ describe("adminImportExcel preview/commit", () => {
     expect(h.state.updates).toHaveLength(0);
   });
 
+  it("ticket 預設 skip：AL Ng 同檔兩行各 1 張，preview 同 commit 都係一人 2 張", async () => {
+    const b64 = makeXlsxBase64("ticket", [["AL Ng", "1"], ["AL Ng", "1"]]);
+    h.state.queue = [[EVENT], []]; // 本活動未有 AL Ng；其他活動 entries 唔應混入
+    const input = { kind: "ticket" as const, fileBase64: b64, eventId: 7 };
+
+    const preview = await caller().adminImportExcel(input); // duplicatePolicy 預設 skip
+    expect(preview.committed).toBe(false);
+    expect(preview.summary).toMatchObject({
+      dataRows: 2,
+      validRows: 2,
+      inserts: 1,
+      merges: 0,
+      duplicates: 1,
+      errors: 0,
+      totalTickets: 2,
+    });
+    expect(preview.duplicates).toEqual([
+      { row: 3, name: "AL Ng", action: "merge", detail: "檔案內重複，劵數已加埋（共 2 張）" },
+    ]);
+    expect(h.state.inserts).toHaveLength(0);
+    expect(h.state.updates).toHaveLength(0);
+
+    h.state.queue = [
+      [EVENT], [],
+      [{ name: "Boss" }],
+      {}, // tx event lock
+      [{ archivedAt: null }],
+      [], // 鎖內重讀：本活動仍未有 AL Ng
+      [], // tx insert pop
+    ];
+    const committed = await caller().adminImportExcel({ ...input, commit: true });
+    expect(committed.committed).toBe(true);
+    expect(committed.summary).toMatchObject({
+      dataRows: 2,
+      validRows: 2,
+      inserts: 1,
+      merges: 0,
+      duplicates: 1,
+      errors: 0,
+      totalTickets: 2,
+    });
+    expect(h.state.updates).toHaveLength(0);
+    const entryIns = insertsOf(luckyDrawEventEntries);
+    expect(entryIns).toHaveLength(1);
+    expect(entryIns[0].values).toEqual([
+      expect.objectContaining({ eventId: 7, holderName: "AL Ng", normalizedName: "al ng", ticketCount: 2 }),
+    ]);
+
+    // 每次 entries 查詢都必須鎖定本活動；其他活動同名 entry 唔會影響預覽或寫入。
+    const entryReads = h.state.selects.filter((s) => s.from === luckyDrawEventEntries);
+    expect(entryReads.length).toBeGreaterThanOrEqual(3);
+    for (const q of entryReads) expectWhere(q.where, ['"eventId" = $1'], [7]);
+  });
+
+  it("ticket 預設 skip：同檔同名累加超每人上限，commit 全批拒寫", async () => {
+    const b64 = makeXlsxBase64("ticket", [["AL Ng", "10000"], ["al ng", "1"]]);
+    h.state.queue = [[EVENT], []];
+    const r = await caller().adminImportExcel({ kind: "ticket", fileBase64: b64, eventId: 7, commit: true });
+    expect(r.committed).toBe(false);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toMatchObject({ row: 3, field: "抽獎劵數" });
+    expect(r.errors[0].message).toContain("超過每人上限");
+    expect(h.state.inserts).toHaveLength(0);
+    expect(h.state.updates).toHaveLength(0);
+    expect(h.state.txCount).toBe(0);
+  });
+
   it("commit=true 但有逐行錯誤 → 全部唔寫", async () => {
     const b64 = makeXlsxBase64("ticket", [["甲", "abc"], ["乙", "1"]]);
     h.state.queue = [[EVENT], [EXISTING_A]];

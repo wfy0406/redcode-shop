@@ -270,6 +270,10 @@ export type RetrievedIntent = {
   /** Airwallex intent 狀態字串：SUCCEEDED / REQUIRES_PAYMENT_METHOD / CANCELLED 等 */
   status: string;
   merchantOrderId: string | null;
+  // v2026.11.09（網站設計）：金額／幣種（只加欄，唔改舊流程）——收款核對用；
+  // 回應缺欄／非數字 → null（caller 當未能核實處理，唔准放行轉 paid）
+  amount: number | null;
+  currency: string | null;
 };
 
 /**
@@ -295,6 +299,8 @@ export async function retrievePaymentIntent(
     id?: string;
     status?: string;
     merchant_order_id?: unknown;
+    amount?: unknown;
+    currency?: unknown;
   };
   if (!json.id || !json.status) {
     throw new Error("Airwallex 查 intent 回應缺 id / status");
@@ -304,6 +310,9 @@ export async function retrievePaymentIntent(
     status: json.status,
     merchantOrderId:
       typeof json.merchant_order_id === "string" ? json.merchant_order_id : null,
+    amount:
+      typeof json.amount === "number" && Number.isFinite(json.amount) ? json.amount : null,
+    currency: typeof json.currency === "string" ? json.currency : null,
   };
 }
 

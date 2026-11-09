@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router';
-import { formatLiveDateLabel, normalizeLiveShare } from './liveShare';
+import { formatLiveDateLabel, liveSharePath, normalizeLiveShare } from './liveShare';
 
 /**
  * SEO（v2.2.20）：逐頁 title / description 管理。
@@ -30,6 +30,11 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     // 2026-10-27（老闆批准文案）：同 api/lib/vite.ts ROUTE_SEO['/about'] 保持一致
     description:
       'RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。',
+  },
+  '/web-design': {
+    title: '香港網站設計｜前台、後台及逐項 SEO｜RedCode',
+    description:
+      'RedCode 網站設計：一頁式前台或前台＋後台，逐項列明香港市場對照價、折扣及 SEO 驗證項目；可網上落單、上載付款截圖及自助查詢進度。',
   },
   '/vip': {
     title: 'VIP 會員｜RedCode Fashion Design',
@@ -175,7 +180,8 @@ export function resolveSeo(pathname: string, search = ''): { title: string; desc
   if (/^\/lucky-results\/\d+/.test(pathname)) return PAGE_SEO['/lucky-results/:eventId'];
   if (/^\/lucky-tickets\/\d+/.test(pathname)) return PAGE_SEO['/lucky-tickets/:eventId'];
   if (/^\/try-on\/shared\/[^/]+/.test(pathname)) return PAGE_SEO['/try-on/shared/:publicId'];
-  return PAGE_SEO[pathname] ?? NOT_FOUND_SEO;
+  const exactPath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  return PAGE_SEO[exactPath] ?? NOT_FOUND_SEO;
 }
 
 const PUBLIC_EXACT_PATHS = new Set([
@@ -183,6 +189,7 @@ const PUBLIC_EXACT_PATHS = new Set([
   '/products',
   '/live',
   '/about',
+  '/web-design',
   '/vip',
   '/sf-stations',
   '/faq',
@@ -202,7 +209,41 @@ export function isNoIndexPath(pathname: string): boolean {
   return true;
 }
 
-/** 掛喺 Router 之下，每次轉頁或更改有效直播篩選即時更新 title、description 同 robots。 */
+/** SPA 轉頁後都要維持 canonical host；私人／404 頁回 null，唔再沿用首頁 canonical。 */
+export function resolveCanonicalPath(pathname: string, search = ''): string | null {
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  if (normalized === '/products') {
+    const params = new URLSearchParams(search);
+    const live = normalizeLiveShare(params.get('liveDate') ?? '', params.get('liveSession'));
+    return live ? liveSharePath(live) : '/products';
+  }
+  if (PUBLIC_EXACT_PATHS.has(normalized)) return normalized;
+  if (/^\/products\/\d+$/.test(normalized)) return normalized;
+  if (/^\/lucky-results\/\d+$/.test(normalized)) return normalized;
+  // 查劵頁雖然 noindex，server 本來就用 self canonical，前後保持一致。
+  if (/^\/lucky-tickets\/\d+$/.test(normalized)) return normalized;
+  return null;
+}
+
+/** null＝移除錯誤嘅首頁 canonical／og:url；否則一律寫 HTTPS apex canonical URL。 */
+export function setCanonicalPath(path: string | null): void {
+  if (typeof document === 'undefined') return;
+  const existing = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+  const ogUrl = document.querySelector('meta[property="og:url"]');
+  if (path === null) {
+    existing?.remove();
+    ogUrl?.remove();
+    return;
+  }
+  const href = `https://redcode.red${path}`;
+  const link = existing ?? document.createElement('link');
+  link.setAttribute('rel', 'canonical');
+  link.setAttribute('href', href);
+  if (!existing) document.head.appendChild(link);
+  ogUrl?.setAttribute('content', href);
+}
+
+/** 掛喺 Router 之下，每次轉頁或更改有效直播篩選即時更新 title、description、robots 同 canonical。 */
 export function SeoManager() {
   const { pathname, search } = useLocation();
   useEffect(() => {
@@ -214,6 +255,7 @@ export function SeoManager() {
     document
       .querySelector('meta[name="robots"]')
       ?.setAttribute('content', isNoIndexPath(pathname) ? 'noindex, nofollow' : 'index, follow');
+    setCanonicalPath(resolveCanonicalPath(pathname, search));
   }, [pathname, search]);
   return null;
 }

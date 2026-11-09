@@ -1,21 +1,26 @@
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let mockRows: unknown[] = [];
 let queryError: Error | null = null;
 let seenLimit = 0;
+let seenWhere: unknown = null;
 
 vi.mock("../queries/connection", () => ({
   getDb: () => ({
     select: () => ({
       from: () => ({
-        where: () => ({
-          orderBy: () => ({
-            limit: (n: number) => {
-              seenLimit = n;
-              return queryError ? Promise.reject(queryError) : Promise.resolve(mockRows);
-            },
-          }),
-        }),
+        where: (where: unknown) => {
+          seenWhere = where;
+          return {
+            orderBy: () => ({
+              limit: (n: number) => {
+                seenLimit = n;
+                return queryError ? Promise.reject(queryError) : Promise.resolve(mockRows);
+              },
+            }),
+          };
+        },
       }),
     }),
   }),
@@ -36,6 +41,7 @@ beforeEach(() => {
   mockRows = [];
   queryError = null;
   seenLimit = 0;
+  seenWhere = null;
 });
 
 describe("公開商品目錄首口 HTML", () => {
@@ -61,5 +67,26 @@ describe("公開商品目錄首口 HTML", () => {
     expect(seenLimit).toBe(60);
     queryError = new Error("connection refused");
     await expect(listPublicCatalog()).rejects.toThrow("connection refused");
+  });
+
+  it("有效直播日期／場次會落入 SQL filter，同時保留公開上架條件", async () => {
+    mockRows = [item];
+    await listPublicCatalog(48, { liveDate: "20261103", liveSession: "1" });
+    const query = new PgDialect().sqlToQuery(seenWhere as never);
+    expect(query.sql).toMatch(/"isActive" = \$1/);
+    expect(query.sql).toMatch(/"delistEnabled" = \$2/);
+    expect(query.sql).toContain('"delistAt" is null');
+    expect(query.sql).toMatch(/"delistAt" > \$3/);
+    expect(query.sql).toMatch(/"liveDate" = \$4/);
+    expect(query.sql).toMatch(/"liveSession" = \$5/);
+    expect(query.params[0]).toBe(true);
+    expect(query.params[1]).toBe(false);
+    expect(Number.isNaN(Date.parse(String(query.params[2])))).toBe(false);
+    expect(query.params.slice(3)).toEqual(["20261103", "1"]);
+  });
+
+  it("直播目錄可以用日期場次做真標題，唔再只得通用全部貨品", () => {
+    const html = renderPublicCatalog([item], "2026年11月3日 第1場直播商品");
+    expect(html).toContain("<h2>2026年11月3日 第1場直播商品</h2>");
   });
 });

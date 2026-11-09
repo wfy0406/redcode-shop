@@ -37,6 +37,9 @@ import { tryOnPrivateMedia, tryOnSharedMedia } from "./tryonHttp";
 import { tryOnAdminMedia } from "./tryonAdminMedia";
 import { startTryOnMediaSweeper } from "./tryonService";
 import { SITEMAP_STATIC_PATHS } from "./lib/publicSeo";
+import { webDesignProofUpload } from "./webDesignUpload";
+import { handleWebDesignWebhookPaid, verifyWebDesignReturn } from "./webDesignPayments";
+import { isWebDesignOrderNo } from "./webDesignCore";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 
@@ -208,6 +211,17 @@ app.get("/api/airwallex/return-topup", async (c) => {
   }
   void verifyReturnTopup(Number(wt));
   return c.redirect(`/#/wallet-topup?paid=1`, 302);
+});
+
+// 網站設計服務單回跳：只接受 WD 單號；主動向支付平台查證後先返第四段。
+// 成功與否都由頁面用姓名＋電話重新查單，唔靠 URL 自行聲稱已付款。
+app.get("/api/airwallex/return-web-design", async (c) => {
+  const orderNo = (c.req.query("orderNo") ?? "").trim();
+  if (!isWebDesignOrderNo(orderNo)) {
+    return c.redirect("/web-design#contact", 302);
+  }
+  await verifyWebDesignReturn(orderNo);
+  return c.redirect(`/web-design?orderNo=${encodeURIComponent(orderNo)}&ap=done#wd-services`, 302);
 });
 
 /** 充值單回跳背景查證（同訂單 verifyReturnPayment 同款，淨係查嘅表唔同） */
@@ -491,11 +505,13 @@ app.post("/api/airwallex/webhook", async (c) => {
   if (!merchantOrderId) {
     return c.json({ ok: true, ignored: true });
   }
-  // 收款確認：v2.5.0 充值單（WT 前綴）行 handleTopupPaidOnline；訂單（RC）照舊 handlePaidOnline。
-  // 兩條路都冪等（conditional update 郁 0 行 → alreadyHandled 收檔）。
-  const handled = isTopupNo(merchantOrderId)
-    ? await handleTopupPaidOnline(merchantOrderId, intentId, "webhook")
-    : await handlePaidOnline(merchantOrderId, intentId, "webhook");
+  // 收款確認：網站設計 WD、購物金 WT、普通商品各自行獨立 handler。
+  // 三路都冪等（conditional update 郁 0 行 → alreadyHandled 收檔），WD 唔會跌入普通 orders 表。
+  const handled = isWebDesignOrderNo(merchantOrderId)
+    ? await handleWebDesignWebhookPaid(intent)
+    : isTopupNo(merchantOrderId)
+      ? await handleTopupPaidOnline(merchantOrderId, intentId, "webhook")
+      : await handlePaidOnline(merchantOrderId, intentId, "webhook");
   if (!handled) {
     // 唔存在嘅單／已處理過嘅 retry：照回 200 收檔
     return c.json({ ok: true, alreadyHandled: true });
@@ -581,6 +597,10 @@ app.get("/merchant-feed.xml", async (c) => {
     return c.json({ error: "Feed temporarily unavailable" }, 500);
   }
 });
+
+// 網站設計服務付款截圖：orderNo＋完整姓名＋電話核實、sharp 驗圖及 re-encode。
+// 同普通會員 /api/upload 分開，唔需要登入，亦唔會共用會員每日配額。
+app.post("/api/web-design/upload", webDesignProofUpload);
 
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({

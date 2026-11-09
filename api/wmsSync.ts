@@ -42,6 +42,7 @@ import { logAudit } from "./audit";
 import { sendOrderApprovedEmail, orderVipEmailInfo } from "./email";
 import { recomputeVipTierInBackground } from "./vip";
 import { secretEquals } from "./wmsSecret";
+import { isWebDesignOrderNo } from "./webDesignCore";
 
 const DEFAULT_WMS_BASE_URL = "https://red-code-wms.onrender.com";
 const DEFAULT_PUBLIC_BASE_URL = "https://redcode.red";
@@ -75,8 +76,9 @@ interface WmsCallResult {
   error: string | null;
 }
 
-/** 調 WMS order.receiveWebhook（tRPC HTTP：body 要包 { json: ... }；apiKey 擺 body，唔係 header） */
-async function callReceiveWebhook(body: Record<string, unknown>): Promise<WmsCallResult> {
+/** 調 WMS order.receiveWebhook（tRPC HTTP：body 要包 { json: ... }；apiKey 擺 body，唔係 header）
+ *  v2026.11.09：export 咗畀 api/webDesignWms.ts（網站設計服務單）重用——同一個 WMS endpoint／同一套 timeout。 */
+export async function callReceiveWebhook(body: Record<string, unknown>): Promise<WmsCallResult> {
   const apiKey = process.env.WMS_API_KEY;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PER_CALL_TIMEOUT_MS);
@@ -529,6 +531,13 @@ export async function wmsReviewCallback(c: Context) {
   // v1.3：rejectType 淨係認 "reupload"，其餘（包括冇呢個欄位嘅舊格式）一律當 cancel
   const rejectType = b.rejectType === "reupload" ? "reupload" : "cancel";
   const noteText = typeof b.note === "string" ? b.note : "";
+
+  // v2026.11.09（網站設計服務）：WD 前綴單分流去專用 handler（api/webDesignWms.ts）；
+  // 普通商品路徑（下面）逐字保持，唔受影響。
+  if (isWebDesignOrderNo(orderNo)) {
+    const { webDesignReviewCallback } = await import("./webDesignWms");
+    return webDesignReviewCallback(c, { orderNo, decision, rejectType, note: noteText });
+  }
 
   const db = getDb();
   const order = await db.query.orders.findFirst({

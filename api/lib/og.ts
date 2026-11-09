@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { products } from "@db/schema";
+import { productCategoryLabel, productSeoDescription } from "@contracts/types";
 import { stripPublicSeoContent } from "./publicSeo";
 
 /** HTML attribute escape：品名/描述入面嘅 & " < > 會整爛 meta tag */
@@ -29,7 +30,11 @@ export interface RouteMeta {
   title?: string;
   description?: string;
   path?: string;
+  /** null＝404／私人 noindex 頁移除首頁 canonical，避免宣告內容等同首頁。 */
+  canonical?: string | null;
   noindex?: boolean;
+  image?: string;
+  structuredData?: Record<string, unknown>;
 }
 
 /**
@@ -68,8 +73,40 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
         `<meta property="og:url" content="${url}" />`,
       );
       out = out.replace(
-        /<link\s+rel="canonical"\s+href="[^"]*"\s*\/>/,
+        /<link\b[^>]*\brel=["']canonical["'][^>]*>/i,
         `<link rel="canonical" href="${url}" />`,
+      );
+    }
+    if (meta.canonical !== undefined) {
+      out = out.replace(/[ \t]*<link\b[^>]*\brel=["']canonical["'][^>]*>\s*/i, "");
+      if (meta.canonical !== null) {
+        const tag = `<link rel="canonical" href="${esc(meta.canonical)}" />`;
+        out = out.replace("</head>", `    ${tag}\n  </head>`);
+      } else {
+        // 404／私人頁唔係首頁替代品：canonical 同 og:url 要一齊移除，
+        // 否則社交 crawler 首口 HTML 同 client 渲染後訊號唔一致。
+        out = out.replace(/[ \t]*<meta\b[^>]*\bproperty=["']og:url["'][^>]*>\s*/i, "");
+      }
+    }
+    if (meta.image) {
+      const imageUrl = esc(
+        meta.image.startsWith("https://") ? meta.image : `https://redcode.red${meta.image}`,
+      );
+      out = out.replace(
+        /<meta\s+property="og:image"\s+content="[^"]*"\s*\/>/,
+        `<meta property="og:image" content="${imageUrl}" />`,
+      );
+      out = out.replace(
+        /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/,
+        `<meta name="twitter:image" content="${imageUrl}" />`,
+      );
+    }
+    if (meta.structuredData) {
+      // JSON-LD 只由 server 嘅公開內容事實來源注入；< 轉義防止 </script> 截斷。
+      const json = JSON.stringify(meta.structuredData).replace(/</g, "\\u003c");
+      out = out.replace(
+        "</head>",
+        `    <script type="application/ld+json" data-redcode-route-schema>${json}</script>\n  </head>`,
       );
     }
     if (meta.noindex) {
@@ -86,16 +123,6 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
   }
 }
 
-/** 商品描述入面嘅 HTML tag／控制碼／emoji 剝走，先至好入 meta description（純文字） */
-function toPlainText(s: string): string {
-  return s
-    .replace(/<[^>]*>/g, " ")
-    .replace(/[\u0000-\u001f]/g, " ")
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 export async function injectProductOg(
   html: string,
   id: number,
@@ -104,7 +131,23 @@ export async function injectProductOg(
   let p: typeof products.$inferSelect | undefined;
   try {
     const db = getDb();
-    [p] = await db.select().from(products).where(eq(products.id, id)).limit(1);
+    // 同 products.byId 完全一致：人手下架或已到期自動下架都係非公開商品。
+    // 否則 server 首口會出 200＋index，client 卻 NOT_FOUND，sitemap 又排除，三邊訊號打架。
+    [p] = await db
+      .select()
+      .from(products)
+      .where(
+        and(
+          eq(products.id, id),
+          eq(products.isActive, true),
+          or(
+            eq(products.delistEnabled, false),
+            isNull(products.delistAt),
+            gt(products.delistAt, new Date()),
+          ),
+        ),
+      )
+      .limit(1);
   } catch {
     // DB 一時故障：原封不動回 html（200），唔好令在架商品被當 404
     return html;
@@ -115,14 +158,9 @@ export async function injectProductOg(
     const pageUrl = `${origin}/products/${p.id}`;
     const imageUrl = p.image.startsWith("http") ? p.image : `${origin}${p.image}`;
     const price = p.discountPrice ?? p.price;
-    // meta description：同前端 ProductDetail 載入後嘅規則一致——商品描述純文字 120 字截斷；
-    // 冇描述就用商品名兜底。**之前呢度淨係改 OG/title，冇郁 meta[name=description]**，
-    // 件件商品出同一條首頁通用 description → Google 當 /products/85、/products/95 呢類
-    // 短名商品做 near-duplicate（duplicate without user-selected canonical）。
-    const descPlain = toPlainText(p.description ?? "");
-    const descSrc =
-      descPlain || `${p.name}——RedCode 香港女裝直播精選，直播優惠價發售，順豐站自取。`;
-    const desc = descSrc.length > 120 ? `${descSrc.slice(0, 117)}…` : descSrc;
+    // meta description 同前端 ProductDetail 共用 contracts/types.ts 規則：
+    // 有真描述用真描述；冇描述就用真貨號、分類、售價同庫存補強，唔再每件都係同一句空泛兜底。
+    const desc = productSeoDescription(p);
     // title 同前端 ProductDetail 嘅 document.title 對齊（server HTML 同 rendered DOM 一致）
     const title = `${p.name}｜RedCode Fashion Design`;
 
@@ -150,21 +188,23 @@ export async function injectProductOg(
       /<meta\s+name="description"\s+content="[^"]*"\s*\/>/,
       `<meta name="description" content="${esc(desc)}" />`,
     );
-    // SEO（v2.2.20）：canonical 指返呢件商品（replace 原有嗰條，唔會多一條出嚟）
+    // canonical 指返呢件商品；唔依賴首頁 canonical 嘅精確 whitespace，模板少少改動都唔會静默失效。
     out = out.replace(
-      '<link rel="canonical" href="https://redcode.red/" />',
+      /<link\b[^>]*\brel=["']canonical["'][^>]*>/i,
       `<link rel="canonical" href="${esc(pageUrl)}" />`,
     );
     out = out.replace("</head>", `    ${tags}\n  </head>`);
 
     // 首口 HTML 直接放商品名、價錢、描述同購物支援連結，唔再只放 noscript。
     // 區塊放喺 #root 外，白屏自救仍可靠 root.childNodes；React mount 後統一移除。
-    const prerenderDesc =
-      (descPlain.length > 300 ? `${descPlain.slice(0, 297)}…` : descPlain) || desc;
+    const prerenderDesc = productSeoDescription(p, 300);
+    const stockText = p.stock > 0 ? `現貨 ${p.stock} 件` : "暫時缺貨";
     const prerender =
       `<main id="redcode-product-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8"><h1>${esc(p.name)}</h1>` +
       `${p.sku ? `<p>貨號：${esc(p.sku)}</p>` : ""}` +
+      `<p>分類：${esc(productCategoryLabel(p.category))}</p>` +
       `<p>HK$${price}</p>` +
+      `<p>${esc(stockText)}</p>` +
       `<p>${esc(prerenderDesc)}</p>` +
       `<nav aria-label="購物相關頁面"><ul><li><a href="/products">全部貨品</a></li><li><a href="/try-on">AI 試穿</a></li><li><a href="/returns">退換貨政策</a></li></ul></nav></main>`;
     out = out.replace("</body>", `    ${prerender}\n  </body>`);
@@ -174,8 +214,7 @@ export async function injectProductOg(
     // cents 淨係訂單/VIP 引擎用），所以 JSON-LD price 直接 toFixed(2)，唔准 ÷100。
     // 任何一步出錯都靜靜雞 skip，唔好炸成個 injection。
     try {
-      const jsonPlain = descPlain || `${p.name}｜RedCode 香港女裝直播`;
-      const jsonDesc = jsonPlain.length > 200 ? `${jsonPlain.slice(0, 197)}…` : jsonPlain;
+      const jsonDesc = productSeoDescription(p, 200);
       const images = (p.photos && p.photos.length ? p.photos : [p.image]).map((u) =>
         u.startsWith("http") ? u : `${origin}${u}`,
       );

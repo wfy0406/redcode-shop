@@ -109,11 +109,15 @@ export function serveStaticFiles(app: App) {
     const productMatch = c.req.path.match(/^\/products\/(\d+)\/?$/);
     if (productMatch) {
       const { injectProductOg, injectRouteMeta } = await import("./og");
-      // Render 反向代理後面 c.req.url 係 http://，OG 圖必須 https 先會被 FB 接受：
-      // 用 x-forwarded-proto/host 還原訪客真正嘅 origin
-      const proto = c.req.header("x-forwarded-proto") ?? new URL(c.req.url).protocol.replace(":", "");
-      const host = c.req.header("x-forwarded-host") ?? c.req.header("host") ?? new URL(c.req.url).host;
-      const injected = await injectProductOg(content, Number(productMatch[1]), `${proto}://${host}`);
+      // OG／canonical 永遠用正式 HTTPS apex host；www／onrender 入口都唔可以產生另一個 self canonical。
+      // 同 client setCanonicalPath() 保持一致，唔受預覽環境 PUBLIC_BASE_URL 影響。
+      const publicOrigin = "https://redcode.red";
+      const productId = Number(productMatch[1]);
+      const validProductId = Number.isSafeInteger(productId) && productId >= 1 && productId <= 2147483647;
+      // pg integer 上限以外嘅 ID 一定唔存在；直接 404，唔好跌入 DB error 嘅 200 兜底。
+      const injected = validProductId
+        ? await injectProductOg(content, productId, publicOrigin)
+        : null;
       if (injected === null) {
         // 2026-10-27 Search Console 軟 404 根治：商品**確定唔存在**（DB 查詢成功、零行，
         // 例如已刪嘅 /products/94）——之前回 200＋首頁 title/canonical，Google 當軟 404。
@@ -123,6 +127,7 @@ export function serveStaticFiles(app: App) {
         const notFoundHtml = injectRouteMeta(content, {
           title: "搵唔到呢件商品｜RedCode Fashion Design",
           description: "呢件商品可能已經賣晒或落架，去全部貨品睇最新直播精選女裝。",
+          canonical: null,
           noindex: true,
         });
         return c.html(notFoundHtml, 404);
@@ -133,32 +138,64 @@ export function serveStaticFiles(app: App) {
       // 未知路徑回真 404，避免任何字串都變成首頁嘅軟 404。
       const { injectRouteMeta } = await import("./og");
       const normPath = reqPath.length > 1 ? reqPath.replace(/\/+$/, "") : reqPath;
-      const isLuckyEvent = /^\/lucky-results\/\d+$/.test(normPath);
+      const luckyEventMatch = normPath.match(/^\/lucky-results\/(\d+)$/);
       const isLuckyTicket = /^\/lucky-tickets\/\d+$/.test(normPath);
-      const publicPath = isLuckyEvent ? "/lucky-results" : normPath;
-      const pageSeo = isLuckyEvent ? LUCKY_EVENT_SEO : PUBLIC_PAGES[publicPath];
+      const pageSeo = PUBLIC_PAGES[normPath];
       if (isLuckyTicket) {
         // 公開查劵頁：200＋專屬 title/description＋self canonical＋noindex。
         // 唔入 PUBLIC_PAGES／sitemap、唔查 DB、唔注入活動名／名單／winners（見 LUCKY_TICKET_SEO 註）。
         content = injectRouteMeta(content, { ...LUCKY_TICKET_SEO, path: normPath, noindex: true });
+      } else if (luckyEventMatch) {
+        // 單場公告必須真係存在兼 winnersPublic=true；否則任何數字 id 都會變 200 soft-404。
+        const { getPublicLuckyEventSeo, injectLuckyEventSeoContent, luckyEventRouteMeta } = await import("./luckyEventSeo");
+        try {
+          const eventId = Number(luckyEventMatch[1]);
+          const validEventId = Number.isSafeInteger(eventId) && eventId >= 1 && eventId <= 2147483647;
+          // 超出 pg integer 嘅 ID 直接當唔存在，唔好誤觸 DB error 嘅通用 200。
+          const event = validEventId ? await getPublicLuckyEventSeo(eventId) : null;
+          if (!event) {
+            content = injectRouteMeta(content, {
+              title: "中獎公告未公開或唔存在｜RedCode Fashion Design",
+              description: "呢場中獎公告未公開、已移除或唔存在，請返回中獎公告總頁睇最新公開活動。",
+              canonical: null,
+              noindex: true,
+            });
+            return c.html(content, 404);
+          }
+          content = injectRouteMeta(content, luckyEventRouteMeta(event));
+          content = injectLuckyEventSeoContent(content, event);
+        } catch {
+          // DB 一時故障唔好誤當未公開：保留通用 200，等之後重新檢索。
+          content = injectRouteMeta(content, { ...LUCKY_EVENT_SEO, path: normPath });
+          content = injectPublicSeoContent(content, "/lucky-results");
+        }
       } else if (normPath === "/products") {
         // 直播節目頁保留有效日期／場次嘅專屬 canonical；無效參數唔反射入 HTML。
-        const { liveRouteMeta } = await import("./liveSeo");
+        const { liveRouteMeta, parseLiveQuery } = await import("./liveSeo");
         const q = new URL(c.req.url).searchParams;
+        const liveFilter = parseLiveQuery(q.get("liveDate"), q.get("liveSession"));
         const liveMeta = liveRouteMeta(q.get("liveDate"), q.get("liveSession"));
         content = injectRouteMeta(content, liveMeta ?? { ...PUBLIC_PAGES["/products"], path: "/products" });
         content = injectPublicSeoContent(content, "/products");
-        if (!liveMeta) {
-          try {
-            const { injectPublicCatalog, listPublicCatalog } = await import("./catalogSeo");
-            content = injectPublicCatalog(content, await listPublicCatalog());
-          } catch {
-            // DB 一時故障照出通用公開摘要；唔好將在架商品頁誤報做空目錄或 404。
-          }
+        try {
+          const { injectPublicCatalog, listPublicCatalog } = await import("./catalogSeo");
+          const items = await listPublicCatalog(48, liveFilter ?? undefined);
+          const heading = liveMeta?.title?.replace("｜RedCode Fashion Design", "");
+          content = injectPublicCatalog(content, items, heading);
+        } catch {
+          // DB 一時故障照出通用公開摘要；唔好將在架商品頁誤報做空目錄或 404。
         }
       } else if (pageSeo) {
         content = injectRouteMeta(content, { ...pageSeo, path: normPath });
-        content = injectPublicSeoContent(content, publicPath);
+        content = injectPublicSeoContent(content, normPath);
+        if (normPath === "/lucky-results") {
+          try {
+            const { injectLuckyEventIndexContent, listPublicLuckyEventSeo } = await import("./luckyEventSeo");
+            content = injectLuckyEventIndexContent(content, await listPublicLuckyEventSeo());
+          } catch {
+            // 活動 DB 一時故障保留公告總頁通用摘要，唔好回假空名單或 404。
+          }
+        }
       } else if (
         NOINDEX_EXACT.includes(normPath) ||
         normPath.startsWith("/receipt/") ||
@@ -166,11 +203,12 @@ export function serveStaticFiles(app: App) {
         normPath === "/admin" ||
         normPath.startsWith("/admin/")
       ) {
-        content = injectRouteMeta(content, { noindex: true });
+        content = injectRouteMeta(content, { canonical: null, noindex: true });
       } else {
         content = injectRouteMeta(content, {
           title: "搵唔到呢頁｜RedCode Fashion Design",
           description: "呢個網址唔存在，返回 RedCode 首頁或去全部貨品睇最新直播精選女裝。",
+          canonical: null,
           noindex: true,
         });
         return c.html(content, 404);

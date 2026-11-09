@@ -71,6 +71,7 @@ const INFO_LINKS = [
 const MORE_LINKS = [
   { to: '/try-on', label: 'AI 試穿' },
   { to: '/lucky-results', label: '中獎公告' },
+  { to: '/web-design', label: '網站設計' },
   ...INFO_LINKS,
 ];
 

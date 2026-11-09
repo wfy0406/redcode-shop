@@ -9,6 +9,9 @@ import {
   paymentProofs,
   walletTopups,
   walletLedger,
+  webDesignOrders,
+  webDesignOrderItems,
+  webDesignPaymentProofs,
 } from "./schema";
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -86,5 +89,25 @@ export const walletLedgerRelations = relations(walletLedger, ({ one }) => ({
   user: one(users, {
     fields: [walletLedger.userId],
     references: [users.id],
+  }),
+}));
+
+// ===== 網站設計服務（v2026.11.09）=====
+export const webDesignOrdersRelations = relations(webDesignOrders, ({ many }) => ({
+  items: many(webDesignOrderItems),
+  proofs: many(webDesignPaymentProofs),
+}));
+
+export const webDesignOrderItemsRelations = relations(webDesignOrderItems, ({ one }) => ({
+  order: one(webDesignOrders, {
+    fields: [webDesignOrderItems.orderId],
+    references: [webDesignOrders.id],
+  }),
+}));
+
+export const webDesignPaymentProofsRelations = relations(webDesignPaymentProofs, ({ one }) => ({
+  order: one(webDesignOrders, {
+    fields: [webDesignPaymentProofs.orderId],
+    references: [webDesignOrders.id],
   }),
 }));

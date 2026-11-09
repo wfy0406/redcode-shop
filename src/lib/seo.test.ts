@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { liveRouteMeta } from "../../api/lib/liveSeo";
-import { isNoIndexPath, NOT_FOUND_SEO, PAGE_SEO, resolveSeo } from "./seo";
+import { isNoIndexPath, NOT_FOUND_SEO, PAGE_SEO, resolveCanonicalPath, resolveSeo } from "./seo";
 
 const PHRASE_TRYON = "影張相即刻試穿";
 const PHRASE_EFFECT = "即刻睇到著上身效果";
@@ -27,6 +27,16 @@ describe("PAGE_SEO 文案", () => {
     // server 首口 HTML（crawler 睇）同 client 轉頁後嘅 meta 必須一致，唔係會有兩個版本
     const serverSeoSrc = readFileSync(new URL("../../api/lib/publicSeo.ts", import.meta.url), "utf8");
     expect(serverSeoSrc).toContain(PAGE_SEO["/about"].description);
+  });
+
+  it("網站設計頁前端同 server 首口 SEO 一致，而且可公開收錄", () => {
+    const serverSeoSrc = readFileSync(new URL("../../api/lib/publicSeo.ts", import.meta.url), "utf8");
+    expect(serverSeoSrc).toContain(PAGE_SEO["/web-design"].title);
+    expect(serverSeoSrc).toContain(PAGE_SEO["/web-design"].description);
+    expect(resolveSeo("/web-design")).toEqual(PAGE_SEO["/web-design"]);
+    expect(resolveSeo("/web-design/")).toEqual(PAGE_SEO["/web-design"]);
+    expect(isNoIndexPath("/web-design")).toBe(false);
+    expect(isNoIndexPath("/web-design/")).toBe(false);
   });
 
   it("index.html 預設 description 同 PAGE_SEO['/'] 一致", () => {
@@ -93,7 +103,7 @@ describe("resolveSeo 路由對應", () => {
   });
 
   it("robots：公開頁可收錄；私人、分享、後台及未知頁 noindex", () => {
-    for (const path of ["/", "/faq", "/returns", "/try-on", "/products/85", "/lucky-results/12"]) {
+    for (const path of ["/", "/faq", "/returns", "/try-on", "/web-design", "/products/85", "/lucky-results/12"]) {
       expect(isNoIndexPath(path), path).toBe(false);
     }
     for (const path of [
@@ -107,5 +117,17 @@ describe("resolveSeo 路由對應", () => {
     ]) {
       expect(isNoIndexPath(path), path).toBe(true);
     }
+  });
+
+  it("SPA canonical：category／try-on query 合併；有效直播 query 保留；私人同 404 唔指首頁", () => {
+    expect(resolveCanonicalPath("/products", "?category=skincare")).toBe("/products");
+    expect(resolveCanonicalPath("/try-on", "?productId=251&photoIndex=0")).toBe("/try-on");
+    expect(resolveCanonicalPath("/products", "?liveDate=20261103&liveSession=1&category=top")).toBe(
+      "/products?liveDate=20261103&liveSession=1",
+    );
+    expect(resolveCanonicalPath("/products/251")).toBe("/products/251");
+    expect(resolveCanonicalPath("/lucky-results/12")).toBe("/lucky-results/12");
+    expect(resolveCanonicalPath("/account")).toBeNull();
+    expect(resolveCanonicalPath("/no-such-page")).toBeNull();
   });
 });

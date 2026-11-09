@@ -2409,3 +2409,47 @@ export async function sendOrderItemChangedEmail(args: {
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
+
+/* ───────────────────────── 網站設計服務（v2026.11.09）───────────────────────── */
+
+/** 網站設計留言通知收件箱（凍結規格） */
+export const WEB_DESIGN_INQUIRY_INBOX = "service.support@ows.redcode.red";
+
+/**
+ * ⑬ 網站設計留言通知（→ 服務收件箱）：客人喺網站設計頁第四段留名＋電話＋email＋訊息，
+ * server 保存 DB 後寄呢封。失敗唔會 throw——caller（submitInquiry）會回明確部分成功。
+ */
+export async function sendWebDesignInquiryEmail(args: {
+  name: string;
+  phone: string;
+  email: string;
+  message: string;
+  inquiryId: number;
+}): Promise<SendResult> {
+  try {
+    const esc = escapeHtml;
+    const content = `
+      <p style="margin:0 0 14px;">網站設計頁收到新留言（#${args.inquiryId}）：</p>
+      ${infoBox([
+        ["姓名", esc(args.name)],
+        ["電話", mono(esc(args.phone))],
+        ["電郵", esc(args.email)],
+      ])}
+      <div style="border-top:1px solid ${GOLD_HAIR};padding-top:14px;font-size:14.5px;line-height:1.8;white-space:pre-wrap;">${esc(args.message)}</div>
+      ${note("請盡快回覆客人；呢條留言已保存喺後台「網站設計 → 留言」。")}
+    `;
+    return await sendEmail({
+      to: WEB_DESIGN_INQUIRY_INBOX,
+      subject: `【RedCode】網站設計新留言：${args.name}（${args.phone}）`,
+      html: brandedEmail({
+        preheader: `網站設計新留言：${args.name}（${args.phone}）`,
+        kicker: "REDCODE · 網站設計服務",
+        title: "新留言通知",
+        contentHtml: content,
+      }),
+    });
+  } catch (e) {
+    console.error(`[email] 砌網站設計留言信出錯（#${args.inquiryId}）`, e);
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+  }
+}

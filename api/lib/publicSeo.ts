@@ -15,6 +15,10 @@ export interface PublicSeoPage {
   summary: string;
   sections?: readonly PublicSeoSection[];
   links: readonly PublicSeoLink[];
+  /** 相對網址會由首口 HTML 注入器轉成 redcode.red 絕對網址。 */
+  image?: string;
+  /** 只放同公開可見內容一致嘅結構化資料；唔放評分、假案例或會過期嘅硬編碼價錢。 */
+  structuredData?: Record<string, unknown>;
 }
 
 /**
@@ -88,6 +92,57 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
       { href: "/try-on", label: "AI 試穿" },
       { href: "/faq", label: "常見問題" },
     ],
+  },
+  "/web-design": {
+    title: "香港網站設計｜前台、後台及逐項 SEO｜RedCode",
+    description:
+      "RedCode 網站設計：一頁式前台或前台＋後台，逐項列明香港市場對照價、折扣及 SEO 驗證項目；可網上落單、上載付款截圖及自助查詢進度。",
+    heading: "香港網站設計，由展示到自行管理",
+    summary:
+      "RedCode 提供只要前台及前台＋後台兩種網站設計方案。你可以按需要逐項加入 SEO、內容管理、留言管理或員工權限功能，再喺同一頁確認價錢及落單。",
+    sections: [
+      {
+        heading: "方案同價錢逐項睇清楚",
+        text: "只要前台適合展示既定內容；前台＋後台就俾你自行修改資料。每個可選項目列明 RedCode 價、香港市場對照價、折扣同可慳金額，雲端託管、維護及網域費用亦分開說明。",
+      },
+      {
+        heading: "SEO 做實事，唔承諾排名",
+        text: "可選項目包括頁面標題及描述、canonical、robots、sitemap、分享預覽、結構化資料、語義標題、圖片替代文字，以及逐項驗證報告。驗證結果會照實記錄，唔會保證搜尋排名。",
+      },
+      {
+        heading: "落單後有正式訂單圖同專屬查詢",
+        text: "揀好方案同功能後，可填寫要求、風格及備註，建立正式訂單；之後用完整姓名同電話查詢網站設計訂單。呢類服務訂單同一般商品訂單分開保存及查詢。",
+      },
+    ],
+    links: [
+      { href: "/web-design#pricing", label: "睇方案同逐項價錢" },
+      { href: "/web-design#contact", label: "查詢或建立訂單" },
+      { href: "/", label: "返回 RedCode 首頁" },
+    ],
+    image: "/web-design/suit-poster.webp",
+    structuredData: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://redcode.red/#organization",
+          name: "RedCode HK Limited",
+          url: "https://redcode.red/",
+        },
+        {
+          "@type": "Service",
+          "@id": "https://redcode.red/web-design#service",
+          name: "香港網站設計",
+          serviceType: "網站設計、前台及後台建置、技術 SEO",
+          description:
+            "只要前台或前台＋後台方案，可逐項加入 SEO、內容管理、留言管理及員工權限功能，並提供驗證報告。",
+          url: "https://redcode.red/web-design",
+          provider: { "@id": "https://redcode.red/#organization" },
+          areaServed: { "@type": "Country", name: "Hong Kong" },
+          inLanguage: "zh-Hant-HK",
+        },
+      ],
+    },
   },
   "/vip": {
     title: "VIP 會員｜RedCode Fashion Design",
@@ -299,6 +354,7 @@ export const SITEMAP_STATIC_PATHS = [
   "/products",
   "/live",
   "/about",
+  "/web-design",
   "/vip",
   "/sf-stations",
   "/privacy",

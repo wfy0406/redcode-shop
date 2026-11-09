@@ -124,6 +124,18 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).not.toContain('id="redcode-public-seo"');
   });
 
+  it("(1b) www／代理 host 入嚟都統一用 HTTPS apex canonical，唔會出第二個 self host", async () => {
+    mockRows = [makeProduct()];
+    const res = await makeApp().request("/products/85", {
+      headers: { "x-forwarded-proto": "https", "x-forwarded-host": "www.redcode.red" },
+    });
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(canonicalHref(html)).toBe("https://redcode.red/products/85");
+    expect(html).toContain('<meta property="og:url" content="https://redcode.red/products/85" />');
+    expect(html).not.toContain("https://www.redcode.red/products/85");
+  });
+
   it("(2) 已刪商品 /products/94 → 真 404＋noindex＋搵唔到商品 title（軟 404 根治）", async () => {
     mockRows = []; // DB 查詢成功、零行＝確定唔存在
     const res = await makeApp().request("/products/94", { headers: PROXY_HEADERS });
@@ -132,20 +144,32 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     const html = await res.text();
     expect(html).toContain("<title>搵唔到呢件商品｜RedCode Fashion Design</title>");
     expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
-    // 唔准有商品專屬內容／self canonical（軟 404 訊號清零）
+    // 唔准有商品專屬內容；404 亦唔應宣告自己等同首頁，所以移除首頁 canonical。
     expect(html).not.toContain("data-redcode-prerender");
-    expect(canonicalHref(html)).toBe("https://redcode.red/");
+    expect(canonicalHref(html)).toBeNull();
+    expect(html).not.toContain('property="og:url"');
+  });
+
+  it("(2b) 超出 pg integer 嘅商品 ID → 直接真 404，唔會跌入 DB error 嘅 200 兜底", async () => {
+    queryError = new Error("呢個 ID 唔應該查 DB");
+    const res = await makeApp().request("/products/99999999999999999999", { headers: PROXY_HEADERS });
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("搵唔到呢件商品");
+    expect(canonicalHref(html)).toBeNull();
+    expect(html).not.toContain('property="og:url"');
   });
 
   it("(3) 私人頁 /account 同 /cart → 200＋robots noindex, nofollow", async () => {
-    for (const path of ["/account", "/cart"]) {
+    for (const path of ["/account", "/orders", "/cart"]) {
       const res = await makeApp().request(path);
       expect(res.status).toBe(200);
       const html = await res.text();
       expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
       expect(html).not.toContain("index, follow");
-      // noindex 唔附帶 title/canonical 改動（照預設首頁版）
-      expect(canonicalHref(html)).toBe("https://redcode.red/");
+      // noindex 保留，但唔再帶一條同內容唔相符嘅首頁 canonical／og:url。
+      expect(canonicalHref(html)).toBeNull();
+      expect(html).not.toContain('property="og:url"');
       expect(html.match(/name="robots"/g)).toHaveLength(1);
     }
   });
@@ -192,19 +216,23 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(canonicalHref(html)).toBe("https://redcode.red/about");
   });
 
-  it("(7) /products?liveDate=20261028（有效全日）→ 全日專屬 title/description/canonical", async () => {
+  it("(7) /products?liveDate=20261028（有效全日）→ 全日專屬 meta＋該日真商品首口目錄", async () => {
+    mockRows = [makeProduct({ name: "全日直播真商品", liveDate: "20261028" })];
     const res = await makeApp().request("/products?liveDate=20261028");
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("<title>2026年10月28日 全日直播商品｜RedCode Fashion Design</title>");
     expect(html).toContain("全日全部場次");
     expect(canonicalHref(html)).toBe("https://redcode.red/products?liveDate=20261028");
+    expect(html).toContain("<h2>2026年10月28日 全日直播商品</h2>");
+    expect(html).toContain('<a href="/products/85"><strong>全日直播真商品</strong></a>');
     // og:image 保留 index.html 預設嗰張（直播頁冇專屬圖）
     expect(html).toContain('<meta property="og:image" content="https://redcode.red/og-image.jpg" />');
     expect(html.match(/rel="canonical"/g)).toHaveLength(1);
   });
 
-  it("(8) /products?liveDate=20261028&liveSession=2（有效單場）→ 單場 meta＋escaped canonical", async () => {
+  it("(8) /products?liveDate=20261028&liveSession=2（有效單場）→ 單場 meta＋真商品＋escaped canonical", async () => {
+    mockRows = [makeProduct({ name: "第2場直播真商品", liveDate: "20261028", liveSession: "2" })];
     const res = await makeApp().request("/products?liveDate=20261028&liveSession=2");
     expect(res.status).toBe(200);
     const html = await res.text();
@@ -219,6 +247,18 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain(
       '<meta property="og:url" content="https://redcode.red/products?liveDate=20261028&amp;liveSession=2" />',
     );
+    expect(html).toContain("<h2>2026年10月28日 第2場直播商品</h2>");
+    expect(html).toContain("第2場直播真商品");
+  });
+
+  it("(8b) live+category URL 係完整直播頁嘅篩選視圖；canonical 合併去完整場次，首口仍出該場商品", async () => {
+    mockRows = [makeProduct({ name: "場次商品", liveDate: "20261028", liveSession: "2", category: "top" })];
+    const res = await makeApp().request("/products?category=top&liveDate=20261028&liveSession=2");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(canonicalHref(html)).toBe("https://redcode.red/products?liveDate=20261028&amp;liveSession=2");
+    expect(html).toContain("場次商品");
+    expect(html.match(/rel="canonical"/g)).toHaveLength(1);
   });
 
   it("(9) 無效日期 /products?liveDate=20261340 → 通用 /products meta，絕不反射輸入", async () => {
@@ -269,6 +309,15 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(await tryOn.text()).toContain("<title>AI 試穿｜RedCode Fashion Design</title>");
   });
 
+  it("(12b) AI 試穿商品 query 係同一工具頁視圖，canonical 合併去 /try-on", async () => {
+    const res = await makeApp().request("/try-on?productId=251&photoIndex=0");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(canonicalHref(html)).toBe("https://redcode.red/try-on");
+    expect(html.match(/rel="canonical"/g)).toHaveLength(1);
+    expect(html).not.toContain("productId=251");
+  });
+
   it("(13) 有時限試穿分享同私人工具頁 → noindex，query token 唔反射入 HTML", async () => {
     for (const path of [
       "/try-on/shared/private-id?e=2099999999&s=secret-token",
@@ -293,15 +342,61 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("<title>搵唔到呢頁｜RedCode Fashion Design</title>");
     expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
     expect(html).not.toContain('id="redcode-public-seo"');
+    expect(canonicalHref(html)).toBeNull();
+    expect(html).not.toContain('property="og:url"');
   });
 
-  it("(15) /lucky-results/12 → 單場標題、self canonical＋公開摘要", async () => {
+  it("(14b) /lucky-results 總頁首口列真公開活動連結，唔再只有通用摘要", async () => {
+    mockRows = [{ id: 12, name: "雙十一．壓軸狂歡", scheduledDrawDate: "20261111" }];
+    const res = await makeApp().request("/lucky-results");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(canonicalHref(html)).toBe("https://redcode.red/lucky-results");
+    expect(html).toContain('id="redcode-lucky-event-index"');
+    expect(html).toContain('<a href="/lucky-results/12">《雙十一．壓軸狂歡》中獎公告</a>');
+  });
+
+  it("(15) 公開 /lucky-results/12 → 活動名獨立標題、self canonical＋該場公開摘要", async () => {
+    mockRows = [{ id: 12, name: "雙十一．壓軸狂歡", scheduledDrawDate: "20261111" }];
+    const res = await makeApp().request("/lucky-results/12");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>《雙十一．壓軸狂歡》中獎名單｜RedCode Fashion Design</title>");
+    expect(canonicalHref(html)).toBe("https://redcode.red/lucky-results/12");
+    expect(html).toContain("<h1>《雙十一．壓軸狂歡》中獎公告</h1>");
+    expect(html).toContain("預定抽獎日：2026-11-11");
+    expect(html).not.toMatch(/winnerName|holderName|ticketCount/i);
+  });
+
+  it("(15b) 未公開／唔存在嘅單場公告 → 真 404＋noindex＋無首頁 canonical", async () => {
+    mockRows = [];
+    const res = await makeApp().request("/lucky-results/999");
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("中獎公告未公開或唔存在");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(canonicalHref(html)).toBeNull();
+    expect(html).not.toContain('property="og:url"');
+    expect(html).not.toContain("data-redcode-prerender");
+  });
+
+  it("(15d) 超出 pg integer 嘅活動 ID → 真 404，唔會誤用 DB error 通用 200", async () => {
+    queryError = new Error("呢個 ID 唔應該查 DB");
+    const res = await makeApp().request("/lucky-results/99999999999999999999");
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("中獎公告未公開或唔存在");
+    expect(canonicalHref(html)).toBeNull();
+    expect(html).not.toContain('property="og:url"');
+  });
+
+  it("(15c) 單場公告 DB 故障 → 通用 200，唔好將可能公開嘅活動誤當 404", async () => {
+    queryError = new Error("connection refused");
     const res = await makeApp().request("/lucky-results/12");
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("<title>中獎名單｜RedCode Fashion Design</title>");
     expect(canonicalHref(html)).toBe("https://redcode.red/lucky-results/12");
-    expect(html).toContain("RedCode 直播抽獎中獎公告");
   });
 
   it("(17) /lucky-tickets/12 → 200＋專屬 title/description＋self canonical＋noindex；零參加者資料", async () => {

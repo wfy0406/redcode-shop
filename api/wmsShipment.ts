@@ -44,6 +44,7 @@ import {
   type OrderEmailItem,
 } from "./email";
 import { secretEquals } from "./wmsSecret";
+import { isWebDesignOrderNo } from "./webDesignCore";
 
 const SHIP_METHODS = new Set(["sf", "face", "pickup", "storage"]);
 
@@ -95,6 +96,14 @@ export async function wmsShipmentCallback(c: Context) {
       { ok: false, error: "需要 orderNo + action（shipped|unshipped|item_cancelled|item_updated|sf_updated）" },
       400,
     );
+  }
+
+  // v2026.11.09（網站設計服務）：WD 前綴單分流去專用 handler（api/webDesignWms.ts）——
+  // 服務單：shipped＝網站交付完成（completed＋completedAt）、unshipped＝返製作中；
+  // 普通商品路徑（下面，包括 sf_updated／items 校驗）逐字保持，唔受影響。
+  if (isWebDesignOrderNo(orderNo)) {
+    const { webDesignShipmentCallback } = await import("./webDesignWms");
+    return webDesignShipmentCallback(c, { orderNo, action, actorName });
   }
 
   // ─── action=sf_updated：WMS 批准改順豐單號 → 官網最新一個生效中嘅順豐批次跟改 ─────

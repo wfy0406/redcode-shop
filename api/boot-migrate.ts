@@ -715,6 +715,78 @@ CREATE INDEX IF NOT EXISTS tryonjobs_user_date ON "tryOnJobs" ("userId", "reques
 CREATE INDEX IF NOT EXISTS tryonjobs_date_status ON "tryOnJobs" ("requestDate", status);
 CREATE INDEX IF NOT EXISTS tryonjobs_month_status ON "tryOnJobs" ("requestMonth", status);
 CREATE INDEX IF NOT EXISTS tryonjobs_look_step ON "tryOnJobs" ("lookId", "stepNumber");
+
+-- ===== 網站設計服務（v2026.11.09 web-design）=====
+-- 獨立訂單鏈，絕不落入普通 orders／orderItems；全部 idempotent（IF NOT EXISTS）。
+CREATE TABLE IF NOT EXISTS "webDesignOrders" (
+  id serial PRIMARY KEY,
+  "orderNo" varchar(32) NOT NULL UNIQUE,
+  plan varchar(16) NOT NULL,
+  name varchar(64) NOT NULL,
+  phone varchar(32) NOT NULL,
+  email varchar(255),
+  requirements text NOT NULL DEFAULT '',
+  "styleNotes" text NOT NULL DEFAULT '',
+  status varchar(16) NOT NULL DEFAULT 'received',
+  "paymentStatus" varchar(16) NOT NULL DEFAULT 'pending',
+  "oneOffTotal" integer NOT NULL,
+  "monthlyTotal" integer NOT NULL DEFAULT 0,
+  total integer NOT NULL,
+  "orderImagePath" varchar(512),
+  "paymentChannel" varchar(16) NOT NULL DEFAULT 'manual',
+  "airwallexIntentId" varchar(64),
+  "paidAt" timestamp,
+  "wmsStatus" varchar(16),
+  "wmsError" text,
+  "wmsWebhookOrderId" varchar(64),
+  "completedAt" timestamp,
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "updatedAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS webdesignorders_name_phone_idx ON "webDesignOrders" (name, phone);
+CREATE INDEX IF NOT EXISTS webdesignorders_created_idx ON "webDesignOrders" ("createdAt");
+
+CREATE TABLE IF NOT EXISTS "webDesignOrderItems" (
+  id serial PRIMARY KEY,
+  "orderId" bigint NOT NULL REFERENCES "webDesignOrders"(id),
+  "itemKey" varchar(64) NOT NULL,
+  name varchar(255) NOT NULL,
+  category varchar(16) NOT NULL DEFAULT 'feature',
+  plan varchar(16) NOT NULL,
+  billing varchar(16) NOT NULL,
+  price integer NOT NULL,
+  "marketPrice" integer NOT NULL DEFAULT 0,
+  "priceNote" varchar(255) NOT NULL DEFAULT '',
+  "sortOrder" integer NOT NULL DEFAULT 0,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS webdesignorderitems_order ON "webDesignOrderItems" ("orderId");
+
+CREATE TABLE IF NOT EXISTS "webDesignPaymentProofs" (
+  id serial PRIMARY KEY,
+  "orderId" bigint NOT NULL REFERENCES "webDesignOrders"(id),
+  "imagePath" varchar(512) NOT NULL,
+  status varchar(16) NOT NULL DEFAULT 'pending',
+  "reviewedBy" bigint,
+  "reviewNote" text,
+  "reviewedAt" timestamp,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS webdesignpaymentproofs_order ON "webDesignPaymentProofs" ("orderId");
+
+CREATE TABLE IF NOT EXISTS "webDesignInquiries" (
+  id serial PRIMARY KEY,
+  name varchar(64) NOT NULL,
+  phone varchar(32) NOT NULL,
+  email varchar(255) NOT NULL,
+  message text NOT NULL,
+  status varchar(16) NOT NULL DEFAULT 'new',
+  "emailSent" boolean NOT NULL DEFAULT false,
+  "handledBy" varchar(64),
+  "handledAt" timestamp,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS webdesigninquiries_status ON "webDesignInquiries" (status, "createdAt" DESC);
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：

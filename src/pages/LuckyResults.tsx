@@ -1,7 +1,9 @@
+import { useEffect } from 'react';
 import { Link, useParams } from 'react-router';
 import { Gift, PartyPopper, Sparkles, Trophy } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { LuckyPublicActions } from '@/components/lucky/LuckyPublicActions';
+import { setCanonicalPath } from '@/lib/seo';
 
 /**
  * LuckyResults（v2.5.8，老闆指令「公開抽獎公告要特別華麗動態引流」）
@@ -146,6 +148,29 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
       query.error.message.includes('已刪除') ||
       query.error.message.includes('未公開'));
   const pageUrl = typeof window !== 'undefined' ? window.location.href : '';
+
+  useEffect(() => {
+    const robots = document.querySelector('meta[name="robots"]');
+    if (!validId || notFound) {
+      document.title = '中獎公告未公開或唔存在｜RedCode Fashion Design';
+      document
+        .querySelector('meta[name="description"]')
+        ?.setAttribute('content', '呢場中獎公告未公開、已移除或唔存在，請返回中獎公告總頁睇最新公開活動。');
+      robots?.setAttribute('content', 'noindex, nofollow');
+      setCanonicalPath(null);
+      return;
+    }
+    if (!data) return;
+    document.title = `《${data.event.name}》中獎名單｜RedCode Fashion Design`;
+    document
+      .querySelector('meta[name="description"]')
+      ?.setAttribute(
+        'content',
+        `RedCode《${data.event.name}》直播抽獎公告——查閱公開活動資料、預定抽獎日同已公佈嘅真實中獎結果。`,
+      );
+    robots?.setAttribute('content', 'index, follow');
+    setCanonicalPath(`/lucky-results/${data.event.id}`);
+  }, [data, eventId, notFound, validId]);
 
   return (
     <div className="lr-page">

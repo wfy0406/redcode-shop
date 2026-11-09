@@ -11,7 +11,7 @@ import { trpc } from '@/providers/trpc';
  *   → 預覽（commit:false，server 零 DB 寫）：逐行姓名/劵數＋逐行錯誤＋重複報告
  *   → 確認匯入（commit:true）：有任何逐行錯誤就唔畀撳（server 亦會全數拒寫，雙保險）
  *
- * ticket 模式：重複處理 skip／merge 可揀（揀咗即重新預覽）；要傳 eventId（未歸檔活動）。
+ * ticket 模式：同檔同名必累加；活動已有同名先按 skip／merge（揀咗即重新預覽）；要傳 eventId（未歸檔活動）。
  * list 模式：commit＝開新名單（要名單名＋每人每日限中 N）。
  */
 
@@ -229,7 +229,7 @@ export default function LuckyDrawExcelImport({
       <p className="mt-1 text-[11.5px] leading-relaxed text-txt-3">
         {kind === 'list'
           ? '範本欄位：姓名。匯入成功會開一份新名單。'
-          : '範本欄位：姓名、抽獎劵數。匯入去而家揀咗嘅活動。'}
+          : '範本欄位：姓名、抽獎劵數。同一份 Excel 內同名會自動加埋劵數；活動已有同名就由你揀略過或合併。'}
         上限：2MB／500 行數據。
       </p>
 
@@ -278,29 +278,34 @@ export default function LuckyDrawExcelImport({
         <p className="mt-1.5 text-[11.5px] text-pink-soft">活動已歸檔，唔可以再匯入</p>
       )}
 
-      {/* ticket：重複處理政策（換咗即重新預覽） */}
+      {/* ticket：skip／merge 只控制活動已有同名；同檔同名一律累加（換政策即重新預覽） */}
       {kind === 'ticket' && fileBase64 && (
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px] text-txt-2" role="group" aria-label="重複姓名處理">
-          重複姓名：
-          {(
-            [
-              ['skip', '略過（唔郁原有劵數）'],
-              ['merge', '合併（劵數加埋）'],
-            ] as const
-          ).map(([p, label]) => (
-            <label key={p} className="flex cursor-pointer items-center gap-1.5">
-              <input
-                type="radio"
-                name={`dup-${kind}`}
-                checked={duplicatePolicy === p}
-                onChange={() => changePolicy(p)}
-                disabled={busy}
-                className="accent-[#F5C518]"
-              />
-              {label}
-            </label>
-          ))}
-        </div>
+        <>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px] text-txt-2" role="group" aria-label="活動已有同名處理">
+            活動已有同名：
+            {(
+              [
+                ['skip', '略過（保留原有劵數）'],
+                ['merge', '合併（原有劵數＋匯入總數）'],
+              ] as const
+            ).map(([p, label]) => (
+              <label key={p} className="flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="radio"
+                  name={`dup-${kind}`}
+                  checked={duplicatePolicy === p}
+                  onChange={() => changePolicy(p)}
+                  disabled={busy}
+                  className="accent-[#F5C518]"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-txt-3">
+            同一份 Excel 內同名（忽略前後空格及英文大小寫）會自動加埋，唔受以上選項影響。
+          </p>
+        </>
       )}
 
       {localErr && (
@@ -342,7 +347,7 @@ export default function LuckyDrawExcelImport({
 
           {preview.duplicates.length > 0 && (
             <div className="rounded-lg border p-2" style={{ borderColor: 'rgba(245,197,24,0.35)' }}>
-              <p className="text-[12px] font-bold text-gold-soft">重複姓名（{duplicatePolicy === 'skip' ? '已略過' : '已合併'}）：</p>
+              <p className="text-[12px] font-bold text-gold-soft">重複姓名處理結果（逐行）：</p>
               <ul className="mt-1 max-h-[120px] space-y-0.5 overflow-y-auto pr-1">
                 {preview.duplicates.map((d, i) => (
                   <li key={i} className="text-[11.5px] text-txt-2">

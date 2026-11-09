@@ -12,19 +12,24 @@
  * HTML fixture 直接用 repo 真 index.html（順便防止正則同模板漂移）。
  */
 import { readFileSync } from "node:fs";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── mock DB：rows 唔空＝商品存在；空＝查詢成功但唔存在；queryError 唔 null＝DB 故障 ──
 let mockRows: unknown[] = [];
 let queryError: Error | null = null;
+let seenWhere: unknown = null;
 
 vi.mock("../queries/connection", () => ({
   getDb: () => ({
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: () => (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)),
-        }),
+        where: (where: unknown) => {
+          seenWhere = where;
+          return {
+            limit: () => (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)),
+          };
+        },
       }),
     }),
   }),
@@ -66,6 +71,7 @@ function makeProduct(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   mockRows = [];
   queryError = null;
+  seenWhere = null;
 });
 
 describe("injectProductOg — 商品存在", () => {
@@ -90,13 +96,14 @@ describe("injectProductOg — 商品存在", () => {
     expect(html).not.toContain("og-image.jpg");
   });
 
-  it("商品冇 description → 用商品名兜底，唔會出首頁通用 description", async () => {
+  it("商品冇 description → 用真貨號、分類、價錢同庫存補強，唔會出首頁通用 description", async () => {
     mockRows = [makeProduct({ description: null })];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
-    expect(html).toContain(
-      '<meta name="description" content="067——RedCode 香港女裝直播精選，直播優惠價發售，順豐站自取。" />',
-    );
+    expect(html).toContain("067｜上衣｜貨號 SKU-067｜HK$199｜現貨 5 件");
+    expect(html).toContain("<p>分類：上衣</p>");
+    expect(html).toContain("<p>現貨 5 件</p>");
     expect(html).not.toContain(GENERIC_HOME_DESC);
+    expect(html).not.toContain("直播優惠價發售，順豐站自取");
   });
 
   it("description 有 HTML tag／emoji → 入 meta 前剝走做純文字", async () => {
@@ -145,6 +152,30 @@ describe("injectProductOg — 商品存在", () => {
     expect(offers.price).toBe("199.00"); // discountPrice 優先
     expect(offers.availability).toBe("https://schema.org/InStock");
     expect(productLd!.name).toBe("067");
+  });
+
+  it("公開查詢同 products.byId 一樣擋人手下架及已到期自動下架", async () => {
+    mockRows = [makeProduct()];
+    await injectProductOg(TEMPLATE, 85, ORIGIN);
+    const query = new PgDialect().sqlToQuery(seenWhere as never);
+    expect(query.params.slice(0, 3)).toEqual([85, true, false]);
+    expect(Number.isNaN(Date.parse(String(query.params[3])))).toBe(false);
+    expect(query.sql).toMatch(/"id" = \$1/);
+    expect(query.sql).toMatch(/"isActive" = \$2/);
+    expect(query.sql).toMatch(/"delistEnabled" = \$3/);
+    expect(query.sql).toContain('"delistAt" is null');
+    expect(query.sql).toMatch(/"delistAt" > \$4/);
+  });
+
+  it("首頁 canonical 改過 whitespace／quote 都照樣換成商品 self canonical", async () => {
+    mockRows = [makeProduct()];
+    const varied = TEMPLATE.replace(
+      '<link rel="canonical" href="https://redcode.red/" />',
+      "<link\n    rel='canonical' href='https://redcode.red/' >",
+    );
+    const html = (await injectProductOg(varied, 85, ORIGIN))!;
+    expect(html).toContain('<link rel="canonical" href="https://redcode.red/products/85" />');
+    expect(html.match(/rel=["']canonical["']/g)).toHaveLength(1);
   });
 });
 
@@ -206,13 +237,15 @@ describe("injectRouteMeta — canonical／noindex", () => {
     expect(out.match(/name="robots"/g)).toHaveLength(1);
   });
 
-  it("noindex 唔附帶 title/description/canonical 改動（404 商品頁用法）", () => {
+  it("404／私人 noindex 可移除首頁 canonical，唔再宣告內容等同首頁", () => {
     const out = injectRouteMeta(TEMPLATE, {
       title: "搵唔到呢件商品｜RedCode Fashion Design",
+      canonical: null,
       noindex: true,
     });
     expect(out).toContain("<title>搵唔到呢件商品｜RedCode Fashion Design</title>");
-    expect(out).toContain('<link rel="canonical" href="https://redcode.red/" />'); // 冇 path → canonical 唔郁
+    expect(out).not.toContain('rel="canonical"');
+    expect(out).not.toContain('property="og:url"');
     expect(out).toContain('<meta name="robots" content="noindex, nofollow" />');
   });
 });
