@@ -115,6 +115,7 @@ function validateItem(raw: unknown): WebDesignCatalogItem | null {
  * 完全 parse 唔到 → 成個預設 catalog。
  * 舊六項 seo_* 正規化：冇 seo_package → 自動補預設套票；有 seo_package → 保留後台自訂
  * 內容同價錢；無論如何舊 seo_* 項一律 drop（舊訂單 items snapshot 係成交紀錄，唔經呢度）。
+ * 舊 catalog 冇 social_embed 時補官方新服務；已存在時保留後台自訂內容同價錢。
  */
 export function mergeCatalogWithDefaults(raw: unknown): WebDesignCatalog {
   const d = DEFAULT_WEB_DESIGN_CATALOG;
@@ -125,6 +126,7 @@ export function mergeCatalogWithDefaults(raw: unknown): WebDesignCatalog {
   const items: WebDesignCatalogItem[] = [];
   let sawLegacySeo = false;
   let sawSeoPackage = false;
+  let sawSocialEmbed = false;
   for (const it of itemsRaw) {
     const v = validateItem(it);
     if (!v || items.length >= 200) continue;
@@ -135,10 +137,15 @@ export function mergeCatalogWithDefaults(raw: unknown): WebDesignCatalog {
     if (seen.has(v.key)) continue; // key 重複：留第一個
     seen.add(v.key);
     if (v.key === "seo_package") sawSeoPackage = true;
+    if (v.key === "social_embed") sawSocialEmbed = true;
     items.push(v);
   }
   if (sawLegacySeo && !sawSeoPackage && items.length < 200) {
     items.push(defaultSeoPackage()); // 舊 catalog 升級：補返官方套票定義
+  }
+  if (!sawSocialEmbed && items.length < 200) {
+    const socialEmbed = d.items.find((item) => item.key === "social_embed");
+    if (socialEmbed) items.push({ ...socialEmbed }); // 舊 catalog 自動補新服務；已存在嘅後台自訂價照保留
   }
   items.sort((a, b) => a.sortOrder - b.sortOrder);
   return {

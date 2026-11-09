@@ -119,7 +119,7 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
       { href: "/web-design#contact", label: "查詢或建立訂單" },
       { href: "/", label: "返回 RedCode 首頁" },
     ],
-    image: "/web-design/suit-poster.webp",
+    image: "/web-design/web-design-og.webp",
     structuredData: {
       "@context": "https://schema.org",
       "@graph": [

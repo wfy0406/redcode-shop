@@ -79,8 +79,8 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     const template = `<html><head><title>舊標題</title><meta property="og:image" content="https://redcode.red/old.png" /><meta name="twitter:image" content="https://redcode.red/old.png" /></head><body><div id="root"></div></body></html>`;
     const html = injectRouteMeta(template, { ...page, path: "/web-design" });
     expect(html).toContain("<title>香港網站設計｜前台、後台及 SEO 套票｜RedCode</title>");
-    expect(html).toContain('<meta property="og:image" content="https://redcode.red/web-design/suit-poster.webp" />');
-    expect(html).toContain('<meta name="twitter:image" content="https://redcode.red/web-design/suit-poster.webp" />');
+    expect(html).toContain('<meta property="og:image" content="https://redcode.red/web-design/web-design-og.webp" />');
+    expect(html).toContain('<meta name="twitter:image" content="https://redcode.red/web-design/web-design-og.webp" />');
     expect(html).toContain('data-redcode-route-schema');
     expect(html).toContain('"@type":"Service"');
     expect(html).toContain('"name":"RedCode HK Limited"');

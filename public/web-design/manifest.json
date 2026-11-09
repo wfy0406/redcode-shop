@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-09",
-  "version": "v2026.11.09.1",
-  "note": "首屏角色按用戶提供嘅相片以 AI 輔助重建，再輸出透明背景 WebP；兩段西裝影片只作樣貌、身形、服裝及動作參考，冇嵌入頁面、冇剪作播放素材，亦冇喺頁面播放。頁面唔披露模型或技術供應商。",
+  "version": "v2026.11.09.2",
+  "note": "首屏角色按用戶提供嘅相片以 AI 輔助重建，再製作透明背景連續動作；兩段西裝影片只作樣貌、身形、服裝及動作參考，冇嵌入頁面、冇剪作播放素材，亦冇喺頁面播放。頁面唔披露模型或技術供應商。",
   "redesignAssets": {
     "character-hero.webp": {
       "width": 864,
@@ -9,15 +9,26 @@
       "bytes": 91792,
       "background": "透明",
       "pose": "站立",
-      "usage": "首屏起始姿勢"
+      "usage": "動畫素材載入前及 reduced-motion 靜態降級"
     },
-    "character-motion.webp": {
-      "width": 864,
-      "height": 1350,
-      "bytes": 84850,
+    "character-walk-sprite.webp": {
+      "width": 2160,
+      "height": 3000,
+      "bytes": 868228,
       "background": "透明",
-      "pose": "行步",
-      "usage": "桌面滾動時同起始姿勢 crossfade"
+      "frameCount": 72,
+      "columns": 9,
+      "rows": 8,
+      "frameWidth": 240,
+      "frameHeight": 375,
+      "usage": "手機及桌面按滾動進度逐幀顯示自然行路動作，唔再使用兩圖 crossfade"
+    },
+    "web-design-og.webp": {
+      "width": 1200,
+      "height": 630,
+      "bytes": 57028,
+      "usage": "WhatsApp／Open Graph／Twitter 分享預覽；全新暖白紙感、黑墨、橙色品牌設計",
+      "brandLogo": "直接合成官方 public/logo.png 原圖，冇重畫或改造標誌"
     },
     "demo-redcode.webp": {
       "width": 1381,
@@ -31,17 +42,16 @@
       "height": 1133,
       "bytes": 81112,
       "source": "用戶提供嘅 bDog Tokyo 官方網站首頁真實截圖",
-      "usage": "第 04 段示範網頁"
+      "usage": "第 04 段示範網頁，連結為 https://bdog.pet"
     }
   },
-  "legacyAssetsNotReferencedByPage": [
+  "legacyAssetsNotReferencedByPageOrSeo": [
+    "character-motion.webp",
     "suit-scroll.mp4",
     "suit-portrait.webp",
-    "suit-detail.webp"
+    "suit-detail.webp",
+    "suit-poster.webp"
   ],
-  "legacyAssetsUsedOnlyForSeo": {
-    "suit-poster.webp": "只保留作 Open Graph／Twitter 分享預覽圖；唔會喺頁面內容顯示。"
-  },
   "contentIntegrity": {
     "demoSites": [
       "https://redcode.red",

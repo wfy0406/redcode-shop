@@ -109,6 +109,15 @@ describe("catalog 預設內容（v2026.11.09 改價＋SEO 套票）", () => {
       requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 170,
     });
   });
+
+  it("Facebook／Instagram 動態嵌入：HK$800、前台方案可選、唔用虛構市場價", () => {
+    const item = CATALOG.items.find((i) => i.key === "social_embed");
+    expect(item).toMatchObject({
+      name: "Facebook／Instagram 動態嵌入", price: 800, marketPrice: 0,
+      requiredPlan: "front_only", billing: "one_off", selectable: true, active: true, sortOrder: 155,
+    });
+    expect(item?.description).toContain("唔需要代你申請第三方 API");
+  });
 });
 
 describe("catalog 合併預設（getCatalog 口徑）", () => {
@@ -140,6 +149,21 @@ describe("catalog 合併預設（getCatalog 口徑）", () => {
     });
     expect(merged.items.find((i) => i.key === "broken")).toBeUndefined();
     expect(merged.items.filter((i) => i.key === CATALOG.items[0].key).length).toBe(1);
+  });
+
+  it("舊 catalog 自動補 social_embed；已存在嘅後台自訂價唔會被冚", () => {
+    const upgraded = mergeCatalogWithDefaults({
+      ...CATALOG,
+      items: CATALOG.items.filter((i) => i.key !== "social_embed"),
+    });
+    expect(upgraded.items.find((i) => i.key === "social_embed")?.price).toBe(800);
+
+    const customized = mergeCatalogWithDefaults({
+      ...CATALOG,
+      items: CATALOG.items.map((i) => i.key === "social_embed" ? { ...i, price: 888 } : i),
+    });
+    expect(customized.items.filter((i) => i.key === "social_embed")).toHaveLength(1);
+    expect(customized.items.find((i) => i.key === "social_embed")?.price).toBe(888);
   });
 
   it("items 按 sortOrder 排", () => {
@@ -182,9 +206,9 @@ describe("catalog 合併預設（getCatalog 口徑）", () => {
     expect(merged.items.some((i) => LEGACY_SEO_ITEM_KEYS.includes(i.key as never))).toBe(false);
   });
 
-  it("淨係舊 key 其中一兩項都觸發正規化（唔使六項齊）", () => {
+  it("淨係舊 key 其中一兩項都觸發正規化，同時補新社交嵌入服務", () => {
     const merged = mergeCatalogWithDefaults({ items: [legacySeoItem("seo_schema", 40)] });
-    expect(merged.items.map((i) => i.key)).toEqual(["seo_package"]);
+    expect(merged.items.map((i) => i.key)).toEqual(["seo_package", "social_embed"]);
   });
 });
 
@@ -268,11 +292,14 @@ describe("server 計價（priceOrder）", () => {
     if (!r.ok) return;
     expect(r.oneOffTotal).toBe(4428 + 690 + 1840 + 3450 + 2760);
     expect(r.monthlyTotal).toBe(0);
-    // multilingual 係 front_only 可揀
-    const r2 = priceOrder(CATALOG, "front_only", ["multilingual"]);
+    // multilingual 同 social_embed 係 front_only 可揀
+    const r2 = priceOrder(CATALOG, "front_only", ["multilingual", "social_embed"]);
     expect(r2.ok).toBe(true);
     if (!r2.ok) return;
-    expect(r2.total).toBe(1668 + 1840);
+    expect(r2.total).toBe(1668 + 1840 + 800);
+    const socialOnly = priceOrder(CATALOG, "front_only", ["social_embed"]);
+    expect(socialOnly.ok).toBe(true);
+    if (socialOnly.ok) expect(socialOnly.total).toBe(1668 + 800);
     // 其餘三項要 full_stack
     for (const key of ["ecard", "progress_lookup", "followup_reminders"]) {
       expect(priceOrder(CATALOG, "front_only", [key]).ok, key).toBe(false);

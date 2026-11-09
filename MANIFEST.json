@@ -1,15 +1,15 @@
 {
   "project": "RedCode 官網",
-  "version": "v2026.11.09.1",
+  "version": "v2026.11.09.2",
   "packageType": "cumulative repo-relative overlay; not a standalone repository",
-  "baseVersion": "v2026.11.09",
-  "baseArchiveSha256": "bcb0185a8292c58c2f7d2e97d1e2b629509f7f5fb9a18e0eb1dcdff6f1bf8fb6",
+  "baseVersion": "v2026.11.09.1",
+  "baseArchiveSha256": "5620ae8da889581d0e03575ebbb62860f35e6c45c681a53efa64ee7281a57cf9",
   "counts": {
-    "payloadFiles": 65,
-    "carriedForwardUnchanged": 47,
-    "updated": 13,
-    "added": 5,
-    "zipEntriesIncludingDocs": 68
+    "payloadFiles": 67,
+    "carriedForwardUnchanged": 56,
+    "updated": 9,
+    "added": 2,
+    "zipEntriesIncludingDocs": 70
   },
   "dependencyChanges": false,
   "lockfileChanges": false,
@@ -20,18 +20,18 @@
     "typescript": "PASS",
     "vitest": {
       "testFiles": 57,
-      "tests": 994,
+      "tests": 996,
       "failed": 0
     },
     "isolatedBrowserQa": {
-      "passed": 35,
+      "passed": 60,
       "failed": 0
     },
     "builtServerSeoSmoke": {
-      "passed": 6,
+      "passed": 8,
       "failed": 0
     },
-    "secretScanPotentialHits": 0
+    "changedFilesSecretScanPotentialHits": 0
   },
   "files": [
     {
@@ -97,14 +97,14 @@
     {
       "path": "api/lib/publicSeo.test.ts",
       "action": "updated",
-      "bytes": 5855,
-      "sha256": "8910c39b74de527834f0609dab186bcbb32df115b7e30ac0bda244ac1fd2babd"
+      "bytes": 5859,
+      "sha256": "6af99c3336a5e8a1a24b5b203b52178a5be074d33ae5d8c9fc56e854adb990b3"
     },
     {
       "path": "api/lib/publicSeo.ts",
       "action": "updated",
-      "bytes": 21039,
-      "sha256": "a6f3fe94dc58765d3412d136cead6e7385cca1208511fcb92dba99beef976a87"
+      "bytes": 21041,
+      "sha256": "ba810ab3b0e3fd5f52c9e158170e92919b389c8ebdde5599361ff6cbdd6ca3bc"
     },
     {
       "path": "api/lib/vite.test.ts",
@@ -145,18 +145,18 @@
     {
       "path": "api/webDesign.test.ts",
       "action": "updated",
-      "bytes": 24215,
-      "sha256": "e0242dfec78fe9e2d1011b47c767c5dc248f2899f60aaab197afab16b72e950c"
+      "bytes": 25607,
+      "sha256": "c7ca8727b8449ccd378108f5c17295f87ca7720a3384652198fe8f6081d0a566"
     },
     {
       "path": "api/webDesignCore.ts",
       "action": "updated",
-      "bytes": 18594,
-      "sha256": "9fca756e56af7c3bcf73c6c825475456d7a584a135fc61b0f442451da9cdb942"
+      "bytes": 19040,
+      "sha256": "679542f80476029dc0a3a58bdd42cd926df3c37dc1519b6911263ee03f082568"
     },
     {
       "path": "api/webDesignFlow.test.ts",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 29833,
       "sha256": "5e39ce5006fdd0f2834808fa0bb7c01708daa1b0983b351473659a4638b73165"
     },
@@ -211,8 +211,8 @@
     {
       "path": "contracts/webDesign.ts",
       "action": "updated",
-      "bytes": 5857,
-      "sha256": "7c49741eed7e73590898e20b9da085d176b77f6b902457a6856eb591a37769c4"
+      "bytes": 6320,
+      "sha256": "3d7a6280edb6467071045c754f6281c62ae3a66910f3c2873f2cdd1c8315265b"
     },
     {
       "path": "db/relations.ts",
@@ -228,33 +228,39 @@
     },
     {
       "path": "public/web-design/character-hero.webp",
-      "action": "added",
+      "action": "carried_forward_unchanged",
       "bytes": 91792,
       "sha256": "2a052c41980895fdef32d66384a5cdbf1706c76a715c19e3f1f5e159d4624af4"
     },
     {
       "path": "public/web-design/character-motion.webp",
-      "action": "added",
+      "action": "carried_forward_unchanged",
       "bytes": 84850,
       "sha256": "5aa548f7d098f3822285c23826b856fa3cec3d0ec87d8733d45056f21e6664e2"
     },
     {
-      "path": "public/web-design/demo-bdog.webp",
+      "path": "public/web-design/character-walk-sprite.webp",
       "action": "added",
+      "bytes": 868228,
+      "sha256": "296227e9e4fd20a7271e114a6a659160000134323d4320f82ce6489d19fcebbb"
+    },
+    {
+      "path": "public/web-design/demo-bdog.webp",
+      "action": "carried_forward_unchanged",
       "bytes": 81112,
       "sha256": "496a05cae7e8c80cf976ce2a207b0e8a867bfb8ad7bcefa16fef603eed385acc"
     },
     {
       "path": "public/web-design/demo-redcode.webp",
-      "action": "added",
+      "action": "carried_forward_unchanged",
       "bytes": 129986,
       "sha256": "68222405877b179cd052565875326ff3e4b64a2ef5759c2c0edd07d432d98f2e"
     },
     {
       "path": "public/web-design/manifest.json",
       "action": "updated",
-      "bytes": 1675,
-      "sha256": "a5cb08f88e220a04e0e24ce0dcb88ade2b87c1b70c75b52d95e14544caf9ebba"
+      "bytes": 2104,
+      "sha256": "4a4cd964326a1d4fc63a5563d3d07c0f2b6146940db07c3288506c3d455af3ca"
     },
     {
       "path": "public/web-design/suit-detail.webp",
@@ -279,6 +285,12 @@
       "action": "carried_forward_unchanged",
       "bytes": 1961226,
       "sha256": "7f88c2e4db395ae84e72948ebac442ce5aa48b07ef376ce84506ee6228c3a6cf"
+    },
+    {
+      "path": "public/web-design/web-design-og.webp",
+      "action": "added",
+      "bytes": 57028,
+      "sha256": "408d78a286b9ee5f2640593e15abe9e8eadcafa0dd98e014dc92328013042830"
     },
     {
       "path": "src/App.tsx",
@@ -306,9 +318,9 @@
     },
     {
       "path": "src/components/web-design/AiScene.tsx",
-      "action": "added",
-      "bytes": 5475,
-      "sha256": "d818ee081e1085c5cf316b2b220a30cb34b73fd397aaa803421888967c7f6244"
+      "action": "updated",
+      "bytes": 9256,
+      "sha256": "9d533faab98c97bebd2e17e289cac246a6cae6c0432e6b0717be7a42f49478d6"
     },
     {
       "path": "src/components/web-design/CartPanel.tsx",
@@ -318,7 +330,7 @@
     },
     {
       "path": "src/components/web-design/LookupPanel.tsx",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 6255,
       "sha256": "8719d5eda3d39e832f1c86c85c074e372ba102d70afc89b11d588f079167b58c"
     },
@@ -343,8 +355,8 @@
     {
       "path": "src/components/web-design/SuitScroll.tsx",
       "action": "updated",
-      "bytes": 4337,
-      "sha256": "9ed58850e44ff36df43dad9bd2bfc23129a6108309305678c952ab13f3c96a09"
+      "bytes": 6258,
+      "sha256": "05085ea9fd150521f01c4e35ff732c398b1e51e8d7b15113d706bf08d49b48be"
     },
     {
       "path": "src/components/web-design/api.ts",
@@ -361,8 +373,8 @@
     {
       "path": "src/components/web-design/webDesign.css",
       "action": "updated",
-      "bytes": 39102,
-      "sha256": "46d62a33fb23dac18272ee4d53249d9f94501e1c813bd8a6cc00fd9ba59902d9"
+      "bytes": 40290,
+      "sha256": "7a3a27e16dedd99efff21d35514459cc8421a693dc22d0293ea6a0e9ec8de55a"
     },
     {
       "path": "src/lib/productQuery.test.ts",
@@ -384,13 +396,13 @@
     },
     {
       "path": "src/lib/seo.test.ts",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 6605,
       "sha256": "54385e7e2102312968db247c6feb549ff32451625697049c58cdabf28a2133df"
     },
     {
       "path": "src/lib/seo.ts",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 12696,
       "sha256": "efa70a0c0216e57dfd38b5d793bf8d511b81611de9ba00053d565dbf2a227224"
     },
@@ -420,7 +432,7 @@
     },
     {
       "path": "src/pages/WebDesignPage.tsx",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 30888,
       "sha256": "340ec5fa8b686ef9dbd3a86f839fdade2763cd4a73e29eb91e0e179834a6ef3b"
     }
