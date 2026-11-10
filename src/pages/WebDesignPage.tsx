@@ -22,6 +22,7 @@ import {
 } from '@contracts/webDesign';
 import SuitScroll from '@/components/web-design/SuitScroll';
 import AiScene from '@/components/web-design/AiScene';
+import CrystalBackground from '@/components/web-design/CrystalBackground';
 import ShinyText from '@/components/web-design/ShinyText';
 import Magnet from '@/components/web-design/Magnet';
 import Reveal from '@/components/web-design/Reveal';
@@ -293,8 +294,9 @@ export default function WebDesignPage() {
 
   return (
     <main className="wd-page" id="wd-top">
+      <CrystalBackground />
       {/* ===== ① Hero（直片 stage）＋ 服務 ===== */}
-      <section className="wd-hero" aria-label="RedCode 網頁設計服務簡介">
+      <section className="wd-hero" data-crystal="hero" aria-label="RedCode 網頁設計服務簡介">
         <SuitScroll spacerVh={250} />
         <div className="wd-hero-overlay">
           <div className="wd-hero-content wd-container">
@@ -303,9 +305,7 @@ export default function WebDesignPage() {
               <h1 className="wd-h1 wd-hero-title">
                 你嘅生意，
                 <br />
-                值得一個
-                <br />
-                <span className="wd-accent">好網站。</span>
+                <span className="wd-accent">值得被看見。</span>
               </h1>
               <p className="wd-hero-sub">
                 由品牌門面到真正好用嘅管理系統，設計、開發、SEO 同雲端託管一次過理順。
@@ -325,7 +325,7 @@ export default function WebDesignPage() {
         </div>
       </section>
 
-      <section className="wd-section wd-solid" id="wd-services" aria-labelledby="wd-services-h">
+      <section className="wd-section wd-solid" id="wd-services" data-crystal="services" aria-labelledby="wd-services-h">
         <div className="wd-container">
           <header className="wd-section-head">
             <span className="wd-section-no" aria-hidden="true">01</span>
@@ -415,7 +415,7 @@ export default function WebDesignPage() {
       </section>
 
       {/* ===== ② 價錢 ===== */}
-      <section className="wd-section wd-solid" id="pricing" aria-labelledby="wd-pricing-h">
+      <section className="wd-section wd-solid" id="pricing" data-crystal="pricing" aria-labelledby="wd-pricing-h">
         <div className="wd-container">
           <header className="wd-section-head">
             <span className="wd-section-no" aria-hidden="true">02</span>
@@ -579,7 +579,7 @@ export default function WebDesignPage() {
       </section>
 
       {/* ===== ③ AI 協作：未來 HUD 滾動工作流 ===== */}
-      <section className="wd-section wd-solid wd-ai" id="wd-ai" aria-labelledby="wd-ai-h">
+      <section className="wd-section wd-solid wd-ai" id="wd-ai" data-crystal="dark" aria-labelledby="wd-ai-h">
         <div className="wd-container">
           <header className="wd-ai-header">
             <div>
@@ -597,7 +597,7 @@ export default function WebDesignPage() {
       </section>
 
       {/* ===== ④ 示範網頁：真網站、真截圖 ===== */}
-      <section className="wd-section wd-solid wd-demos" id="wd-demos" aria-labelledby="wd-demos-h">
+      <section className="wd-section wd-solid wd-demos" id="wd-demos" data-crystal="demos" aria-labelledby="wd-demos-h">
         <div className="wd-container">
           <header className="wd-section-head">
             <span className="wd-section-no" aria-hidden="true">04</span>
@@ -646,7 +646,7 @@ export default function WebDesignPage() {
       </section>
 
       {/* ===== ⑤ WhatsApp／留言／購物車 ===== */}
-      <section className="wd-section wd-solid" id="contact" aria-labelledby="wd-contact-h">
+      <section className="wd-section wd-solid" id="contact" data-crystal="contact" aria-labelledby="wd-contact-h">
         <div className="wd-container">
           <header className="wd-section-head">
             <span className="wd-section-no" aria-hidden="true">05</span>
@@ -705,7 +705,7 @@ export default function WebDesignPage() {
         </div>
       </section>
 
-      <footer className="wd-footer">
+      <footer className="wd-footer" data-crystal="dark">
         <div className="wd-container wd-footer-inner">
           <div>
             <p className="wd-kicker">YOUR NEXT CHAPTER</p>

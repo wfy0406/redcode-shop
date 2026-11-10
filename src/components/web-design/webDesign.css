@@ -1,13 +1,13 @@
 /* RedCode Web Design — fox-couture editorial + new-era interface
    Scoped to .wd-page / .wd-* so the main storefront remains untouched. */
 .wd-page {
-  --wd-paper: #e9e6e1;
-  --wd-paper-2: #f4f1ec;
-  --wd-white: #fbfaf7;
-  --wd-ink: #0b0b0b;
-  --wd-ink-2: #514e49;
-  --wd-ink-3: #77736d;
-  --wd-line: rgba(11, 11, 11, .14);
+  --wd-paper: #f3f3f3;
+  --wd-paper-2: #ffffff;
+  --wd-white: #ffffff;
+  --wd-ink: #252525;
+  --wd-ink-2: #575757;
+  --wd-ink-3: #747474;
+  --wd-line: rgba(37, 37, 37, .14);
   --wd-orange: #ff5a1f;
   --wd-orange-dark: #c93908;
   --wd-dark: #0b0b0b;
@@ -433,4 +433,235 @@
   .wd-ai-scanner span, .wd-ai-progress, .wd-ai-particles { display: none; }
   .wd-reveal { opacity: 1; transform: none; }
   .wd-plan:hover, .wd-cta:hover, .wd-glass-home:hover { transform: none; }
+}
+
+/* v2026.11.09.3 — white crystal editorial system. One fixed GPU canvas sits
+   behind the five light chapters; dark AI/footer chapters cover it completely. */
+.wd-page { --wd-dark: #252525; background: #f3f3f3; }
+.wd-crystal-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background:
+    linear-gradient(132deg, rgba(255,255,255,.96), rgba(243,243,243,.82)),
+    linear-gradient(45deg, transparent 46%, rgba(205,229,237,.24) 47%, transparent 49%);
+}
+.wd-crystal-bg[data-renderer='webgl-gpu'] { background: transparent; }
+.wd-section > .wd-container { position: relative; z-index: 1; }
+
+/* Typography: true loaded weights, calmer Chinese line-height, no synthetic italics. */
+.wd-h1, .wd-h2, .wd-h3 { text-rendering: optimizeLegibility; }
+.wd-h1 { font-size: clamp(52px, 7.2vw, 116px); font-weight: 600; letter-spacing: -.048em; line-height: 1.04; }
+.wd-h2 { font-size: clamp(40px, 4.7vw, 68px); font-weight: 600; letter-spacing: -.035em; line-height: 1.13; }
+.wd-h3 { font-weight: 600; line-height: 1.25; }
+.wd-kicker { font-weight: 700; }
+.wd-lede { line-height: 1.9; }
+.wd-section-note { line-height: 1.85; }
+.wd-hero-title .wd-accent { font-style: normal; }
+.wd-hero-sub { font-weight: 400; letter-spacing: .012em; line-height: 1.9; }
+.wd-hero-meta { font-family: 'DM Mono', var(--wd-font-body); font-weight: 500; letter-spacing: .045em; }
+.wd-plan-name { line-height: 1.2; }
+.wd-row-name { font-weight: 600; letter-spacing: .012em; }
+.wd-row-desc { line-height: 1.85; }
+
+/* Hero: crystals remain visible, but no colour veil sits over the person.
+   The outer hero must also stay transparent; otherwise its old opaque paper
+   background hides the animated canvas even though the shader keeps drawing. */
+.wd-hero { background: transparent; }
+.wd-suit-stage {
+  background: linear-gradient(90deg, rgba(255,255,255,.88) 0%, rgba(255,255,255,.38) 43%, rgba(255,255,255,0) 69%);
+}
+.wd-suit-stage::before {
+  z-index: 0;
+  opacity: .28;
+  background-image:
+    linear-gradient(rgba(37,37,37,.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37,37,37,.09) 1px, transparent 1px);
+  background-size: 9vw 9vw;
+  mix-blend-mode: normal;
+  mask-image: linear-gradient(110deg, black, transparent 56%);
+}
+.wd-suit-stage::after {
+  z-index: 1;
+  background: linear-gradient(180deg, rgba(255,255,255,.08), transparent 70%, rgba(243,243,243,.2));
+  box-shadow: none;
+}
+.wd-character-wrap {
+  z-index: 2;
+  opacity: 1;
+  will-change: transform;
+  backface-visibility: hidden;
+  transform: translate3d(var(--wd-character-x),var(--wd-character-y),0) scale(var(--wd-character-scale)) translateZ(0);
+}
+.wd-character-wrap::after {
+  content: '';
+  position: absolute;
+  right: 18%;
+  bottom: 1.5%;
+  left: 18%;
+  z-index: -1;
+  height: 4.5%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(37,37,37,.17), rgba(37,37,37,0) 70%);
+  pointer-events: none;
+}
+.wd-character { filter: none; }
+.wd-character-canvas { filter: none; }
+.wd-hero-wordmark { -webkit-text-stroke-color: rgba(37,37,37,.12); }
+.wd-hero-orbit { border-color: rgba(37,37,37,.13); }
+
+/* Each light chapter has its own translucent architectural rhythm. */
+.wd-solid { background: rgba(255,255,255,.8); }
+#wd-services {
+  overflow: hidden;
+  background: linear-gradient(118deg, rgba(243,243,243,.92), rgba(255,255,255,.74));
+}
+#wd-services::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent calc(7vw - 1px), rgba(37,37,37,.08) 7vw, transparent calc(7vw + 1px)),
+    linear-gradient(155deg, transparent 64%, rgba(211,232,238,.22) 64.2%, transparent 77%);
+}
+#pricing {
+  overflow: hidden;
+  background: linear-gradient(100deg, rgba(255,255,255,.93) 12%, rgba(255,255,255,.7) 72%, rgba(243,243,243,.82));
+}
+#pricing::before {
+  content: '02';
+  position: absolute;
+  top: 3%;
+  right: -1vw;
+  color: transparent;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: clamp(180px, 27vw, 420px);
+  font-weight: 900;
+  letter-spacing: -.09em;
+  line-height: 1;
+  -webkit-text-stroke: 1px rgba(37,37,37,.055);
+  pointer-events: none;
+}
+.wd-demos {
+  overflow: hidden;
+  background: linear-gradient(156deg, rgba(243,243,243,.9), rgba(255,255,255,.72) 55%, rgba(237,244,246,.78));
+}
+.wd-demos::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(112deg, transparent 0 72%, rgba(37,37,37,.055) 72.05% 72.12%, transparent 72.17%);
+}
+#contact {
+  overflow: hidden;
+  background: linear-gradient(110deg, rgba(255,255,255,.92), rgba(243,243,243,.8));
+}
+#contact::before {
+  content: 'START / 05';
+  position: absolute;
+  right: 3vw;
+  bottom: 22px;
+  color: rgba(37,37,37,.16);
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  letter-spacing: .24em;
+  pointer-events: none;
+}
+#wd-ai { background: #050708; }
+
+/* Opaque-enough reading surfaces; no full-screen backdrop filters. */
+.wd-plan { border-radius: 20px; background: rgba(255,255,255,.93); box-shadow: 0 22px 60px rgba(37,37,37,.055); }
+.wd-plan--full { background: #252525; }
+.wd-plan--full::after { color: rgba(255,255,255,.045); }
+.wd-lookup { background: rgba(255,255,255,.9); }
+.wd-price-base-cell { background: rgba(243,243,243,.88); }
+.wd-price-base-cell--c { background: #252525; }
+.wd-rows { background: rgba(255,255,255,.94); }
+.wd-demo-card { border-radius: 20px; background: rgba(255,255,255,.95); box-shadow: 0 24px 70px rgba(37,37,37,.075); }
+.wd-msg-form { background: rgba(255,255,255,.88); }
+.wd-cart { background: rgba(255,255,255,.97); }
+.wd-btn:hover, .wd-add:hover { background: #3a3a3a; }
+.wd-add[disabled] { background: #eceff1; }
+.wd-input, .wd-textarea, .wd-select { background: rgba(255,255,255,.88); }
+
+@media (max-width: 900px) {
+  .wd-suit-stage {
+    background: linear-gradient(180deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,0) 40%, rgba(255,255,255,.84) 66%, rgba(255,255,255,.98) 100%);
+  }
+  .wd-suit-stage::before { background-size: 18vw 18vw; opacity: .2; }
+  .wd-character-wrap {
+    top: 0;
+    right: -20vw;
+    bottom: auto;
+    width: 78vw;
+    height: 62svh;
+    opacity: 1;
+  }
+  .wd-hero-content { align-items: center; padding-top: 0; padding-bottom: 0; }
+  .wd-hero-inner { width: 67%; }
+  .wd-kicker { margin-bottom: 6px; }
+  .wd-h1 { font-size: clamp(38px, 10.5vw, 58px); line-height: 1.04; }
+  .wd-hero-title { max-width: 100%; text-shadow: 0 2px 22px rgba(255,255,255,.82); }
+  .wd-hero-sub { margin-top: 8px; font-size: 12px; line-height: 1.6; }
+  .wd-hero-actions { flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 14px; }
+  .wd-hero-text-link { font-size: 12px; }
+  .wd-hero-meta { margin-top: 14px; }
+  .wd-h2 { line-height: 1.18; }
+  #wd-services::before { background: linear-gradient(155deg, transparent 70%, rgba(211,232,238,.2) 70.2%, transparent 86%); }
+  #pricing::before { top: 5%; font-size: 52vw; }
+}
+
+@media (max-width: 600px) {
+  .wd-character-wrap { top: 0; right: -20vw; width: 78vw; height: 64svh; }
+  .wd-hero-content { padding-bottom: 0; }
+  .wd-hero-index { top: 18px; right: auto; left: 14px; }
+  .wd-h1 { font-size: clamp(38px, 10.5vw, 44px); line-height: 1.04; }
+  .wd-hero-sub { max-width: 36ch; margin-top: 10px; }
+  .wd-hero-actions { margin-top: 10px; }
+  .wd-hero-meta { margin-top: 8px; }
+  .wd-hero-wordmark { top: 11%; }
+  .wd-hero-orbit--outer { bottom: 2vw; }
+  .wd-plan, .wd-demo-card, .wd-whatsapp-card, .wd-cart { border-radius: 18px; }
+}
+
+/* Short landscape screens use left/right composition instead of stacking. */
+@media (max-width: 900px) and (max-height: 700px) and (orientation: landscape) {
+  .wd-character-wrap { top: 5svh; right: 0; bottom: auto; width: 46%; height: 90svh; }
+  .wd-hero-content { align-items: center; padding-bottom: 0; }
+  .wd-hero-inner { width: 54%; }
+  .wd-h1 { font-size: clamp(40px, 7vw, 58px); }
+  .wd-hero-sub { margin-top: 12px; font-size: 12px; line-height: 1.6; }
+  .wd-hero-actions { flex-direction: row; gap: 16px; margin-top: 14px; }
+  .wd-hero-meta { margin-top: 12px; }
+}
+
+/* Short portrait screens keep a full-size right-aligned person and compact copy. */
+@media (max-width: 600px) and (max-height: 740px) and (orientation: portrait) {
+  .wd-character-wrap { top: 0; height: 62svh; }
+  .wd-hero-content { padding-bottom: 0; }
+  .wd-kicker { margin-bottom: 6px; }
+  .wd-h1 { font-size: 38px; }
+  .wd-hero-sub { margin-top: 8px; font-size: 11.5px; line-height: 1.55; }
+  .wd-hero-actions { flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 10px; }
+  .wd-hero-text-link { font-size: 12px; }
+  .wd-hero-meta { margin-top: 8px; }
+}
+
+@media (max-width: 600px) and (max-height: 680px) and (orientation: portrait) {
+  .wd-character-wrap { height: 60svh; }
+  .wd-hero-content { padding-bottom: 0; }
+  .wd-h1 { font-size: 37px; }
+  .wd-hero-sub { font-size: 11px; line-height: 1.5; }
+  .wd-hero-actions .wd-cta { min-height: 44px; padding: 11px 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wd-character-wrap { will-change: auto; }
+  .wd-crystal-bg { transform: none; }
 }

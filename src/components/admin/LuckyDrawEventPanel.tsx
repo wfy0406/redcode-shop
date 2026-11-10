@@ -245,11 +245,13 @@ export default function LuckyDrawEventPanel({
     onSuccess: (r) => {
       toast(
         r.winnersPublic
-          ? '公開中獎公告已開啟——公開公告頁／總覽即時顯示呢場'
-          : '公開中獎公告已關閉——公開公告頁／總覽即時收埋呢場；查劵 link 唔受影響，內部中獎名單主管照舊睇到',
+          ? '公開中獎公告已開啟——全網「更多」選單會顯示「中獎公告」；查劵 link 照舊可用'
+          : '公開中獎公告已關閉——全部活動都關晒時，全網選單會收埋「中獎公告」；查劵 link 唔受影響',
         'success',
       );
       invalidateEvents();
+      // Navbar 用呢份公開活動資料決定全網入口；後台切換後即時刷新，唔使等 60 秒。
+      void utils.luckyDraw.publicEvents.invalidate();
     },
     onError: (e) => toast(fmtErr(e), 'error'),
   });
@@ -438,8 +440,8 @@ export default function LuckyDrawEventPanel({
     const target = !selected.winnersPublic;
     const ok = window.confirm(
       target
-        ? `重新公開活動《${selected.name}》嘅中獎公告？\n\n公開公告頁同公告總覽會即時顯示呢場中獎名單。`
-        : `關閉活動《${selected.name}》嘅公開中獎公告？\n\n・公開公告頁同公告總覽會即時收埋呢場\n・抽獎劵查詢 link 唔受影響，客人照舊查到自己有幾多張劵\n・內部中獎名單主管照舊睇到`,
+        ? `重新公開活動《${selected.name}》嘅中獎公告？\n\n・公開公告頁同公告總覽會即時顯示呢場中獎名單\n・全網「更多」選單會喺至少一場公告公開時顯示「中獎公告」\n・獨立抽獎劵查詢 link 照舊可用`
+        : `關閉活動《${selected.name}》嘅公開中獎公告？\n\n・公開公告頁同公告總覽會即時收埋呢場\n・如果其他活動都關晒，全網「更多」選單嘅「中獎公告」會自動消失\n・獨立抽獎劵查詢 link 唔受影響，客人照舊查到自己有幾多張劵\n・內部中獎名單主管照舊睇到`,
     );
     if (ok) winnersPublicMut.mutate({ eventId: selected.id, winnersPublic: target });
   };
@@ -872,7 +874,7 @@ export default function LuckyDrawEventPanel({
           <div className="rounded-lg border px-2.5 py-2" style={{ borderColor: 'rgba(245,197,24,0.35)' }}>
             <div className="flex flex-wrap items-center gap-2">
               <p className="min-w-0 flex-1 text-[12px] font-semibold text-gold-soft">
-                公開中獎公告（對外只放活動名＋抽獎時間＋中獎人名，唔放電話／會員編號／地址）
+                公開中獎公告／全網選單開關（每場獨立；對外唔放電話／會員編號／地址）
               </p>
               {/* v2026.11.08：公告開關（每場獨立；關閉有確認講明後果） */}
               <button
@@ -880,7 +882,7 @@ export default function LuckyDrawEventPanel({
                 onClick={toggleWinnersPublic}
                 disabled={busy}
                 aria-pressed={selected.winnersPublic}
-                title={selected.winnersPublic ? '撳一下關閉公開公告' : '撳一下重新公開公告'}
+                title={selected.winnersPublic ? '撳一下關閉此場公告；全部關晒後全網選單會收埋' : '撳一下重新公開此場公告及全網選單入口'}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] font-bold transition-colors disabled:opacity-40"
                 style={
                   selected.winnersPublic
@@ -893,9 +895,12 @@ export default function LuckyDrawEventPanel({
                   className="inline-block h-2 w-2 rounded-full"
                   style={{ background: selected.winnersPublic ? '#7BD88F' : 'var(--pink-soft)' }}
                 />
-                {winnersPublicMut.isPending ? '切換緊…' : selected.winnersPublic ? '公告：公開中' : '公告：已關閉'}
+                {winnersPublicMut.isPending ? '切換緊…' : selected.winnersPublic ? '此場公告：公開中' : '此場公告：已關閉'}
               </button>
             </div>
+            <p className="mt-2 text-[11.5px] leading-relaxed text-txt-3">
+              全部活動嘅公告都關閉後，全網「更多」選單會自動收埋「中獎公告」；下面嘅獨立查劵 link 唔受呢個開關影響。
+            </p>
             {selected.winnersPublic ? (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <button
@@ -941,7 +946,7 @@ export default function LuckyDrawEventPanel({
               </div>
             ) : (
               <p className="mt-2 text-[11.5px] leading-relaxed text-txt-3">
-                公告已關閉：公開公告頁同公告總覽唔再顯示呢場，公開 link／Facebook 分享／預覽／公告 PNG 已收埋；上面嘅內部中獎名單主管照舊睇到。
+                公告已關閉：公開公告頁同公告總覽唔再顯示呢場；全部活動都關晒時，全網選單都會收埋「中獎公告」。公開 link／Facebook 分享／預覽／公告 PNG 已收埋；內部中獎名單同獨立查劵 link 唔受影響。
               </p>
             )}
           </div>

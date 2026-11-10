@@ -6,12 +6,12 @@ import { readFileSync } from 'node:fs';
  *
  * 直接掃 Navbar.tsx 源碼，鎖死以下合約，任何人改返即刻紅：
  * - AI 試穿 /try-on 同中獎公告 /lucky-results 收入同一份 MORE_LINKS，
- *   桌面 dropdown 同手機 drawer 共用（各自 MORE_LINKS.map），同其他項目完全同款
+ *   桌面 dropdown 同手機 drawer 共用動態 moreLinks（各自 moreLinks.map），同其他項目完全同款
  * - MORE_LINKS 新兩項擺最前；原有 INFO_LINKS 順序（順豐→VIP→關於→FAQ）不變
  * - 冇桌面獨立 AI CTA（lg:inline-flex btn-primary）、冇金框中獎入口（xl:inline-flex + Trophy）、
  *   冇 xl:hidden dropdown 專用 lucky link、冇手機特色 row（Sparkles/Trophy 漸變 row）
  * - Sparkles／Trophy 唔再 import（無死代碼）
- * - 「更多」對子路由 active（MORE_LINKS.some startsWith），有 aria-expanded、Escape、
+ * - 「更多」對子路由 active（moreLinks.some startsWith），有 aria-expanded、Escape、
  *   觸控 click 開關同 outside-click 收埋
  * - 右 cluster／auth min-w-0＋會員名 truncate（長名唔再頂爆）；手機 DrawerRow label 都 truncate
  * - WhatsApp 連字＋加寬 padding 維持 2xl 起（1280/1440 icon-only）
@@ -66,18 +66,40 @@ describe('Navbar「更多」共用資料契約（2026-10.26.2）', () => {
     expect(idxs).toEqual([...idxs].sort((a, b) => a - b));
   });
 
-  it('桌面 dropdown 同手機 drawer 共用 MORE_LINKS（兩處 MORE_LINKS.map）', () => {
-    expect(countOccurrences('MORE_LINKS.map')).toBe(2);
+  it('桌面 dropdown 同手機 drawer 共用動態 moreLinks（兩處 moreLinks.map）', () => {
+    expect(countOccurrences('moreLinks.map')).toBe(2);
+    expect(countOccurrences('MORE_LINKS.map')).toBe(0);
   });
 
   it('More 項目同其他 dropdown 項目同款（統一 NavLink 樣式，無 xl:hidden 特例）', () => {
-    // 桌面「更多」MORE_LINKS.map 行用返標準 dropdown 項目樣式（同商品分類項一致）
-    const moreMap = source.indexOf('MORE_LINKS.map');
+    // 桌面「更多」moreLinks.map 行用返標準 dropdown 項目樣式（同商品分類項一致）
+    const moreMap = source.indexOf('moreLinks.map');
     expect(moreMap).toBeGreaterThanOrEqual(0);
     const block = source.slice(moreMap, moreMap + 800);
     expect(block).toContain('block rounded-xl px-3.5 py-2 text-[13px] font-bold tracking-wide transition-colors hover:bg-space-3');
     // 唔再有任何 xl:hidden 嘅 breakpoint 特例連結
     expect(source).not.toContain('xl:hidden');
+  });
+});
+
+describe('Navbar 中獎公告公開狀態契約（2026-11.09.3）', () => {
+  it('用 publicEvents 真公開活動資料決定入口，唔再硬編碼長駐', () => {
+    expect(source).toContain('trpc.luckyDraw.publicEvents.useQuery');
+    expect(source).toContain('(publicLuckyEventsQuery.data?.length ?? 0) > 0');
+    expect(source).toContain("MORE_LINKS.filter((link) => link.to !== '/lucky-results')");
+  });
+
+  it('桌面、手機、active 同後續動畫序號全部只用動態 moreLinks', () => {
+    expect(countOccurrences('moreLinks.map')).toBe(2);
+    expect(source).toContain('moreLinks.some((l) => pathname.startsWith(l.to))');
+    expect(source).toContain('moreLinks.length');
+    expect(source).not.toContain('MORE_LINKS.length');
+  });
+
+  it('Navbar 開關唔介入獨立查劵頁或查劵 API', () => {
+    expect(source).not.toContain('/lucky-tickets/');
+    expect(source).not.toContain('publicTicketEvent');
+    expect(source).not.toContain('publicLookupEventTicket');
   });
 });
 
@@ -114,8 +136,8 @@ describe('Navbar 無獨立入口（2026-10.26.2 刪除契約）', () => {
 });
 
 describe('Navbar「更多」互動契約', () => {
-  it('More 對子路由 active（MORE_LINKS.some startsWith）', () => {
-    expect(source).toContain('MORE_LINKS.some((l) => pathname.startsWith(l.to))');
+  it('More 對而家可見嘅子路由 active（moreLinks.some startsWith）', () => {
+    expect(source).toContain('moreLinks.some((l) => pathname.startsWith(l.to))');
   });
 
   it('More 掣有 aria-haspopup／aria-expanded，click 開關照顧觸控', () => {

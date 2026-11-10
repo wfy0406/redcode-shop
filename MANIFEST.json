@@ -1,15 +1,15 @@
 {
   "project": "RedCode 官網",
-  "version": "v2026.11.09.2",
+  "version": "v2026.11.09.3",
   "packageType": "cumulative repo-relative overlay; not a standalone repository",
-  "baseVersion": "v2026.11.09.1",
-  "baseArchiveSha256": "5620ae8da889581d0e03575ebbb62860f35e6c45c681a53efa64ee7281a57cf9",
+  "baseVersion": "v2026.11.09.2",
+  "baseArchiveSha256": "d6a0e6e977a9d2c412819be1bf068c44af2a9e3fde05919fe3fa85f58ab926f8",
   "counts": {
-    "payloadFiles": 67,
-    "carriedForwardUnchanged": 56,
-    "updated": 9,
-    "added": 2,
-    "zipEntriesIncludingDocs": 70
+    "payloadFiles": 89,
+    "carried_forward_unchanged": 60,
+    "updated": 7,
+    "added": 22,
+    "zipEntriesIncludingDocs": 92
   },
   "dependencyChanges": false,
   "lockfileChanges": false,
@@ -20,19 +20,31 @@
     "typescript": "PASS",
     "vitest": {
       "testFiles": 57,
-      "tests": 996,
+      "tests": 999,
       "failed": 0
     },
     "isolatedBrowserQa": {
-      "passed": 60,
-      "failed": 0
+      "passed": 99,
+      "failed": 0,
+      "complete": true
     },
     "builtServerSeoSmoke": {
       "passed": 8,
       "failed": 0
     },
-    "changedFilesSecretScanPotentialHits": 0
+    "distAssetAndDependencyHashChecks": {
+      "passed": 23,
+      "failed": 0
+    },
+    "changedFilesSecretScanPotentialHits": 0,
+    "previousArchivesByteAndSha256Unchanged": true,
+    "rawFrames1To71ByteIdentical": true,
+    "rows1To17ByteIdentical": true,
+    "walkTiles1To3ByteIdentical": true
   },
+  "liveReviewPoints": [
+    "Shoe-edge green-dominant observation remains a live visual review point; not recorded as a formal PASS."
+  ],
   "files": [
     {
       "path": "api/airwallex.ts",
@@ -96,13 +108,13 @@
     },
     {
       "path": "api/lib/publicSeo.test.ts",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 5859,
       "sha256": "6af99c3336a5e8a1a24b5b203b52178a5be074d33ae5d8c9fc56e854adb990b3"
     },
     {
       "path": "api/lib/publicSeo.ts",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 21041,
       "sha256": "ba810ab3b0e3fd5f52c9e158170e92919b389c8ebdde5599361ff6cbdd6ca3bc"
     },
@@ -144,13 +156,13 @@
     },
     {
       "path": "api/webDesign.test.ts",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 25607,
       "sha256": "c7ca8727b8449ccd378108f5c17295f87ca7720a3384652198fe8f6081d0a566"
     },
     {
       "path": "api/webDesignCore.ts",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 19040,
       "sha256": "679542f80476029dc0a3a58bdd42cd926df3c37dc1519b6911263ee03f082568"
     },
@@ -210,7 +222,7 @@
     },
     {
       "path": "contracts/webDesign.ts",
-      "action": "updated",
+      "action": "carried_forward_unchanged",
       "bytes": 6320,
       "sha256": "3d7a6280edb6467071045c754f6281c62ae3a66910f3c2873f2cdd1c8315265b"
     },
@@ -227,10 +239,16 @@
       "sha256": "ef54df66bc8486989a0fe8bf0222e53f32605f2f188b36d1308c60999abd09ad"
     },
     {
+      "path": "index.html",
+      "action": "added",
+      "bytes": 6881,
+      "sha256": "2b9a78e34ae747adb98cb72b65b11cc489f5dd67680e3fd9f050e53b959b7f69"
+    },
+    {
       "path": "public/web-design/character-hero.webp",
-      "action": "carried_forward_unchanged",
-      "bytes": 91792,
-      "sha256": "2a052c41980895fdef32d66384a5cdbf1706c76a715c19e3f1f5e159d4624af4"
+      "action": "updated",
+      "bytes": 103794,
+      "sha256": "a64a1e673298872ec91741f1b170e4ee655f134eb17715304972e769bfe0f5b9"
     },
     {
       "path": "public/web-design/character-motion.webp",
@@ -239,8 +257,116 @@
       "sha256": "5aa548f7d098f3822285c23826b856fa3cec3d0ec87d8733d45056f21e6664e2"
     },
     {
-      "path": "public/web-design/character-walk-sprite.webp",
+      "path": "public/web-design/character-walk-row-0.webp",
       "action": "added",
+      "bytes": 307640,
+      "sha256": "196fb16c927b295c1600a86a69ca239f7a39dfb2db8ff74779d2c93119c237ef"
+    },
+    {
+      "path": "public/web-design/character-walk-row-1.webp",
+      "action": "added",
+      "bytes": 317718,
+      "sha256": "f1f30d6b7312715b6f1fb0c69db9bcbd3831e3e03e8b20d5f3ac7faf9753f0ac"
+    },
+    {
+      "path": "public/web-design/character-walk-row-10.webp",
+      "action": "added",
+      "bytes": 312826,
+      "sha256": "deb6233b9e378ecae14ca22d18c0991d17112a4b0f333543c4478f3bac2470d2"
+    },
+    {
+      "path": "public/web-design/character-walk-row-11.webp",
+      "action": "added",
+      "bytes": 297320,
+      "sha256": "589fa0f288b4177af1dee35a93fd6e35b1752a06a8dd4e87d27abc94fc9c3ff8"
+    },
+    {
+      "path": "public/web-design/character-walk-row-12.webp",
+      "action": "added",
+      "bytes": 314058,
+      "sha256": "3bec940e3e326da2173944ef6a39c91634d489673020902eec9b25da81b4ee8b"
+    },
+    {
+      "path": "public/web-design/character-walk-row-13.webp",
+      "action": "added",
+      "bytes": 321174,
+      "sha256": "c9a9385f317c78e1e0ceac9ba7152a213b3cf7f94320ce3fd6f9cf958abeeebb"
+    },
+    {
+      "path": "public/web-design/character-walk-row-14.webp",
+      "action": "added",
+      "bytes": 321470,
+      "sha256": "752feca8d5fbfde801a352fe5a01c78d4cf2b62a552de568ff0cb61aa875fa1c"
+    },
+    {
+      "path": "public/web-design/character-walk-row-15.webp",
+      "action": "added",
+      "bytes": 315642,
+      "sha256": "d1e8758754d0c0c5a588e9bc01df3a4d844480d5535d6185fc204514136d25cc"
+    },
+    {
+      "path": "public/web-design/character-walk-row-16.webp",
+      "action": "added",
+      "bytes": 312544,
+      "sha256": "f0d106bb241289552bd56c77f7a7c79538929a4b50f0c8b2c38b8bdc1be60a58"
+    },
+    {
+      "path": "public/web-design/character-walk-row-17.webp",
+      "action": "added",
+      "bytes": 330238,
+      "sha256": "dfe4f8fae751ed091104f76347fde3765598edec169da13f094f7f74234c1271"
+    },
+    {
+      "path": "public/web-design/character-walk-row-2.webp",
+      "action": "added",
+      "bytes": 308360,
+      "sha256": "91bb253bbcc31ac9c5432e1340585ab0f287b8d203a9c555095f5fe152994af7"
+    },
+    {
+      "path": "public/web-design/character-walk-row-3.webp",
+      "action": "added",
+      "bytes": 306260,
+      "sha256": "d3ef210fa0c2ca776cbd954ffa531fb655fd35f4898fd6b4470755537bb5d67e"
+    },
+    {
+      "path": "public/web-design/character-walk-row-4.webp",
+      "action": "added",
+      "bytes": 304612,
+      "sha256": "20157f3f68c78b363b59f995642c95afc65e414f66c9a36ad216eddbe6b1906e"
+    },
+    {
+      "path": "public/web-design/character-walk-row-5.webp",
+      "action": "added",
+      "bytes": 309396,
+      "sha256": "9a856825cc5abfb7893c7ebe10b2ca12061ed73431e5595aa4bc189a3508f423"
+    },
+    {
+      "path": "public/web-design/character-walk-row-6.webp",
+      "action": "added",
+      "bytes": 309998,
+      "sha256": "db95291110c00e5dc630465e977afc475efb6923a98912ab91a52dc365b2bdc9"
+    },
+    {
+      "path": "public/web-design/character-walk-row-7.webp",
+      "action": "added",
+      "bytes": 310892,
+      "sha256": "177f151ccf555d928382ae900857b4de9bc996cd8a785aaa485f797803bd0514"
+    },
+    {
+      "path": "public/web-design/character-walk-row-8.webp",
+      "action": "added",
+      "bytes": 306422,
+      "sha256": "c13ad1125e6f42aa178aa87c08dd4edd66403602179e3d468cd47fc320abfe70"
+    },
+    {
+      "path": "public/web-design/character-walk-row-9.webp",
+      "action": "added",
+      "bytes": 304840,
+      "sha256": "904e6018cde3290cbfee51def3ddaefa60d103ea930c5e95e8ed5fd8c6781682"
+    },
+    {
+      "path": "public/web-design/character-walk-sprite.webp",
+      "action": "carried_forward_unchanged",
       "bytes": 868228,
       "sha256": "296227e9e4fd20a7271e114a6a659160000134323d4320f82ce6489d19fcebbb"
     },
@@ -259,8 +385,8 @@
     {
       "path": "public/web-design/manifest.json",
       "action": "updated",
-      "bytes": 2104,
-      "sha256": "4a4cd964326a1d4fc63a5563d3d07c0f2b6146940db07c3288506c3d455af3ca"
+      "bytes": 12914,
+      "sha256": "d3193871d5d5e5645cfc8c82933e1b9fd4e8764746651c1b1c301365830713ea"
     },
     {
       "path": "public/web-design/suit-detail.webp",
@@ -288,7 +414,7 @@
     },
     {
       "path": "public/web-design/web-design-og.webp",
-      "action": "added",
+      "action": "carried_forward_unchanged",
       "bytes": 57028,
       "sha256": "408d78a286b9ee5f2640593e15abe9e8eadcafa0dd98e014dc92328013042830"
     },
@@ -300,9 +426,15 @@
     },
     {
       "path": "src/components/Navbar.tsx",
-      "action": "carried_forward_unchanged",
-      "bytes": 47048,
-      "sha256": "6cbcf90f2d08017a289636cdc0191e3f156b4db50ae465f72b8d01844dfcb07f"
+      "action": "updated",
+      "bytes": 47656,
+      "sha256": "1aebd976473cefc4bbd380dfd747deac2ccf6d4915ba163e2bd8c88a55eaf9fd"
+    },
+    {
+      "path": "src/components/admin/LuckyDrawEventPanel.tsx",
+      "action": "added",
+      "bytes": 61766,
+      "sha256": "4a8dd2331a9be579880bdb6ab74dc50531c1178224411cc3e3b859223858a215"
     },
     {
       "path": "src/components/admin/LuckyDrawExcelImport.tsx",
@@ -317,16 +449,28 @@
       "sha256": "0b2a4813f4f280c989017d57f4607c8db5ec4ff209c7a9c7dd0ae8008eb48b67"
     },
     {
+      "path": "src/components/navbarResponsive.test.ts",
+      "action": "added",
+      "bytes": 9965,
+      "sha256": "411b2f2938e5e600274260b67ef8b8e338aed89b805ba2da38fcd67e92b751c4"
+    },
+    {
       "path": "src/components/web-design/AiScene.tsx",
       "action": "updated",
-      "bytes": 9256,
-      "sha256": "9d533faab98c97bebd2e17e289cac246a6cae6c0432e6b0717be7a42f49478d6"
+      "bytes": 19342,
+      "sha256": "d2e452aeabbbe2188c7086011b5876743cb8003d8924f77f43a055921dae0571"
     },
     {
       "path": "src/components/web-design/CartPanel.tsx",
       "action": "carried_forward_unchanged",
       "bytes": 15767,
       "sha256": "43f7e30fc9371ee009252a7566f97757a0ba97baf2e02a6fd8abb00278cf45d2"
+    },
+    {
+      "path": "src/components/web-design/CrystalBackground.tsx",
+      "action": "added",
+      "bytes": 12875,
+      "sha256": "2f2c1b8a92128ab252388e21e3553c929b027698b19afecc04f1230e7d24af50"
     },
     {
       "path": "src/components/web-design/LookupPanel.tsx",
@@ -355,8 +499,8 @@
     {
       "path": "src/components/web-design/SuitScroll.tsx",
       "action": "updated",
-      "bytes": 6258,
-      "sha256": "05085ea9fd150521f01c4e35ff732c398b1e51e8d7b15113d706bf08d49b48be"
+      "bytes": 17286,
+      "sha256": "5251ac96e0009f1641ade729049673ea33e5c023beabc0167a5298d0bb4e8751"
     },
     {
       "path": "src/components/web-design/api.ts",
@@ -373,8 +517,8 @@
     {
       "path": "src/components/web-design/webDesign.css",
       "action": "updated",
-      "bytes": 40290,
-      "sha256": "7a3a27e16dedd99efff21d35514459cc8421a693dc22d0293ea6a0e9ec8de55a"
+      "bytes": 49394,
+      "sha256": "1ad2630912b626493949c140fd014caa27b583a1bdd8d05f423330baba4ad2ce"
     },
     {
       "path": "src/lib/productQuery.test.ts",
@@ -432,9 +576,9 @@
     },
     {
       "path": "src/pages/WebDesignPage.tsx",
-      "action": "carried_forward_unchanged",
-      "bytes": 30888,
-      "sha256": "340ec5fa8b686ef9dbd3a86f839fdade2763cd4a73e29eb91e0e179834a6ef3b"
+      "action": "updated",
+      "bytes": 31096,
+      "sha256": "2d71a95340c249908842b2a636541e3f83d4a25dc7ddf57568de622614747fe5"
     }
   ]
 }

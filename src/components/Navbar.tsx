@@ -239,8 +239,23 @@ export default function Navbar() {
   const moreRef = useRef<HTMLDivElement>(null);
   const moreBtnRef = useRef<HTMLButtonElement>(null);
   const suppressMoreFocusOpenRef = useRef(false);
-  // 「更多」當前頁高亮：任何一個子路由（/try-on、/lucky-results 及其他）都著燈
-  const moreActive = MORE_LINKS.some((l) => pathname.startsWith(l.to));
+  // v2026.11.09.3：全網「中獎公告」入口跟公開活動狀態走。
+  // 載入完成前唔假設有公告；只有至少一場 winnersPublic=true 先顯示。
+  // 呢個判斷只控制 Navbar；獨立查劵頁同查劵 API 完全唔經呢度。
+  const publicLuckyEventsQuery = trpc.luckyDraw.publicEvents.useQuery(undefined, {
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+  const moreLinks = useMemo(
+    () =>
+      (publicLuckyEventsQuery.data?.length ?? 0) > 0
+        ? MORE_LINKS
+        : MORE_LINKS.filter((link) => link.to !== '/lucky-results'),
+    [publicLuckyEventsQuery.data],
+  );
+  // 「更多」當前頁高亮：任何一個而家可見嘅子路由都著燈
+  const moreActive = moreLinks.some((l) => pathname.startsWith(l.to));
   useEffect(() => {
     if (!moreOpen) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -502,7 +517,7 @@ export default function Navbar() {
                   boxShadow: '0 14px 36px rgba(0, 0, 0, 0.35)',
                 }}
               >
-                {MORE_LINKS.map((l) => (
+                {moreLinks.map((l) => (
                   <NavLink
                     key={l.to}
                     to={l.to}
@@ -902,7 +917,7 @@ export default function Navbar() {
             />
             <span className="font-mono text-[10px] font-bold tracking-[0.32em] text-txt-3">更多資訊 MORE</span>
           </p>
-          {MORE_LINKS.map((link, j) => {
+          {moreLinks.map((link, j) => {
             const index = mobileMainLinks.length + j + 1;
             return (
               <DrawerRow
@@ -920,10 +935,10 @@ export default function Navbar() {
             <DrawerRow
               to="/admin"
               label="後台管理"
-              index={mobileMainLinks.length + MORE_LINKS.length + 1}
+              index={mobileMainLinks.length + moreLinks.length + 1}
               active={pathname.startsWith('/admin')}
               gold
-              delayMs={(mobileMainLinks.length + MORE_LINKS.length) * 45}
+              delayMs={(mobileMainLinks.length + moreLinks.length) * 45}
               onNavigate={() => setMenuOpen(false)}
             />
           )}
@@ -938,7 +953,7 @@ export default function Navbar() {
               className="border-b py-4 text-left font-serif-tc text-2xl font-semibold text-txt-3"
               style={{
                 borderColor: 'var(--space-line)',
-                animation: `mobile-nav-in 400ms var(--ease-expo) ${(mobileMainLinks.length + MORE_LINKS.length + (isStaff ? 1 : 0)) * 45}ms both`,
+                animation: `mobile-nav-in 400ms var(--ease-expo) ${(mobileMainLinks.length + moreLinks.length + (isStaff ? 1 : 0)) * 45}ms both`,
               }}
             >
               登出
