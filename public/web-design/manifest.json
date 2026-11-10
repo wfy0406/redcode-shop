@@ -1,17 +1,17 @@
 {
-  "generated": "2026-11-09",
-  "version": "v2026.11.09.3",
-  "note": "首屏第 0 幀係雙手插褲袋企定、輕微閉嘴微笑；滾動後由第 1 幀起行路。其餘 71 幀完整全身新圖全部保留，以用戶正面原相作身份依據；冇舊片頭頸或身體像素、冇換頭、冇光流補間。所有人物素材均無徽章或 logo 覆蓋。兩段西裝影片只作腳部、手部、重心及步態參考，冇嵌入頁面。頁面唔披露模型或技術供應商。",
+  "generated": "2026-11-10",
+  "version": "v2026.11.09.4",
+  "note": "首屏第 0 幀係單手插袋企定、輕微閉嘴微笑；拎手出袋、雙手垂低後先開始原地步行。72 幀來自同一指定動作序列，保留同一人物五官、髮型、服裝、皮帶、黑鞋及鞋扣；已清理手臂與身體之間嘅綠幕殘留、手掌負空間、手指綠邊及鞋底接觸陰影。所有人物素材均無徽章或 logo 覆蓋，冇換頭、冇光流補間。頁面唔披露模型或技術供應商。",
   "redesignAssets": {
     "character-hero.webp": {
       "width": 864,
       "height": 1350,
-      "bytes": 103794,
+      "bytes": 100324,
       "background": "透明",
-      "pose": "雙手插褲袋企定、輕微閉嘴微笑",
+      "pose": "單手插袋企定、輕微閉嘴微笑",
       "usage": "動畫素材載入前及 reduced-motion 靜態降級",
-      "sha256": "a64a1e673298872ec91741f1b170e4ee655f134eb17715304972e769bfe0f5b9",
-      "source": "新 72 幀序列第 0 幀；雙手插袋輕微微笑；無徽章"
+      "sha256": "84098b0e8aba90ea67591a289cdd8dc76db7a63d073f7329e481cd9b4796b710",
+      "source": "72 幀序列第 0 幀；單手插袋、輕微微笑；無徽章"
     },
     "web-design-og.webp": {
       "width": 1200,
@@ -37,7 +37,7 @@
     "character-walk-row-0.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 307640,
+      "bytes": 280370,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -46,13 +46,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "196fb16c927b295c1600a86a69ca239f7a39dfb2db8ff74779d2c93119c237ef",
-      "source": "第 0 幀插袋企定輕微微笑；第 1–3 幀原樣保留；無徽章"
+      "sha256": "e898b944bfdad35fb5934c435af936411627e2e3b96e345eb2572194c630be50",
+      "source": "第 0–3 幀：單手插袋企定，再自然拎手出袋；無徽章"
     },
     "character-walk-row-1.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 317718,
+      "bytes": 280788,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -61,13 +61,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "f1f30d6b7312715b6f1fb0c69db9bcbd3831e3e03e8b20d5f3ac7faf9753f0ac",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "c56913304ac2c4f67ab2bf33f194343ddbd75e7a83ade50b08746bf612308bc0",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-2.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 308360,
+      "bytes": 286020,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -76,13 +76,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "91bb253bbcc31ac9c5432e1340585ab0f287b8d203a9c555095f5fe152994af7",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "aeb8ae51a838e7f960eb5c76ef6efc310db0683ddc968426525ccea324870a30",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-3.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 306260,
+      "bytes": 295932,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -91,13 +91,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "d3ef210fa0c2ca776cbd954ffa531fb655fd35f4898fd6b4470755537bb5d67e",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "8eb2c6c2b07e0122fcddfbc0b14bf5c83cff42f9d22e9e347bf075d3673e9580",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-4.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 304612,
+      "bytes": 305332,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -106,13 +106,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "20157f3f68c78b363b59f995642c95afc65e414f66c9a36ad216eddbe6b1906e",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "0d8b2e0ede53c22d8750fc09b0a58f526518cba3dd82bfa7029c99363490272d",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-5.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 309396,
+      "bytes": 280524,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -121,13 +121,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "9a856825cc5abfb7893c7ebe10b2ca12061ed73431e5595aa4bc189a3508f423",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "2ec4e63df8c758a68a57873ea78381512911c7323e4133c488028f2c0ca2758a",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-6.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 309998,
+      "bytes": 281758,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -136,13 +136,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "db95291110c00e5dc630465e977afc475efb6923a98912ab91a52dc365b2bdc9",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "afd779715099e167bb5648a2a49ec98de5c11525ee4f0235e4bb7c84765e0632",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-7.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 310892,
+      "bytes": 278128,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -151,13 +151,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "177f151ccf555d928382ae900857b4de9bc996cd8a785aaa485f797803bd0514",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "1767635e4e9ce4d68e78f81497099228ace3850fc9e8b18d0b6c02dcd94ac61c",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-8.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 306422,
+      "bytes": 255618,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -166,13 +166,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "c13ad1125e6f42aa178aa87c08dd4edd66403602179e3d468cd47fc320abfe70",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "f3a5966a3c2fda7995943546d9ee53f22b64b1ee107928f2c6659242b950c57c",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-9.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 304840,
+      "bytes": 266196,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -181,13 +181,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "904e6018cde3290cbfee51def3ddaefa60d103ea930c5e95e8ed5fd8c6781682",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "b91f741843d9b811ab65e3a8038d299b47395b8445cabe1c79c0e40e20006544",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-10.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 312826,
+      "bytes": 252430,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -196,13 +196,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "deb6233b9e378ecae14ca22d18c0991d17112a4b0f333543c4478f3bac2470d2",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "57f6353aaee827c8369a568ab3ddba37ce66571a7ba1856cc6939754b6944028",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-11.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 297320,
+      "bytes": 252916,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -211,13 +211,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "589fa0f288b4177af1dee35a93fd6e35b1752a06a8dd4e87d27abc94fc9c3ff8",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "b9c43082e6d8c9fef9d139b5f79875b9372597b9320def344b9c723df790d842",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-12.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 314058,
+      "bytes": 241226,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -226,13 +226,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "3bec940e3e326da2173944ef6a39c91634d489673020902eec9b25da81b4ee8b",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "b1fc91cfb51c403c676bca9cd2496044d0be6b2f53a4f27e6df522e88de4c3cc",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-13.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 321174,
+      "bytes": 248928,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -241,13 +241,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "c9a9385f317c78e1e0ceac9ba7152a213b3cf7f94320ce3fd6f9cf958abeeebb",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "d47a6de7bbe75b1892ef4bd88564de8d7ea73eb77373e84cb9c992ea17148d0c",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-14.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 321470,
+      "bytes": 242514,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -256,13 +256,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "752feca8d5fbfde801a352fe5a01c78d4cf2b62a552de568ff0cb61aa875fa1c",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "45b393637cc94637bc0aea517fd5a24cc0eb889e763a1841fc0876d8ae569aea",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-15.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 315642,
+      "bytes": 254138,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -271,13 +271,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "d1e8758754d0c0c5a588e9bc01df3a4d844480d5535d6185fc204514136d25cc",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "31dacbfd984182c987009bfbed0ca05debc5e99ebfaf6841ac9da0bc5f7b4a3e",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-16.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 312544,
+      "bytes": 246210,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -286,13 +286,13 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "f0d106bb241289552bd56c77f7a7c79538929a4b50f0c8b2c38b8bdc1be60a58",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "3050203a7bb947794a85b678988fe47452682253c70a9853ec98013d1d95a84f",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     },
     "character-walk-row-17.webp": {
       "width": 2880,
       "height": 1125,
-      "bytes": 330238,
+      "bytes": 256638,
       "background": "透明",
       "frameCount": 4,
       "columns": 4,
@@ -301,8 +301,8 @@
       "frameHeight": 1125,
       "webpQuality": 96,
       "usage": "72 幀高細節人物動畫嘅其中一行；按滾動位置載入，GPU 只保留當前及相鄰行",
-      "sha256": "dfe4f8fae751ed091104f76347fde3765598edec169da13f094f7f74234c1271",
-      "source": "完整全身新生成帧；無徽章"
+      "sha256": "ad3799e2036c26538cd3be1c629512c8693d96b58bb36979839b897e54b2cc8b",
+      "source": "同一指定動作序列嘅完整全身透明幀；無徽章"
     }
   },
   "legacyAssetsNotReferencedByPageOrSeo": [
@@ -323,7 +323,7 @@
     "fictionalPerformanceMetrics": false
   },
   "motionAndDesign": {
-    "character": "72 幀，每幀 720×1125；第 0 幀插袋企定輕微微笑，滾動後由第 1 幀起行路；手機取消向左位移，人物靠右並維持大尺寸；渲染 DPR 上限 2.5，靜態圖只作載入前及減動態降級",
+    "character": "72 幀，每幀 720×1125；第 0 幀單手插袋企定、輕微微笑，拎手出袋並垂低後先原地步行；桌面及手機人物位置與比例固定，只切換動作幀；渲染 DPR 上限 2.5，靜態圖只作載入前及減動態降級",
     "aiScene": "112 粒子及連線保留，深色三階段內容不變",
     "crystalBackground": "原創程序化白色玻璃切面；首段、01、02、04、05 各自密度、角度及冰藍折射節奏；無使用第三方付費圖片或影片",
     "palette": [
@@ -332,8 +332,8 @@
       "#252525"
     ],
     "heroTitle": "你嘅生意，值得被看見。",
-    "characterBeauty": "只用用戶正面原相作身份依據；保留較長偏瘦面形、窄下巴及原本眼眉鼻唇比例；唔放大頭、唔拉闊面、唔改五官，唔再額外磨皮。",
-    "characterSource": "72 張完整全身新圖（16 anchors＋56 張新增帧，17 張問題帧已精準重做）；無舊片身體像素、無局部頭頸合成、無光流補間。",
+    "characterBeauty": "保留指定影片內同一人物嘅五官、髮型、皮膚細節及服裝；冇改五官、冇額外磨皮。",
+    "characterSource": "由用戶指定嘅同一動作序列整理 72 張完整全身透明幀；只作去背、穩定比例及邊緣清理，無換頭、無光流補間。",
     "lapelPin": "按用戶最新指示取消；全部產品人物帧及靜態 fallback 均無徽章。"
   }
 }
