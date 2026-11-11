@@ -12,7 +12,14 @@
  * 契約（同 WMS api/listing-router.ts 逐字對齊）：
  *   batch: { batchNo, liveDate(YYYYMMDD), liveSession, delistAt?(ISO),
  *            requestedBy, reviewedBy?, reviewNote?, items[] }
- *   item:  { sku, name?, price?, discountPrice?, stock?, sizes?, category, imageUrl }
+ *   item:  { sku, name?, price?, discountPrice?, stock?, sizes?, category, imageUrl,
+ *            description?, aiTags?, aiContentApproved? }
+ *   - AI 內容（2026-11 合約 v2）：description ≤500 字（空字串＝清 AI 描述）、
+ *     aiTags ≤5 個每個 ≤12 字（空 array 得）。只要 description 或 aiTags 欄存在，
+ *     就必須 aiContentApproved===true 兼 batch.reviewedBy 非空，否則 validateBatch 拒絕；
+ *     未帶呢三件嘅舊批完全向後相容。內容清理 NFC／控制字元後先入庫（唔做 HTML escape）。
+ *     approved payload 先可以寫 products.description／products.aiTags；
+ *     products.aiTagsEnabled 永遠唔會被 WMS 推送郁到（後台停用後重推唔會復活）。
  *   - imageUrl 以 "/" 開頭＝官網本地 path（listing-image 預存）→ 直接用；
  *     否則當外連（貨圖搜尋 RCFD）→ server fetch 下載落 uploads 先用，失敗＝item failed。
  *   - 冪等：batchNo 已完成且逐件成功 → { ok:true, already:true, results }；有失敗明細可用同批次重試。
@@ -32,6 +39,13 @@ import { PRODUCT_CATEGORY_VALUES } from "@contracts/types";
 import { logAudit } from "./audit";
 import { archiveProductImages } from "./productsRouter";
 import { secretEquals } from "./wmsSecret";
+import {
+  aiContentGateError,
+  aiTagsToJson,
+  sanitizeAiDescription,
+  validateAiDescription,
+  validateAiTags,
+} from "./productAiContent";
 
 /* ---------- 上傳儲存（同 boot.ts /api/upload 一個模式） ---------- */
 const UPLOAD_DIR = process.env.UPLOADS_DIR || "uploads";
@@ -58,6 +72,10 @@ type ListingItemIn = {
   // v2.2.2（老闆指示 2026-09-29）：上架日期 override（YYYY-MM-DD，選填）—
   // 有值＝product.listedDate 跟呢日，liveDate/liveSession 唔 set（唔入「直播日期→場次」分類，淨係按類別分）
   listedDate?: string;
+  // AI 內容（2026-11 合約 v2，全部選填；有帶就一定要 aiContentApproved===true＋批次 reviewedBy）
+  description?: string;
+  aiTags?: string[];
+  aiContentApproved?: boolean;
 };
 
 type ListingBatchIn = {
@@ -180,6 +198,18 @@ function validateBatch(b: Partial<ListingBatchIn>): string | null {
     if (it.listedDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(it.listedDate)) {
       return `第 ${i + 1} 件（${it.sku}）上架日期格式係 YYYY-MM-DD`;
     }
+    // AI 內容合約（2026-11 v2）：只要帶 description 或 aiTags 欄，
+    // 就一定要 aiContentApproved===true 兼批次 reviewedBy 非空；內容本身都要過長度／格式檢查。
+    const aiGate = aiContentGateError(it, b.reviewedBy);
+    if (aiGate) return `第 ${i + 1} 件（${it.sku}）${aiGate}`;
+    if (it.description !== undefined) {
+      const err = validateAiDescription(it.description);
+      if (err) return `第 ${i + 1} 件（${it.sku}）${err}`;
+    }
+    if (it.aiTags !== undefined) {
+      const err = validateAiTags(it.aiTags);
+      if (err) return `第 ${i + 1} 件（${it.sku}）${err}`;
+    }
     for (const k of ["price", "discountPrice", "stock"] as const) {
       const v = it[k];
       if (v !== undefined && (!Number.isInteger(v) || v < 0)) {
@@ -285,6 +315,9 @@ export async function wmsListingBatch(c: Context) {
           sizes: it.sizes ?? null,
           category: it.category ?? null,
           imageUrl: it.imageUrl.slice(0, 512),
+          // AI 內容快照：validateBatch 已保證「有欄＝已批准」；冇帶內容就留 NULL
+          aiDescription: it.description !== undefined ? sanitizeAiDescription(it.description) : null,
+          aiTags: it.aiTags !== undefined ? aiTagsToJson(it.aiTags) : null,
           status: "pending",
         })),
       );
@@ -364,6 +397,12 @@ export async function wmsListingBatch(c: Context) {
     let itemError: string | null = null;
     let productId: number | null = null;
     let finalImageUrl = it.imageUrl.slice(0, 512);
+    // AI 內容（validateBatch 已保證「有欄＝approved===true＋reviewedBy 非空」兼長度合格）：
+    // 欄唔存在＝完全唔郁（向後相容）；空字串描述＝清 AI 描述（products 存 NULL）。
+    const hasAiDesc = it.description !== undefined;
+    const aiDesc = hasAiDesc ? sanitizeAiDescription(it.description as string) : undefined;
+    const hasAiTags = it.aiTags !== undefined;
+    const aiTagsJson = hasAiTags ? aiTagsToJson(it.aiTags as string[]) : undefined;
     try {
       // ① 圖片：本地 path 直接用；外連 → 下載落官網（失敗＝呢件 failed，唔阻成批）
       let localImage: string;
@@ -414,6 +453,9 @@ export async function wmsListingBatch(c: Context) {
         if (it.price !== undefined) set.price = it.price;
         if (it.discountPrice !== undefined) set.discountPrice = it.discountPrice;
         if (it.stock !== undefined) set.stock = it.stock;
+        // AI 內容：有欄先更新；⚠️ 絕對唔准郁 aiTagsEnabled——後台停用後重推唔可以復活個開關
+        if (hasAiDesc) set.description = aiDesc === "" ? null : aiDesc;
+        if (hasAiTags) set.aiTags = aiTagsJson;
         if (it.sizes !== undefined) {
           set.sizes = it.sizes;
           set.sizeEnabled = Boolean(it.sizes);
@@ -447,6 +489,9 @@ export async function wmsListingBatch(c: Context) {
               sizes: it.sizes ?? null,
               sizeEnabled: Boolean(it.sizes),
               category: it.category ?? "other",
+              // AI 內容：新貨按 approved payload 寫入；aiTagsEnabled 跟 schema default true
+              ...(hasAiDesc ? { description: aiDesc === "" ? null : aiDesc } : {}),
+              ...(hasAiTags ? { aiTags: aiTagsJson } : {}),
               ...liveFields,
               delistEnabled: Boolean(delistAt),
               delistAt,
@@ -487,6 +532,9 @@ export async function wmsListingBatch(c: Context) {
       sizes: it.sizes ?? null,
       category: it.category ?? null,
       imageUrl: finalImageUrl,
+      // AI 內容已批准快照（冇帶內容就 NULL；失敗件都照記，方便後台追查批咗啲乜）
+      aiDescription: hasAiDesc ? (aiDesc as string) : null,
+      aiTags: hasAiTags ? (aiTagsJson as string) : null,
       productId,
       status: itemStatus,
       error: itemError,

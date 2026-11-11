@@ -226,6 +226,122 @@ describe("wmsListingBatch — 同 SKU 更新、失敗重試及商品 upsert 競�
 });
 
 
+describe("wmsListingBatch — AI 內容合約（approved 閘＋寫入）", () => {
+  const aiItem = (overrides: Record<string, unknown> = {}) =>
+    makeItem("SKU-A", {
+      description: "AI 寫嘅靚衫描述",
+      aiTags: ["直播熱賣", "新品"],
+      aiContentApproved: true,
+      ...overrides,
+    });
+
+  it("帶 description／aiTags 但冇 aiContentApproved → 400，唔郁 DB", async () => {
+    const res = await invoke(payload([makeItem("SKU-A", { description: "未批" })]));
+    expect(res.status).toBe(400);
+    expect(res.data.error).toContain("aiContentApproved");
+    expect(h.state.inserts).toHaveLength(0);
+    const res2 = await invoke(payload([makeItem("SKU-A", { aiTags: ["x"], aiContentApproved: false })]));
+    expect(res2.status).toBe(400);
+  });
+
+  it("approved=true 但批次冇 reviewedBy → 400", async () => {
+    const body = payload([aiItem()]);
+    delete (body.batch as Record<string, unknown>).reviewedBy;
+    const res = await invoke(body);
+    expect(res.status).toBe(400);
+    expect(res.data.error).toContain("reviewedBy");
+    expect(h.state.inserts).toHaveLength(0);
+  });
+
+  it("超長描述／超標 tags 就算批准咗都拒絕", async () => {
+    const long = await invoke(payload([aiItem({ description: "字".repeat(501) })]));
+    expect(long.status).toBe(400);
+    expect(long.data.error).toContain("最長");
+    const many = await invoke(payload([aiItem({ aiTags: ["a", "b", "c", "d", "e", "f"] })]));
+    expect(many.status).toBe(400);
+    const longTag = await invoke(payload([aiItem({ aiTags: ["標".repeat(13)] })]));
+    expect(longTag.status).toBe(400);
+  });
+
+  it("舊批冇 AI 三欄完全向後相容（照樣過閘、照樣冪等）", async () => {
+    h.state.batchFind.push(makeBatch());
+    h.state.select.push([{ sku: "SKU-A", status: "created", error: null }]);
+    const res = await invoke(payload()); // 冇 description／aiTags／aiContentApproved
+    expect(res.status).toBe(200);
+    expect(res.data.already).toBe(true);
+    expect(res.data.results).toEqual([{ sku: "SKU-A", status: "created" }]);
+  });
+
+  it("更新現有商品：approved 描述＋tags 寫入，控制字元清走，aiTagsEnabled 絕對唔郁", async () => {
+    h.state.batchFind.push(null);
+    h.state.insert.push([{ id: 11 }], []); // 新批次、listingBatchItems
+    h.state.productFind.push(makeProduct({ aiTagsEnabled: false })); // 後台停用咗
+    h.state.update.push([], [], []); // 商品 update、心跳、批次完成
+    const res = await invoke(payload([aiItem({ description: "AI 描述" })]));
+    expect(res.data.results).toEqual([{ sku: "SKU-A", status: "updated" }]);
+    const productUpdate = h.state.updates.find((row) => row.table === products);
+    expect(productUpdate?.set?.description).toBe("AI 描述");
+    expect(productUpdate?.set?.aiTags).toBe('["直播熱賣","新品"]');
+    // 後台停用唔會被重推復活
+    expect(productUpdate?.set).not.toHaveProperty("aiTagsEnabled");
+    // 明細快照對齊
+    const detail = h.state.inserts.find((row) => row.table === listingBatchItems);
+    expect(detail?.values).toMatchObject({ aiDescription: "AI 描述", aiTags: '["直播熱賣","新品"]' });
+  });
+
+  it("空字串 description＝清 AI 描述（products 存 NULL）；空 aiTags array 寫 []", async () => {
+    h.state.batchFind.push(null);
+    h.state.insert.push([{ id: 11 }], []);
+    h.state.productFind.push(makeProduct({ description: "舊 AI 描述" }));
+    h.state.update.push([], [], []);
+    const res = await invoke(payload([aiItem({ description: "", aiTags: [] })]));
+    expect(res.data.results).toEqual([{ sku: "SKU-A", status: "updated" }]);
+    const productUpdate = h.state.updates.find((row) => row.table === products);
+    expect(productUpdate?.set?.description).toBeNull();
+    expect(productUpdate?.set?.aiTags).toBe("[]");
+  });
+
+  it("新商品：approved payload 寫入 description／aiTags；唔帶 AI 欄就唔寫", async () => {
+    h.state.batchFind.push(null);
+    h.state.insert.push([{ id: 11 }], [{ id: 55 }], []); // 批次、商品、明細
+    h.state.productFind.push(null); // 新貨號
+    h.state.update.push([], []); // 心跳、批次完成
+    const res = await invoke(payload([aiItem()]));
+    expect(res.data.results).toEqual([{ sku: "SKU-A", status: "created" }]);
+    const productInsert = h.state.inserts.find((row) => row.table === products);
+    expect(productInsert?.values).toMatchObject({
+      description: "AI 寫嘅靚衫描述",
+      aiTags: '["直播熱賣","新品"]',
+    });
+    // enabled 跟 schema default true，insert 唔會指定
+    expect(productInsert?.values).not.toHaveProperty("aiTagsEnabled");
+  });
+
+  it("reject：有 approved 內容照記快照；冇帶內容就 null", async () => {
+    h.state.batchFind.push(null);
+    h.state.insert.push([{ id: 7 }], []); // rejected 批次、明細
+    const res = await invoke({
+      secret: "test-secret",
+      action: "reject",
+      batch: {
+        batchNo: "LB20261026-777",
+        liveDate: "20261026",
+        liveSession: "1",
+        requestedBy: "員工A",
+        reviewedBy: "主管",
+        items: [aiItem(), makeItem("SKU-B")],
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(res.data.ok).toBe(true);
+    const detail = h.state.inserts.find((row) => row.table === listingBatchItems);
+    const values = detail?.values as Array<Record<string, unknown>>;
+    expect(values[0]).toMatchObject({ aiDescription: "AI 寫嘅靚衫描述", aiTags: '["直播熱賣","新品"]' });
+    expect(values[1]).toMatchObject({ aiDescription: null, aiTags: null });
+  });
+});
+
+
 describe("wmsListingBatch — processing 鎖及 timestamp 精度安全恢復", () => {
   it("新鮮 processing：409，唔會刪明細或重複上架", async () => {
     h.state.batchFind.push(makeBatch({ status: "processing", updatedAt: new Date() }));

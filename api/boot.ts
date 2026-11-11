@@ -25,7 +25,7 @@ import { buildMerchantFeedXml } from "./merchantFeed";
 import { env } from "./lib/env";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { orders, productImageArchive, products, users, walletTopups } from "@db/schema";
+import { luckyDrawEvents, orders, productImageArchive, products, users, walletTopups } from "@db/schema";
 import { getAirwallexConfig, retrievePaymentIntent, verifyWebhookSignature } from "./airwallex";
 import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail, orderVipEmailInfo, sendWalletTopupApprovedEmail } from "./email";
 import { approveTopupCore } from "./walletRouter";
@@ -36,7 +36,7 @@ import { recheckUserRole } from "./middleware";
 import { tryOnPrivateMedia, tryOnSharedMedia } from "./tryonHttp";
 import { tryOnAdminMedia } from "./tryonAdminMedia";
 import { startTryOnMediaSweeper } from "./tryonService";
-import { SITEMAP_STATIC_PATHS } from "./lib/publicSeo";
+import { publicLuckyEventSitemapPaths, SITEMAP_STATIC_PATHS } from "./lib/publicSeo";
 import { webDesignProofUpload } from "./webDesignUpload";
 import { handleWebDesignWebhookPaid, verifyWebDesignReturn } from "./webDesignPayments";
 import { isWebDesignOrderNo } from "./webDesignCore";
@@ -567,6 +567,24 @@ app.get("/sitemap.xml", async (c) => {
   } catch (e) {
     console.error(
       "[sitemap] 讀產品出錯（照出淨首頁＋靜態頁版）:",
+      maskForLog(e instanceof Error ? e.message : String(e)),
+    );
+  }
+  // 公開單場公告同查劵係兩條獨立路徑：只有 winnersPublic=true 嘅公告先入 sitemap；
+  // 私人查劵 URL 永不加入。活動查詢失敗唔會連累已成功讀取嘅商品 URL。
+  try {
+    const db = getDb();
+    const eventRows = await db
+      .select({ id: luckyDrawEvents.id })
+      .from(luckyDrawEvents)
+      .where(eq(luckyDrawEvents.winnersPublic, true));
+    const eventUrls = publicLuckyEventSitemapPaths(eventRows.map((event) => event.id)).map(
+      (path) => `<url><loc>https://redcode.red${path}</loc><priority>0.6</priority></url>`,
+    );
+    urls = [urls, ...eventUrls].join("\n  ");
+  } catch (e) {
+    console.error(
+      "[sitemap] 讀公開中獎公告出錯（保留首頁＋靜態頁＋商品版）:",
       maskForLog(e instanceof Error ? e.message : String(e)),
     );
   }

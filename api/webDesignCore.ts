@@ -7,12 +7,14 @@ import { randomInt } from "node:crypto";
 import {
   DEFAULT_WEB_DESIGN_CATALOG,
   LEGACY_SEO_ITEM_KEYS,
+  RETIRED_ITEM_KEYS,
   WEB_DESIGN_PLANS,
   planAllows,
   planLabel,
   type WebDesignCatalog,
   type WebDesignCatalogItem,
   type WebDesignPlan,
+  type WebDesignPlanCopy,
 } from "@contracts/webDesign";
 import { normalizeGuestPhone } from "./guestUtils";
 
@@ -73,6 +75,14 @@ const BILLINGS = new Set(["one_off", "monthly", "at_cost"]);
 /** 舊六項 seo_* 已併入 seo_package 套票（契約常量的 Set 版，內部用） */
 const LEGACY_SEO_KEY_SET = new Set<string>(LEGACY_SEO_ITEM_KEYS);
 
+/** 已退役項目（followup_reminders）：merge 過濾／strict 拒收／priceOrder 拒絕 */
+const RETIRED_KEY_SET = new Set<string>(RETIRED_ITEM_KEYS);
+
+/** 永遠只供參考／查詢報價：唔信 stored JSON 嘅 selectable、billing 或價錢。 */
+const QUOTE_ONLY_KEY_SET = new Set<string>(["domain_at_cost", "website_customization"]);
+
+const ITEM_KEY_RE = /^[a-z][a-z0-9_]{0,63}$/;
+
 /** 預設 catalog 入面嘅 seo_package 套票定義（legacy 正規化時照用呢份） */
 function defaultSeoPackage(): WebDesignCatalogItem {
   const pkg = DEFAULT_WEB_DESIGN_CATALOG.items.find((i) => i.key === "seo_package");
@@ -87,7 +97,7 @@ function isNonNegInt(n: unknown): n is number {
 function validateItem(raw: unknown): WebDesignCatalogItem | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  if (typeof r.key !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(r.key)) return null;
+  if (typeof r.key !== "string" || !ITEM_KEY_RE.test(r.key)) return null;
   if (typeof r.name !== "string" || !r.name.trim()) return null;
   if (!CATEGORIES.has(String(r.category))) return null;
   if (!isNonNegInt(r.price) || !isNonNegInt(r.marketPrice)) return null;
@@ -109,43 +119,96 @@ function validateItem(raw: unknown): WebDesignCatalogItem | null {
   };
 }
 
+function normalizeQuoteOnlyItem(item: WebDesignCatalogItem): WebDesignCatalogItem {
+  if (!QUOTE_ONLY_KEY_SET.has(item.key)) return item;
+  return { ...item, price: 0, marketPrice: 0, billing: "at_cost", selectable: false };
+}
+
+function hasValidQuoteOnlySemantics(item: WebDesignCatalogItem): boolean {
+  return !QUOTE_ONLY_KEY_SET.has(item.key)
+    || (item.price === 0 && item.marketPrice === 0 && item.billing === "at_cost" && !item.selectable);
+}
+
+/** 方案文案驗證：name 非空；points 係非空字串陣列（0–20 條）；description 可空字串 */
+function validatePlanCopy(raw: unknown): WebDesignPlanCopy | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.name !== "string" || !r.name.trim()) return null;
+  if (!Array.isArray(r.points) || r.points.length > 20) return null;
+  const points: string[] = [];
+  for (const p of r.points) {
+    if (typeof p !== "string" || !p.trim()) return null;
+    points.push(p.trim().slice(0, 255));
+  }
+  return {
+    name: r.name.trim().slice(0, 255),
+    description: typeof r.description === "string" ? r.description.slice(0, 1000) : "",
+    points,
+  };
+}
+
+/** 墓碑 key 列表（lenient 版）：壞值逐個 drop、去重；merge 用呢個 */
+function sanitizeDeletedKeys(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const k of raw) {
+    if (typeof k !== "string" || !ITEM_KEY_RE.test(k) || out.includes(k)) continue;
+    out.push(k);
+  }
+  return out;
+}
+
 /**
  * siteSettings JSON → 完整 catalog（合併預設）：
  * 四個方案價逐個驗，唔啱／缺就落預設；items 逐項驗，壞項 drop（唔好成個 catalog 報廢）；
  * 完全 parse 唔到 → 成個預設 catalog。
  * 舊六項 seo_* 正規化：冇 seo_package → 自動補預設套票；有 seo_package → 保留後台自訂
  * 內容同價錢；無論如何舊 seo_* 項一律 drop（舊訂單 items snapshot 係成交紀錄，唔經呢度）。
- * 舊 catalog 冇 social_embed 時補官方新服務；已存在時保留後台自訂內容同價錢。
+ * 舊 catalog 冇 social_embed／website_customization 時補官方新服務；已存在時保留後台自訂內容同價錢。
+ * 已退役項目（followup_reminders）一律過濾；deletedItemKeys 墓碑內嘅 key 一律唔放行，
+ * legacy 自動補項（seo_package／social_embed／website_customization）都唔會復活已刪項目。
+ * 舊 stored JSON 冇方案文案／墓碑欄 → 落預設；文案壞咗都落預設（lenient 讀取）。
  */
 export function mergeCatalogWithDefaults(raw: unknown): WebDesignCatalog {
   const d = DEFAULT_WEB_DESIGN_CATALOG;
   if (!raw || typeof raw !== "object") return d;
   const r = raw as Record<string, unknown>;
+  const deletedItemKeys = sanitizeDeletedKeys(r.deletedItemKeys);
+  const tombstones = new Set(deletedItemKeys);
   const itemsRaw = Array.isArray(r.items) ? r.items : [];
   const seen = new Set<string>();
   const items: WebDesignCatalogItem[] = [];
   let sawLegacySeo = false;
   let sawSeoPackage = false;
   let sawSocialEmbed = false;
+  let sawWebsiteCustomization = false;
   for (const it of itemsRaw) {
-    const v = validateItem(it);
-    if (!v || items.length >= 200) continue;
+    const validated = validateItem(it);
+    if (!validated || items.length >= 200) continue;
+    const v = normalizeQuoteOnlyItem(validated);
     if (LEGACY_SEO_KEY_SET.has(v.key)) {
       sawLegacySeo = true; // 舊逐項 SEO：唔再放行，落喺單一套票
       continue;
     }
+    if (RETIRED_KEY_SET.has(v.key)) continue; // 退役項（followup_reminders）：一律過濾
+    if (tombstones.has(v.key)) continue; // 後台刪除咗：唔復活
     if (seen.has(v.key)) continue; // key 重複：留第一個
     seen.add(v.key);
     if (v.key === "seo_package") sawSeoPackage = true;
     if (v.key === "social_embed") sawSocialEmbed = true;
+    if (v.key === "website_customization") sawWebsiteCustomization = true;
     items.push(v);
   }
-  if (sawLegacySeo && !sawSeoPackage && items.length < 200) {
-    items.push(defaultSeoPackage()); // 舊 catalog 升級：補返官方套票定義
+  if (sawLegacySeo && !sawSeoPackage && !tombstones.has("seo_package") && items.length < 200) {
+    items.push(defaultSeoPackage()); // 舊 catalog 升級：補返官方套票定義（已刪就唔補）
   }
-  if (!sawSocialEmbed && items.length < 200) {
+  if (!sawSocialEmbed && !tombstones.has("social_embed") && items.length < 200) {
     const socialEmbed = d.items.find((item) => item.key === "social_embed");
-    if (socialEmbed) items.push({ ...socialEmbed }); // 舊 catalog 自動補新服務；已存在嘅後台自訂價照保留
+    if (socialEmbed) items.push({ ...socialEmbed }); // 舊 catalog 自動補新服務（已刪就唔補）
+  }
+  if (!sawWebsiteCustomization && !tombstones.has("website_customization") && items.length < 200) {
+    const customization = d.items.find((item) => item.key === "website_customization");
+    if (customization) items.push({ ...customization }); // 舊 catalog 自動補客製化報價項（已刪就唔補）
   }
   items.sort((a, b) => a.sortOrder - b.sortOrder);
   return {
@@ -157,23 +220,61 @@ export function mergeCatalogWithDefaults(raw: unknown): WebDesignCatalog {
     fullStackMarketPrice: isNonNegInt(r.fullStackMarketPrice)
       ? r.fullStackMarketPrice
       : d.fullStackMarketPrice,
+    frontOnlyCopy: validatePlanCopy(r.frontOnlyCopy) ?? { ...d.frontOnlyCopy, points: [...d.frontOnlyCopy.points] },
+    fullStackCopy: validatePlanCopy(r.fullStackCopy) ?? { ...d.fullStackCopy, points: [...d.fullStackCopy.points] },
     items,
+    deletedItemKeys,
   };
 }
 
-/** adminCatalog/setCatalog 用：完整結構驗證（setCatalog 唔接受壞 payload 落 DB；舊 seo_* 逐項 key 一律拒收，要用 seo_package 套票） */
+/**
+ * adminCatalog/setCatalog 用：完整結構驗證（setCatalog 唔接受壞 payload 落 DB；
+ * 舊 seo_* 逐項 key 一律拒收，要用 seo_package 套票；退役項 followup_reminders 一律拒收）。
+ * 方案文案／deletedItemKeys：缺咗落預設（舊 payload 兼容）；有但壞 → 成個拒收。
+ */
 export function validateCatalog(raw: unknown): WebDesignCatalog | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   if (!isNonNegInt(r.frontOnlyPrice) || !isNonNegInt(r.frontOnlyMarketPrice)) return null;
   if (!isNonNegInt(r.fullStackPrice) || !isNonNegInt(r.fullStackMarketPrice)) return null;
   if (!Array.isArray(r.items)) return null;
+  if (r.items.length > 200) return null;
+  const d = DEFAULT_WEB_DESIGN_CATALOG;
+  let frontOnlyCopy: WebDesignPlanCopy;
+  let fullStackCopy: WebDesignPlanCopy;
+  if (r.frontOnlyCopy === undefined) {
+    frontOnlyCopy = { ...d.frontOnlyCopy, points: [...d.frontOnlyCopy.points] };
+  } else {
+    const v = validatePlanCopy(r.frontOnlyCopy);
+    if (!v) return null;
+    frontOnlyCopy = v;
+  }
+  if (r.fullStackCopy === undefined) {
+    fullStackCopy = { ...d.fullStackCopy, points: [...d.fullStackCopy.points] };
+  } else {
+    const v = validatePlanCopy(r.fullStackCopy);
+    if (!v) return null;
+    fullStackCopy = v;
+  }
+  let deletedItemKeys: string[];
+  if (r.deletedItemKeys === undefined) {
+    deletedItemKeys = [];
+  } else {
+    if (!Array.isArray(r.deletedItemKeys)) return null;
+    deletedItemKeys = [];
+    for (const k of r.deletedItemKeys) {
+      if (typeof k !== "string" || !ITEM_KEY_RE.test(k)) return null;
+      if (!deletedItemKeys.includes(k)) deletedItemKeys.push(k);
+    }
+  }
   const seen = new Set<string>();
   const items: WebDesignCatalogItem[] = [];
   for (const it of r.items) {
     const v = validateItem(it);
     if (!v) return null; // 後台落貨要嚴：任何一項壞都成個拒收
     if (LEGACY_SEO_KEY_SET.has(v.key)) return null; // 舊逐項 SEO key 已廢，唔准再落 DB
+    if (RETIRED_KEY_SET.has(v.key)) return null; // 退役項（followup_reminders）唔准再落 DB
+    if (!hasValidQuoteOnlySemantics(v)) return null; // 查詢報價項唔可以改成收費／可加入購物車
     if (seen.has(v.key)) return null;
     seen.add(v.key);
     items.push(v);
@@ -183,7 +284,10 @@ export function validateCatalog(raw: unknown): WebDesignCatalog | null {
     frontOnlyMarketPrice: r.frontOnlyMarketPrice,
     fullStackPrice: r.fullStackPrice,
     fullStackMarketPrice: r.fullStackMarketPrice,
+    frontOnlyCopy,
+    fullStackCopy,
     items,
+    deletedItemKeys,
   };
 }
 
@@ -252,6 +356,14 @@ export function priceOrder(
     // 舊六項 seo_* 已併入套票：就算傳入嘅 catalog 未正規化都唔准用舊 key 落新單
     if (LEGACY_SEO_KEY_SET.has(key)) {
       return { ok: false, error: `功能「${key}」已併入「SEO 技術優化套票」，請揀 seo_package` };
+    }
+    // 退役項（followup_reminders）：就算傳入嘅 catalog 未正規化都唔准落新單
+    if (RETIRED_KEY_SET.has(key)) {
+      return { ok: false, error: `功能「${key}」已退役，唔可以再加入訂單` };
+    }
+    // 指定報價項以 key 硬性拒絕：即使舊 JSON／管理員 payload 將 selectable 改成 true 都唔放行。
+    if (QUOTE_ONLY_KEY_SET.has(key)) {
+      return { ok: false, error: `功能「${key}」只供查詢報價，唔係自選項，唔可以加入訂單` };
     }
     const item = byKey.get(key);
     if (!item) return { ok: false, error: `功能「${key}」唔存在` };

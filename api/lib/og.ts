@@ -3,6 +3,7 @@ import { getDb } from "../queries/connection";
 import { products } from "@db/schema";
 import { productCategoryLabel, productSeoDescription } from "@contracts/types";
 import { stripPublicSeoContent } from "./publicSeo";
+import { publicAiTags } from "../productAiContent";
 
 /** HTML attribute escape：品名/描述入面嘅 & " < > 會整爛 meta tag */
 function esc(s: string): string {
@@ -38,6 +39,15 @@ export interface RouteMeta {
 }
 
 /**
+ * Meta upsert：模板有就原位換，冇就插入 `</head>` 前（同 robots 補插一個模式）。
+ * 有啲首口模板（例如精簡版）本身冇 twitter:*／og:image:alt，純 replace 會静默漏出。
+ */
+function upsertMeta(html: string, pattern: RegExp, tag: string): string {
+  if (pattern.test(html)) return html.replace(pattern, tag);
+  return html.replace("</head>", `    ${tag}\n  </head>`);
+}
+
+/**
  * 逐頁 SEO（v2.2.21 E2）：BrowserRouter 遷移後每條路由係真 URL，server 喺
  * notFound fallback 出 index.html 前，按頁面注入專屬 title / description /
  * og:title / og:description / og:url / canonical（https://redcode.red{path}）；
@@ -50,29 +60,44 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
     if (meta.title) {
       const t = esc(meta.title);
       out = out.replace(/<title>[^<]*<\/title>/, `<title>${t}</title>`);
-      out = out.replace(
+      out = upsertMeta(
+        out,
         /<meta\s+property="og:title"\s+content="[^"]*"\s*\/>/,
         `<meta property="og:title" content="${t}" />`,
+      );
+      out = upsertMeta(
+        out,
+        /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/>/,
+        `<meta name="twitter:title" content="${t}" />`,
       );
     }
     if (meta.description) {
       const d = esc(meta.description);
-      out = out.replace(
+      out = upsertMeta(
+        out,
         /<meta\s+name="description"\s+content="[^"]*"\s*\/>/,
         `<meta name="description" content="${d}" />`,
       );
-      out = out.replace(
+      out = upsertMeta(
+        out,
         /<meta\s+property="og:description"\s+content="[^"]*"\s*\/>/,
         `<meta property="og:description" content="${d}" />`,
+      );
+      out = upsertMeta(
+        out,
+        /<meta\s+name="twitter:description"\s+content="[^"]*"\s*\/>/,
+        `<meta name="twitter:description" content="${d}" />`,
       );
     }
     if (meta.path) {
       const url = esc(`https://redcode.red${meta.path}`);
-      out = out.replace(
+      out = upsertMeta(
+        out,
         /<meta\s+property="og:url"\s+content="[^"]*"\s*\/>/,
         `<meta property="og:url" content="${url}" />`,
       );
-      out = out.replace(
+      out = upsertMeta(
+        out,
         /<link\b[^>]*\brel=["']canonical["'][^>]*>/i,
         `<link rel="canonical" href="${url}" />`,
       );
@@ -92,13 +117,20 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
       const imageUrl = esc(
         meta.image.startsWith("https://") ? meta.image : `https://redcode.red${meta.image}`,
       );
-      out = out.replace(
+      out = upsertMeta(
+        out,
         /<meta\s+property="og:image"\s+content="[^"]*"\s*\/>/,
         `<meta property="og:image" content="${imageUrl}" />`,
       );
-      out = out.replace(
+      out = upsertMeta(
+        out,
         /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/,
         `<meta name="twitter:image" content="${imageUrl}" />`,
+      );
+      out = upsertMeta(
+        out,
+        /<meta\s+property="og:image:alt"\s+content="[^"]*"\s*\/>/,
+        `<meta property="og:image:alt" content="${esc(meta.title ?? "RedCode")}" />`,
       );
     }
     if (meta.structuredData) {
@@ -106,7 +138,7 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
       const json = JSON.stringify(meta.structuredData).replace(/</g, "\\u003c");
       out = out.replace(
         "</head>",
-        `    <script type="application/ld+json" data-redcode-route-schema>${json}</script>\n  </head>`,
+        `    <script type="application/ld+json" data-redcode-route-schema="${esc(meta.path ?? "")}">${json}</script>\n  </head>`,
       );
     }
     if (meta.noindex) {
@@ -158,6 +190,9 @@ export async function injectProductOg(
     const pageUrl = `${origin}/products/${p.id}`;
     const imageUrl = p.image.startsWith("http") ? p.image : `${origin}${p.image}`;
     const price = p.discountPrice ?? p.price;
+    const sizes = p.sizeEnabled
+      ? (p.sizes ?? "").split(",").map((size) => size.trim()).filter(Boolean)
+      : [];
     // meta description 同前端 ProductDetail 共用 contracts/types.ts 規則：
     // 有真描述用真描述；冇描述就用真貨號、分類、售價同庫存補強，唔再每件都係同一句空泛兜底。
     const desc = productSeoDescription(p);
@@ -170,6 +205,7 @@ export async function injectProductOg(
       `<meta property="og:title" content="${esc(title)}" />`,
       `<meta property="og:description" content="${esc(desc)}" />`,
       `<meta property="og:image" content="${esc(imageUrl)}" />`,
+      `<meta property="og:image:alt" content="${esc(title)}" />`,
       `<meta property="og:url" content="${esc(pageUrl)}" />`,
       `<meta name="twitter:card" content="summary_large_image" />`,
       `<meta name="twitter:title" content="${esc(title)}" />`,
@@ -199,13 +235,18 @@ export async function injectProductOg(
     // 區塊放喺 #root 外，白屏自救仍可靠 root.childNodes；React mount 後統一移除。
     const prerenderDesc = productSeoDescription(p, 300);
     const stockText = p.stock > 0 ? `現貨 ${p.stock} 件` : "暫時缺貨";
+    // AI 標籤可見重點：淨係 aiTagsEnabled=true 先出；disabled 時內容就算仲喺 DB 都絕對唔出現。
+    // （只加喺現有首口描述區；Product JSON-LD／運費／退貨政策主線邏輯唔郁）
+    const aiTags = publicAiTags(p.aiTags, p.aiTagsEnabled);
     const prerender =
       `<main id="redcode-product-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8"><h1>${esc(p.name)}</h1>` +
       `${p.sku ? `<p>貨號：${esc(p.sku)}</p>` : ""}` +
       `<p>分類：${esc(productCategoryLabel(p.category))}</p>` +
+      `${sizes.length ? `<p>尺寸：${esc(sizes.join("、"))}</p>` : ""}` +
       `<p>HK$${price}</p>` +
       `<p>${esc(stockText)}</p>` +
       `<p>${esc(prerenderDesc)}</p>` +
+      `${aiTags.length ? `<p>重點：${esc(aiTags.join("、"))}</p>` : ""}` +
       `<nav aria-label="購物相關頁面"><ul><li><a href="/products">全部貨品</a></li><li><a href="/try-on">AI 試穿</a></li><li><a href="/returns">退換貨政策</a></li></ul></nav></main>`;
     out = out.replace("</body>", `    ${prerender}\n  </body>`);
 
@@ -225,6 +266,7 @@ export async function injectProductOg(
         image: images,
         description: jsonDesc,
         ...(p.sku ? { sku: p.sku } : {}),
+        ...(sizes.length ? { size: sizes } : {}),
         brand: { "@type": "Brand", name: "RedCode" },
         offers: {
           "@type": "Offer",
@@ -234,9 +276,8 @@ export async function injectProductOg(
           availability:
             p.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
           itemCondition: "https://schema.org/NewCondition",
-          // SEO（2026-10-06）：Search Console 商家資訊警告——offers 補退貨政策＋運費。
-          // 退貨政策照 /returns 頁：收貨 7 天內、郵寄退貨、退貨運費買家付（破損個案內部酌情）。
-          // 運費 HK$30 係順豐基準價（滿 $350 免運）；正式展示以 Merchant Center 運送設定為準。
+          // 退貨政策同 /returns 可見規則一致：破損／寄錯貨由我哋承擔運費；
+          // 尺寸換貨嘅來回運費由客人承擔。實際順豐到付金額會變，唔再寫死 HK$30。
           hasMerchantReturnPolicy: {
             "@type": "MerchantReturnPolicy",
             applicableCountry: "HK",
@@ -244,23 +285,11 @@ export async function injectProductOg(
             merchantReturnDays: 7,
             merchantReturnLink: "https://redcode.red/returns",
             returnMethod: "https://schema.org/ReturnByMail",
-            returnFees: "https://schema.org/ReturnShippingFees",
-            // SEO（2026-10-08）：Search Console 建議欄位——退貨運費金額。
-            // 買家付順豐到付，基準價 HK$30（同樓上運費一致）。
-            returnShippingFeesAmount: { "@type": "MonetaryAmount", value: "30.00", currency: "HKD" },
+            itemDefectReturnFees: "https://schema.org/FreeReturn",
+            customerRemorseReturnFees: "https://schema.org/ReturnShippingFees",
           },
-          shippingDetails: {
-            "@type": "OfferShippingDetails",
-            shippingDestination: { "@type": "DefinedRegion", addressCountry: "HK" },
-            shippingRate: { "@type": "MonetaryAmount", value: "30.00", currency: "HKD" },
-            // SEO（2026-10-08）：Search Console 建議欄位——送貨時間。
-            // 跟老闆 Merchant Center 填嘅數：處理 3–12 天（一至五）＋ 運送 2–4 天（一至日）＝ 總共 5–16 工作天。
-            deliveryTime: {
-              "@type": "ShippingDeliveryTime",
-              handlingTime: { "@type": "QuantitativeValue", minValue: 3, maxValue: 12, unitCode: "DAY" },
-              transitTime: { "@type": "QuantitativeValue", minValue: 2, maxValue: 4, unitCode: "DAY" },
-            },
-          },
+          // 唔寫固定 shippingDetails：上門及未符合免運條件嘅訂單係順豐到付，
+          // 指定自取方式滿額又會免運，運費要由結帳按方式及小計計，唔係每件貨一律 HK$30。
         },
       };
       // SEO（v2.2.21 E2）：BreadcrumbList JSON-LD（首頁 > 全部貨品 > 產品名），

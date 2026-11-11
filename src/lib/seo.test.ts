@@ -8,9 +8,9 @@
  * 3) resolveSeo 路由對應：/products/:id 動態段、私人頁、未知路由 fallback。
  */
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { liveRouteMeta } from "../../api/lib/liveSeo";
-import { isNoIndexPath, NOT_FOUND_SEO, PAGE_SEO, resolveCanonicalPath, resolveSeo } from "./seo";
+import { isNoIndexPath, NOT_FOUND_SEO, PAGE_SEO, removeStaleRouteSchemas, resolveCanonicalPath, resolveSeo } from "./seo";
 
 const PHRASE_TRYON = "影張相即刻試穿";
 const PHRASE_EFFECT = "即刻睇到著上身效果";
@@ -132,5 +132,35 @@ describe("resolveSeo 路由對應", () => {
     expect(resolveCanonicalPath("/lucky-results/12")).toBe("/lucky-results/12");
     expect(resolveCanonicalPath("/account")).toBeNull();
     expect(resolveCanonicalPath("/no-such-page")).toBeNull();
+  });
+});
+
+
+describe("SPA route JSON-LD 清理", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("只保留屬於現時路徑嘅 route schema；轉頁後舊 Service schema 即移除", () => {
+    const current = {
+      removed: false,
+      getAttribute: () => "/web-design",
+      remove() { this.removed = true; },
+    };
+    const other = {
+      removed: false,
+      getAttribute: () => "/products?liveDate=20261103&liveSession=1",
+      remove() { this.removed = true; },
+    };
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [current, other],
+    });
+
+    removeStaleRouteSchemas("/web-design/");
+    expect(current.removed).toBe(false);
+    expect(other.removed).toBe(true);
+
+    removeStaleRouteSchemas("/");
+    expect(current.removed).toBe(true);
   });
 });

@@ -232,6 +232,24 @@ function ProductCard({ product, className, demo = false }: ProductCardProps) {
           <h3 className="line-clamp-2 text-[18px] font-bold leading-[1.4] text-txt-1">
             {product.name}
           </h3>
+          {/* AI 重點標籤（已批准先有）：品名下方小圓角 chip，flex wrap 手機兩欄都睇到；
+              放資訊區唔會遮住圖或快速加車 CTA。demo／冇 tags 就唔出 */}
+          {product.aiTags && product.aiTags.length > 0 && (
+            <ul className="flex flex-wrap gap-1.5" aria-label="商品重點標籤">
+              {product.aiTags.map((tag) => (
+                <li
+                  key={tag}
+                  className="rounded-md border px-2 py-0.5 text-[12px] leading-[1.6] text-lavender"
+                  style={{
+                    borderColor: 'var(--glass-border)',
+                    background: 'var(--glass-bg)',
+                  }}
+                >
+                  {tag}
+                </li>
+              ))}
+            </ul>
+          )}
           <p className="font-mono text-xs text-txt-3">
             貨號 {product.sku} · {formatListedAt(product.listedAt)} 上架
           </p>

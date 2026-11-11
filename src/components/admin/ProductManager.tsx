@@ -1,9 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Ban, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import { useAuth } from '@/hooks/useAuth';
 import { getToken } from '@/lib/auth';
 import { PRODUCT_CATEGORIES, productCategoryLabel } from '@contracts/types';
+import { parseAiTagsJson } from '@/components/shop/shop-utils';
 import { fmtDate, fmtHKD } from './format';
 import WishingStar, { LoadingBlock } from './WishingStar';
 import type { ToastKind } from './useToasts';
@@ -56,6 +58,19 @@ type ProductRow = {
   stock: number;
   isActive: boolean;
   createdAt: Date;
+  /** AI 標籤原始 JSON 字串（adminList 合約：string|null；壞資料用 parseAiTagsJson 擋） */
+  aiTags: string | null;
+  /** AI 標籤啟用狀態（adminList 合約：boolean）：false＝已停用（原始標籤照舊保留，唔會回返去公開 API） */
+  aiTagsEnabled: boolean;
+};
+
+/** 後端新合約 products.disableAiTags（supervisor/admin only，員工 server 會 FORBIDDEN）。
+ *  AppRouter 型別未更新前用結構型別接住；前端隱藏按鈕只係 UX，唔係保安防線。 */
+type DisableAiTagsApi = {
+  useMutation: (opts: {
+    onSuccess?: (result: unknown, vars: { ids: number[] }) => void;
+    onError?: (err: { message?: string }) => void;
+  }) => { mutate: (vars: { ids: number[] }) => void; isPending: boolean };
 };
 
 /** Date（superjson 已還原）→ datetime-local 欄位格式（本地時間 YYYY-MM-DDTHH:mm） */
@@ -104,6 +119,9 @@ export default function ProductManager({
   toast: (text: string, kind?: ToastKind) => void;
 }) {
   const utils = trpc.useUtils();
+  const { user } = useAuth();
+  // AI 標籤停用控制只畀 supervisor/admin 睇（UX）；真正權限喺 server（員工會 FORBIDDEN）
+  const canManageAiTags = user?.role === 'supervisor' || user?.role === 'admin';
   const listQuery = trpc.products.adminList.useQuery(undefined);
   const [form, setForm] = useState(initialForm);
   // 尺寸選項總開關（boolean，唔入 initialForm 嘅 string 結構）：閂咗商品頁唔顯示尺寸、落單唔使揀
@@ -128,6 +146,9 @@ export default function ProductManager({
   const [dayFilter, setDayFilter] = useState<string | null>(null);
   // 排列方式：created 上載日期（最新先）／name 名稱／listed 上架日期（最新先）／category 分類
   const [sortKey, setSortKey] = useState<SortKey>('created');
+  // AI 標籤：逐件停用嘅 inline 兩步確認＋批量多選（淨係可揀有啟用標籤嘅商品）
+  const [confirmDisableAiId, setConfirmDisableAiId] = useState<number | null>(null);
+  const [selectedAiIds, setSelectedAiIds] = useState<number[]>([]);
 
   /** 商品圖片上傳（一次過可揀多張）：逐張 POST /api/upload（staff JWT），路徑加入相簿 */
   const uploadImages = async (files: File[]) => {
@@ -290,6 +311,36 @@ export default function ProductManager({
     },
     onError: (err) => toast(err.message || '更新類別失敗', 'error'),
   });
+
+  /** AI 標籤停用成功後：後台列表＋前台公開查詢一齊更新（公開端停用後 server 會回 []） */
+  const invalidateAiTagViews = () => {
+    void utils.products.adminList.invalidate();
+    void utils.products.list.invalidate();
+    void utils.products.latest.invalidate();
+    void utils.products.byId.invalidate();
+  };
+
+  // products.disableAiTags：一次過停一件或多件；冇重新啟用（停咗就停咗）
+  const disableAiTagsMutation = (
+    trpc.products as unknown as { disableAiTags: DisableAiTagsApi }
+  ).disableAiTags.useMutation({
+    onSuccess: (result, vars) => {
+      // toast 報 server 實際 updated count（API 欄名係 count）；冇回就先當全部成功
+      const updated = (result as { count?: number } | null)?.count ?? vars.ids.length;
+      toast(`已停用 ${updated} 件商品嘅 AI 標籤（原始標籤會保留，但前台唔再顯示）`, 'success');
+      setSelectedAiIds([]);
+      setConfirmDisableAiId(null);
+      invalidateAiTagViews();
+    },
+    onError: (err) => {
+      // 失敗保留選擇同確認狀態，等主管可以即刻重試
+      toast(err.message || '停用 AI 標籤失敗', 'error');
+    },
+  });
+
+  /** 批量多選 toggle（淨係有啟用標籤嘅商品先有 checkbox） */
+  const toggleAiSelect = (id: number) =>
+    setSelectedAiIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
   /** 進入編輯模式：populate 表單（日期轉 YYYY-MM-DD、null 欄轉空字串） */
   const startEdit = (p: ProductRow) => {
@@ -944,6 +995,41 @@ export default function ProductManager({
         ) : products.length === 0 ? (
           <p className="py-14 text-center text-[14px] text-txt-3">未有商品，左手邊新增第一款啦。</p>
         ) : (
+          <>
+          {/* 原位批量行動列（supervisor/admin）：揀咗有啟用標籤嘅商品先出現，唔係 modal */}
+          {canManageAiTags && selectedAiIds.length > 0 && (
+            <div
+              className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3"
+              style={{ borderColor: 'var(--gold)', background: 'var(--glass-bg)' }}
+              role="region"
+              aria-label="批量停用 AI 標籤"
+            >
+              <p className="text-[13px] text-txt-2">
+                已揀 <span className="font-mono font-bold text-gold">{selectedAiIds.length}</span> 件商品
+              </p>
+              <button
+                type="button"
+                disabled={disableAiTagsMutation.isPending}
+                onClick={() => disableAiTagsMutation.mutate({ ids: selectedAiIds })}
+                className="btn btn-primary !min-h-11 !px-4 !py-2 text-[13px] disabled:opacity-60"
+              >
+                {disableAiTagsMutation.isPending ? (
+                  <WishingStar size={13} />
+                ) : (
+                  <Ban size={13} aria-hidden="true" />
+                )}
+                批量停用 AI 標籤
+              </button>
+              <button
+                type="button"
+                disabled={disableAiTagsMutation.isPending}
+                onClick={() => setSelectedAiIds([])}
+                className="btn btn-secondary !min-h-11 !px-4 !py-2 text-[13px] disabled:opacity-60"
+              >
+                清除選擇
+              </button>
+            </div>
+          )}
           <ul className="mt-4 flex flex-col gap-2">
             {visibleProducts.map((p) => {
               // 存貨 10 件以下都當緊張（直播前提醒補貨）
@@ -952,6 +1038,10 @@ export default function ProductManager({
               const autoDelisted =
                 p.delistEnabled && p.delistAt !== null && new Date(p.delistAt).getTime() <= Date.now();
               const removing = removeMutation.isPending && confirmRemoveId === p.id;
+              // AI 標籤：parse JSON 防壞資料；啟用中＝server 話 enabled 兼且有標籤
+              const aiTags = parseAiTagsJson(p.aiTags);
+              const aiEnabled = p.aiTagsEnabled === true && aiTags.length > 0;
+              const disablingAi = disableAiTagsMutation.isPending && confirmDisableAiId === p.id;
               return (
                 <li
                   key={p.id}
@@ -962,6 +1052,18 @@ export default function ProductManager({
                     opacity: p.isActive && !autoDelisted ? 1 : 0.55,
                   }}
                 >
+                  {/* 批量多選 checkbox（supervisor/admin；淨係有啟用中 AI 標籤嘅商品先可揀） */}
+                  {canManageAiTags && aiEnabled && (
+                    <label className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedAiIds.includes(p.id)}
+                        onChange={() => toggleAiSelect(p.id)}
+                        aria-label={`選擇 ${p.name} 以批量停用 AI 標籤`}
+                        className="h-4 w-4 accent-pink"
+                      />
+                    </label>
+                  )}
                   <img
                     src={p.image}
                     alt=""
@@ -979,6 +1081,73 @@ export default function ProductManager({
                       <p className="mt-1 text-[12px] leading-[1.5] text-gold-soft">
                         備註：{p.note}
                       </p>
+                    )}
+                    {/* AI 標籤行：原始標籤照顯示（停咗用都睇返）；狀態 badge ＋ 逐件停用（inline 兩步確認）。
+                        員工睇到標籤同狀態，但停用控制只畀 supervisor/admin */}
+                    {aiTags.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <Sparkles size={12} aria-hidden="true" className="shrink-0 text-gold" />
+                        {aiTags.map((t) => (
+                          <span
+                            key={t}
+                            className="rounded-md border px-2 py-0.5 font-mono text-[12px] leading-[1.6]"
+                            style={{
+                              borderColor: 'var(--glass-border)',
+                              background: 'var(--glass-bg)',
+                              color: aiEnabled ? 'var(--gold-soft)' : 'var(--text-3)',
+                            }}
+                          >
+                            {t}
+                          </span>
+                        ))}
+                        {aiEnabled ? (
+                          <span
+                            className="rounded-full border px-2 py-0.5 font-mono text-[12px] text-success"
+                            style={{ borderColor: 'var(--success)', background: 'var(--glass-bg)' }}
+                          >
+                            AI 標籤啟用中
+                          </span>
+                        ) : (
+                          <span
+                            className="rounded-full border px-2 py-0.5 font-mono text-[12px] text-txt-3"
+                            style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
+                          >
+                            AI 標籤已停用（前台唔顯示）
+                          </span>
+                        )}
+                        {canManageAiTags &&
+                          aiEnabled &&
+                          (confirmDisableAiId === p.id ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={disablingAi}
+                                onClick={() => disableAiTagsMutation.mutate({ ids: [p.id] })}
+                                className="btn btn-primary shrink-0 !min-h-11 !px-3 !py-2 text-[12px] disabled:opacity-60"
+                              >
+                                {disablingAi ? <WishingStar size={12} /> : null}
+                                確認停用？
+                              </button>
+                              <button
+                                type="button"
+                                disabled={disablingAi}
+                                onClick={() => setConfirmDisableAiId(null)}
+                                className="btn btn-secondary shrink-0 !min-h-11 !px-3 !py-2 text-[12px] disabled:opacity-60"
+                              >
+                                取消
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDisableAiId(p.id)}
+                              className="btn btn-secondary shrink-0 !min-h-11 !px-3 !py-2 text-[12px]"
+                            >
+                              <Ban size={12} aria-hidden="true" />
+                              停用 AI 標籤
+                            </button>
+                          ))}
+                      </div>
                     )}
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       {/* 類別 badge */}
@@ -1136,6 +1305,7 @@ export default function ProductManager({
               );
             })}
           </ul>
+          </>
         )}
       </div>
     </div>

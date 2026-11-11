@@ -26,6 +26,8 @@ export interface Product {
   live?: boolean;
   /** 斷貨 */
   soldOut?: boolean;
+  /** AI 重點標籤（已批准）；冇就唔顯示 */
+  aiTags?: string[];
 }
 
 export const PRODUCTS: Product[] = [

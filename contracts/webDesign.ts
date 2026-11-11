@@ -18,12 +18,23 @@ export interface WebDesignCatalogItem {
   priceNote: string;
 }
 
+/** 方案文案（01 方案卡／02 價錢格共用）：後台可改名稱、描述同重點列表 */
+export interface WebDesignPlanCopy {
+  name: string;
+  description: string;
+  points: string[];
+}
+
 export interface WebDesignCatalog {
   frontOnlyPrice: number;
   frontOnlyMarketPrice: number;
   fullStackPrice: number;
   fullStackMarketPrice: number;
+  frontOnlyCopy: WebDesignPlanCopy;
+  fullStackCopy: WebDesignPlanCopy;
   items: WebDesignCatalogItem[];
+  /** 後台刪除咗嘅項目 key（墓碑）：merge 唔會復活佢哋（包括 legacy 自動補項） */
+  deletedItemKeys: string[];
 }
 
 export const WEB_DESIGN_CATALOG_SETTING_KEY = "web_design_catalog";
@@ -42,11 +53,28 @@ export const LEGACY_SEO_ITEM_KEYS = [
   "seo_report",
 ] as const;
 
+/**
+ * 已退役項目 key（v2026.11.09.5）：mergeCatalogWithDefaults 一律過濾；
+ * validateCatalog／priceOrder 一律拒絕（就算傳入未正規化 catalog 都擋）。
+ * 舊訂單 items snapshot 唔會改（嗰啲係成交紀錄，唔經 catalog）。
+ */
+export const RETIRED_ITEM_KEYS = ["followup_reminders"] as const;
+
 export const DEFAULT_WEB_DESIGN_CATALOG: WebDesignCatalog = {
   frontOnlyPrice: 1668,
   frontOnlyMarketPrice: 5179,
   fullStackPrice: 4428,
   fullStackMarketPrice: 13750,
+  frontOnlyCopy: {
+    name: "基本一頁式",
+    description: "純展示網站：公司介紹、服務、聯絡方法，一頁講清楚。內容由我哋幫你放好，適合想快啲有個體面門面嘅生意。",
+    points: ["一頁式設計，手機電腦都啱睇", "可加成套 SEO 技術優化（見下）", "改內容由我哋代勞"],
+  },
+  fullStackCopy: {
+    name: "前台＋後台",
+    description: "除咗前台，仲有自己嘅管理後台：基本內容（文字、圖片、聯絡方法）可以自己改，唔使次次搵人。",
+    points: ["基本內容後台自行修改", "進階內容管理／留言跟進／員工權限可另加（見下面逐項價錢）", "前台＋後台方案先解鎖進階功能"],
+  },
   items: [
     { key: "seo_package", name: "SEO 技術優化套票", description: "一次過做晒：逐頁 title 同 description、canonical／robots／sitemap、Open Graph 分享預覽、同內容一致嘅 Service／Organization 結構化資料、H1–H3 層級同圖片 alt、效能檢查，並出逐項驗證報告。做實事，唔承諾搜尋排名。", category: "seo", price: 1240, marketPrice: 4429, requiredPlan: "front_only", billing: "one_off", selectable: true, active: true, sortOrder: 10, priceNote: "一次性｜完整套票" },
     { key: "catalog_admin", name: "服務／產品內容管理", description: "同事喺後台新增、修改、停用服務或產品內容。", category: "feature", price: 1127, marketPrice: 3500, requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 110, priceNote: "一次性｜需要前台＋後台" },
@@ -56,10 +84,11 @@ export const DEFAULT_WEB_DESIGN_CATALOG: WebDesignCatalog = {
     { key: "multilingual", name: "全網多語言版本", description: "全網頁面加語言切換同各語種文案，hreflang 等收錄設定一併執好，內容自己後台更新。", category: "feature", price: 1840, marketPrice: 8000, requiredPlan: "front_only", billing: "one_off", selectable: true, active: true, sortOrder: 150, priceNote: "一次性" },
     { key: "social_embed", name: "Facebook／Instagram 動態嵌入", description: "喺網站指定位置嵌入你提供嘅 Facebook 專頁或 Instagram 公開內容，社交平台有新帖會喺嵌入位置同步顯示；包括桌面及手機排版，唔需要代你申請第三方 API。", category: "feature", price: 800, marketPrice: 0, requiredPlan: "front_only", billing: "one_off", selectable: true, active: true, sortOrder: 155, priceNote: "一次性" },
     { key: "progress_lookup", name: "客戶進度查詢專區", description: "客人用單號同電話自己查訂單／服務進度，唔使次次打嚟問；進度由同事後台更新。", category: "feature", price: 3450, marketPrice: 9000, requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 160, priceNote: "一次性｜需要前台＋後台" },
-    { key: "followup_reminders", name: "跟進提醒系統", description: "後台為每位客設定跟進日期同備註，到期提醒同事跟客，唔再靠腦記。", category: "feature", price: 2760, marketPrice: 3500, requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 170, priceNote: "一次性｜需要前台＋後台" },
     { key: "hosting_monthly", name: "網站架設、雲端託管及維護", description: "網站成品需要地方存放，好似畀間屋佢住。月費包括雲端服務商收費，以及系統有問題時由我方維修。", category: "service", price: 633, marketPrice: 1964, requiredPlan: "front_only", billing: "monthly", selectable: true, active: true, sortOrder: 200, priceNote: "每月｜今次連首月計，其後按月安排" },
     { key: "domain_at_cost", name: "網域名稱 Domain", description: "一般約 HK$100–300／年，按供應商實報實銷；唔需要我哋代客申請其他第三方 API。", category: "service", price: 0, marketPrice: 0, requiredPlan: "front_only", billing: "at_cost", selectable: false, active: true, sortOrder: 210, priceNote: "約 HK$100–300／年｜實報實銷" },
+    { key: "website_customization", name: "網站客製化", description: "你嘅需求如果超出上面列出嘅方案同項目——例如特別功能、系統整合、特別流程——RedCode 會先了解同評估，再按實際工作量度身報價。", category: "service", price: 0, marketPrice: 0, requiredPlan: "front_only", billing: "at_cost", selectable: false, active: true, sortOrder: 220, priceNote: "度身評估｜聯絡我哋報價" },
   ],
+  deletedItemKeys: [],
 };
 
 export function planLabel(plan: WebDesignPlan): string {

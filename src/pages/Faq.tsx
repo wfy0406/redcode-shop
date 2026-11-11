@@ -219,10 +219,10 @@ const FAQ_ITEMS: FaqItem[] = [
     q: '用 WhatsApp 分享試穿結果安全嗎？',
     a: (
       <>
-        安全。WhatsApp 分享 fallback 只會帶<span className="faq-key">公開商品資料同網址</span>，
-        <span className="faq-mark">你嘅私人試穿結果唔會自動附加</span>。
-        如果想俾朋友睇效果，可以先<span className="faq-key">下載 PNG</span>，
-        再喺 WhatsApp 自己揀相附加，話事權完全喺你手。
+        WhatsApp 分享會帶你嘅<span className="faq-key">24 小時效果連結同公開商品資料</span>；
+        連結有效期內，收到連結嘅人可以睇到效果圖。主要分享按鈕會直接傳出
+        <span className="faq-key">PNG 效果圖</span>，唔會附上原相或會員資料。
+        你可以喺結果區即時刪除網站分享存取，但<span className="faq-mark">已下載或已傳出嘅 PNG 無法撤回</span>。
       </>
     ),
   },

@@ -243,6 +243,17 @@ export function setCanonicalPath(path: string | null): void {
   ogUrl?.setAttribute('content', href);
 }
 
+/** SPA 轉頁時只保留屬於本路徑嘅 server route JSON-LD，避免舊 Service schema 殘留。 */
+export function removeStaleRouteSchemas(pathname: string): void {
+  if (typeof document === 'undefined') return;
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  document.querySelectorAll<HTMLScriptElement>('script[data-redcode-route-schema]').forEach((script) => {
+    const schemaPath = (script.getAttribute('data-redcode-route-schema') ?? '').split('?')[0];
+    const normalizedSchemaPath = schemaPath.length > 1 ? schemaPath.replace(/\/+$/, '') : schemaPath;
+    if (normalizedSchemaPath !== normalized) script.remove();
+  });
+}
+
 /** 掛喺 Router 之下，每次轉頁或更改有效直播篩選即時更新 title、description、robots 同 canonical。 */
 export function SeoManager() {
   const { pathname, search } = useLocation();
@@ -256,6 +267,7 @@ export function SeoManager() {
       .querySelector('meta[name="robots"]')
       ?.setAttribute('content', isNoIndexPath(pathname) ? 'noindex, nofollow' : 'index, follow');
     setCanonicalPath(resolveCanonicalPath(pathname, search));
+    removeStaleRouteSchemas(pathname);
   }, [pathname, search]);
   return null;
 }

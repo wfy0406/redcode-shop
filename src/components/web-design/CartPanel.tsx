@@ -159,7 +159,7 @@ export default function CartPanel({ catalog, plan, selected, onRemoveItem, onCha
     <aside className="wd-cart" aria-label="購物車及結帳">
       <h3 className="wd-cart-title">購物車</h3>
 
-      {!plan && <p className="wd-cart-empty">未揀方案。請喺第一段揀「只要前台」或「前台＋後台」。</p>}
+      {!plan && <p className="wd-cart-empty">未揀方案。請喺第 01 或 02 段揀一個方案；揀咗會即時加入購物車。</p>}
 
       {plan && (
         <>

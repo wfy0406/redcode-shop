@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WEB_DESIGN_CATALOG,
   LEGACY_SEO_ITEM_KEYS,
+  RETIRED_ITEM_KEYS,
   WEB_DESIGN_CATALOG_SETTING_KEY,
   type WebDesignCatalogItem,
 } from "@contracts/webDesign";
@@ -30,6 +31,7 @@ import {
 import { ORDER_IMAGE_HEIGHT, ORDER_IMAGE_WIDTH, buildOrderImageSvg } from "./webDesignImage";
 
 const CATALOG = DEFAULT_WEB_DESIGN_CATALOG;
+const QUOTE_ONLY_TEST_KEYS = ["domain_at_cost", "website_customization"];
 
 /** 舊版逐項 SEO item（v2026.11.09 前嘅 DB 存量會係呢啲 key） */
 function legacySeoItem(key: (typeof LEGACY_SEO_ITEM_KEYS)[number], sortOrder: number): WebDesignCatalogItem {
@@ -90,7 +92,7 @@ describe("catalog 預設內容（v2026.11.09 改價＋SEO 套票）", () => {
     expect(byKey.get("seo_package")?.price).toBe(1240);
   });
 
-  it("新增四個唔需代客申請 API 嘅項目", () => {
+  it("新增三個唔需代客申請 API 嘅項目", () => {
     const byKey = new Map(CATALOG.items.map((i) => [i.key, i]));
     expect(byKey.get("ecard")).toMatchObject({
       name: "電子名片 e-Card", price: 690, marketPrice: 3500,
@@ -104,10 +106,32 @@ describe("catalog 預設內容（v2026.11.09 改價＋SEO 套票）", () => {
       name: "客戶進度查詢專區", price: 3450, marketPrice: 9000,
       requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 160,
     });
-    expect(byKey.get("followup_reminders")).toMatchObject({
-      name: "跟進提醒系統", price: 2760, marketPrice: 3500,
-      requiredPlan: "full_stack", billing: "one_off", selectable: true, active: true, sortOrder: 170,
+  });
+
+  it("followup_reminders 已退役：預設 catalog 冇佢，RETIRED_ITEM_KEYS 列明", () => {
+    expect(RETIRED_ITEM_KEYS).toContain("followup_reminders");
+    expect(CATALOG.items.find((i) => i.key === "followup_reminders")).toBeUndefined();
+  });
+
+  it("website_customization：HK$0 度身評估、唔揀得、實報實銷、排序 220", () => {
+    const item = CATALOG.items.find((i) => i.key === "website_customization");
+    expect(item).toMatchObject({
+      name: "網站客製化", category: "service", price: 0, marketPrice: 0,
+      requiredPlan: "front_only", billing: "at_cost", selectable: false, active: true,
+      sortOrder: 220, priceNote: "度身評估｜聯絡我哋報價",
     });
+    expect(item?.description).toContain("RedCode");
+    expect(item?.description).toContain("報價");
+  });
+
+  it("預設方案文案：名稱／描述／三個重點齊；deletedItemKeys 預設空", () => {
+    expect(CATALOG.frontOnlyCopy.name).toBe("基本一頁式");
+    expect(CATALOG.frontOnlyCopy.points).toHaveLength(3);
+    expect(CATALOG.frontOnlyCopy.description).toContain("純展示網站");
+    expect(CATALOG.fullStackCopy.name).toBe("前台＋後台");
+    expect(CATALOG.fullStackCopy.points).toHaveLength(3);
+    expect(CATALOG.fullStackCopy.description).toContain("管理後台");
+    expect(CATALOG.deletedItemKeys).toEqual([]);
   });
 
   it("Facebook／Instagram 動態嵌入：HK$800、前台方案可選、唔用虛構市場價", () => {
@@ -206,9 +230,131 @@ describe("catalog 合併預設（getCatalog 口徑）", () => {
     expect(merged.items.some((i) => LEGACY_SEO_ITEM_KEYS.includes(i.key as never))).toBe(false);
   });
 
-  it("淨係舊 key 其中一兩項都觸發正規化，同時補新社交嵌入服務", () => {
+  it("淨係舊 key 其中一兩項都觸發正規化，同時補新社交嵌入服務同客製化報價項", () => {
     const merged = mergeCatalogWithDefaults({ items: [legacySeoItem("seo_schema", 40)] });
-    expect(merged.items.map((i) => i.key)).toEqual(["seo_package", "social_embed"]);
+    expect(merged.items.map((i) => i.key)).toEqual(["seo_package", "social_embed", "website_customization"]);
+  });
+
+  it("舊 stored JSON 冇 website_customization → 自動補預設定義；已存在嘅後台自訂價唔會被冚", () => {
+    const upgraded = mergeCatalogWithDefaults({
+      ...CATALOG,
+      items: CATALOG.items.filter((i) => i.key !== "website_customization"),
+    });
+    const added = upgraded.items.find((i) => i.key === "website_customization");
+    expect(added).toMatchObject({
+      name: "網站客製化", price: 0, marketPrice: 0, billing: "at_cost",
+      selectable: false, active: true, sortOrder: 220,
+    });
+    const customized = mergeCatalogWithDefaults({
+      ...CATALOG,
+      items: CATALOG.items.map((i) =>
+        i.key === "website_customization" ? { ...i, description: "後台改過嘅客製化描述" } : i),
+    });
+    expect(customized.items.filter((i) => i.key === "website_customization")).toHaveLength(1);
+    expect(customized.items.find((i) => i.key === "website_customization")?.description)
+      .toBe("後台改過嘅客製化描述");
+  });
+
+  it("舊 stored JSON 就算將報價項改成收費可選，merge 都強制返 quote-only", () => {
+    const merged = mergeCatalogWithDefaults({
+      ...CATALOG,
+      items: CATALOG.items.map((i) =>
+        QUOTE_ONLY_TEST_KEYS.includes(i.key)
+          ? { ...i, price: 999, marketPrice: 1299, billing: "one_off" as const, selectable: true }
+          : i),
+    });
+    for (const key of QUOTE_ONLY_TEST_KEYS) {
+      expect(merged.items.find((i) => i.key === key)).toMatchObject({
+        price: 0, marketPrice: 0, billing: "at_cost", selectable: false,
+      });
+    }
+  });
+
+  it("website_customization 墓碑：刪除後 legacy 自動補項唔會復活佢", () => {
+    const merged = mergeCatalogWithDefaults({
+      ...CATALOG,
+      items: CATALOG.items.filter((i) => i.key !== "website_customization"),
+      deletedItemKeys: ["website_customization"],
+    });
+    expect(merged.items.find((i) => i.key === "website_customization")).toBeUndefined();
+    expect(merged.deletedItemKeys).toEqual(["website_customization"]);
+    // 就算 stored items 入面仲有（未清），墓碑都照擋
+    const stillThere = mergeCatalogWithDefaults({ ...CATALOG, deletedItemKeys: ["website_customization"] });
+    expect(stillThere.items.find((i) => i.key === "website_customization")).toBeUndefined();
+  });
+
+  it("退役 followup_reminders：stored catalog 有都一律過濾（舊單 snapshot 唔經呢度）", () => {
+    const stored = {
+      ...CATALOG,
+      items: [
+        ...CATALOG.items,
+        {
+          key: "followup_reminders", name: "跟進提醒系統", description: "舊項",
+          category: "feature", price: 2760, marketPrice: 3500, requiredPlan: "full_stack",
+          billing: "one_off", selectable: true, active: true, sortOrder: 170, priceNote: "一次性",
+        },
+      ],
+    };
+    const merged = mergeCatalogWithDefaults(stored);
+    expect(merged.items.find((i) => i.key === "followup_reminders")).toBeUndefined();
+    expect(merged.items.length).toBe(CATALOG.items.length);
+  });
+
+  it("deletedItemKeys 墓碑：stored 項目被過濾；social_embed 刪咗唔會被 legacy 自動補項復活", () => {
+    const stored = {
+      ...CATALOG,
+      items: CATALOG.items.filter((i) => i.key !== "social_embed"),
+      deletedItemKeys: ["social_embed"],
+    };
+    const merged = mergeCatalogWithDefaults(stored);
+    expect(merged.items.find((i) => i.key === "social_embed")).toBeUndefined();
+    expect(merged.deletedItemKeys).toEqual(["social_embed"]);
+    // 就算 stored items 入面仲有（未清），墓碑都照擋
+    const stillThere = mergeCatalogWithDefaults({ ...CATALOG, deletedItemKeys: ["social_embed"] });
+    expect(stillThere.items.find((i) => i.key === "social_embed")).toBeUndefined();
+  });
+
+  it("seo_package 墓碑：舊 seo_* 正規化唔會復活已刪套票", () => {
+    const merged = mergeCatalogWithDefaults({
+      items: [legacySeoItem("seo_schema", 40)],
+      deletedItemKeys: ["seo_package", "social_embed", "website_customization"],
+    });
+    expect(merged.items).toHaveLength(0);
+    expect(merged.deletedItemKeys).toEqual(["seo_package", "social_embed", "website_customization"]);
+  });
+
+  it("deletedItemKeys 壞值 lenient：非字串／壞格式逐個 drop、去重", () => {
+    const merged = mergeCatalogWithDefaults({
+      ...CATALOG,
+      deletedItemKeys: ["social_embed", 42, "Bad Key!", "social_embed"],
+    });
+    expect(merged.deletedItemKeys).toEqual(["social_embed"]);
+  });
+
+  it("舊 stored JSON 冇方案文案／墓碑欄 → 落預設；文案壞咗都落預設", () => {
+    const old = mergeCatalogWithDefaults({
+      frontOnlyPrice: 1450,
+      frontOnlyMarketPrice: 5179,
+      fullStackPrice: 3850,
+      fullStackMarketPrice: 13750,
+      items: CATALOG.items,
+    });
+    expect(old.frontOnlyCopy).toEqual(CATALOG.frontOnlyCopy);
+    expect(old.fullStackCopy).toEqual(CATALOG.fullStackCopy);
+    expect(old.deletedItemKeys).toEqual([]);
+    const broken = mergeCatalogWithDefaults({
+      ...CATALOG,
+      frontOnlyCopy: { name: "", points: "no" },
+      fullStackCopy: null,
+    });
+    expect(broken.frontOnlyCopy).toEqual(CATALOG.frontOnlyCopy);
+    expect(broken.fullStackCopy).toEqual(CATALOG.fullStackCopy);
+    // 合法自訂文案保留
+    const custom = mergeCatalogWithDefaults({
+      ...CATALOG,
+      frontOnlyCopy: { name: "自訂名", description: "自訂描述", points: ["甲", "乙"] },
+    });
+    expect(custom.frontOnlyCopy).toEqual({ name: "自訂名", description: "自訂描述", points: ["甲", "乙"] });
   });
 });
 
@@ -243,6 +389,94 @@ describe("validateCatalog（setCatalog 嚴格驗證）", () => {
         items: LEGACY_SEO_ITEM_KEYS.map((k, i) => legacySeoItem(k, (i + 1) * 10)),
       }),
     ).toBeNull();
+  });
+
+  it("strict roundtrip：預設 catalog 原樣通過（方案文案＋deletedItemKeys 保留）", () => {
+    const v = validateCatalog(CATALOG);
+    expect(v).toEqual(CATALOG);
+    // 後台加咗自訂項＋墓碑都 roundtrip
+    const customItem: WebDesignCatalogItem = {
+      key: "custom_whatsapp_button",
+      name: "WhatsApp 按鈕",
+      description: "自訂項目",
+      category: "feature",
+      price: 500,
+      marketPrice: 0,
+      requiredPlan: "front_only",
+      billing: "one_off",
+      selectable: true,
+      active: true,
+      sortOrder: 300,
+      priceNote: "一次性",
+    };
+    const withCustom = validateCatalog({
+      ...CATALOG,
+      items: [...CATALOG.items, customItem],
+      deletedItemKeys: ["social_embed"],
+      frontOnlyCopy: { name: "改咗名", description: "改咗描述", points: ["一", "二", "三"] },
+    });
+    expect(withCustom).not.toBeNull();
+    expect(withCustom?.items.find((i) => i.key === "custom_whatsapp_button")).toEqual(customItem);
+    expect(withCustom?.deletedItemKeys).toEqual(["social_embed"]);
+    expect(withCustom?.frontOnlyCopy.name).toBe("改咗名");
+  });
+
+  it("方案文案：缺欄落預設；有但壞（空 name／points 非陣列／空字串 point）→ 拒收", () => {
+    const missing = validateCatalog({
+      frontOnlyPrice: 1450,
+      frontOnlyMarketPrice: 5179,
+      fullStackPrice: 3850,
+      fullStackMarketPrice: 13750,
+      items: [],
+    });
+    expect(missing).not.toBeNull();
+    expect(missing?.frontOnlyCopy).toEqual(CATALOG.frontOnlyCopy);
+    expect(missing?.fullStackCopy).toEqual(CATALOG.fullStackCopy);
+    expect(missing?.deletedItemKeys).toEqual([]);
+    expect(
+      validateCatalog({ ...CATALOG, frontOnlyCopy: { name: "", description: "", points: [] } }),
+    ).toBeNull();
+    expect(
+      validateCatalog({ ...CATALOG, fullStackCopy: { name: "名", description: "", points: "no" } }),
+    ).toBeNull();
+    expect(
+      validateCatalog({ ...CATALOG, frontOnlyCopy: { name: "名", description: "", points: ["ok", "  "] } }),
+    ).toBeNull();
+  });
+
+  it("deletedItemKeys：缺欄落 []；有但壞（非陣列／非字串／壞 key 格式）→ 拒收；重複去重", () => {
+    expect(validateCatalog({ ...CATALOG, deletedItemKeys: "social_embed" })).toBeNull();
+    expect(validateCatalog({ ...CATALOG, deletedItemKeys: ["ok_key", 42] })).toBeNull();
+    expect(validateCatalog({ ...CATALOG, deletedItemKeys: ["Bad Key"] })).toBeNull();
+    const v = validateCatalog({ ...CATALOG, deletedItemKeys: ["social_embed", "social_embed"] });
+    expect(v?.deletedItemKeys).toEqual(["social_embed"]);
+  });
+
+  it("退役 followup_reminders 一律拒收（就算結構合法）", () => {
+    expect(
+      validateCatalog({
+        ...CATALOG,
+        items: [
+          ...CATALOG.items,
+          {
+            key: "followup_reminders", name: "跟進提醒系統", description: "舊項",
+            category: "feature", price: 2760, marketPrice: 3500, requiredPlan: "full_stack",
+            billing: "one_off", selectable: true, active: true, sortOrder: 170, priceNote: "一次性",
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("報價項 strict write 唔准改做收費或可選，避免由後台繞過 quote-only", () => {
+    for (const key of QUOTE_ONLY_TEST_KEYS) {
+      const changed = validateCatalog({
+        ...CATALOG,
+        items: CATALOG.items.map((i) =>
+          i.key === key ? { ...i, price: 999, billing: "one_off" as const, selectable: true } : i),
+      });
+      expect(changed, key).toBeNull();
+    }
   });
 });
 
@@ -286,11 +520,11 @@ describe("server 計價（priceOrder）", () => {
     expect(r.error).toContain("seo_package");
   });
 
-  it("新增四項 server 計價：full_stack 全揀；front_only 只揀到 multilingual", () => {
-    const r = priceOrder(CATALOG, "full_stack", ["ecard", "multilingual", "progress_lookup", "followup_reminders"]);
+  it("新增三項 server 計價：full_stack 全揀；front_only 只揀到 multilingual", () => {
+    const r = priceOrder(CATALOG, "full_stack", ["ecard", "multilingual", "progress_lookup"]);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.oneOffTotal).toBe(4428 + 690 + 1840 + 3450 + 2760);
+    expect(r.oneOffTotal).toBe(4428 + 690 + 1840 + 3450);
     expect(r.monthlyTotal).toBe(0);
     // multilingual 同 social_embed 係 front_only 可揀
     const r2 = priceOrder(CATALOG, "front_only", ["multilingual", "social_embed"]);
@@ -300,9 +534,50 @@ describe("server 計價（priceOrder）", () => {
     const socialOnly = priceOrder(CATALOG, "front_only", ["social_embed"]);
     expect(socialOnly.ok).toBe(true);
     if (socialOnly.ok) expect(socialOnly.total).toBe(1668 + 800);
-    // 其餘三項要 full_stack
-    for (const key of ["ecard", "progress_lookup", "followup_reminders"]) {
+    // 其餘兩項要 full_stack
+    for (const key of ["ecard", "progress_lookup"]) {
       expect(priceOrder(CATALOG, "front_only", [key]).ok, key).toBe(false);
+    }
+  });
+
+  it("退役 followup_reminders：落單一律擋（就算傳入未正規化、仲有呢項嘅舊 catalog）", () => {
+    expect(priceOrder(CATALOG, "full_stack", ["followup_reminders"]).ok).toBe(false);
+    const staleCatalog = {
+      ...CATALOG,
+      items: [
+        ...CATALOG.items,
+        {
+          key: "followup_reminders", name: "跟進提醒系統", description: "舊項",
+          category: "feature" as const, price: 2760, marketPrice: 3500, requiredPlan: "full_stack" as const,
+          billing: "one_off" as const, selectable: true, active: true, sortOrder: 170, priceNote: "一次性",
+        },
+      ],
+    };
+    const r = priceOrder(staleCatalog, "full_stack", ["followup_reminders"]);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain("退役");
+  });
+
+  it("website_customization 係報價項：唔係自選，server 拒絕加入訂單", () => {
+    const r = priceOrder(CATALOG, "front_only", ["website_customization"]);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain("唔係自選項");
+    expect(priceOrder(CATALOG, "full_stack", ["website_customization"]).ok).toBe(false);
+
+    // 唔信被改過嘅 stored catalog：selectable=true、 billing=one_off 都照樣以 key 拒絕。
+    const manipulated = {
+      ...CATALOG,
+      items: CATALOG.items.map((i) =>
+        QUOTE_ONLY_TEST_KEYS.includes(i.key)
+          ? { ...i, price: 999, billing: "one_off" as const, selectable: true }
+          : i),
+    };
+    for (const key of QUOTE_ONLY_TEST_KEYS) {
+      const blocked = priceOrder(manipulated, "front_only", [key]);
+      expect(blocked.ok, key).toBe(false);
+      if (!blocked.ok) expect(blocked.error).toContain("查詢報價");
     }
   });
 

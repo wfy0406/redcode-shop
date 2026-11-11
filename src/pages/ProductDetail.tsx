@@ -13,9 +13,11 @@ import {
   effectivePrice,
   formatHKD,
   hasDiscount,
+  normalizeAiTags,
   parseSizes,
   toCardProduct,
 } from '@/components/shop/shop-utils';
+import ProductStory from '@/components/shop/ProductStory';
 import { useReveal } from '@/hooks/useReveal';
 import { useRevealDep } from '@/components/shop/useRevealDep';
 import { addToGuestCart } from '@/lib/guestCart';
@@ -66,6 +68,11 @@ export default function ProductDetail() {
   }, [productQuery.data]);
 
   const sizes = useMemo(() => parseSizes(product?.sizes), [product?.sizes]);
+  // AI 重點標籤（公開 API 已批准先回 string[]；停用 server 回 []；demo／舊後端冇呢欄 → 空）
+  const aiTags = useMemo(
+    () => normalizeAiTags((product as { aiTags?: unknown } | null | undefined)?.aiTags),
+    [product],
+  );
   // 尺寸開關閂咗（冇尺寸嘅貨，例如袋/飾物）→ 唔顯示尺寸、落單唔使揀
   const sizeEnabled = product?.sizeEnabled ?? true;
   const needSize = sizeEnabled && sizes.length > 0;
@@ -514,15 +521,9 @@ export default function ProductDetail() {
             </div>
           )}
 
-          {/* 描述 */}
-          {product.description && (
-            <div className="mt-9 border-t pt-7" style={{ borderColor: 'var(--space-line)' }}>
-              <h2 className="text-[15px] font-bold text-txt-1">商品描述</h2>
-              <p className="mt-3 whitespace-pre-line text-[14px] leading-[1.9] text-txt-2">
-                {product.description}
-              </p>
-            </div>
-          )}
+          {/* 商品小筆記（editorial 描述區）：暖紙卡 + 重點 tags；冇描述但有 tags 都出，
+              兩樣都冇 ProductStory 自己回 null */}
+          <ProductStory description={product.description} aiTags={aiTags} className="mt-9" />
         </div>
       </div>
 

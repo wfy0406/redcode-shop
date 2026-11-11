@@ -63,6 +63,8 @@ function makeProduct(overrides: Record<string, unknown> = {}) {
     listedDate: new Date("2026-10-01"),
     stock: 5,
     isActive: true,
+    aiTags: null,
+    aiTagsEnabled: true,
     createdAt: new Date("2026-10-01"),
     ...overrides,
   };
@@ -130,6 +132,7 @@ describe("injectProductOg — 商品存在", () => {
     expect(html).toContain('<main id="redcode-product-seo" data-redcode-prerender');
     expect(html).toContain("<h1>067</h1>");
     expect(html).toContain("<p>貨號：SKU-067</p>");
+    expect(html).toContain("<p>尺寸：S、M、L</p>");
     expect(html).toContain("<p>HK$199</p>");
     expect(html).toContain("<p>星空閃石上衣，直播限定色，S/M/L 碼齊。</p>");
     expect(html).toContain('<a href="/products">全部貨品</a>');
@@ -152,6 +155,43 @@ describe("injectProductOg — 商品存在", () => {
     expect(offers.price).toBe("199.00"); // discountPrice 優先
     expect(offers.availability).toBe("https://schema.org/InStock");
     expect(productLd!.name).toBe("067");
+    expect(productLd!.size).toEqual(["S", "M", "L"]);
+    const returnPolicy = offers.hasMerchantReturnPolicy as Record<string, unknown>;
+    expect(returnPolicy.merchantReturnDays).toBe(7);
+    expect(returnPolicy.itemDefectReturnFees).toBe("https://schema.org/FreeReturn");
+    expect(returnPolicy.customerRemorseReturnFees).toBe("https://schema.org/ReturnShippingFees");
+    expect(returnPolicy.returnShippingFeesAmount).toBeUndefined();
+    expect(offers.shippingDetails).toBeUndefined();
+    expect(JSON.stringify(offers)).not.toContain("30.00");
+  });
+
+  it("停用尺寸或冇尺寸資料時，首口摘要同 Product JSON-LD 都唔會虛構尺寸", async () => {
+    mockRows = [makeProduct({ sizeEnabled: false, sizes: "S,M,L" })];
+    const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
+    expect(html).not.toContain("<p>尺寸：");
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const productLd = ldBlocks
+      .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
+      .find((j) => j["@type"] === "Product");
+    expect(productLd).toBeTruthy();
+    expect(productLd!.size).toBeUndefined();
+  });
+
+  it("AI 標籤重點：aiTagsEnabled=true 先出喺首口描述區；disabled 絕對唔出現", async () => {
+    mockRows = [makeProduct({ aiTags: '["直播熱賣","新品"]', aiTagsEnabled: true })];
+    const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
+    expect(html).toContain("<p>重點：直播熱賣、新品</p>");
+
+    mockRows = [makeProduct({ aiTags: '["直播熱賣","新品"]', aiTagsEnabled: false })];
+    const off = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
+    expect(off).not.toContain("重點：");
+    expect(off).not.toContain("直播熱賣");
+
+    // enabled 但冇內容／壞 JSON → 唔出重點行，亦唔會炸
+    mockRows = [makeProduct({ aiTags: null })];
+    expect((await injectProductOg(TEMPLATE, 85, ORIGIN))!).not.toContain("重點：");
+    mockRows = [makeProduct({ aiTags: "唔係JSON" })];
+    expect((await injectProductOg(TEMPLATE, 85, ORIGIN))!).not.toContain("重點：");
   });
 
   it("公開查詢同 products.byId 一樣擋人手下架及已到期自動下架", async () => {
@@ -206,6 +246,20 @@ describe("injectRouteMeta — canonical／noindex", () => {
     expect(out).toContain('<meta property="og:url" content="https://redcode.red/products" />');
     // 淨係一條 canonical（replace 原有，唔會多一條）
     expect(out.match(/rel="canonical"/g)).toHaveLength(1);
+  });
+
+  it("公開頁同步換 Twitter title／description、OG image alt，並標記 schema 所屬路徑", () => {
+    const out = injectRouteMeta(TEMPLATE, {
+      title: "網站設計標題",
+      description: "網站設計描述",
+      path: "/web-design",
+      image: "/web-design/web-design-og.webp",
+      structuredData: { "@context": "https://schema.org", "@type": "Service" },
+    });
+    expect(out).toContain('<meta name="twitter:title" content="網站設計標題" />');
+    expect(out).toContain('<meta name="twitter:description" content="網站設計描述" />');
+    expect(out).toContain('<meta property="og:image:alt" content="網站設計標題" />');
+    expect(out).toContain('data-redcode-route-schema="/web-design"');
   });
 
   it("直播節目頁 path 帶 query：canonical／og:url 正確 escape（& → &amp;），淨係一條 canonical", () => {

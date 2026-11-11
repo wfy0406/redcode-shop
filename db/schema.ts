@@ -154,6 +154,9 @@ export const listingBatchItems = pgTable("listingBatchItems", {
   sizes: varchar("sizes", { length: 255 }),
   category: varchar("category", { length: 32 }),
   imageUrl: varchar("imageUrl", { length: 512 }), // 最終落咗官網嘅本地 path（下載失敗就係原 URL）
+  // AI 內容已批准快照（WMS 推送合約 v2）：淨係 approved 內容先落嚟；冇帶／未批准＝NULL
+  aiDescription: text("aiDescription"),
+  aiTags: text("aiTags"), // JSON array 字串（已清理 tags）
   productId: integer("productId"), // upsert 成功後寫返
   status: varchar("status", { length: 16 }).notNull().default("pending"), // 'created'|'updated'|'failed'（rejected 批留 'pending'）
   error: text("error"),
@@ -181,6 +184,10 @@ export const products = pgTable("products", {
   liveDate: varchar("liveDate", { length: 8 }),
   liveSession: varchar("liveSession", { length: 16 }),
   note: varchar("note", { length: 512 }),
+  // AI 標籤（WMS 主管批准後推送）：JSON array 字串（最多 5 個、每個 ≤12 字）；
+  // aiTagsEnabled=false＝後台停用，公開 API／首口 HTML 一律唔出（重推都唔會復活個開關）
+  aiTags: text("aiTags"),
+  aiTagsEnabled: boolean("aiTagsEnabled").notNull().default(true),
   category: varchar("category", { length: 32 }).notNull().default("other"),
   listedDate: timestamp("listedDate").notNull(),
   stock: integer("stock").notNull().default(0),

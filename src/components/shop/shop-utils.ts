@@ -25,6 +25,33 @@ export interface ShopProduct {
   category: ProductCategory;
   listedDate: Date | string;
   stock: number;
+  /** AI 重點標籤（公開 API 已批准先回 string[]；停用嘅 server 回 []；舊後端/示範數據冇呢欄） */
+  aiTags?: string[];
+}
+
+/** AI 重點標籤正規化：淨係留非空字串、trim、去重（順序保留）；乜嘢壞資料都回 [] 唔會爆 */
+export function normalizeAiTags(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== 'string') continue;
+    const t = raw.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+/** adminList 嘅 aiTags 係 JSON 字串（或 null）；壞 JSON／非陣列 → 空陣列，唔好搞爆成個列表 */
+export function parseAiTagsJson(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    return normalizeAiTags(JSON.parse(raw));
+  } catch {
+    return [];
+  }
 }
 
 export function parseSizes(sizes: string | null | undefined): string[] {
@@ -60,6 +87,8 @@ export interface CardProduct {
   image: string;
   soldOut: boolean;
   stock: number;
+  /** AI 重點標籤（已批准）；冇就唔顯示 */
+  aiTags?: string[];
 }
 
 /** listedDate 兼容 Date（superjson）同 ISO 字串；Invalid 就用今日保底，唔好畀 Intl.DateTimeFormat 爆（Invalid time value） */
@@ -70,6 +99,7 @@ function toListedAt(d: Date | string): string {
 }
 
 export function toCardProduct(p: ShopProduct): CardProduct {
+  const aiTags = normalizeAiTags(p.aiTags);
   return {
     id: String(p.id),
     name: p.name,
@@ -82,6 +112,7 @@ export function toCardProduct(p: ShopProduct): CardProduct {
     image: p.image,
     soldOut: p.stock <= 0,
     stock: p.stock,
+    aiTags: aiTags.length > 0 ? aiTags : undefined,
   };
 }
 

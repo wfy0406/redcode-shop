@@ -258,6 +258,15 @@ CREATE TABLE IF NOT EXISTS "listingBatchItems" (
 );
 CREATE INDEX IF NOT EXISTS listingbatchitems_batch ON "listingBatchItems" ("batchId");
 
+-- WMS 推送 AI 內容合約（description＋aiTags，主管批准先落庫）：
+-- products.aiTags＝JSON array 字串（最多 5 個、每個 ≤12 字）；aiTagsEnabled＝後台總開關
+-- （false＝公開 API／首口 HTML 唔出；WMS 重推只更新內容，絕對唔會復活個開關）。
+-- listingBatchItems.aiDescription/aiTags＝該件已批准內容快照（冇帶／未批准＝NULL）。
+ALTER TABLE products ADD COLUMN IF NOT EXISTS "aiTags" text;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS "aiTagsEnabled" boolean NOT NULL DEFAULT true;
+ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "aiDescription" text;
+ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "aiTags" text;
+
 -- 忘記密碼 email 驗證碼（2026-08-04）：6 位碼存 hash，10 分鐘有效，最多試 5 次
 CREATE TABLE IF NOT EXISTS "passwordResetCodes" (
   id serial PRIMARY KEY,

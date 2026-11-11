@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   injectPublicSeoContent,
   PUBLIC_PAGES,
+  publicLuckyEventSitemapPaths,
   renderPublicContent,
   SITEMAP_STATIC_PATHS,
   stripPublicSeoContent,
@@ -21,6 +22,14 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
       expect(path.startsWith("/try-on/shared/")).toBe(false);
       expect(["/cart", "/checkout", "/account", "/admin"]).not.toContain(path);
     }
+  });
+
+  it("單場公告 sitemap 路徑去重及擋無效 ID，唔包含私人查劵路徑", () => {
+    expect(publicLuckyEventSitemapPaths([7, 12, 7, 0, -1, 1.5, Number.NaN])).toEqual([
+      "/lucky-results/7",
+      "/lucky-results/12",
+    ]);
+    expect(publicLuckyEventSitemapPaths([7]).join()).not.toContain("/lucky-tickets/");
   });
 
   it("index.html 自帶同資料來源一致嘅首頁真 HTML 摘要，#root 保持空", () => {
@@ -54,6 +63,11 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(html).toContain("唔代表尺碼、鬆緊、合身程度");
     expect(html).toContain('<a href="/try-on">AI 試穿</a>');
     expect(html).toContain('<a href="/returns">退換貨政策</a>');
+    expect(html).toContain("24 小時效果連結同公開商品資料");
+    expect(html).toContain("主要分享按鈕會直接傳出 PNG 效果圖");
+    expect(html).not.toContain("私人試穿結果唔會自動附加");
+    expect(faqSource).toContain("24 小時效果連結同公開商品資料");
+    expect(faqSource).toContain("已下載或已傳出嘅 PNG 無法撤回");
   });
 
   it("AI 試穿頁答案先置，並清楚講明視覺預覽唔等於尺碼建議", () => {
@@ -62,6 +76,10 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(html).toContain("登入會員後");
     expect(html).toContain("唔代表實際尺碼、鬆緊、合身程度或舒適度");
     expect(html).toContain('href="/faq#ai-tryon-tutorial"');
+    expect(html).toContain("300 × 300 像素");
+    expect(html).toContain("JPEG、PNG 或 WebP");
+    expect(html).toContain("私人原相及結果預設保留 24 小時");
+    expect(html).toContain('href="/privacy"');
   });
 
   it("退換貨首口內容同公開政策一致", () => {
@@ -81,10 +99,22 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(html).toContain("<title>香港網站設計｜前台、後台及 SEO 套票｜RedCode</title>");
     expect(html).toContain('<meta property="og:image" content="https://redcode.red/web-design/web-design-og.webp" />');
     expect(html).toContain('<meta name="twitter:image" content="https://redcode.red/web-design/web-design-og.webp" />');
-    expect(html).toContain('data-redcode-route-schema');
-    expect(html).toContain('"@type":"Service"');
-    expect(html).toContain('"name":"RedCode HK Limited"');
+    expect(html).toContain('data-redcode-route-schema="/web-design"');
+    expect(html.match(/"@type":"Service"/g)).toHaveLength(1);
+    expect(html).toContain('"provider":{"@id":"https://redcode.red/#org"}');
+    expect(html).not.toContain('#organization');
+    expect(html).toContain(`<meta name="twitter:title" content="${page.title}" />`);
+    expect(html).toContain(`<meta name="twitter:description" content="${page.description}" />`);
+    expect(html).toContain(`<meta property="og:image:alt" content="${page.title}" />`);
     expect(html).not.toContain('保證搜尋排名');
+    const webDesignSource = readFileSync(new URL("../../src/pages/WebDesignPage.tsx", import.meta.url), "utf8");
+    const visibleH1 = webDesignSource
+      .match(/<h1[^>]*>([\s\S]*?)<\/h1>/)?.[1]
+      .replace(/<br\s*\/>/g, "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, "");
+    expect(visibleH1).toBe(page.heading);
+    expect(webDesignSource).not.toContain("dangerouslySetInnerHTML={{ __html: jsonLd }}");
     const content = renderPublicContent("/web-design");
     expect(content).toContain("只要前台");
     expect(content).toContain("前台＋後台");

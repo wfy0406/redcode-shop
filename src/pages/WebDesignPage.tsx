@@ -188,6 +188,95 @@ function InquiryForm() {
 }
 
 /* ---------- 主頁 ---------- */
+function scrollToSection(id: string) {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.getElementById(id)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+}
+
+const GUIDE_STEPS = [
+  { id: 'wd-services', label: '01 方案', next: '02 價錢' },
+  { id: 'pricing', label: '02 價錢', next: '03 AI 協作' },
+  { id: 'wd-ai', label: '03 AI 協作', next: '04 示範' },
+  { id: 'wd-demos', label: '04 示範', next: '05 購物車' },
+  { id: 'contact', label: '05 購物車', next: '05 購物車' },
+] as const;
+
+/* 由 01 開始逐段帶客人向 05 前進；見到聯絡／購物車區即收起。 */
+function CartJourneyGuide() {
+  const [state, setState] = useState({ visible: false, current: 0 });
+
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const vh = window.innerHeight || 1;
+      const first = document.getElementById(GUIDE_STEPS[0].id);
+      const contact = document.getElementById('contact');
+      if (!first || !contact) {
+        setState((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+        return;
+      }
+      const firstRect = first.getBoundingClientRect();
+      const contactRect = contact.getBoundingClientRect();
+      const cartRect = document.querySelector('#contact .wd-cart')?.getBoundingClientRect();
+      const cartVisible = Boolean(cartRect && cartRect.top < vh * 0.9 && cartRect.bottom > 0);
+      const visible = firstRect.top <= vh * 0.82 && contactRect.top > vh * 0.62 && !cartVisible;
+      let current = 0;
+      for (let index = 0; index < GUIDE_STEPS.length - 1; index += 1) {
+        const section = document.getElementById(GUIDE_STEPS[index].id);
+        if (section && section.getBoundingClientRect().top <= vh * 0.55) current = index;
+      }
+      setState((prev) => (prev.visible === visible && prev.current === current ? prev : { visible, current }));
+    };
+    const requestUpdate = () => {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener('scroll', requestUpdate, { passive: true });
+    window.addEventListener('resize', requestUpdate);
+    return () => {
+      window.removeEventListener('scroll', requestUpdate);
+      window.removeEventListener('resize', requestUpdate);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  if (!state.visible) return null;
+  const targetIndex = Math.min(state.current + 1, GUIDE_STEPS.length - 1);
+  const target = GUIDE_STEPS[targetIndex];
+  const goNext = () => {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const destination = target.id === 'contact'
+      ? document.querySelector('#contact .wd-cart') || document.getElementById('contact')
+      : document.getElementById(target.id);
+    destination?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+  };
+
+  return (
+    <aside className="wd-journey-guide" aria-label="前往購物車導引">
+      <button
+        type="button"
+        className="wd-journey-button"
+        onClick={goNext}
+        data-guide-target={target.id}
+        aria-label={`向下前往${target.label}；購物車喺第 05 段`}
+        title={`向下去 ${target.label}`}
+      >
+        <span className="wd-journey-copy">
+          <span className="wd-journey-progress">{GUIDE_STEPS[state.current].label} → {target.label}</span>
+          <strong>向下去 {target.label}</strong>
+        </span>
+        <span className="wd-journey-mobile-label" aria-hidden="true">0{targetIndex + 1}</span>
+        <span className="wd-phantom-arrows" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+      </button>
+    </aside>
+  );
+}
+
 export default function WebDesignPage() {
   const catalogQuery = wdApi.getCatalog.useQuery(undefined, { staleTime: 60_000 });
   // catalog 未返之前用預設值頂住（server 計價永遠以 DB 為準）
@@ -209,6 +298,80 @@ export default function WebDesignPage() {
     url.searchParams.delete('ap');
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
   }, [paymentReturn]);
+
+  // 外部直接開 /web-design#pricing 呢類深連結時，React mount 後先補做原生 anchor 滾動。
+  // 後台 catalog、圖片同字體會令段落高度稍後改變；短時間內只在目標偏位時校正。
+  // 客人一撳、一碌或用鍵盤操作就立即停止，唔會同客人爭滾動控制。
+  useEffect(() => {
+    const rawHash = window.location.hash.slice(1);
+    if (!rawHash) return;
+    let id = rawHash;
+    try {
+      id = decodeURIComponent(rawHash);
+    } catch {
+      // 非完整 percent-encoding 都唔可以令成頁 crash；直接用原字串搵 ID。
+    }
+
+    let stopped = false;
+    let firstFrame = 0;
+    let secondFrame = 0;
+    let interval = 0;
+    let stopTimer = 0;
+    let observer: ResizeObserver | null = null;
+    const startedAt = performance.now();
+
+    const align = () => {
+      if (stopped) return;
+      const target = document.getElementById(id);
+      if (!target) return;
+      const marginTop = Number.parseFloat(window.getComputedStyle(target).scrollMarginTop) || 0;
+      if (Math.abs(target.getBoundingClientRect().top - marginTop) > 2) {
+        const root = document.documentElement;
+        const previousScrollBehavior = root.style.scrollBehavior;
+        // CSS 全域 smooth 會令 auto 仍然逐格動；深連結校正要即時完成，否則會追唔上內容變化。
+        root.style.scrollBehavior = 'auto';
+        try {
+          target.scrollIntoView({ behavior: 'auto', block: 'start' });
+        } finally {
+          root.style.scrollBehavior = previousScrollBehavior;
+        }
+      }
+    };
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      if (firstFrame) window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      if (interval) window.clearInterval(interval);
+      if (stopTimer) window.clearTimeout(stopTimer);
+      observer?.disconnect();
+      window.removeEventListener('load', align);
+      window.removeEventListener('wheel', stop);
+      window.removeEventListener('touchstart', stop);
+      window.removeEventListener('pointerdown', stop);
+      window.removeEventListener('keydown', stop);
+    };
+
+    firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(align);
+    });
+    interval = window.setInterval(align, 150);
+    stopTimer = window.setTimeout(stop, 4500);
+    window.addEventListener('load', align, { once: true });
+    window.addEventListener('wheel', stop, { passive: true });
+    window.addEventListener('touchstart', stop, { passive: true });
+    window.addEventListener('pointerdown', stop, { passive: true });
+    window.addEventListener('keydown', stop);
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => {
+        if (performance.now() - startedAt < 4500) align();
+      });
+      const root = document.getElementById('root');
+      if (root) observer.observe(root);
+    }
+    void document.fonts?.ready.then(align).catch(() => undefined);
+    return stop;
+  }, []);
 
   const pickPlan = (p: WebDesignPlan) => {
     setPlan(p);
@@ -261,37 +424,6 @@ export default function WebDesignPage() {
 
   const effectivePlan = plan ?? 'front_only';
 
-  // 真實 Service JSON-LD：淨係寫真實方案價錢，無虛假評分／案例
-  const jsonLd = useMemo(
-    () =>
-      JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'Service',
-        '@id': 'https://redcode.red/web-design#service',
-        name: '香港網站設計',
-        url: 'https://redcode.red/web-design',
-        provider: { '@id': 'https://redcode.red/#organization' },
-        areaServed: { '@type': 'Country', name: 'Hong Kong' },
-        serviceType: '網站設計、前台及後台建置、技術 SEO',
-        inLanguage: 'zh-Hant-HK',
-        offers: [
-          {
-            '@type': 'Offer',
-            name: '一頁式網站（只要前台）',
-            price: catalog.frontOnlyPrice,
-            priceCurrency: 'HKD',
-          },
-          {
-            '@type': 'Offer',
-            name: '網站前台＋後台（自己改內容）',
-            price: catalog.fullStackPrice,
-            priceCurrency: 'HKD',
-          },
-        ],
-      }),
-    [catalog],
-  );
-
   return (
     <main className="wd-page" id="wd-top">
       <CrystalBackground />
@@ -312,8 +444,26 @@ export default function WebDesignPage() {
                 你專心做生意，網站交俾我哋整到似樣、用得順。
               </p>
               <div className="wd-hero-actions">
-                <a className="wd-cta" href="#wd-services">揀選方案 <span aria-hidden="true">↘</span></a>
-                <a className="wd-hero-text-link" href="#wd-demos">睇示範網頁 <span aria-hidden="true">↗</span></a>
+                <a
+                  className="wd-cta"
+                  href="/web-design#wd-services"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    scrollToSection('wd-services');
+                  }}
+                >
+                  揀選方案 <span aria-hidden="true">↘</span>
+                </a>
+                <a
+                  className="wd-hero-text-link"
+                  href="/web-design#wd-demos"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    scrollToSection('wd-demos');
+                  }}
+                >
+                  睇示範網頁 <span aria-hidden="true">↗</span>
+                </a>
               </div>
               <div className="wd-hero-meta">
                 <span>一頁式 {fmtHKD(catalog.frontOnlyPrice)} 起</span>
@@ -344,7 +494,7 @@ export default function WebDesignPage() {
                 aria-pressed={plan === 'front_only'}
                 onClick={() => pickPlan('front_only')}
               >
-                <h3 className="wd-plan-name">只要前台</h3>
+                <h3 className="wd-plan-name">{catalog.frontOnlyCopy.name}</h3>
                 <div className="wd-plan-price">
                   <strong>{fmtHKD(catalog.frontOnlyPrice)}</strong>
                   <s>市場參考 {fmtHKD(catalog.frontOnlyMarketPrice)}</s>
@@ -352,17 +502,12 @@ export default function WebDesignPage() {
                     慳 {fmtHKD(savings(catalog.frontOnlyPrice, catalog.frontOnlyMarketPrice))}
                   </span>
                 </div>
-                <p className="wd-plan-desc">
-                  純展示網站：公司介紹、服務、聯絡方法，一頁講清楚。
-                  內容由我哋幫你放好，適合想快啲有個體面門面嘅生意。
-                </p>
+                <p className="wd-plan-desc">{catalog.frontOnlyCopy.description}</p>
                 <ul className="wd-plan-points">
-                  <li>一頁式設計，手機電腦都啱睇</li>
-                  <li>可加成套 SEO 技術優化（見下）</li>
-                  <li>改內容由我哋代勞</li>
+                  {catalog.frontOnlyCopy.points.map((point) => <li key={point}>{point}</li>)}
                 </ul>
                 <span className="wd-plan-cta">
-                  {plan === 'front_only' ? '✓ 已選擇' : '揀呢個 →'}
+                  {plan === 'front_only' ? '✓ 已加入購物車' : '揀呢個 →'}
                 </span>
               </button>
 
@@ -372,7 +517,7 @@ export default function WebDesignPage() {
                 aria-pressed={plan === 'full_stack'}
                 onClick={() => pickPlan('full_stack')}
               >
-                <h3 className="wd-plan-name">前台＋後台</h3>
+                <h3 className="wd-plan-name">{catalog.fullStackCopy.name}</h3>
                 <div className="wd-plan-price">
                   <strong>{fmtHKD(catalog.fullStackPrice)}</strong>
                   <s>市場參考 {fmtHKD(catalog.fullStackMarketPrice)}</s>
@@ -380,17 +525,12 @@ export default function WebDesignPage() {
                     慳 {fmtHKD(savings(catalog.fullStackPrice, catalog.fullStackMarketPrice))}
                   </span>
                 </div>
-                <p className="wd-plan-desc">
-                  除咗前台，仲有自己嘅管理後台：基本內容（文字、圖片、聯絡方法）可以自己改，
-                  唔使次次搵人。
-                </p>
+                <p className="wd-plan-desc">{catalog.fullStackCopy.description}</p>
                 <ul className="wd-plan-points">
-                  <li>基本內容後台自行修改</li>
-                  <li>進階內容管理／留言跟進／員工權限可另加（見下面逐項價錢）</li>
-                  <li>前台＋後台方案先解鎖進階功能</li>
+                  {catalog.fullStackCopy.points.map((point) => <li key={point}>{point}</li>)}
                 </ul>
                 <span className="wd-plan-cta">
-                  {plan === 'full_stack' ? '✓ 已選擇' : '揀呢個 →'}
+                  {plan === 'full_stack' ? '✓ 已加入購物車' : '揀呢個 →'}
                 </span>
               </button>
             </div>
@@ -436,8 +576,14 @@ export default function WebDesignPage() {
 
           <Reveal>
             <div className="wd-price-base">
-              <div className="wd-price-base-cell wd-price-base-cell--a">
-                <p className="wd-kicker" style={{ marginBottom: 6 }}>基本一頁式</p>
+              <button
+                type="button"
+                className="wd-price-base-cell wd-price-base-cell--a wd-price-base-cell--select"
+                aria-pressed={plan === 'front_only'}
+                data-plan="front_only"
+                onClick={() => pickPlan('front_only')}
+              >
+                <p className="wd-kicker" style={{ marginBottom: 6 }}>{catalog.frontOnlyCopy.name}</p>
                 <p className="wd-price-num">{fmtHKD(catalog.frontOnlyPrice)}</p>
                 <p className="wd-price-market">
                   <s>市場參考 {fmtHKD(catalog.frontOnlyMarketPrice)}</s>
@@ -446,9 +592,19 @@ export default function WebDesignPage() {
                     {discountLabel(catalog.frontOnlyPrice, catalog.frontOnlyMarketPrice)}）
                   </span>
                 </p>
-              </div>
-              <div className="wd-price-base-cell wd-price-base-cell--b">
-                <p className="wd-kicker" style={{ marginBottom: 6 }}>前台＋後台</p>
+                <p className="wd-price-plan-desc">{catalog.frontOnlyCopy.description}</p>
+                <span className="wd-price-select-cta">
+                  {plan === 'front_only' ? '✓ 已加入購物車' : '選擇方案，加入購物車 →'}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="wd-price-base-cell wd-price-base-cell--b wd-price-base-cell--select"
+                aria-pressed={plan === 'full_stack'}
+                data-plan="full_stack"
+                onClick={() => pickPlan('full_stack')}
+              >
+                <p className="wd-kicker" style={{ marginBottom: 6 }}>{catalog.fullStackCopy.name}</p>
                 <p className="wd-price-num">{fmtHKD(catalog.fullStackPrice)}</p>
                 <p className="wd-price-market">
                   <s>市場參考 {fmtHKD(catalog.fullStackMarketPrice)}</s>
@@ -457,7 +613,11 @@ export default function WebDesignPage() {
                     {discountLabel(catalog.fullStackPrice, catalog.fullStackMarketPrice)}）
                   </span>
                 </p>
-              </div>
+                <p className="wd-price-plan-desc">{catalog.fullStackCopy.description}</p>
+                <span className="wd-price-select-cta">
+                  {plan === 'full_stack' ? '✓ 已加入購物車' : '選擇方案，加入購物車 →'}
+                </span>
+              </button>
               <div className="wd-price-base-cell wd-price-base-cell--c">
                 <p className="wd-kicker" style={{ marginBottom: 6 }}>點解平咁多？</p>
                 <p className="wd-hint" style={{ fontSize: 14 }}>
@@ -538,6 +698,20 @@ export default function WebDesignPage() {
                             >
                               {inCart ? '✓ 已加入' : '加入'}
                             </button>
+                          ) : it.key === 'website_customization' ? (
+                            <div className="wd-quote-actions">
+                              <span className="wd-tag">參考</span>
+                              <a
+                                className="wd-quote-link"
+                                href="/web-design#contact"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  scrollToSection('contact');
+                                }}
+                              >
+                                查詢報價 ↓
+                              </a>
+                            </div>
                           ) : (
                             <span className="wd-tag">參考</span>
                           )}
@@ -705,6 +879,8 @@ export default function WebDesignPage() {
         </div>
       </section>
 
+      <CartJourneyGuide />
+
       <footer className="wd-footer" data-crystal="dark">
         <div className="wd-container wd-footer-inner">
           <div>
@@ -715,8 +891,6 @@ export default function WebDesignPage() {
         </div>
       </footer>
 
-      {/* 真實 Service JSON-LD（無虛假評分／案例／客戶） */}
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
     </main>
   );
 }

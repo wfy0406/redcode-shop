@@ -4,9 +4,10 @@ import { and, eq, gt, ilike, inArray, isNotNull, isNull, or, desc } from "drizzl
 import { getDb } from "./queries/connection";
 import { cartItems, listingBatchItems, listingBatches, orderItems, productImageArchive, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
-import { createRouter, publicQuery, staffProcedure } from "./middleware";
+import { createRouter, publicQuery, staffProcedure, supervisorProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { requestApprovalIfStaff } from "./approvalGuard";
+import { publicAiTags } from "./productAiContent";
 
 const categorySchema = z.enum(PRODUCT_CATEGORY_VALUES as [string, ...string[]]);
 
@@ -51,6 +52,10 @@ const productListColumns = {
   liveDate: products.liveDate,
   liveSession: products.liveSession,
   createdAt: products.createdAt,
+  // AI 標籤（raw＋內部開關只係中間欄位）：落 DTO 前一定經 publicProductRow 剝走開關、
+  // disabled 一律 []——內部 enabled flag 絕對唔會出現喺公開回應
+  aiTags: products.aiTags,
+  aiTagsEnabled: products.aiTagsEnabled,
 } as const;
 
 /** 首頁「新品上架」卡片專用欄位（products.latest 合約：唔包 description/photos，保留封面圖 image） */
@@ -65,7 +70,20 @@ const productCardColumns = {
   category: products.category,
   listedDate: products.listedDate,
   stock: products.stock,
+  aiTags: products.aiTags,
+  aiTagsEnabled: products.aiTagsEnabled,
 } as const;
+
+/**
+ * 公開 DTO：aiTags 回 string[]；aiTagsEnabled=false 一律回 []，
+ * 而且剝走內部 raw JSON／enabled flag（唔出現喺公開回應）。
+ */
+function publicProductRow<T extends { aiTags: string | null; aiTagsEnabled: boolean }>(
+  row: T,
+): Omit<T, "aiTags" | "aiTagsEnabled"> & { aiTags: string[] } {
+  const { aiTags, aiTagsEnabled, ...rest } = row;
+  return { ...rest, aiTags: publicAiTags(aiTags, aiTagsEnabled) };
+}
 
 /**
  * 商品圖歸檔（2026-08-06 Glo 要求：WMS 補舊訂單圖嘅保險）。
@@ -227,11 +245,12 @@ export const productsRouter = createRouter({
           conditions.push(eq(products.liveSession, input.liveSession));
         }
       }
-      return db
+      const rows = await db
         .select(productListColumns)
         .from(products)
         .where(and(...conditions))
         .orderBy(desc(products.listedDate));
+      return rows.map(publicProductRow);
     }),
 
   /**
@@ -249,12 +268,13 @@ export const productsRouter = createRouter({
     )
     .query(async ({ input }) => {
       const db = getDb();
-      return db
+      const rows = await db
         .select(productCardColumns)
         .from(products)
         .where(and(eq(products.isActive, true), notAutoDelisted()))
         .orderBy(desc(products.listedDate))
         .limit(input?.limit ?? 8);
+      return rows.map(publicProductRow);
     }),
 
   /**
@@ -326,7 +346,40 @@ export const productsRouter = createRouter({
       if (!product) {
         throw new TRPCError({ code: "NOT_FOUND", message: "產品不存在或已下架" });
       }
-      return product;
+      // 唔再直接 dump 整列：剝走內部 raw aiTags JSON／enabled flag；
+      // aiTagsEnabled=false 一律回 []，公開回應唔會見到個開關
+      return publicProductRow(product);
+    }),
+
+  /**
+   * 停用 AI 標籤（2026-11 合約 v2）：主管級先准（supervisorProcedure 強制，員工 staff 唔用得）；
+   * 淨係閂 aiTagsEnabled，內容保留（日後冇 enable API，重推都唔會復活）。
+   * 冪等：已停用嘅 id 重送都係 ok。
+   */
+  disableAiTags: supervisorProcedure
+    .input(
+      z
+        .object({
+          ids: z.array(z.number().int().positive()).min(1).max(100),
+        })
+        .refine((v) => new Set(v.ids).size === v.ids.length, { message: "ids 唔可以重複" }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const updated = await db
+        .update(products)
+        .set({ aiTagsEnabled: false })
+        .where(inArray(products.id, input.ids))
+        .returning({ id: products.id });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "product.disableAiTags",
+        targetType: "product",
+        targetId: input.ids.join(",").slice(0, 64),
+        detail: `停用 AI 標籤：${updated.length} 件商品（ids：${input.ids.join(",")}）`,
+      });
+      return { ok: true, count: updated.length };
     }),
 
   create: staffProcedure

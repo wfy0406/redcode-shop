@@ -97,7 +97,7 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
     title: "香港網站設計｜前台、後台及 SEO 套票｜RedCode",
     description:
       "RedCode 網站設計：一頁式前台或前台＋後台，逐項列明香港市場對照價、折扣及 SEO 驗證項目；可網上落單、上載付款截圖及自助查詢進度。",
-    heading: "香港網站設計，由展示到自行管理",
+    heading: "你嘅生意，值得被看見。",
     summary:
       "RedCode 提供只要前台及前台＋後台兩種網站設計方案。你可以按需要逐項加入 SEO、內容管理、留言管理或員工權限功能，再喺同一頁確認價錢及落單。",
     sections: [
@@ -124,12 +124,6 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
       "@context": "https://schema.org",
       "@graph": [
         {
-          "@type": "Organization",
-          "@id": "https://redcode.red/#organization",
-          name: "RedCode HK Limited",
-          url: "https://redcode.red/",
-        },
-        {
           "@type": "Service",
           "@id": "https://redcode.red/web-design#service",
           name: "香港網站設計",
@@ -137,7 +131,7 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
           description:
             "只要前台或前台＋後台方案，可逐項加入 SEO、內容管理、留言管理及員工權限功能，並提供驗證報告。",
           url: "https://redcode.red/web-design",
-          provider: { "@id": "https://redcode.red/#organization" },
+          provider: { "@id": "https://redcode.red/#org" },
           areaServed: { "@type": "Country", name: "Hong Kong" },
           inLanguage: "zh-Hant-HK",
         },
@@ -297,7 +291,7 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
       },
       {
         heading: "用 WhatsApp 分享試穿結果安全嗎？",
-        text: "安全。WhatsApp 分享 fallback 只會帶公開商品資料同網址，你嘅私人試穿結果唔會自動附加。如果想俾朋友睇效果，可以先下載 PNG，再喺 WhatsApp 自己揀相附加，話事權完全喺你手。",
+        text: "WhatsApp 分享會帶你嘅 24 小時效果連結同公開商品資料；連結有效期內，收到連結嘅人可以睇到效果圖。主要分享按鈕會直接傳出 PNG 效果圖，唔會附上原相或會員資料。你可以喺結果區即時刪除網站分享存取，但已下載或已傳出嘅 PNG 無法撤回。",
       },
     ],
     links: [
@@ -323,11 +317,16 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
         heading: "AI 預覽唔等於尺碼建議",
         text: "AI 試穿只係視覺效果預覽，唔代表實際尺碼、鬆緊、合身程度或舒適度；尺寸請以商品尺寸表及實物為準。",
       },
+      {
+        heading: "相片格式同私隱",
+        text: "相片最少要 300 × 300 像素，支援 JPEG、PNG 或 WebP；HEIC／HEIF 請先輸出做 JPEG。私人原相及結果預設保留 24 小時，唔會公開喺商品圖庫，亦可以喺結果區即時刪除。",
+      },
     ],
     links: [
       { href: "/products", label: "揀 RedCode 商品" },
       { href: "/faq#ai-tryon-tutorial", label: "睇 70 秒 AI 試穿教學" },
       { href: "/live", label: "睇直播上身示範" },
+      { href: "/privacy", label: "私隱政策" },
     ],
   },
   "/lucky-results": {
@@ -364,6 +363,12 @@ export const SITEMAP_STATIC_PATHS = [
   "/try-on",
   "/lucky-results",
 ] as const;
+
+/** Sitemap 只加入後台已確認公開嘅單場公告；唔用抽獎日期冒充內容修改日期。 */
+export function publicLuckyEventSitemapPaths(eventIds: readonly number[]): string[] {
+  const validIds = eventIds.filter((id) => Number.isInteger(id) && id > 0);
+  return [...new Set(validIds)].map((id) => `/lucky-results/${id}`);
+}
 
 function esc(value: string): string {
   return value

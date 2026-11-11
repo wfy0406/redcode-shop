@@ -1,0 +1,177 @@
+/*
+ * product-story.css —— 商品詳情頁「商品小筆記」（editorial 區塊）
+ *
+ * 深色主頁入面一張暖紙色卡片：暖紙底 + 深啡字 + burnt-orange 點綴，
+ * 同四周深色玻璃介面形成精緻層次。
+ * 標題用 CJK serif（Noto Serif TC）、正文用 sans（Noto Sans TC）；
+ * 唔用 font-style: italic —— 中文字假斜體會變形難睇。
+ * 所有動效只係 transition；prefers-reduced-motion 全部停用。
+ */
+
+.ps-story {
+  --ps-paper: #f7efdf;
+  --ps-paper-deep: #f1e4cc;
+  --ps-ink: #3a2a1c;
+  --ps-ink-soft: #6d5942;
+  --ps-accent: #c1502e; /* burnt orange */
+  --ps-accent-deep: #9a3f22;
+  --ps-line: #e2cfa9;
+
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  padding: 28px 24px 24px;
+  background: linear-gradient(155deg, var(--ps-paper) 0%, var(--ps-paper-deep) 100%);
+  color: var(--ps-ink);
+  box-shadow:
+    0 1px 0 rgba(58, 42, 28, 0.06),
+    0 16px 40px rgba(0, 0, 0, 0.38);
+}
+
+/* 右上角 burnt-orange 小圓點裝飾（非對稱細節） */
+.ps-story::after {
+  content: '';
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--ps-accent);
+  opacity: 0.85;
+}
+
+/* 非對稱小標：短 burnt-orange 橫劃 + 細字 kicker，向左縮排唔置中 */
+.ps-kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px 2px;
+  font-family: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ps-accent-deep);
+}
+
+.ps-kicker::before {
+  content: '';
+  flex: none;
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ps-accent);
+}
+
+.ps-title {
+  margin: 0 0 4px;
+  font-family: 'Noto Serif TC', serif;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ps-ink);
+}
+
+/* 重點標籤： burnt-orange 描邊 chip，flex wrap，手機都睇到 */
+.ps-tags-block {
+  margin-top: 14px;
+}
+
+.ps-tags-label {
+  margin: 0 0 8px;
+  font-family: 'Noto Serif TC', serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ps-accent-deep);
+}
+
+.ps-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ps-tag {
+  border: 1px solid var(--ps-accent);
+  border-radius: 8px;
+  padding: 3px 10px;
+  background: rgba(193, 80, 46, 0.08);
+  color: var(--ps-accent-deep);
+  font-family: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.6;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.ps-tag:hover {
+  background: rgba(193, 80, 46, 0.16);
+}
+
+/* 正文：段落之間留白清楚；段內保留單行換行（pre-line） */
+.ps-body {
+  margin-top: 16px;
+  border-top: 1px solid var(--ps-line);
+  padding-top: 16px;
+}
+
+/* 冇描述淨係 tags 嗰陣，唔好多一條分隔線 */
+.ps-tags-block + .ps-body {
+  margin-top: 18px;
+}
+
+.ps-para {
+  margin: 0;
+  font-family: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  font-size: 16px;
+  line-height: 1.85;
+  color: var(--ps-ink);
+  white-space: pre-line;
+}
+
+.ps-para + .ps-para {
+  margin-top: 14px;
+}
+
+/* 配搭免責句：內文提到配搭先出；短句、柔和啡色，唔搶戲 */
+.ps-disclaimer {
+  margin: 16px 0 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--ps-accent);
+  font-family: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ps-ink-soft);
+}
+
+/* 手機間距收緊，字級保持清楚 */
+@media (max-width: 640px) {
+  .ps-story {
+    border-radius: 16px;
+    padding: 22px 18px 20px;
+  }
+
+  .ps-title {
+    font-size: 21px;
+  }
+
+  .ps-para {
+    font-size: 16px;
+    line-height: 1.8;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ps-story,
+  .ps-story *,
+  .ps-story *::before,
+  .ps-story *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
