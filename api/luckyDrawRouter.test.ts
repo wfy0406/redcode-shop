@@ -2055,7 +2055,7 @@ describe("adminSetEventWinnersPublic 公告開關（event 鎖內重讀＋audit�
     h.state.queue = [
       {}, // tx execute：event 雙 key 鎖
       [{ id: 7, name: "週年慶" }], // 鎖內重讀活動
-      [], // update luckyDrawEvents
+      [{ winnersPublic: false }], // update returning：DB 實際寫入值
     ];
     const r = await caller().adminSetEventWinnersPublic({ eventId: 7, winnersPublic: false });
     expect(r).toEqual({ ok: true, winnersPublic: false });
@@ -2082,10 +2082,26 @@ describe("adminSetEventWinnersPublic 公告開關（event 鎖內重讀＋audit�
   });
 
   it("開啟：winnersPublic:true 照寫＋audit 寫「公開」", async () => {
-    h.state.queue = [{}, [{ id: 7, name: "週年慶" }], []];
+    h.state.queue = [{}, [{ id: 7, name: "週年慶" }], [{ winnersPublic: true }]];
     const r = await caller().adminSetEventWinnersPublic({ eventId: 7, winnersPublic: true });
     expect(r).toEqual({ ok: true, winnersPublic: true });
     expect(h.state.updates.filter((u) => u.table === luckyDrawEvents)[0].set).toEqual({ winnersPublic: true });
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.setEventWinnersPublic",
+      detail: expect.stringContaining("公開"),
+    }));
+  });
+
+  it("回應同 audit 用 DB returning 實際值，唔係齋 echo input", async () => {
+    h.state.queue = [
+      {},
+      [{ id: 7, name: "週年慶" }],
+      [{ winnersPublic: true }], // 刻意同 input false 唔同，證明 resolver 冇齋 echo 請求值
+    ];
+
+    const r = await caller().adminSetEventWinnersPublic({ eventId: 7, winnersPublic: false });
+
+    expect(r).toEqual({ ok: true, winnersPublic: true });
     expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: "luckyDraw.setEventWinnersPublic",
       detail: expect.stringContaining("公開"),

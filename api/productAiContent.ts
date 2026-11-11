@@ -33,22 +33,22 @@ export function sanitizeAiTag(value: string): string {
 
 /** 校驗 AI 描述（已清理後計長度）；合格返 null，唔合格返錯誤字串。空字串合法（清描述用）。 */
 export function validateAiDescription(value: unknown): string | null {
-  if (typeof value !== "string") return "AI 描述要係字串";
+  if (typeof value !== "string") return "商品描述要係字串";
   if (sanitizeAiDescription(value).length > AI_DESCRIPTION_MAX) {
-    return `AI 描述最長 ${AI_DESCRIPTION_MAX} 字`;
+    return `商品描述最長 ${AI_DESCRIPTION_MAX} 字`;
   }
   return null;
 }
 
-/** 校驗 AI 標籤；合格返 null。空 array 合法；超長／非字串／清理後變空嘅 tag 一律拒絕。 */
+/** 校驗 重點標籤；合格返 null。空 array 合法；超長／非字串／清理後變空嘅 tag 一律拒絕。 */
 export function validateAiTags(value: unknown): string | null {
-  if (!Array.isArray(value)) return "AI 標籤要係 array";
-  if (value.length > AI_TAG_MAX_COUNT) return `AI 標籤最多 ${AI_TAG_MAX_COUNT} 個`;
+  if (!Array.isArray(value)) return "重點標籤要係 array";
+  if (value.length > AI_TAG_MAX_COUNT) return `重點標籤最多 ${AI_TAG_MAX_COUNT} 個`;
   for (const tag of value) {
-    if (typeof tag !== "string") return "AI 標籤逐個都要係字串";
+    if (typeof tag !== "string") return "重點標籤逐個都要係字串";
     const clean = sanitizeAiTag(tag);
-    if (!clean) return "AI 標籤唔可以係空字串";
-    if (clean.length > AI_TAG_MAX_LEN) return `AI 標籤每個最長 ${AI_TAG_MAX_LEN} 字`;
+    if (!clean) return "重點標籤唔可以係空字串";
+    if (clean.length > AI_TAG_MAX_LEN) return `重點標籤每個最長 ${AI_TAG_MAX_LEN} 字`;
   }
   return null;
 }

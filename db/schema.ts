@@ -124,6 +124,18 @@ export const productImageArchive = pgTable("productImageArchive", {
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 });
 
+// 重點標籤 SKU 級停用 tombstone（L2，2026-11）：後台「停用 重點標籤」除咗閂
+// products.aiTagsEnabled，仲會喺呢度記低 SKU。零訂單商品硬刪後，同一 SKU 經
+// WMS 重推或人手重建，新行 aiTagsEnabled 都保持 false，唔會跟 schema default true 復活。
+// SKU 口徑同 products.sku 身份完全一致：exact match、區分大小寫、唔 trim——
+// 同現有 products.sku unique 行為一致（"ABC" 同 "abc" 本身就係兩件貨，
+// 停用一件唔會誤傷另一件；代价係改大小寫重建會當新貨，同 unique 一樣擋唔到，屬已知邊界）。
+// 呢張表淨係記停用：冇刪除／重新啟用路，WMS 重推都唔會清走或復活。
+export const productAiTagsTombstones = pgTable("productAiTagsTombstones", {
+  sku: varchar("sku", { length: 64 }).primaryKey(),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 // ===== WMS 批量上架（2026-09-29 F8）：WMS 主管批准後成批推落官網嘅紀錄 =====
 // 一批＝一個直播日期＋場次；逐件記 created/updated/failed（rejected 批全部留 'pending'）。
 // 邊個申請、邊個批、批語，全部留底——後台「上架紀錄」卡同呢度對。

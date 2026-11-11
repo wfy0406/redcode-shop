@@ -51,7 +51,13 @@ export default function LuckyResults() {
 
 /* ---------- 公告總頁：全部公開活動一覽（新→舊） ---------- */
 function LuckyResultsIndex() {
-  const query = trpc.luckyDraw.publicEvents.useQuery(undefined, { retry: false, refetchOnWindowFocus: false });
+  const query = trpc.luckyDraw.publicEvents.useQuery(undefined, {
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
+  });
   const events = query.data ?? [];
   return (
     <div className="lr-page">
@@ -133,7 +139,16 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
 
   const query = trpc.luckyDraw.publicEventResults.useQuery(
     { eventId: validId ? eventId : 0 },
-    { enabled: validId, retry: false, refetchOnWindowFocus: false },
+    {
+      enabled: validId,
+      retry: false,
+      // 公告開關會喺另一分頁改；唔可以俾 60 秒 fresh cache 令舊名單無限期留喺畫面。
+      // 後台切換會即時 remove 同一 SPA 快取；其他已開分頁就喺聚焦或下一次 30 秒重查時收起。
+      staleTime: 0,
+      refetchOnMount: 'always',
+      refetchOnWindowFocus: true,
+      refetchInterval: 30_000,
+    },
   );
 
   const data = query.data ?? null;

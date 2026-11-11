@@ -388,3 +388,38 @@ describe("winnersPublic 公告開關欄（v2026.11.08）", () => {
     expect(st.applied.filter((a) => a.includes("winnersPublic"))).toHaveLength(0);
   });
 });
+
+
+// ── v2026.11.11 L2：productAiTagsTombstones（重點標籤 SKU 級停用 tombstone）──────
+
+describe("productAiTagsTombstones tombstone 表（L2）", () => {
+  it("DDL 有建表（sku PK）；idempotent 回填排喺建表之後、引用已建嘅 products", () => {
+    expect(DDL).toMatch(
+      /CREATE TABLE IF NOT EXISTS "productAiTagsTombstones" \([\s\S]*?sku varchar\(64\) PRIMARY KEY/,
+    );
+    // 回填：已停用（aiTagsEnabled=false）嘅在架商品補 tombstone，ON CONFLICT 冪等可重跑
+    expect(DDL).toMatch(
+      /INSERT INTO "productAiTagsTombstones" \(sku\)\s+SELECT sku FROM products WHERE "aiTagsEnabled" = false\s+ON CONFLICT \(sku\) DO NOTHING/,
+    );
+    const stmts = buildMigrationStatements().map(stripComments);
+    const iCreate = stmts.findIndex((s) =>
+      /CREATE TABLE IF NOT EXISTS "productAiTagsTombstones"/i.test(s),
+    );
+    const iBackfill = stmts.findIndex((s) => /INSERT INTO "productAiTagsTombstones"/i.test(s));
+    const iProductsTable = stmts.findIndex((s) => /CREATE TABLE IF NOT EXISTS products/i.test(s));
+    expect(iCreate).toBeGreaterThanOrEqual(0);
+    expect(iBackfill).toBeGreaterThan(iCreate);
+    expect(iProductsTable).toBeGreaterThanOrEqual(0);
+    expect(iBackfill).toBeGreaterThan(iProductsTable);
+  });
+
+  it("fresh DB 建到表；repeat 重跑零新動作（回填 ON CONFLICT 冪等）", () => {
+    const st = newMockState();
+    expect(() => runMigration(st)).not.toThrow();
+    expect(st.tables.get("productAiTagsTombstones")?.has("sku")).toBe(true);
+    runMigration(st);
+    const appliedAfterTwo = [...st.applied];
+    expect(() => runMigration(st)).not.toThrow();
+    expect(st.applied).toEqual(appliedAfterTwo);
+  });
+});

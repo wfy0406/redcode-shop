@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, eq, gt, ilike, inArray, isNotNull, isNull, or, desc } from "drizzle-orm";
 import { getDb } from "./queries/connection";
-import { cartItems, listingBatchItems, listingBatches, orderItems, productImageArchive, products } from "@db/schema";
+import { cartItems, listingBatchItems, listingBatches, orderItems, productAiTagsTombstones, productImageArchive, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
 import { createRouter, publicQuery, staffProcedure, supervisorProcedure } from "./middleware";
 import { logAudit } from "./audit";
@@ -52,7 +52,7 @@ const productListColumns = {
   liveDate: products.liveDate,
   liveSession: products.liveSession,
   createdAt: products.createdAt,
-  // AI 標籤（raw＋內部開關只係中間欄位）：落 DTO 前一定經 publicProductRow 剝走開關、
+  // 重點標籤（raw＋內部開關只係中間欄位）：落 DTO 前一定經 publicProductRow 剝走開關、
   // disabled 一律 []——內部 enabled flag 絕對唔會出現喺公開回應
   aiTags: products.aiTags,
   aiTagsEnabled: products.aiTagsEnabled,
@@ -352,9 +352,11 @@ export const productsRouter = createRouter({
     }),
 
   /**
-   * 停用 AI 標籤（2026-11 合約 v2）：主管級先准（supervisorProcedure 強制，員工 staff 唔用得）；
+   * 停用 重點標籤（2026-11 合約 v2）：主管級先准（supervisorProcedure 強制，員工 staff 唔用得）；
    * 淨係閂 aiTagsEnabled，內容保留（日後冇 enable API，重推都唔會復活）。
    * 冪等：已停用嘅 id 重送都係 ok。
+   * L2（2026-11）：同時將受影響商品嘅 SKU 寫入 productAiTagsTombstones——
+   * 商品硬刪後同一 SKU 重建（WMS／人手），新行 aiTagsEnabled 都保持 false。
    */
   disableAiTags: supervisorProcedure
     .input(
@@ -370,14 +372,22 @@ export const productsRouter = createRouter({
         .update(products)
         .set({ aiTagsEnabled: false })
         .where(inArray(products.id, input.ids))
-        .returning({ id: products.id });
+        .returning({ id: products.id, sku: products.sku });
+      if (updated.length > 0) {
+        // SKU 口徑：直接記 products.sku 原值（exact、區分大小寫、唔 trim），
+        // 同 products.sku unique 身份一致；onConflictDoNothing 令重送冪等。
+        await db
+          .insert(productAiTagsTombstones)
+          .values(updated.map((row) => ({ sku: row.sku })))
+          .onConflictDoNothing();
+      }
       void logAudit({
         actorId: ctx.user.userId,
         actorRole: ctx.user.role,
         action: "product.disableAiTags",
         targetType: "product",
         targetId: input.ids.join(",").slice(0, 64),
-        detail: `停用 AI 標籤：${updated.length} 件商品（ids：${input.ids.join(",")}）`,
+        detail: `停用 重點標籤：${updated.length} 件商品（ids：${input.ids.join(",")}）`,
       });
       return { ok: true, count: updated.length };
     }),
@@ -415,6 +425,10 @@ export const productsRouter = createRouter({
       if (dup) {
         throw new TRPCError({ code: "CONFLICT", message: "貨號已存在" });
       }
+      // L2：呢個 SKU 嘅舊貨被停用過 重點標籤 → 重建都保持停用（tombstone 冇 enable 路）
+      const aiTagsTombstoned = await db.query.productAiTagsTombstones.findFirst({
+        where: eq(productAiTagsTombstones.sku, input.sku),
+      });
       // 場次配對：場次一定要配直播日期（2026-09-29 F8）
       if (input.liveSession && !input.liveDate) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "直播場次要配埋直播日期" });
@@ -451,6 +465,8 @@ export const productsRouter = createRouter({
           delistAt: input.delistAt ?? null,
           liveDate: input.liveDate ?? null,
           liveSession: input.liveDate ? (input.liveSession ?? null) : null,
+          // L2：tombstoned SKU 重建 → 唔跟 schema default true，直接停用狀態出世
+          ...(aiTagsTombstoned ? { aiTagsEnabled: false } : {}),
         })
         .returning({ id: products.id });
       // 圖片歸檔：WMS 補舊單圖保險（商品日後刪咗都查得到）

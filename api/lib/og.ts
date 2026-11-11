@@ -4,6 +4,12 @@ import { products } from "@db/schema";
 import { productCategoryLabel, productSeoDescription } from "@contracts/types";
 import { stripPublicSeoContent } from "./publicSeo";
 import { publicAiTags } from "../productAiContent";
+import {
+  productEffectivePrice,
+  productImageUrls,
+  productInStock,
+  productSizeOptions,
+} from "./productPublicFacts";
 
 /** HTML attribute escape：品名/描述入面嘅 & " < > 會整爛 meta tag */
 function esc(s: string): string {
@@ -188,11 +194,12 @@ export async function injectProductOg(
   if (!p) return null;
   try {
     const pageUrl = `${origin}/products/${p.id}`;
-    const imageUrl = p.image.startsWith("http") ? p.image : `${origin}${p.image}`;
-    const price = p.discountPrice ?? p.price;
-    const sizes = p.sizeEnabled
-      ? (p.sizes ?? "").split(",").map((size) => size.trim()).filter(Boolean)
-      : [];
+    // 圖／價／折扣／庫存／尺寸全部經 productPublicFacts mapper，同 Merchant Feed 同一口徑
+    const images = productImageUrls(p, origin);
+    const imageUrl = images[0];
+    const price = productEffectivePrice(p);
+    const inStock = productInStock(p);
+    const sizes = productSizeOptions(p);
     // meta description 同前端 ProductDetail 共用 contracts/types.ts 規則：
     // 有真描述用真描述；冇描述就用真貨號、分類、售價同庫存補強，唔再每件都係同一句空泛兜底。
     const desc = productSeoDescription(p);
@@ -234,7 +241,7 @@ export async function injectProductOg(
     // 首口 HTML 直接放商品名、價錢、描述同購物支援連結，唔再只放 noscript。
     // 區塊放喺 #root 外，白屏自救仍可靠 root.childNodes；React mount 後統一移除。
     const prerenderDesc = productSeoDescription(p, 300);
-    const stockText = p.stock > 0 ? `現貨 ${p.stock} 件` : "暫時缺貨";
+    const stockText = inStock ? `現貨 ${p.stock} 件` : "暫時缺貨";
     // AI 標籤可見重點：淨係 aiTagsEnabled=true 先出；disabled 時內容就算仲喺 DB 都絕對唔出現。
     // （只加喺現有首口描述區；Product JSON-LD／運費／退貨政策主線邏輯唔郁）
     const aiTags = publicAiTags(p.aiTags, p.aiTagsEnabled);
@@ -256,9 +263,6 @@ export async function injectProductOg(
     // 任何一步出錯都靜靜雞 skip，唔好炸成個 injection。
     try {
       const jsonDesc = productSeoDescription(p, 200);
-      const images = (p.photos && p.photos.length ? p.photos : [p.image]).map((u) =>
-        u.startsWith("http") ? u : `${origin}${u}`,
-      );
       const jsonLd = {
         "@context": "https://schema.org",
         "@type": "Product",
@@ -267,14 +271,16 @@ export async function injectProductOg(
         description: jsonDesc,
         ...(p.sku ? { sku: p.sku } : {}),
         ...(sizes.length ? { size: sizes } : {}),
-        brand: { "@type": "Brand", name: "RedCode" },
+        // brand 冇真欄位：唔再硬編碼「RedCode」假裝已核實（同 Feed 唔出 g:brand 一致）。
+        // schema.org 嘅 brand 屬性只係建議唔係必填，省略唔會令 Product markup 失效。
         offers: {
           "@type": "Offer",
           url: pageUrl,
           priceCurrency: "HKD",
           price: price.toFixed(2),
-          availability:
-            p.stock > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+          availability: inStock
+            ? "https://schema.org/InStock"
+            : "https://schema.org/OutOfStock",
           itemCondition: "https://schema.org/NewCondition",
           // 退貨政策同 /returns 可見規則一致：破損／寄錯貨由我哋承擔運費；
           // 尺寸換貨嘅來回運費由客人承擔。實際順豐到付金額會變，唔再寫死 HK$30。

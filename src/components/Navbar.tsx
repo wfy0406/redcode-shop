@@ -243,8 +243,11 @@ export default function Navbar() {
   // 載入完成前唔假設有公告；只有至少一場 winnersPublic=true 先顯示。
   // 呢個判斷只控制 Navbar；獨立查劵頁同查劵 API 完全唔經呢度。
   const publicLuckyEventsQuery = trpc.luckyDraw.publicEvents.useQuery(undefined, {
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
+    // 後台切換會即時更新同一 SPA cache；其他分頁聚焦或每 60 秒重查，唔再長期留舊入口。
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
     retry: 1,
   });
   const moreLinks = useMemo(

@@ -9,7 +9,6 @@ import { resolveTryOnProductKind } from '@contracts/tryon';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/admin/WishingStar';
 import {
-  demoShopProducts,
   effectivePrice,
   formatHKD,
   hasDiscount,
@@ -29,34 +28,28 @@ import { setCanonicalPath } from '@/lib/seo';
  * 左圖右資訊（手機上下）：折扣 badge、價錢、類別 pill＋上架日期（2026-08-03 加）、
  * 尺寸 pill 選擇（必填）、數量 stepper、
  * 加入購物車（真 mutation + toast）、心心收藏（本地）、描述、相關商品（同類別隨機 4 件）。
- * 讀取失敗 → demo fallback +「睇緊示範款」橫額；load 唔到 id → 搵唔到頁。
+ * 讀取失敗 → 如實顯示錯誤同重試；明確 NOT_FOUND → 搵唔到頁，兩者都唔用示範商品。
  */
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const productId = Number(id);
+  const validProductId = Number.isInteger(productId) && productId > 0;
   const { user } = useAuth();
   const utils = trpc.useUtils();
 
   const productQuery = trpc.products.byId.useQuery(
     { id: productId },
-    { enabled: Number.isInteger(productId) && productId > 0, retry: 1 },
+    { enabled: validProductId, retry: 1 },
   );
   const relatedQuery = trpc.products.list.useQuery(undefined, { retry: 1 });
 
   const productNotFound = isProductNotFoundError(productQuery.error);
 
-  // 只有網絡／server 故障先用 demo；明確 NOT_FOUND（已刪、人手或自動下架）必須顯示搵唔到＋noindex。
-  // 否則低 id 同示範貨相撞時，會將真 404 變返一件假商品兼 index,follow。
-  const product = useMemo(() => {
-    if (productQuery.data) return productQuery.data;
-    if (productQuery.isError) {
-      if (productNotFound) return null;
-      return demoShopProducts().find((p) => p.id === productId) ?? null;
-    }
-    return undefined; // loading
-  }, [productQuery.data, productQuery.isError, productNotFound, productId]);
-  const isDemo = productQuery.isError && !productNotFound && product !== null;
+  // 明確 NOT_FOUND（已刪、人手或自動下架）顯示搵唔到＋noindex；
+  // 網絡／server 故障就顯示重試，兩種情況都唔會用示範商品冒充真貨。
+  const product = productQuery.data ?? (productQuery.isError || !validProductId ? null : undefined);
+  const productLoadFailed = productQuery.isError && !productNotFound;
 
   // AI 試穿入口資格：只限真 DB 商品（productQuery.data 先算；demo fallback / 載入中一律冇），
   // 並且 resolveTryOnProductKind 辨到明確穿戴部位——非穿著（lifestyle/skincare/other）、
@@ -68,7 +61,7 @@ export default function ProductDetail() {
   }, [productQuery.data]);
 
   const sizes = useMemo(() => parseSizes(product?.sizes), [product?.sizes]);
-  // AI 重點標籤（公開 API 已批准先回 string[]；停用 server 回 []；demo／舊後端冇呢欄 → 空）
+  // 重點標籤（公開 API 已批准先回 string[]；停用 server 回 []；舊後端冇呢欄 → 空）
   const aiTags = useMemo(
     () => normalizeAiTags((product as { aiTags?: unknown } | null | undefined)?.aiTags),
     [product],
@@ -83,10 +76,10 @@ export default function ProductDetail() {
   const [sizeError, setSizeError] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
-  // 相簿：有 photos 用 photos；冇（舊貨／示範款）就由 image 做唯一一張
+  // 相簿：有 photos 用 photos；舊貨冇相簿欄就由 image 做唯一一張
   const [activePhoto, setActivePhoto] = useState(0);
   const gallery = useMemo(() => {
-    // DB 貨有 photos 相簿；demo ShopProduct 冇呢欄——用 in 窄化，冇就淨係用封面 image
+    // DB 貨有 photos 相簿；舊資料冇呢欄就用封面 image
     const ph = product && 'photos' in product ? product.photos : null;
     const list = ph?.length ? ph : [product?.image];
     return list.filter((s): s is string => Boolean(s));
@@ -123,7 +116,7 @@ export default function ProductDetail() {
   });
 
   const related = useMemo(() => {
-    const source = relatedQuery.data ?? demoShopProducts();
+    const source = relatedQuery.data ?? [];
     const cards = source.map((p) => toCardProduct(p as never));
     return cards
       .filter((p) => Number(p.id) !== productId)
@@ -139,11 +132,19 @@ export default function ProductDetail() {
   const infoRef = useReveal<HTMLDivElement>();
   const gridRef = useRevealDep<HTMLDivElement>([productId]);
 
-  // SEO（v2.2.20）：商品載入後（包括 demo fallback）按商品名改 title/description；
-  // demo 貨 description 係 null → 用通用句兜底，唔好 set 到「undefined」。
+  // SEO：商品載入後按真商品名改 title/description；故障同 NOT_FOUND 都 noindex。
   // unmount 唔使 reset：轉頁時 SeoManager 會按新 pathname 接管。
   useEffect(() => {
     const robots = document.querySelector('meta[name="robots"]');
+    if (productLoadFailed) {
+      document.title = '商品資料暫時載入唔到｜RedCode Fashion Design';
+      document
+        .querySelector('meta[name="description"]')
+        ?.setAttribute('content', '商品資料暫時載入唔到，請稍後重試或返回全部商品。');
+      robots?.setAttribute('content', 'noindex, nofollow');
+      setCanonicalPath(null);
+      return;
+    }
     if (product === null) {
       document.title = '搵唔到呢件商品｜RedCode Fashion Design';
       document
@@ -160,7 +161,7 @@ export default function ProductDetail() {
       ?.setAttribute('content', productSeoDescription(product));
     robots?.setAttribute('content', 'index, follow');
     setCanonicalPath(`/products/${product.id}`);
-  }, [product]);
+  }, [product, productLoadFailed]);
 
   const handleAdd = () => {
     if (!product || added || addCart.isPending) return;
@@ -187,6 +188,32 @@ export default function ProductDetail() {
         <div className="flex flex-col items-center gap-3">
           <WishingStar size={32} />
           <p className="text-[14px] text-txt-3">許願星搬緊商品資料…</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (productLoadFailed) {
+    return (
+      <section className="mx-auto max-w-[1280px] px-5 py-24 text-center md:px-8">
+        <p className="script text-4xl">Please retry ✦</p>
+        <h1 className="mt-2 font-serif-tc text-2xl font-bold text-txt-1">商品資料暫時載入唔到</h1>
+        <p className="mx-auto mt-3 max-w-lg text-[14px] leading-relaxed text-txt-3">
+          網絡或伺服器可能暫時不穩，請重新載入；系統唔會用示範商品代替真實資料。
+        </p>
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              void productQuery.refetch();
+              void relatedQuery.refetch();
+            }}
+            disabled={productQuery.isFetching}
+            className="btn btn-primary min-h-11 disabled:opacity-50"
+          >
+            {productQuery.isFetching ? '重新載入緊…' : '重新載入'}
+          </button>
+          <Link to="/products" className="btn btn-secondary min-h-11">全部商品</Link>
         </div>
       </section>
     );
@@ -257,30 +284,6 @@ export default function ProductDetail() {
         <span aria-hidden="true"> / </span>
         <span className="text-txt-2">{product.name}</span>
       </nav>
-
-      {isDemo && (
-        /* 示範貨橫額（2026-10 batch1 UX）：同 Home 一致口吻＋重試掣；加車掣喺下面 disabled 咗 */
-        <div
-          role="alert"
-          className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3"
-          style={{ borderColor: 'var(--glass-border)' }}
-        >
-          <p className="text-sm text-gold-soft">
-            伺服器暫時連唔到，而家顯示緊示範款，未能即時落單。
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              void productQuery.refetch();
-              void relatedQuery.refetch();
-            }}
-            className="flex min-h-11 items-center rounded-full border px-4 text-sm font-bold text-gold transition-colors hover:text-gold-soft"
-            style={{ borderColor: 'var(--gold)' }}
-          >
-            重新載入
-          </button>
-        </div>
-      )}
 
       <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-14">
         {/* 左：相簿（主圖＋縮圖列；多過一張先出縮圖） */}
@@ -456,7 +459,7 @@ export default function ProductDetail() {
             <button
               type="button"
               onClick={handleAdd}
-              disabled={addCart.isPending || outOfStock || isDemo}
+              disabled={addCart.isPending || outOfStock}
               className="btn btn-primary flex-1 !py-3.5 text-[16px] font-bold disabled:opacity-50"
               style={
                 added
@@ -504,7 +507,7 @@ export default function ProductDetail() {
             </button>
           </div>
 
-          {/* AI 試穿入口（只限真 DB、可明確辨識穿戴部位嘅商品；demo fallback 永遠唔出現）。
+          {/* AI 試穿入口（只限真 DB、可明確辨識穿戴部位嘅商品；載入失敗唔出現）。
               photoIndex 跟實 activePhoto——換相後網址即時更新，試穿頁會用緊客人而家睇嗰張商品相。 */}
           {tryOnKind && (
             <div className="mt-4">
@@ -527,15 +530,17 @@ export default function ProductDetail() {
         </div>
       </div>
 
-      {/* 相關商品 */}
-      <div className="mt-20">
-        <h2 className="font-serif-tc text-[24px] font-bold text-txt-1">你可能都鍾意</h2>
-        <div ref={gridRef} className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4 md:gap-6">
-          {related.map((p) => (
-            <ProductCard key={p.id} product={p} />
-          ))}
+      {/* 相關商品：只顯示公開 API 真資料，故障時成區收起，唔用示範商品補位。 */}
+      {related.length > 0 && (
+        <div className="mt-20">
+          <h2 className="font-serif-tc text-[24px] font-bold text-txt-1">你可能都鍾意</h2>
+          <div ref={gridRef} className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-4 md:gap-6">
+            {related.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* toast */}
       {toast && (

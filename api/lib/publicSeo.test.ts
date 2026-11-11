@@ -122,6 +122,25 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(content).toContain("服務訂單同一般商品訂單分開");
   });
 
+  it("公開事實 regression：/live 同 /products 唔再無條件承諾直播優惠，以商品頁為準", () => {
+    // 證據：客人可見嘅 /live 頁（src/pages/Live.tsx）只講部分場次有限時快閃價；
+    // 商品真描述（contracts/types.ts productSeoDescription）用真 discountPrice/price＋庫存，
+    // 佢嘅測試明確禁止「直播優惠價發售，順豐站自取」呢句無條件承諾。
+    const live = PUBLIC_PAGES["/live"];
+    expect(live.description).not.toContain("直播優惠繼續生效");
+    expect(live.description).not.toContain("直播優惠價發售");
+    expect(live.description).toContain("以商品頁為準");
+    const products = PUBLIC_PAGES["/products"];
+    expect(products.description).not.toContain("直播優惠價發售");
+    expect(products.description).toContain("以各商品頁為準");
+    // 仍然如實講自取方式（FAQ 可見頁一致）
+    expect(products.description).toContain("順豐站/自提點/智能櫃自取");
+    // 全站任何公開頁文案都唔准有排名承諾或假評價
+    for (const page of Object.values(PUBLIC_PAGES)) {
+      expect(page.description).not.toMatch(/保證|排名第一|第一名|好評|評分/);
+    }
+  });
+
   it("注入只發生一次；未知路徑同冇 </body> 嘅 HTML 原樣返回", () => {
     const template = "<html><body><div id=\"root\"></div></body></html>";
     const once = injectPublicSeoContent(template, "/");

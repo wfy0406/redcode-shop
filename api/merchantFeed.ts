@@ -3,9 +3,23 @@
 // 過濾條件同 sitemap route 一致：isActive=true＋未自動下架（delistEnabled/delistAt）。
 // 價錢注意：products 表 price/discountPrice 係整數港元（唔係 cents），直接 toFixed(2)，唔准 ÷100。
 // 鐵律：任何單一產品壞咗 skip 佢，唔准炸成個 feed；URL 唔落 log。
+// v2026.11.11 一致性：描述／分類／價錢／折扣／庫存／尺寸／相片全部經
+// api/lib/productPublicFacts.ts 取材，同可見首口 HTML 及 Product JSON-LD 同一套口徑；
+// brand 冇真欄位所以唔出 g:brand（identifier_exists=no），唔再假設全部貨係 RedCode 品牌。
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { products } from "@db/schema";
+import {
+  FEED_ADDITIONAL_IMAGE_MAX,
+  googleProductCategoryId,
+  productFeedDescription,
+  productFeedTitle,
+  productImageUrls,
+  productInStock,
+  productSalePrice,
+  productSizeOptions,
+  productTypeLabel,
+} from "./lib/productPublicFacts";
 
 const SITE_ORIGIN = "https://redcode.red";
 // 首頁 meta description（同 index.html 一致），做 channel description
@@ -20,23 +34,6 @@ function xmlEscape(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
-}
-
-/** strip HTML tag＋控制字元＋emoji（跟 og.ts stripText 同款），再截到 maxLen 字元 */
-function stripText(s: string, maxLen: number): string {
-  const plain = s
-    .replace(/<[^>]*>/g, " ")
-    .replace(/[\u0000-\u001f]/g, " ")
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return plain.length > maxLen ? plain.slice(0, maxLen) : plain;
-}
-
-/** 首圖絕對 URL：photos[0]（封面，同 image 欄同步）優先，跟 og.ts 攞圖方式 */
-function firstImageAbsUrl(photos: string[] | null, image: string): string {
-  const src = photos && photos.length > 0 ? photos[0] : image;
-  return src.startsWith("http") ? src : `${SITE_ORIGIN}${src}`;
 }
 
 export async function buildMerchantFeedXml(): Promise<string> {
@@ -59,18 +56,19 @@ export async function buildMerchantFeedXml(): Promise<string> {
   for (const p of rows) {
     // 單一產品壞咗 skip 佢，唔准炸成個 feed
     try {
-      const title = p.name.length > 150 ? p.name.slice(0, 150) : p.name;
-      const descSrc = p.description?.trim() || `${p.name}｜RedCode 香港女裝直播`;
-      const description = stripText(descSrc, 5000);
+      const title = productFeedTitle(p);
+      const description = productFeedDescription(p);
       const link = `${SITE_ORIGIN}/products/${p.id}`;
-      const imageLink = firstImageAbsUrl(p.photos, p.image);
-      // 整數港元直接 toFixed(2) → "123.00 HKD"
+      const images = productImageUrls(p, SITE_ORIGIN);
+      const imageLink = images[0];
+      const additionalImages = images.slice(1, 1 + FEED_ADDITIONAL_IMAGE_MAX);
+      // 整數港元直接 toFixed(2) → "123.00 HKD"；折扣口徑同 JSON-LD 一致
       const price = `${p.price.toFixed(2)} HKD`;
-      const salePrice =
-        p.discountPrice != null && p.discountPrice < p.price
-          ? `${p.discountPrice.toFixed(2)} HKD`
-          : null;
-      const availability = p.stock > 0 ? "in stock" : "out of stock";
+      const sale = productSalePrice(p);
+      const salePrice = sale != null ? `${sale.toFixed(2)} HKD` : null;
+      const availability = productInStock(p) ? "in stock" : "out of stock";
+      const googleCategory = googleProductCategoryId(p.category);
+      const sizes = productSizeOptions(p);
 
       const lines = [
         `    <g:id>${p.id}</g:id>`,
@@ -78,13 +76,23 @@ export async function buildMerchantFeedXml(): Promise<string> {
         `    <description>${xmlEscape(description)}</description>`,
         `    <link>${xmlEscape(link)}</link>`,
         `    <g:image_link>${xmlEscape(imageLink)}</g:image_link>`,
+        ...additionalImages.map(
+          (u) => `    <g:additional_image_link>${xmlEscape(u)}</g:additional_image_link>`,
+        ),
         `    <g:price>${price}</g:price>`,
         ...(salePrice ? [`    <g:sale_price>${salePrice}</g:sale_price>`] : []),
         `    <g:availability>${availability}</g:availability>`,
         `    <g:condition>new</g:condition>`,
-        `    <g:brand>RedCode</g:brand>`,
+        // brand 冇真欄位：唔出 g:brand，用 identifier_exists=no（冇 GTIN/MPN/brand 嘅合法組合）
         `    <g:identifier_exists>no</g:identifier_exists>`,
-        `    <g:google_product_category>166</g:google_product_category>`,
+        // google_product_category 按內部 8 類明確 mapping；other／未知類冇誠實對應就省略
+        ...(googleCategory
+          ? [`    <g:google_product_category>${googleCategory}</g:google_product_category>`]
+          : []),
+        // product_type 用真內部分類 label（同商品頁可見分類一致）
+        `    <g:product_type>${xmlEscape(productTypeLabel(p.category))}</g:product_type>`,
+        // 尺寸選項係真欄位；DB 冇 per-variant 行，多碼以 "/" 合併出（唔虛構缺碼）
+        ...(sizes.length ? [`    <g:size>${xmlEscape(sizes.join("/"))}</g:size>`] : []),
         `    <g:adult>no</g:adult>`,
       ];
       items.push(`  <item>\n${lines.join("\n")}\n  </item>`);

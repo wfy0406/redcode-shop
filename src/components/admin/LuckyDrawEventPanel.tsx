@@ -242,7 +242,7 @@ export default function LuckyDrawEventPanel({
   });
   // v2026.11.08：每場公開中獎公告開關（關咗公開頁即收，內部名單照舊；查劵頁唔受影響）
   const winnersPublicMut = trpc.luckyDraw.adminSetEventWinnersPublic.useMutation({
-    onSuccess: (r) => {
+    onSuccess: (r, v) => {
       toast(
         r.winnersPublic
           ? '公開中獎公告已開啟——全網「更多」選單會顯示「中獎公告」；查劵 link 照舊可用'
@@ -250,7 +250,15 @@ export default function LuckyDrawEventPanel({
         'success',
       );
       invalidateEvents();
-      // Navbar 用呢份公開活動資料決定全網入口；後台切換後即時刷新，唔使等 60 秒。
+      // 關閉要即時移走總覽／Navbar 嘅呢場舊資料；重開則由 invalidate 取返最新公開清單。
+      if (!r.winnersPublic) {
+        utils.luckyDraw.publicEvents.setData(undefined, (current) =>
+          current?.filter((event) => event.id !== v.eventId),
+        );
+      }
+      // 已開過嘅單場公告會有獨立快取；只 invalidate publicEvents 唔會郁佢。
+      // 開關兩個方向都 reset 返初始狀態，下次入直接 URL 必須向 server 重查，唔准重播舊中獎名單。
+      void utils.luckyDraw.publicEventResults.reset({ eventId: v.eventId });
       void utils.luckyDraw.publicEvents.invalidate();
     },
     onError: (e) => toast(fmtErr(e), 'error'),

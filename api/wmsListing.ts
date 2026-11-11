@@ -34,7 +34,7 @@ import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { getDb } from "./queries/connection";
-import { listingBatchItems, listingBatches, products } from "@db/schema";
+import { listingBatchItems, listingBatches, productAiTagsTombstones, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES } from "@contracts/types";
 import { logAudit } from "./audit";
 import { archiveProductImages } from "./productsRouter";
@@ -475,6 +475,10 @@ export async function wmsListingBatch(c: Context) {
         if (!it.name || it.price === undefined) {
           throw new Error("新貨號需要品名同原價");
         }
+        // L2：呢個 SKU 嘅舊貨被停用過 重點標籤 → WMS 重建都唔會復活個開關
+        const aiTagsTombstoned = await db.query.productAiTagsTombstones.findFirst({
+          where: eq(productAiTagsTombstones.sku, it.sku),
+        });
         try {
           const [np] = await db
             .insert(products)
@@ -489,9 +493,11 @@ export async function wmsListingBatch(c: Context) {
               sizes: it.sizes ?? null,
               sizeEnabled: Boolean(it.sizes),
               category: it.category ?? "other",
-              // AI 內容：新貨按 approved payload 寫入；aiTagsEnabled 跟 schema default true
+              // AI 內容：新貨按 approved payload 寫入；aiTagsEnabled 跟 schema default true，
+              // 除非 SKU 有停用 tombstone（L2）→ 直接以停用狀態出世
               ...(hasAiDesc ? { description: aiDesc === "" ? null : aiDesc } : {}),
               ...(hasAiTags ? { aiTags: aiTagsJson } : {}),
+              ...(aiTagsTombstoned ? { aiTagsEnabled: false } : {}),
               ...liveFields,
               delistEnabled: Boolean(delistAt),
               delistAt,

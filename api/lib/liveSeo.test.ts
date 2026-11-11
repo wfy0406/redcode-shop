@@ -2,15 +2,19 @@
  * 直播節目頁 SEO helper 測試（v2026.10.28.2）——純函數，唔掂 DB、唔掂 fs。
  * 覆蓋：真實日曆日期／數字場次驗證、全日／單場 title/description 分別、
  * canonical path 編碼、無效輸入回 null（絕不反射）。
+ * v2026.11.11 補強：真空場次 emptyLiveRouteMeta（noindex、唔扮有貨）、
+ * sitemap 直播 URL 去重＋非法 DB 值過濾、文案唔再無條件承諾直播優惠價。
  */
 import { describe, expect, it } from "vitest";
 import {
+  emptyLiveRouteMeta,
   formatLiveDateLabel,
   isValidLiveDate,
   isValidLiveSession,
   liveDescription,
   livePath,
   liveRouteMeta,
+  liveSitemapPaths,
   liveTitle,
   parseLiveQuery,
 } from "./liveSeo";
@@ -81,6 +85,69 @@ describe("live meta — 全日／單場文案有分別", () => {
     expect(liveDescription(f)).toContain("第2場");
     expect(liveDescription(f)).toContain("即睇直播商品");
     expect(livePath(f)).toBe("/products?liveDate=20261028&liveSession=2");
+  });
+});
+
+describe("live meta — 公開事實文案 regression", () => {
+  it("唔再無條件承諾「直播優惠價發售」；品名／價錢／庫存以商品頁為準", () => {
+    for (const f of [
+      { liveDate: "20261028", liveSession: null },
+      { liveDate: "20261028", liveSession: "2" },
+    ]) {
+      const d = liveDescription(f);
+      expect(d).not.toContain("直播優惠價發售");
+      expect(d).not.toContain("優惠繼續生效");
+      expect(d).toContain("以商品頁為準");
+    }
+  });
+});
+
+describe("emptyLiveRouteMeta — 真空場次唔准扮有貨", () => {
+  it("全日空場次：noindex＋移除 self canonical＋如實文案", () => {
+    const meta = emptyLiveRouteMeta({ liveDate: "20261028", liveSession: null });
+    expect(meta.noindex).toBe(true);
+    expect(meta.canonical).toBeNull();
+    expect(meta.path).toBeUndefined();
+    expect(meta.title).toBe("2026年10月28日 直播暫未有公開商品｜RedCode Fashion Design");
+    expect(meta.description).toContain("冇公開商品");
+    expect(meta.description).toContain("以商品頁為準");
+    expect(meta.description).not.toContain("直播優惠");
+  });
+  it("單場空場次帶場次號；合法日期先會出現喺文案", () => {
+    const meta = emptyLiveRouteMeta({ liveDate: "20261111", liveSession: "3" });
+    expect(meta.title).toContain("第3場");
+    expect(meta.title).toContain("2026年11月11日");
+    expect(meta.noindex).toBe(true);
+    expect(meta.canonical).toBeNull();
+  });
+});
+
+describe("liveSitemapPaths — sitemap 直播 URL", () => {
+  it("合法全日／單場出 URL，同一 URL 去重", () => {
+    const paths = liveSitemapPaths([
+      { liveDate: "20261111", liveSession: null },
+      { liveDate: "20261111", liveSession: "1" },
+      { liveDate: "20261111", liveSession: "1" }, // 重複場次
+      { liveDate: "20261111", liveSession: null }, // 重複全日
+      { liveDate: "20261111", liveSession: "2" },
+    ]);
+    expect(paths).toEqual([
+      "/products?liveDate=20261111",
+      "/products?liveDate=20261111&liveSession=1",
+      "/products?liveDate=20261111&liveSession=2",
+    ]);
+  });
+  it("DB 落嚟嘅非法值（假日曆日期／非數字場次／null）一律唔入 sitemap", () => {
+    const paths = liveSitemapPaths([
+      { liveDate: "20261340", liveSession: null },
+      { liveDate: "20261111", liveSession: "abc" },
+      { liveDate: "20261111", liveSession: "0" },
+      { liveDate: '20261111"><script>', liveSession: null },
+      null,
+      undefined,
+      { liveDate: "20261111", liveSession: "1" },
+    ]);
+    expect(paths).toEqual(["/products?liveDate=20261111&liveSession=1"]);
   });
 });
 

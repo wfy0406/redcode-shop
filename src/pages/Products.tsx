@@ -15,7 +15,7 @@ import {
 } from '@/lib/liveShare';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/shop/WishingStar';
-import { toCardProduct, demoShopProducts } from '@/components/shop/shop-utils';
+import { toCardProduct } from '@/components/shop/shop-utils';
 import type { ShopProduct } from '@/components/shop/shop-utils';
 import { useRevealDep } from '@/components/shop/useRevealDep';
 import { PRODUCT_CATEGORIES } from '@contracts/types';
@@ -156,26 +156,8 @@ export default function Products() {
     (introSubQuery.data as SettingEntry | null | undefined)?.value?.trim() || 'pick your star ✦';
 
   const products = useMemo<ShopProduct[]>(() => {
-    // 靜態示範模式：後端連唔到（API error）→ 用內建示範商品
-    if (listQuery.isError) {
-      let demo = demoShopProducts();
-      if (kw) {
-        const lower = kw.toLowerCase();
-        demo = demo.filter(
-          (p) => p.name.toLowerCase().includes(lower) || p.sku.toLowerCase().includes(lower),
-        );
-      }
-      if (category !== 'all') demo = demo.filter((p) => p.category === category);
-      // 場次篩選係 server 做（demo 模式冇場次數據，唔郁 demo 嘅日期篩）
-      if (!liveDate) {
-        demo = demo.filter((p) =>
-          pickedDate ? sameLocalDay(p.listedDate, pickedDate) : matchDateFilter(p.listedDate, dateFilter),
-        );
-      }
-      if (sort === 'price-asc') demo.sort((a, b) => effectivePrice(a) - effectivePrice(b));
-      else if (sort === 'price-desc') demo.sort((a, b) => effectivePrice(b) - effectivePrice(a));
-      return demo;
-    }
+    // API 故障唔好拎示範商品冒充搜尋結果；畫面會另行顯示錯誤同重試入口。
+    if (listQuery.isError) return [];
     const merged = new Map<number, ShopProduct>();
     for (const p of (listQuery.data ?? []) as ShopProduct[]) merged.set(p.id, p);
     if (kw) {
@@ -614,8 +596,7 @@ export default function Products() {
         </label>
       </div>
 
-      {/* 示範貨橫額（2026-10 batch1 UX，唔准靜默賣示範貨）：API 故障時講明係示範款＋重試掣。
-          加車喺詳情頁已禁（ProductDetail isDemo）；列表快速加車對非數字 id 會去詳情頁，見到同一橫額 */}
+      {/* API 故障只顯示真錯誤同重試，唔用示範商品填充公開目錄。 */}
       {listQuery.isError && (
         <div
           role="alert"
@@ -628,7 +609,7 @@ export default function Products() {
           }}
         >
           <p className="text-sm text-gold-soft">
-            伺服器暫時連唔到，而家顯示緊示範款，未能即時落單。
+            商品資料暫時載入唔到，請重新載入；系統唔會用示範商品代替。
           </p>
           <button
             type="button"
@@ -649,7 +630,7 @@ export default function Products() {
         <div className="flex min-h-[40vh] items-center justify-center">
           <WishingStar size={48} label="許願星載入中…" />
         </div>
-      ) : products.length === 0 ? (
+      ) : listQuery.isError ? null : products.length === 0 ? (
         /* 空結果：empty-cart.png 插畫 */
         <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 py-16 text-center">
           <img src="/empty-cart.svg" alt="" className="w-48 max-w-full opacity-90 md:w-64" />

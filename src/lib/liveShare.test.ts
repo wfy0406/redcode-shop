@@ -103,6 +103,16 @@ describe('日期格式化＋分享文案（全日／單場有分別）', () => {
     expect(liveShareText(t)).toContain('第2場');
     expect(liveShareText(t)).toContain('即睇即買');
   });
+  it('分享文案唔再無條件承諾直播優惠價；品名／價錢／庫存以商品頁為準', () => {
+    for (const t of [
+      { liveDate: '20261028', liveSession: null },
+      { liveDate: '20261028', liveSession: '2' },
+    ]) {
+      expect(liveShareText(t)).not.toContain('直播優惠價發售');
+      expect(liveShareText(t)).not.toContain('優惠繼續生效');
+      expect(liveShareText(t)).toContain('以商品頁為準');
+    }
+  });
 });
 
 describe('Facebook／WhatsApp share link', () => {

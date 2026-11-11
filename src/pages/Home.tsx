@@ -29,7 +29,6 @@ import DuotoneImage from '@/components/DuotoneImage';
 import MovingPhoto from '@/components/MovingPhoto';
 import GloCutout from '@/components/GloCutout';
 import FacebookPageEmbed from '@/components/FacebookPageEmbed';
-import { PRODUCTS } from '@/data/products';
 import type { Product } from '@/data/products';
 import { useReveal } from '@/hooks/useReveal';
 import { useAuth } from '@/hooks/useAuth';
@@ -567,25 +566,21 @@ export default function Home() {
   const { user } = useAuth();
   // v2.2.2：跟會員級別轉首頁色調（未登入／普通會員＝原色）
   const homeTier = (user?.vipTier ?? 'NONE') as VipTier;
-  // 後端連唔到（純前端預覽）時 fallback 用內建示範商品
-  // perf-fix（P0-3）：改用 products.latest(8)——server 直接出最新 8 件、淨係卡片欄位，
-  // 唔再成個商品表（連描述＋圖陣）dump 落首頁先 slice
+  // perf-fix（P0-3）：server 直接出最新 8 件、淨係卡片欄位。
+  // API 未返／故障都唔再用示範商品頂數，避免虛構內容流入公開頁同分享。
   const {
     data: dbProducts,
     isError: productsError,
+    isLoading: productsLoading,
     refetch: refetchProducts,
     isFetching: productsFetching,
   } = trpc.products.latest.useQuery(
     { limit: 8 },
     { retry: false, staleTime: 5 * 60_000, refetchOnWindowFocus: false },
   );
-  // UX P0-2：API 故障降級示範貨嗰陣要講到明（橫額＋禁加車），唔准靜默當真貨賣。
-  // 注意：loading 期間（未 error）照舊靜默墊示範貨，唔好閃橫額嚇人——淨係真．故障先出聲。
-  const isDemoProducts = productsError || !dbProducts;
-  const showDemoNotice = productsError;
   // 2026-09（Glo 要求）：新品上架只顯示最新 8 件，唔再成版碌極未完；
   // 其餘商品經「睇全部商品 →」去 /products 睇晒
-  const newArrivals = isDemoProducts ? PRODUCTS.slice(0, 8) : dbProducts.map(mapDbProduct);
+  const newArrivals = (dbProducts ?? []).map(mapDbProduct);
 
   // 客戶打卡牆：API 失敗或空陣列 → 靜態 6 張預設相
   const { data: praiseData, isError: praiseError } = trpc.praise.list.useQuery(undefined, {
@@ -989,15 +984,15 @@ export default function Home() {
               睇全部商品 →
             </Link>
           </div>
-          {/* UX P0-2：API 故障嗰陣唔准靜默賣示範貨——出橫額講到明＋畀客人重試 */}
-          {showDemoNotice && (
+          {/* API 故障要如實話客人載入失敗；唔再用示範商品冒充真貨。 */}
+          {productsError && (
             <div
               className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-2.5"
               style={{ borderColor: 'var(--glass-border)' }}
-              role="status"
+              role="alert"
             >
               <p className="text-[14px] text-gold-soft">
-                伺服器暫時連唔到，而家顯示緊示範款，未能即時落單。
+                商品資料暫時載入唔到，請重試；未載入成功前唔會顯示商品。
               </p>
               <button
                 type="button"
@@ -1010,17 +1005,23 @@ export default function Home() {
               </button>
             </div>
           )}
-          <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6 xl:grid-cols-4">
-            {newArrivals.map((product, i) => (
-              <div
-                key={product.id}
-                className="reveal"
-                style={{ transitionDelay: `${Math.min(i * 80, 400)}ms` }}
-              >
-                <ProductCard product={product} demo={showDemoNotice} />
-              </div>
-            ))}
-          </div>
+          {productsLoading ? (
+            <p className="mt-8 min-h-24 text-[14px] text-txt-3" role="status">商品資料載入中…</p>
+          ) : newArrivals.length > 0 ? (
+            <div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-3 md:gap-6 xl:grid-cols-4">
+              {newArrivals.map((product, i) => (
+                <div
+                  key={product.id}
+                  className="reveal"
+                  style={{ transitionDelay: `${Math.min(i * 80, 400)}ms` }}
+                >
+                  <ProductCard product={product} />
+                </div>
+              ))}
+            </div>
+          ) : !productsError ? (
+            <p className="mt-8 text-[14px] text-txt-3">暫時未有新商品上架，遲啲再嚟睇下。</p>
+          ) : null}
         </div>
       </section>
 

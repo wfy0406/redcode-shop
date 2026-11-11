@@ -37,6 +37,8 @@ import { tryOnPrivateMedia, tryOnSharedMedia } from "./tryonHttp";
 import { tryOnAdminMedia } from "./tryonAdminMedia";
 import { startTryOnMediaSweeper } from "./tryonService";
 import { publicLuckyEventSitemapPaths, SITEMAP_STATIC_PATHS } from "./lib/publicSeo";
+import { listPublicLiveFilters } from "./lib/catalogSeo";
+import { liveSitemapPaths } from "./lib/liveSeo";
 import { webDesignProofUpload } from "./webDesignUpload";
 import { handleWebDesignWebhookPaid, verifyWebDesignReturn } from "./webDesignPayments";
 import { isWebDesignOrderNo } from "./webDesignCore";
@@ -535,18 +537,26 @@ app.get("/sitemap.xml", async (c) => {
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   const maskForLog = (msg: string) =>
     msg.replace(/https?:\/\/[^\s)】]+/gi, "〈網址已遮罩〉").slice(0, 300);
-  const homeUrl = `<url><loc>https://redcode.red/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`;
+  // 全表以未 escape 嘅絕對 URL 做 key 去重——同一頁無論由邊段邏輯產生都只出一次。
+  const seenLocs = new Set<string>();
+  const entries: string[] = [];
+  const addUrl = (loc: string, inner: string) => {
+    if (seenLocs.has(loc)) return;
+    seenLocs.add(loc);
+    entries.push(`<url><loc>${xmlEscape(loc)}</loc>${inner}</url>`);
+  };
+  addUrl("https://redcode.red/", "<changefreq>daily</changefreq><priority>1.0</priority>");
   // 公開靜態頁同首口 HTML 使用同一路由清單：只放 canonical、可收錄網址。
-  const staticUrls = SITEMAP_STATIC_PATHS.map(
-    (path) =>
-      `<url><loc>https://redcode.red${path}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>`,
-  );
-  let urls = [homeUrl, ...staticUrls].join("\n  ");
+  for (const path of SITEMAP_STATIC_PATHS) {
+    addUrl(`https://redcode.red${path}`, "<changefreq>weekly</changefreq><priority>0.6</priority>");
+  }
   try {
     const db = getDb();
-    // 產品表冇 updatedAt 欄，lastmod 用 listedDate（上架日期，YYYY-MM-DD）
+    // v2026.11.11：商品 lastmod 之前用 listedDate（上架日期）冒充最後修改日，
+    // 會誤導 crawler 以為內容日日更新。產品表冇真 contentUpdatedAt，
+    // 冇真更新時間之前商品 URL 唔出 lastmod。
     const rows = await db
-      .select({ id: products.id, listedDate: products.listedDate })
+      .select({ id: products.id })
       .from(products)
       .where(
         and(
@@ -558,15 +568,26 @@ app.get("/sitemap.xml", async (c) => {
           )!,
         ),
       );
-    const productUrls = rows.map((p) => {
-      const d = p.listedDate instanceof Date ? p.listedDate : new Date(p.listedDate);
-      const lastmod = Number.isNaN(d.getTime()) ? "" : `<lastmod>${d.toISOString().slice(0, 10)}</lastmod>`;
-      return `<url><loc>${xmlEscape(`https://redcode.red/products/${p.id}`)}</loc>${lastmod}<priority>0.8</priority></url>`;
-    });
-    urls = [homeUrl, ...staticUrls, ...productUrls].join("\n  ");
+    for (const p of rows) {
+      addUrl(`https://redcode.red/products/${p.id}`, "<priority>0.8</priority>");
+    }
   } catch (e) {
     console.error(
       "[sitemap] 讀產品出錯（照出淨首頁＋靜態頁版）:",
+      maskForLog(e instanceof Error ? e.message : String(e)),
+    );
+  }
+  // v2026.11.11：直播全日／單場 URL 由公開商品實際嘅 liveDate/liveSession 得出
+  // （同一套公開上架條件，所以每條直播 URL 至少對應一件真公開商品）。
+  // 獨立 try：直播查詢失敗唔會拖垮上面已成功嘅商品 URL。
+  try {
+    const liveFilters = await listPublicLiveFilters();
+    for (const path of liveSitemapPaths(liveFilters)) {
+      addUrl(`https://redcode.red${path}`, "<changefreq>daily</changefreq><priority>0.7</priority>");
+    }
+  } catch (e) {
+    console.error(
+      "[sitemap] 讀直播場次出錯（保留首頁＋靜態頁＋商品版）:",
       maskForLog(e instanceof Error ? e.message : String(e)),
     );
   }
@@ -578,17 +599,16 @@ app.get("/sitemap.xml", async (c) => {
       .select({ id: luckyDrawEvents.id })
       .from(luckyDrawEvents)
       .where(eq(luckyDrawEvents.winnersPublic, true));
-    const eventUrls = publicLuckyEventSitemapPaths(eventRows.map((event) => event.id)).map(
-      (path) => `<url><loc>https://redcode.red${path}</loc><priority>0.6</priority></url>`,
-    );
-    urls = [urls, ...eventUrls].join("\n  ");
+    for (const path of publicLuckyEventSitemapPaths(eventRows.map((event) => event.id))) {
+      addUrl(`https://redcode.red${path}`, "<priority>0.6</priority>");
+    }
   } catch (e) {
     console.error(
-      "[sitemap] 讀公開中獎公告出錯（保留首頁＋靜態頁＋商品版）:",
+      "[sitemap] 讀公開中獎公告出錯（保留首頁＋靜態頁＋商品＋直播版）:",
       maskForLog(e instanceof Error ? e.message : String(e)),
     );
   }
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  ${urls}\n</urlset>`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  ${entries.join("\n  ")}\n</urlset>`;
   return c.body(xml, 200, {
     "Content-Type": "application/xml; charset=utf-8",
     "Cache-Control": "public, max-age=3600",

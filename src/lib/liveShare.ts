@@ -72,12 +72,14 @@ export function liveShareTitle(t: LiveShareTarget): string {
     : `${d} 全日直播商品｜RedCode`;
 }
 
-/** 分享內文（WhatsApp／系統分享 text）：全日强调全部場次；單場强调指定場次即睇即買 */
+/** 分享內文（WhatsApp／系統分享 text）：全日强调全部場次；單場强调指定場次即睇即買。
+ *  v2026.11.11：唔准無條件承諾「直播優惠價發售」——價錢／折扣係逐件貨嘅事實，
+ *  以商品頁為準（同 api/lib/liveSeo.ts 及商品真描述口徑一致）。 */
 export function liveShareText(t: LiveShareTarget): string {
   const d = formatLiveDateLabel(t.liveDate);
   return t.liveSession
-    ? `RedCode ${d} 第${t.liveSession}場直播商品，呢場主播推介款式即睇即買，直播優惠價發售！`
-    : `RedCode ${d} 全日直播商品，當日全部場次精選一頁睇晒，直播優惠價發售！`;
+    ? `RedCode ${d} 第${t.liveSession}場直播商品，呢場主播推介款式即睇即買；品名、價錢同庫存以商品頁為準！`
+    : `RedCode ${d} 全日直播商品，當日全部場次精選一頁睇晒；品名、價錢同庫存以商品頁為準！`;
 }
 
 /** Facebook sharer（開新視窗；crawler 會跟入面 u= 嗰條 URL 讀 OG） */

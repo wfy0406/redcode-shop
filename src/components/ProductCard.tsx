@@ -232,8 +232,8 @@ function ProductCard({ product, className, demo = false }: ProductCardProps) {
           <h3 className="line-clamp-2 text-[18px] font-bold leading-[1.4] text-txt-1">
             {product.name}
           </h3>
-          {/* AI 重點標籤（已批准先有）：品名下方小圓角 chip，flex wrap 手機兩欄都睇到；
-              放資訊區唔會遮住圖或快速加車 CTA。demo／冇 tags 就唔出 */}
+          {/* 重點標籤（已批准先有）：品名下方小圓角 chip，flex wrap 手機兩欄都睇到；
+              放資訊區唔會遮住圖或快速加車 CTA。冇 tags 就唔出 */}
           {product.aiTags && product.aiTags.length > 0 && (
             <ul className="flex flex-wrap gap-1.5" aria-label="商品重點標籤">
               {product.aiTags.map((tag) => (

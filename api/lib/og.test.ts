@@ -165,6 +165,41 @@ describe("injectProductOg — 商品存在", () => {
     expect(JSON.stringify(offers)).not.toContain("30.00");
   });
 
+  it("brand 冇真欄位：Product JSON-LD 唔再硬編碼 RedCode 品牌（同 Feed 唔出 g:brand 一致）", async () => {
+    mockRows = [makeProduct()];
+    const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const productLd = ldBlocks
+      .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
+      .find((j) => j["@type"] === "Product");
+    expect(productLd).toBeTruthy();
+    expect(productLd!.brand).toBeUndefined();
+  });
+
+  it("JSON-LD image 用晒成個真 photos 相簿（同 Feed image_link＋additional_image_link 一致）", async () => {
+    mockRows = [makeProduct()];
+    const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const productLd = ldBlocks
+      .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
+      .find((j) => j["@type"] === "Product");
+    expect(productLd!.image).toEqual([
+      "https://redcode.red/uploads/p85.jpg",
+      "https://redcode.red/uploads/p85b.jpg",
+    ]);
+  });
+
+  it("壞折扣（discountPrice ≥ 原價）：JSON-LD offers.price 照原價，唔再出虛高價（同 Feed 口徑）", async () => {
+    mockRows = [makeProduct({ discountPrice: 399 })];
+    const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
+    expect(html).toContain("<p>HK$299</p>");
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const productLd = ldBlocks
+      .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
+      .find((j) => j["@type"] === "Product");
+    expect((productLd!.offers as Record<string, unknown>).price).toBe("299.00");
+  });
+
   it("停用尺寸或冇尺寸資料時，首口摘要同 Product JSON-LD 都唔會虛構尺寸", async () => {
     mockRows = [makeProduct({ sizeEnabled: false, sizes: "S,M,L" })];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;

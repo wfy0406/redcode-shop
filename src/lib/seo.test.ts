@@ -29,6 +29,23 @@ describe("PAGE_SEO 文案", () => {
     expect(serverSeoSrc).toContain(PAGE_SEO["/about"].description);
   });
 
+  it("/products 同 /live 前端同 server 首口逐字一致，唔再無條件承諾直播優惠", () => {
+    // v2026.11.11：「直播優惠價發售」「直播優惠繼續生效」係無條件承諾，
+    // 同商品頁真品名／價錢／庫存口徑矛盾，兩邊一齊移除並保持逐字一致。
+    const serverSeoSrc = readFileSync(new URL("../../api/lib/publicSeo.ts", import.meta.url), "utf8");
+    for (const path of ["/products", "/live"] as const) {
+      expect(PAGE_SEO[path].description).not.toContain("直播優惠價發售");
+      expect(PAGE_SEO[path].description).not.toContain("優惠繼續生效");
+      expect(PAGE_SEO[path].description).toContain("商品頁為準");
+      expect(serverSeoSrc).toContain(PAGE_SEO[path].description);
+    }
+  });
+
+  it("商品詳情過渡 SEO 唔再無條件承諾直播優惠", () => {
+    expect(PAGE_SEO["/products/:id"].description).not.toContain("直播優惠價發售");
+    expect(PAGE_SEO["/products/:id"].description).toContain("以頁面顯示為準");
+  });
+
   it("網站設計頁前端同 server 首口 SEO 一致，而且可公開收錄", () => {
     // v2026.11.09.1：SEO 六項合併做套票，title 用「SEO 套票」唔再「逐項 SEO」
     expect(PAGE_SEO["/web-design"].title).toBe("香港網站設計｜前台、後台及 SEO 套票｜RedCode");

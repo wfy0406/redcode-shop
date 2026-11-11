@@ -2027,6 +2027,7 @@ export const luckyDrawRouter = createRouter({
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
       let eventName = "";
+      let actualWinnersPublic: boolean | undefined;
       await db.transaction(async (tx) => {
         // 鎖次序統一：冇 prize 參與，第一道就係 event 雙 key lock
         await lockEventTx(tx, input.eventId);
@@ -2038,17 +2039,24 @@ export const luckyDrawRouter = createRouter({
           .limit(1);
         if (!evNow) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在" });
         eventName = evNow.name;
-        await tx
+        const [updated] = await tx
           .update(luckyDrawEvents)
           .set({ winnersPublic: input.winnersPublic })
-          .where(eq(luckyDrawEvents.id, input.eventId));
+          .where(eq(luckyDrawEvents.id, input.eventId))
+          .returning({ winnersPublic: luckyDrawEvents.winnersPublic });
+        if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "活動唔存在或公告狀態更新失敗" });
+        // 回 DB 實際寫入值，唔係齋 echo input；後台 badge、toast 同公開快取都以呢個值為準。
+        actualWinnersPublic = updated.winnersPublic;
       });
+      if (actualWinnersPublic === undefined) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "公告狀態更新後未能確認" });
+      }
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.setEventWinnersPublic",
         targetType: "luckyDrawEvent", targetId: String(input.eventId),
-        detail: `活動《${eventName}》中獎公告 → ${input.winnersPublic ? "公開" : "關閉（收埋公開公告，查劵不受影響）"}`,
+        detail: `活動《${eventName}》中獎公告 → ${actualWinnersPublic ? "公開" : "關閉（收埋公開公告，查劵不受影響）"}`,
       });
-      return { ok: true as const, winnersPublic: input.winnersPublic };
+      return { ok: true as const, winnersPublic: actualWinnersPublic };
     }),
 
   /** v2.5.8（老闆指令）：刪除成個活動——確認後先郁手。

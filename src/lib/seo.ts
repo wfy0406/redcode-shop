@@ -18,12 +18,15 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   },
   '/products': {
     title: '全部貨品｜RedCode Fashion Design',
+    // v2026.11.11：同 server 首口（api/lib/publicSeo.ts）逐字一致——唔再無條件承諾
+    // 「直播優惠價發售」，品名／價錢／庫存以各商品頁為準。
     description:
-      'RedCode 直播精選女裝全部貨品，直播優惠價發售，順豐站/自提點/智能櫃自取，香港女裝網購。',
+      'RedCode 直播精選女裝全部貨品，品名、價錢同庫存以各商品頁為準，順豐站/自提點/智能櫃自取，香港女裝網購。',
   },
   '/live': {
     title: '直播重溫｜RedCode Fashion Design',
-    description: '錯過直播唔緊要，RedCode 直播重溫隨時睇，直播優惠繼續生效，睇中即刻落單。',
+    // v2026.11.11：同 server 首口逐字一致——唔再無條件承諾「直播優惠繼續生效」。
+    description: '錯過直播唔緊要，RedCode 直播重溫隨時睇，睇中即刻落單；品名、價錢同庫存以商品頁為準。',
   },
   '/about': {
     title: '關於我們｜RedCode Fashion Design',
@@ -127,7 +130,7 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   // 動態段路由：SeoManager 用 pattern 對返呢兩條
   '/products/:id': {
     title: '商品詳情｜RedCode Fashion Design',
-    description: 'RedCode 直播精選女裝商品詳情，直播優惠價發售，順豐站自取。',
+    description: 'RedCode 直播精選女裝商品詳情，品名、價錢同庫存以頁面顯示為準，順豐站自取。',
   },
   '/receipt/:orderId': {
     title: '訂單收據｜RedCode Fashion Design',
@@ -169,9 +172,11 @@ export function resolveSeo(pathname: string, search = ''): { title: string; desc
         title: live.liveSession
           ? `${date} 第${live.liveSession}場直播商品｜RedCode Fashion Design`
           : `${date} 全日直播商品｜RedCode Fashion Design`,
+        // v2026.11.11：同 server api/lib/liveSeo.ts liveDescription 逐字一致
+        // （seo.test.ts parity 斷言靠佢）；唔再無條件承諾「直播優惠價發售」。
         description: live.liveSession
-          ? `RedCode ${date} 第${live.liveSession}場直播商品——呢一場主播推介嘅女裝款式即睇直播商品、睇中即刻落單，直播優惠價發售，順豐站自取。`
-          : `RedCode ${date} 直播全日全部場次嘅精選女裝，一頁睇晒當日所有直播商品，直播優惠價發售，順豐站自取。`,
+          ? `RedCode ${date} 第${live.liveSession}場直播商品——呢一場主播推介嘅女裝款式即睇直播商品、睇中即刻落單；品名、價錢同庫存以商品頁為準，順豐站自取。`
+          : `RedCode ${date} 直播全日全部場次嘅精選女裝，一頁睇晒當日所有直播商品；品名、價錢同庫存以商品頁為準，順豐站自取。`,
       };
     }
   }

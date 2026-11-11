@@ -27,6 +27,7 @@ const h = vi.hoisted(() => {
     queue: [] as any[],
     selects: [] as { selection?: any; authRoleQuery: boolean }[],
     updates: [] as { set?: any; where?: any; returning?: any }[],
+    inserts: [] as { table?: any; values?: any; onConflictDoNothing?: boolean }[],
     findFirstResult: undefined as any,
   };
   const pop = () => (state.queue.length > 0 ? state.queue.shift() : []);
@@ -91,6 +92,23 @@ const h = vi.hoisted(() => {
       };
       return chain;
     },
+    // L2：disableAiTags 會將受影響 SKU 寫入 productAiTagsTombstones（onConflictDoNothing）
+    insert: (table?: any) => {
+      const rec: { table?: any; values?: any; onConflictDoNothing?: boolean } = { table };
+      state.inserts.push(rec);
+      const chain: any = {
+        values: (v: any) => {
+          rec.values = v;
+          return chain;
+        },
+        onConflictDoNothing: () => {
+          rec.onConflictDoNothing = true;
+          return Promise.resolve(pop());
+        },
+        returning: () => Promise.resolve(pop()),
+      };
+      return chain;
+    },
     query: {
       products: {
         findFirst: async () => state.findFirstResult,
@@ -136,6 +154,7 @@ function reset(
   h.state.queue = [];
   h.state.selects = [];
   h.state.updates = [];
+  h.state.inserts = [];
   h.state.findFirstResult = undefined;
   vi.mocked(logAudit).mockClear();
 }
@@ -236,8 +255,10 @@ describe("disableAiTags 權限：主管級先准", () => {
 describe("disableAiTags 成功路徑", () => {
   beforeEach(() => reset());
 
-  it("supervisor 停用 3 件：淨 set aiTagsEnabled=false、where 係 id IN、寫 audit、回 count", async () => {
-    h.state.queue = [[{ id: 11 }, { id: 22 }, { id: 33 }]];
+  it("supervisor 停用 3 件：淨 set aiTagsEnabled=false、where 係 id IN、寫 audit、回 count；SKU 寫入 tombstones（L2）", async () => {
+    h.state.queue = [
+      [{ id: 11, sku: "SKU-11" }, { id: 22, sku: "SKU-22" }, { id: 33, sku: "SKU-33" }],
+    ];
     const res = await caller().disableAiTags({ ids: [11, 22, 33] });
     expect(res).toEqual({ ok: true, count: 3 });
 
@@ -250,6 +271,15 @@ describe("disableAiTags 成功路徑", () => {
     expect(sig.sql).toContain('"products"."id" in');
     expect(sig.params).toEqual([11, 22, 33]);
 
+    // L2：受影響 SKU 全部記入 productAiTagsTombstones，onConflictDoNothing 冪等
+    expect(h.state.inserts).toHaveLength(1);
+    expect(h.state.inserts[0].values).toEqual([
+      { sku: "SKU-11" },
+      { sku: "SKU-22" },
+      { sku: "SKU-33" },
+    ]);
+    expect(h.state.inserts[0].onConflictDoNothing).toBe(true);
+
     expect(logAudit).toHaveBeenCalledTimes(1);
     expect(logAudit).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -261,22 +291,26 @@ describe("disableAiTags 成功路徑", () => {
     );
   });
 
-  it("admin 同樣准；單件 id 都得；已停用重送冇 hitting 行 → count 0（冪等）", async () => {
+  it("admin 同樣准；單件 id 都得；已停用重送冇 hitting 行 → count 0（冪等），零行更新唔寫 tombstone", async () => {
     reset({ userId: 9002, role: "admin" });
     h.state.queue = [[]]; // DB 已停用／唔存在 → returning 空
     const res = await caller().disableAiTags({ ids: [7] });
     expect(res).toEqual({ ok: true, count: 0 });
     expect(h.state.updates[0].set).toEqual({ aiTagsEnabled: false });
     expect(whereSig(h.state.updates[0].where).params).toEqual([7]);
+    expect(h.state.inserts).toHaveLength(0); // L2：冇行被停就唔會亂記 SKU
     expect(logAudit).toHaveBeenCalledTimes(1);
   });
 
-  it("上限 100 個 ids 啱啱好放行", async () => {
+  it("上限 100 個 ids 啱啱好放行，100 個 SKU 全部記 tombstone", async () => {
     const ids = Array.from({ length: 100 }, (_, i) => i + 1);
-    h.state.queue = [ids.map((id) => ({ id }))];
+    h.state.queue = [ids.map((id) => ({ id, sku: `SKU-${id}` }))];
     const res = await caller().disableAiTags({ ids });
     expect(res).toEqual({ ok: true, count: 100 });
     expect(whereSig(h.state.updates[0].where).params).toEqual(ids);
+    expect(h.state.inserts).toHaveLength(1);
+    expect(h.state.inserts[0].values).toHaveLength(100);
+    expect(h.state.inserts[0].values[0]).toEqual({ sku: "SKU-1" });
   });
 });
 

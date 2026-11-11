@@ -14,7 +14,7 @@ import './product-story.css';
 export interface ProductStoryProps {
   /** 商品描述（手動填嘅純文字；空行分段、單行換行保留） */
   description?: string | null;
-  /** 已批准嘅 AI 重點標籤 */
+  /** 已批准嘅 重點標籤 */
   aiTags?: string[];
   className?: string;
 }
@@ -47,7 +47,7 @@ export default function ProductStory({ description, aiTags, className }: Product
 
       {tags.length > 0 && (
         <div className="ps-tags-block">
-          <p className="ps-tags-label">重點</p>
+          <p className="ps-tags-label">重點標籤</p>
           <ul className="ps-tags">
             {tags.map((tag) => (
               <li key={tag} className="ps-tag">

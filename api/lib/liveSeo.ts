@@ -5,7 +5,13 @@ import type { RouteMeta } from "./og";
  * 首口 HTML 注入全日／單場專屬 title / description / og:url / canonical，
  * crawler（FB／WhatsApp／Google）唔行 JS 都讀到節目專屬預覽。
  *
- * 純函數、唔掂 DB（直播日期／場次本身就係客人手㨂嘅公開參數，唔使查庫）。
+ * v2026.11.11：格式合法 ≠ 可索引。邊個日期／場次真係有公開商品，
+ * 要由 caller 用公開商品目錄查詢（catalogSeo.listPublicCatalog）證實：
+ * - 查到有公開商品 → liveRouteMeta（self canonical＋直播專屬文案）。
+ * - 查詢成功但零公開商品（未開賣／已下架嘅空場次）→ emptyLiveRouteMeta
+ *   （noindex＋移除 self canonical，唔准扮有貨）。
+ * - DB 故障 → caller 回通用 /products meta，唔好誤報空場次。
+ * 呢個檔保持純函數、唔掂 DB；DB 分叉決定喺 caller（vite.ts）。
  *
  * 安全鐵律：
  * - liveDate 必須係真實日曆日期；liveSession 必須係正整數字串。
@@ -77,9 +83,11 @@ export function liveTitle(f: LiveFilter): string {
 
 export function liveDescription(f: LiveFilter): string {
   const d = formatLiveDateLabel(f.liveDate);
+  // 唔准無條件承諾「直播優惠價發售」——價錢／折扣係逐件貨嘅事實，
+  // 一律以商品頁為準（同 contracts/types.ts productSeoDescription 口徑一致）。
   return f.liveSession
-    ? `RedCode ${d} 第${f.liveSession}場直播商品——呢一場主播推介嘅女裝款式即睇直播商品、睇中即刻落單，直播優惠價發售，順豐站自取。`
-    : `RedCode ${d} 直播全日全部場次嘅精選女裝，一頁睇晒當日所有直播商品，直播優惠價發售，順豐站自取。`;
+    ? `RedCode ${d} 第${f.liveSession}場直播商品——呢一場主播推介嘅女裝款式即睇直播商品、睇中即刻落單；品名、價錢同庫存以商品頁為準，順豐站自取。`
+    : `RedCode ${d} 直播全日全部場次嘅精選女裝，一頁睇晒當日所有直播商品；品名、價錢同庫存以商品頁為準，順豐站自取。`;
 }
 
 /**
@@ -93,4 +101,43 @@ export function liveRouteMeta(
   const f = parseLiveQuery(liveDate, liveSession);
   if (!f) return null;
   return { title: liveTitle(f), description: liveDescription(f), path: livePath(f) };
+}
+
+/**
+ * 真空場次（caller 已用公開商品目錄證實零公開商品）嘅 meta：
+ * 如實講暫未公開／已下架，noindex＋移除 self canonical——
+ * 唔准再用直播專屬 title/description 扮有貨（薄頁誤導 crawler）。
+ * f 係已過 parseLiveQuery 嘅合法值，先會出現喺文案；raw input 永遠唔入。
+ */
+export function emptyLiveRouteMeta(f: LiveFilter): RouteMeta {
+  const d = formatLiveDateLabel(f.liveDate);
+  const which = f.liveSession ? `${d} 第${f.liveSession}場直播` : `${d} 直播`;
+  return {
+    title: `${which}暫未有公開商品｜RedCode Fashion Design`,
+    description: `RedCode ${which}而家冇公開商品——可能未開賣、已賣晒或已下架；去全部貨品睇最新直播精選女裝，品名、價錢同庫存以商品頁為準。`,
+    canonical: null,
+    noindex: true,
+  };
+}
+
+/**
+ * sitemap 用嘅直播全日／單場 URL（由公開商品查詢得出嘅 liveDate/liveSession 組合）。
+ * DB 落嚟嘅值都照過 parseLiveQuery——唔合法嘅日期／場次唔入 sitemap；
+ * 同一 URL（全日同單場各自）去重。
+ */
+export function liveSitemapPaths(
+  filters: readonly (LiveFilter | null | undefined)[],
+): string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (const raw of filters) {
+    const f = raw ? parseLiveQuery(raw.liveDate, raw.liveSession) : null;
+    if (!f) continue;
+    const p = livePath(f);
+    if (!seen.has(p)) {
+      seen.add(p);
+      paths.push(p);
+    }
+  }
+  return paths;
 }

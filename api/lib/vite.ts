@@ -170,20 +170,40 @@ export function serveStaticFiles(app: App) {
           content = injectPublicSeoContent(content, "/lucky-results");
         }
       } else if (normPath === "/products") {
-        // 直播節目頁保留有效日期／場次嘅專屬 canonical；無效參數唔反射入 HTML。
-        const { liveRouteMeta, parseLiveQuery } = await import("./liveSeo");
+        // v2026.11.11：直播節目頁唔再齋驗格式就當可索引薄頁——
+        // 用同一次真公開商品目錄查詢（唔好雙 DB hit）決定 meta 同首口商品清單：
+        // ─ 有真公開商品 → 直播專屬 title/description＋self canonical＋該場商品清單
+        // ─ 查詢成功但零公開商品（未開賣／已下架空場次）→ noindex＋移除 self canonical，
+        //   如實講暫未有公開商品，唔准扮有貨
+        // ─ DB 故障 → 通用 /products meta，唔好將可能存貨嘅場次誤報做空場次
+        // 無效日期／場次（parseLiveQuery 回 null）行通用 /products，絕不反射輸入。
+        const { emptyLiveRouteMeta, liveRouteMeta, parseLiveQuery } = await import("./liveSeo");
+        const { injectPublicCatalog, listPublicCatalog } = await import("./catalogSeo");
         const q = new URL(c.req.url).searchParams;
         const liveFilter = parseLiveQuery(q.get("liveDate"), q.get("liveSession"));
-        const liveMeta = liveRouteMeta(q.get("liveDate"), q.get("liveSession"));
-        content = injectRouteMeta(content, liveMeta ?? { ...PUBLIC_PAGES["/products"], path: "/products" });
-        content = injectPublicSeoContent(content, "/products");
+        let catalogItems: Awaited<ReturnType<typeof listPublicCatalog>> | null = null;
         try {
-          const { injectPublicCatalog, listPublicCatalog } = await import("./catalogSeo");
-          const items = await listPublicCatalog(48, liveFilter ?? undefined);
-          const heading = liveMeta?.title?.replace("｜RedCode Fashion Design", "");
-          content = injectPublicCatalog(content, items, heading);
+          catalogItems = await listPublicCatalog(48, liveFilter ?? undefined);
         } catch {
+          catalogItems = null; // DB 一時故障：同「真零商品」分清，下面行通用 fallback
+        }
+        if (liveFilter && catalogItems !== null && catalogItems.length === 0) {
+          content = injectRouteMeta(content, emptyLiveRouteMeta(liveFilter));
+          content = injectPublicSeoContent(content, "/products");
+        } else if (liveFilter && catalogItems !== null) {
+          const liveMeta = liveRouteMeta(q.get("liveDate"), q.get("liveSession"));
+          content = injectRouteMeta(
+            content,
+            liveMeta ?? { ...PUBLIC_PAGES["/products"], path: "/products" },
+          );
+          content = injectPublicSeoContent(content, "/products");
+          const heading = liveMeta?.title?.replace("｜RedCode Fashion Design", "");
+          content = injectPublicCatalog(content, catalogItems, heading);
+        } else {
+          content = injectRouteMeta(content, { ...PUBLIC_PAGES["/products"], path: "/products" });
+          content = injectPublicSeoContent(content, "/products");
           // DB 一時故障照出通用公開摘要；唔好將在架商品頁誤報做空目錄或 404。
+          if (catalogItems) content = injectPublicCatalog(content, catalogItems);
         }
       } else if (pageSeo) {
         content = injectRouteMeta(content, { ...pageSeo, path: normPath });

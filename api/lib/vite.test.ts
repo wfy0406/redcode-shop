@@ -261,6 +261,47 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html.match(/rel="canonical"/g)).toHaveLength(1);
   });
 
+  it("(8c) 真空場次（DB 查詢成功、零公開商品）→ 200＋noindex＋移除 self canonical，唔准扮有貨", async () => {
+    mockRows = []; // 查詢成功、零行＝該日／該場確定冇公開商品
+    const res = await makeApp().request("/products?liveDate=20261028");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>2026年10月28日 直播暫未有公開商品｜RedCode Fashion Design</title>");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(html).not.toContain("index, follow");
+    // self canonical／og:url 移除——唔准再宣告呢條係可索引嘅直播節目頁
+    expect(canonicalHref(html)).toBeNull();
+    expect(html).not.toContain('property="og:url"');
+    // 唔准出直播專屬「有貨」訊號或假目錄
+    expect(html).not.toContain("全日直播商品｜RedCode Fashion Design");
+    expect(html).not.toContain('id="redcode-catalog-seo"');
+    // 如實文案：話人知冇公開商品，價錢以商品頁為準
+    expect(html).toContain("冇公開商品");
+  });
+
+  it("(8d) 空單場 → 場次號入 noindex 標題；有效格式先會出現（唔反射 raw input）", async () => {
+    mockRows = [];
+    const res = await makeApp().request("/products?liveDate=20261028&liveSession=9");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("2026年10月28日 第9場直播暫未有公開商品");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(canonicalHref(html)).toBeNull();
+  });
+
+  it("(8e) 直播頁 DB 故障 → 通用 /products meta，唔好誤報空場次／404", async () => {
+    queryError = new Error("connection refused");
+    const res = await makeApp().request("/products?liveDate=20261028&liveSession=2");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // 回通用 /products（canonical 指去真內容），唔出「暫未有公開商品」嘅假確定
+    expect(html).toContain("<title>全部貨品｜RedCode Fashion Design</title>");
+    expect(canonicalHref(html)).toBe("https://redcode.red/products");
+    expect(html).not.toContain("暫未有公開商品");
+    expect(html).not.toContain("noindex");
+    expect(html).not.toContain('id="redcode-catalog-seo"');
+  });
+
   it("(9) 無效日期 /products?liveDate=20261340 → 通用 /products meta，絕不反射輸入", async () => {
     const res = await makeApp().request("/products?liveDate=20261340");
     expect(res.status).toBe(200);

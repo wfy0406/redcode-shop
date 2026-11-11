@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, or } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { products } from "@db/schema";
 import type { LiveFilter } from "./liveSeo";
@@ -35,6 +35,28 @@ export async function listPublicCatalog(limit = 48, live?: LiveFilter): Promise<
     )
     .orderBy(desc(products.listedDate), desc(products.id))
     .limit(cap);
+}
+
+/**
+ * sitemap 用：公開商品實際出現過嘅直播日期／場次組合（distinct）。
+ * 同 listPublicCatalog 同一套公開條件（上架中＋未自動下架），
+ * 所以入到 sitemap 嘅直播 URL 一定對應至少一件真公開商品。
+ * 回嚟嘅值未保證格式合法——caller 要過 liveSitemapPaths（內部會再驗證）。
+ */
+export async function listPublicLiveFilters(): Promise<LiveFilter[]> {
+  const rows = await getDb()
+    .selectDistinct({ liveDate: products.liveDate, liveSession: products.liveSession })
+    .from(products)
+    .where(
+      and(
+        eq(products.isActive, true),
+        or(eq(products.delistEnabled, false), isNull(products.delistAt), gt(products.delistAt, new Date())),
+        isNotNull(products.liveDate),
+      ),
+    );
+  return rows
+    .filter((r): r is { liveDate: string; liveSession: string | null } => typeof r.liveDate === "string")
+    .map((r) => ({ liveDate: r.liveDate, liveSession: r.liveSession ?? null }));
 }
 
 function esc(value: string): string {

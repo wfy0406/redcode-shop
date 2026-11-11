@@ -6,6 +6,8 @@ const h = vi.hoisted(() => {
   const state = {
     batchFind: [] as unknown[],
     productFind: [] as unknown[],
+    tombstoneFind: [] as unknown[],
+    tombstoneFindCount: 0,
     select: [] as unknown[],
     insert: [] as unknown[],
     update: [] as unknown[],
@@ -35,6 +37,12 @@ const h = vi.hoisted(() => {
     query: {
       listingBatches: { findFirst: () => state.batchFind.length > 0 ? settle(state.batchFind) : Promise.resolve(null) },
       products: { findFirst: () => state.productFind.length > 0 ? settle(state.productFind) : Promise.resolve(null) },
+      productAiTagsTombstones: {
+        findFirst: () => {
+          state.tombstoneFindCount += 1;
+          return state.tombstoneFind.length > 0 ? settle(state.tombstoneFind) : Promise.resolve(null);
+        },
+      },
     },
     select: () => chain(state.select),
     insert: (table: unknown) => {
@@ -121,9 +129,10 @@ async function invoke(body: unknown) {
 }
 
 beforeEach(() => {
-  for (const key of ["batchFind", "productFind", "select", "insert", "update", "del", "inserts", "updates"] as const) {
+  for (const key of ["batchFind", "productFind", "tombstoneFind", "select", "insert", "update", "del", "inserts", "updates"] as const) {
     h.state[key].length = 0;
   }
+  h.state.tombstoneFindCount = 0;
   h.logAudit.mockClear();
   h.archiveProductImages.mockClear();
   vi.stubEnv("WMS_CALLBACK_SECRET", "test-secret");
@@ -315,6 +324,45 @@ describe("wmsListingBatch — AI 內容合約（approved 閘＋寫入）", () =>
     });
     // enabled 跟 schema default true，insert 唔會指定
     expect(productInsert?.values).not.toHaveProperty("aiTagsEnabled");
+  });
+
+  it("L2 tombstone：新 SKU 有停用紀錄 → 重建出嚟 aiTagsEnabled 直接 false（WMS 重推唔會復活）", async () => {
+    h.state.batchFind.push(null);
+    h.state.insert.push([{ id: 11 }], [{ id: 55 }], []); // 批次、商品、明細
+    h.state.productFind.push(null); // 舊貨已硬刪，冇現有商品
+    h.state.tombstoneFind.push({ sku: "SKU-A" }); // 舊貨停用過 重點標籤
+    h.state.update.push([], []); // 心跳、批次完成
+    const res = await invoke(payload([aiItem()]));
+    expect(res.data.results).toEqual([{ sku: "SKU-A", status: "created" }]);
+    const productInsert = h.state.inserts.find((row) => row.table === products);
+    expect(productInsert?.values).toMatchObject({ aiTagsEnabled: false });
+    // 內容照寫（停用嘅係開關，唔係內容）
+    expect(productInsert?.values).toMatchObject({ aiTags: '["直播熱賣","新品"]' });
+  });
+
+  it("L2 tombstone：新 SKU 冇停用紀錄 → insert 唔帶 aiTagsEnabled（跟 schema default true）", async () => {
+    h.state.batchFind.push(null);
+    h.state.insert.push([{ id: 11 }], [{ id: 55 }], []);
+    h.state.productFind.push(null);
+    h.state.tombstoneFind.push(null); // 明確查咗冇 tombstone
+    h.state.update.push([], []);
+    const res = await invoke(payload([aiItem()]));
+    expect(res.data.results).toEqual([{ sku: "SKU-A", status: "created" }]);
+    const productInsert = h.state.inserts.find((row) => row.table === products);
+    expect(productInsert?.values).not.toHaveProperty("aiTagsEnabled");
+    expect(h.state.tombstoneFindCount).toBe(1); // 新貨號一定查一次
+  });
+
+  it("L2 tombstone：更新現有商品唔會查 tombstone，亦絕對唔郁 aiTagsEnabled", async () => {
+    h.state.batchFind.push(null);
+    h.state.insert.push([{ id: 11 }], []); // 批次、明細
+    h.state.productFind.push(makeProduct({ aiTagsEnabled: false }));
+    h.state.update.push([], [], []); // 商品 update、心跳、批次完成
+    const res = await invoke(payload([aiItem()]));
+    expect(res.data.results).toEqual([{ sku: "SKU-A", status: "updated" }]);
+    expect(h.state.tombstoneFindCount).toBe(0); // 更新路徑唔使查
+    const productUpdate = h.state.updates.find((row) => row.table === products);
+    expect(productUpdate?.set).not.toHaveProperty("aiTagsEnabled");
   });
 
   it("reject：有 approved 內容照記快照；冇帶內容就 null", async () => {

@@ -304,6 +304,20 @@ CREATE TABLE IF NOT EXISTS "productImageArchive" (
   "updatedAt" timestamp NOT NULL DEFAULT now()
 );
 
+-- 重點標籤 SKU 級停用 tombstone（L2，2026-11）：見 schema.ts productAiTagsTombstones 註解。
+-- 停用時記 SKU；硬刪後同 SKU 重建（WMS／人手）新行 aiTagsEnabled 保持 false。
+CREATE TABLE IF NOT EXISTS "productAiTagsTombstones" (
+  sku varchar(64) PRIMARY KEY,
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+
+-- 一次性回填（idempotent）：功能上線前已停用（aiTagsEnabled=false）嘅在架商品
+-- 都補返 tombstone，佢哋日後硬刪重建都一樣保持停用。已停用但已刪走嘅舊貨
+-- 冇紀錄可追溯，唔會假裝補得返。
+INSERT INTO "productAiTagsTombstones" (sku)
+SELECT sku FROM products WHERE "aiTagsEnabled" = false
+ON CONFLICT (sku) DO NOTHING;
+
 -- 2026-08-04（Glo 要求）：迎新優惠碼 WELLCOMEYOU——全單 92 折（percent 8 ＝ 減 8%）、
 -- 無最低消費門檻、每個帳號限用一次；ON CONFLICT 唔郁後台之後嘅任何改動（停用/改規則都唔會被覆蓋）
 INSERT INTO "promoCodes" ("code", "kind", "value", "minSpend", "perUserLimit", "usedCount", "isActive")

@@ -25,11 +25,11 @@ export interface ShopProduct {
   category: ProductCategory;
   listedDate: Date | string;
   stock: number;
-  /** AI 重點標籤（公開 API 已批准先回 string[]；停用嘅 server 回 []；舊後端/示範數據冇呢欄） */
+  /** 重點標籤（公開 API 已批准先回 string[]；停用嘅 server 回 []；舊後端/示範數據冇呢欄） */
   aiTags?: string[];
 }
 
-/** AI 重點標籤正規化：淨係留非空字串、trim、去重（順序保留）；乜嘢壞資料都回 [] 唔會爆 */
+/** 重點標籤正規化：淨係留非空字串、trim、去重（順序保留）；乜嘢壞資料都回 [] 唔會爆 */
 export function normalizeAiTags(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
   const seen = new Set<string>();
@@ -87,7 +87,7 @@ export interface CardProduct {
   image: string;
   soldOut: boolean;
   stock: number;
-  /** AI 重點標籤（已批准）；冇就唔顯示 */
+  /** 重點標籤（已批准）；冇就唔顯示 */
   aiTags?: string[];
 }
 

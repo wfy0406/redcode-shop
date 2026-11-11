@@ -58,20 +58,81 @@ type ProductRow = {
   stock: number;
   isActive: boolean;
   createdAt: Date;
-  /** AI 標籤原始 JSON 字串（adminList 合約：string|null；壞資料用 parseAiTagsJson 擋） */
+  /** 重點標籤原始 JSON 字串（adminList 合約：string|null；壞資料用 parseAiTagsJson 擋） */
   aiTags: string | null;
-  /** AI 標籤啟用狀態（adminList 合約：boolean）：false＝已停用（原始標籤照舊保留，唔會回返去公開 API） */
+  /** 重點標籤啟用狀態（adminList 合約：boolean）：false＝已停用（原始標籤照舊保留，唔會回返去公開 API） */
   aiTagsEnabled: boolean;
 };
 
 /** 後端新合約 products.disableAiTags（supervisor/admin only，員工 server 會 FORBIDDEN）。
  *  AppRouter 型別未更新前用結構型別接住；前端隱藏按鈕只係 UX，唔係保安防線。 */
 type DisableAiTagsApi = {
-  useMutation: (opts: {
+  useMutation: (opts?: {
     onSuccess?: (result: unknown, vars: { ids: number[] }) => void;
     onError?: (err: { message?: string }) => void;
-  }) => { mutate: (vars: { ids: number[] }) => void; isPending: boolean };
+  }) => {
+    mutate: (
+      vars: { ids: number[] },
+      opts?: {
+        onSuccess?: (result: unknown, vars: { ids: number[] }) => void;
+        onError?: (err: { message?: string }) => void;
+      },
+    ) => void;
+    mutateAsync: (vars: { ids: number[] }) => Promise<unknown>;
+    isPending: boolean;
+  };
 };
+
+/** 後端 products.disableAiTags 每 call 最多 100 ids（zod max(100)）；批量 UI 按呢個上限 chunk */
+export const AI_TAGS_DISABLE_CHUNK_SIZE = 100;
+
+/** 將已揀 id 切成 ≤100 嘅 chunk（保持原有順序；空陣列 → 空） */
+export function chunkAiDisableIds(ids: number[], size = AI_TAGS_DISABLE_CHUNK_SIZE): number[][] {
+  const cap = Math.max(1, Math.floor(size));
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += cap) chunks.push(ids.slice(i, i + cap));
+  return chunks;
+}
+
+/** 批量停用逐 chunk 順序執行嘅如實結果（部份失敗唔會報全成功） */
+export interface AiTagsDisableRunResult {
+  /** server 實際更新行數總和（逐 chunk count 相加） */
+  updatedCount: number;
+  /** 成功 chunk 嘅 ids（UI 淨係清呢啲選擇） */
+  succeededIds: number[];
+  /** 失敗 chunk 嘅 ids（保留選擇等主管重試） */
+  failedIds: number[];
+  firstError: string | null;
+}
+
+/**
+ * L3：逐 100 ids chunk、順序 mutateAsync。其中一 chunk 失敗唔會中斷後面嘅 chunk，
+ * 亦唔會當全成功——逐 chunk 記低成敗，由 UI 如實報總數。
+ */
+export async function runAiTagsDisableInChunks(
+  ids: number[],
+  mutateAsync: (vars: { ids: number[] }) => Promise<unknown>,
+): Promise<AiTagsDisableRunResult> {
+  const result: AiTagsDisableRunResult = {
+    updatedCount: 0,
+    succeededIds: [],
+    failedIds: [],
+    firstError: null,
+  };
+  for (const chunk of chunkAiDisableIds(ids)) {
+    try {
+      const res = await mutateAsync({ ids: chunk });
+      result.updatedCount += (res as { count?: number } | null)?.count ?? chunk.length;
+      result.succeededIds.push(...chunk);
+    } catch (e) {
+      result.failedIds.push(...chunk);
+      if (!result.firstError) {
+        result.firstError = (e as { message?: string })?.message || '未知錯誤';
+      }
+    }
+  }
+  return result;
+}
 
 /** Date（superjson 已還原）→ datetime-local 欄位格式（本地時間 YYYY-MM-DDTHH:mm） */
 function toLocalInput(d: Date): string {
@@ -120,7 +181,7 @@ export default function ProductManager({
 }) {
   const utils = trpc.useUtils();
   const { user } = useAuth();
-  // AI 標籤停用控制只畀 supervisor/admin 睇（UX）；真正權限喺 server（員工會 FORBIDDEN）
+  // 重點標籤停用控制只畀 supervisor/admin 睇（UX）；真正權限喺 server（員工會 FORBIDDEN）
   const canManageAiTags = user?.role === 'supervisor' || user?.role === 'admin';
   const listQuery = trpc.products.adminList.useQuery(undefined);
   const [form, setForm] = useState(initialForm);
@@ -146,7 +207,7 @@ export default function ProductManager({
   const [dayFilter, setDayFilter] = useState<string | null>(null);
   // 排列方式：created 上載日期（最新先）／name 名稱／listed 上架日期（最新先）／category 分類
   const [sortKey, setSortKey] = useState<SortKey>('created');
-  // AI 標籤：逐件停用嘅 inline 兩步確認＋批量多選（淨係可揀有啟用標籤嘅商品）
+  // 重點標籤：逐件停用嘅 inline 兩步確認＋批量多選（淨係可揀有啟用標籤嘅商品）
   const [confirmDisableAiId, setConfirmDisableAiId] = useState<number | null>(null);
   const [selectedAiIds, setSelectedAiIds] = useState<number[]>([]);
 
@@ -312,7 +373,7 @@ export default function ProductManager({
     onError: (err) => toast(err.message || '更新類別失敗', 'error'),
   });
 
-  /** AI 標籤停用成功後：後台列表＋前台公開查詢一齊更新（公開端停用後 server 會回 []） */
+  /** 重點標籤停用成功後：後台列表＋前台公開查詢一齊更新（公開端停用後 server 會回 []） */
   const invalidateAiTagViews = () => {
     void utils.products.adminList.invalidate();
     void utils.products.list.invalidate();
@@ -320,23 +381,54 @@ export default function ProductManager({
     void utils.products.byId.invalidate();
   };
 
-  // products.disableAiTags：一次過停一件或多件；冇重新啟用（停咗就停咗）
+  // products.disableAiTags：一次過停一件或多件；冇重新啟用（停咗就停咗）。
+  // 成功/失敗處理放喺逐次呼叫嘅 callback（單件）同 chunked runner（批量），
+  // 唔放 mutation 級——否則批量逐 chunk mutateAsync 會每件都 toast＋清晒選擇。
   const disableAiTagsMutation = (
     trpc.products as unknown as { disableAiTags: DisableAiTagsApi }
-  ).disableAiTags.useMutation({
-    onSuccess: (result, vars) => {
-      // toast 報 server 實際 updated count（API 欄名係 count）；冇回就先當全部成功
-      const updated = (result as { count?: number } | null)?.count ?? vars.ids.length;
-      toast(`已停用 ${updated} 件商品嘅 AI 標籤（原始標籤會保留，但前台唔再顯示）`, 'success');
-      setSelectedAiIds([]);
-      setConfirmDisableAiId(null);
+  ).disableAiTags.useMutation();
+
+  /** L3：批量停用進行中（chunked runner 自定狀態；mutation.isPending 只蓋單次呼叫） */
+  const [batchAiDisabling, setBatchAiDisabling] = useState(false);
+
+  /** 單件停用成功（原行為）：toast server 實際 count＋清確認狀態＋刷新 */
+  const onSingleDisableSuccess = (result: unknown, vars: { ids: number[] }) => {
+    const updated = (result as { count?: number } | null)?.count ?? vars.ids.length;
+    toast(`已停用 ${updated} 件商品嘅 重點標籤（原始標籤會保留，但前台唔再顯示）`, 'success');
+    setSelectedAiIds([]);
+    setConfirmDisableAiId(null);
+    invalidateAiTagViews();
+  };
+
+  /** L3：批量停用——揀幾多都得，後端每 call 最多 100 ids 所以逐 100 chunk 順序送。
+   *  全部成功先清晒選擇；部份失敗如實報總數，失敗嘅 ids 保留選擇等主管重試。 */
+  const runBatchDisableAiTags = async () => {
+    const ids = selectedAiIds;
+    if (ids.length === 0 || batchAiDisabling) return;
+    setBatchAiDisabling(true);
+    try {
+      const result = await runAiTagsDisableInChunks(ids, disableAiTagsMutation.mutateAsync);
+      if (result.failedIds.length === 0) {
+        toast(
+          `已停用 ${result.updatedCount} 件商品嘅 重點標籤（原始標籤會保留，但前台唔再顯示）`,
+          'success',
+        );
+        setSelectedAiIds([]);
+        setConfirmDisableAiId(null);
+      } else {
+        // 如實提示：成功幾多、失敗幾多、點解；失敗嘅保留選擇，唔會單 chunk 成功就報全成功
+        toast(
+          `已停用 ${result.updatedCount} 件；${result.failedIds.length} 件失敗（${result.firstError}）。未成功嘅已保留喺選擇入面，可以即刻重試。`,
+          'error',
+        );
+        const failed = new Set(result.succeededIds);
+        setSelectedAiIds((cur) => cur.filter((id) => !failed.has(id)));
+      }
       invalidateAiTagViews();
-    },
-    onError: (err) => {
-      // 失敗保留選擇同確認狀態，等主管可以即刻重試
-      toast(err.message || '停用 AI 標籤失敗', 'error');
-    },
-  });
+    } finally {
+      setBatchAiDisabling(false);
+    }
+  };
 
   /** 批量多選 toggle（淨係有啟用標籤嘅商品先有 checkbox） */
   const toggleAiSelect = (id: number) =>
@@ -1002,27 +1094,27 @@ export default function ProductManager({
               className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3"
               style={{ borderColor: 'var(--gold)', background: 'var(--glass-bg)' }}
               role="region"
-              aria-label="批量停用 AI 標籤"
+              aria-label="批量停用 重點標籤"
             >
               <p className="text-[13px] text-txt-2">
                 已揀 <span className="font-mono font-bold text-gold">{selectedAiIds.length}</span> 件商品
               </p>
               <button
                 type="button"
-                disabled={disableAiTagsMutation.isPending}
-                onClick={() => disableAiTagsMutation.mutate({ ids: selectedAiIds })}
+                disabled={disableAiTagsMutation.isPending || batchAiDisabling}
+                onClick={() => void runBatchDisableAiTags()}
                 className="btn btn-primary !min-h-11 !px-4 !py-2 text-[13px] disabled:opacity-60"
               >
-                {disableAiTagsMutation.isPending ? (
+                {disableAiTagsMutation.isPending || batchAiDisabling ? (
                   <WishingStar size={13} />
                 ) : (
                   <Ban size={13} aria-hidden="true" />
                 )}
-                批量停用 AI 標籤
+                批量停用 重點標籤
               </button>
               <button
                 type="button"
-                disabled={disableAiTagsMutation.isPending}
+                disabled={disableAiTagsMutation.isPending || batchAiDisabling}
                 onClick={() => setSelectedAiIds([])}
                 className="btn btn-secondary !min-h-11 !px-4 !py-2 text-[13px] disabled:opacity-60"
               >
@@ -1038,7 +1130,7 @@ export default function ProductManager({
               const autoDelisted =
                 p.delistEnabled && p.delistAt !== null && new Date(p.delistAt).getTime() <= Date.now();
               const removing = removeMutation.isPending && confirmRemoveId === p.id;
-              // AI 標籤：parse JSON 防壞資料；啟用中＝server 話 enabled 兼且有標籤
+              // 重點標籤：parse JSON 防壞資料；啟用中＝server 話 enabled 兼且有標籤
               const aiTags = parseAiTagsJson(p.aiTags);
               const aiEnabled = p.aiTagsEnabled === true && aiTags.length > 0;
               const disablingAi = disableAiTagsMutation.isPending && confirmDisableAiId === p.id;
@@ -1052,14 +1144,14 @@ export default function ProductManager({
                     opacity: p.isActive && !autoDelisted ? 1 : 0.55,
                   }}
                 >
-                  {/* 批量多選 checkbox（supervisor/admin；淨係有啟用中 AI 標籤嘅商品先可揀） */}
+                  {/* 批量多選 checkbox（supervisor/admin；淨係有啟用中 重點標籤嘅商品先可揀） */}
                   {canManageAiTags && aiEnabled && (
                     <label className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center">
                       <input
                         type="checkbox"
                         checked={selectedAiIds.includes(p.id)}
                         onChange={() => toggleAiSelect(p.id)}
-                        aria-label={`選擇 ${p.name} 以批量停用 AI 標籤`}
+                        aria-label={`選擇 ${p.name} 以批量停用 重點標籤`}
                         className="h-4 w-4 accent-pink"
                       />
                     </label>
@@ -1082,7 +1174,7 @@ export default function ProductManager({
                         備註：{p.note}
                       </p>
                     )}
-                    {/* AI 標籤行：原始標籤照顯示（停咗用都睇返）；狀態 badge ＋ 逐件停用（inline 兩步確認）。
+                    {/* 重點標籤行：原始標籤照顯示（停咗用都睇返）；狀態 badge ＋ 逐件停用（inline 兩步確認）。
                         員工睇到標籤同狀態，但停用控制只畀 supervisor/admin */}
                     {aiTags.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -1105,14 +1197,14 @@ export default function ProductManager({
                             className="rounded-full border px-2 py-0.5 font-mono text-[12px] text-success"
                             style={{ borderColor: 'var(--success)', background: 'var(--glass-bg)' }}
                           >
-                            AI 標籤啟用中
+                            重點標籤啟用中
                           </span>
                         ) : (
                           <span
                             className="rounded-full border px-2 py-0.5 font-mono text-[12px] text-txt-3"
                             style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
                           >
-                            AI 標籤已停用（前台唔顯示）
+                            重點標籤已停用（前台唔顯示）
                           </span>
                         )}
                         {canManageAiTags &&
@@ -1122,7 +1214,17 @@ export default function ProductManager({
                               <button
                                 type="button"
                                 disabled={disablingAi}
-                                onClick={() => disableAiTagsMutation.mutate({ ids: [p.id] })}
+                                onClick={() =>
+                                  disableAiTagsMutation.mutate(
+                                    { ids: [p.id] },
+                                    {
+                                      onSuccess: onSingleDisableSuccess,
+                                      // 失敗保留選擇同確認狀態，等主管可以即刻重試
+                                      onError: (err) =>
+                                        toast(err.message || '停用 重點標籤失敗', 'error'),
+                                    },
+                                  )
+                                }
                                 className="btn btn-primary shrink-0 !min-h-11 !px-3 !py-2 text-[12px] disabled:opacity-60"
                               >
                                 {disablingAi ? <WishingStar size={12} /> : null}
@@ -1144,7 +1246,7 @@ export default function ProductManager({
                               className="btn btn-secondary shrink-0 !min-h-11 !px-3 !py-2 text-[12px]"
                             >
                               <Ban size={12} aria-hidden="true" />
-                              停用 AI 標籤
+                              停用 重點標籤
                             </button>
                           ))}
                       </div>

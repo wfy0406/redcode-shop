@@ -50,8 +50,10 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
   },
   "/products": {
     title: "全部貨品｜RedCode Fashion Design",
+    // 唔准無條件承諾「直播優惠價發售」——並非件件貨都有折扣，
+    // 品名／價錢／庫存以各商品頁為準（同 productSeoDescription 口徑一致）。
     description:
-      "RedCode 直播精選女裝全部貨品，直播優惠價發售，順豐站/自提點/智能櫃自取，香港女裝網購。",
+      "RedCode 直播精選女裝全部貨品，品名、價錢同庫存以各商品頁為準，順豐站/自提點/智能櫃自取，香港女裝網購。",
     heading: "RedCode 全部貨品",
     summary:
       "瀏覽 RedCode 香港女裝直播精選，商品頁列出品名、貨號、價錢、庫存、尺寸、相片及購買入口。",
@@ -63,7 +65,10 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
   },
   "/live": {
     title: "直播重溫｜RedCode Fashion Design",
-    description: "錯過直播唔緊要，RedCode 直播重溫隨時睇，直播優惠繼續生效，睇中即刻落單。",
+    // 唔准無條件承諾「直播優惠繼續生效」——客人可見嘅 /live 頁只講部分場次有
+    // 限時快閃價；品名／價錢／庫存一律以商品頁為準。
+    description:
+      "錯過直播唔緊要，RedCode 直播重溫隨時睇，睇中即刻落單；品名、價錢同庫存以商品頁為準。",
     heading: "RedCode 直播重溫",
     summary:
       "重溫 RedCode 香港女裝直播，了解主播示範嘅款式同上身效果，再前往公開商品頁選購。",
