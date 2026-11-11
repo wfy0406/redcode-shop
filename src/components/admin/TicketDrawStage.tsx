@@ -43,6 +43,8 @@ export interface DrawPrize {
   imageUrl?: string | null;
   /** 展示用價值/備註（例如 "HK$1,280"），可留空 */
   value?: string | null;
+  /** 同款獎品最新可抽件數；由父層用後端 quantity／takenCount 計，唔係舞台估數 */
+  remainingQuantity?: number | null;
 }
 
 export interface TicketDrawStageProps {
@@ -247,6 +249,11 @@ export default function TicketDrawStage({
         <div style={{ marginTop: 4, fontSize: 'clamp(15px, 2.4vw, 19px)', fontWeight: 800, color: CREAM, overflowWrap: 'anywhere' }}>
           {prize.name}{prize.value ? <span style={{ color: GOLD_LIGHT, fontWeight: 700 }}>（{prize.value}）</span> : null}
         </div>
+        {typeof prize.remainingQuantity === 'number' && (
+          <div style={{ marginTop: 6, display: 'inline-flex', alignItems: 'baseline', gap: 5, padding: '4px 12px', border: '1px solid rgba(245,197,24,0.35)', borderRadius: 999, background: 'rgba(245,197,24,0.08)', color: GOLD_LIGHT, fontSize: 12, fontWeight: 800 }}>
+            呢款剩 <strong style={{ fontSize: 18, color: CREAM }}>{prize.remainingQuantity}</strong> 件
+          </div>
+        )}
       </div>
 
       {/* 舞台：idle/drawing＝抽獎劵正面；revealed＝翻去金色中獎卡 */}

@@ -10,6 +10,8 @@ import LuckyDrawEventPanel from './LuckyDrawEventPanel';
 import type { DrawEvent } from './LuckyDrawEventPanel';
 import LuckyDrawExcelImport from './LuckyDrawExcelImport';
 import LuckyWmsRecovery from './LuckyWmsRecovery';
+import LuckyPrizePicker from './LuckyPrizePicker';
+import { remainingOf, type Prize } from '@/lib/luckyPrizeStock';
 
 /**
  * v2.2.46 直播抽獎大輪盤（老闆 2026-10-03 指令：「整到好華麗，會直播比客睇」）
@@ -38,26 +40,7 @@ import LuckyWmsRecovery from './LuckyWmsRecovery';
  */
 
 // ───────────────────────────── 型別 ─────────────────────────────
-
-type Prize = {
-  id: number;
-  // 名/圖而家選填（server 會用貨號商品名/官網圖頂上）；舊 data 可能 null → 顯示時用 sku 頂
-  name: string | null;
-  sku: string;
-  price: number;
-  imagePath: string | null;
-  session: string; // 場次（空字串＝未分場）
-  active: boolean;
-  // v2.2.55（老闆指令）：同款獎品件數＋已抽出件數（pending/confirmed 計）— 夠數先算抽晒
-  quantity: number;
-  takenCount: number;
-  drawCount: number;
-  takenBy: { name: string; status: string; drawDate: string } | null;
-};
-
-/** v2.2.55：仲可以抽幾多件（舊 server 冇 quantity/takenCount 時 fallback 返 1 件制邏輯） */
-const remainingOf = (p: Prize): number =>
-  (p.quantity ?? 1) - (p.takenCount ?? (p.takenBy ? 1 : 0));
+// Prize／remainingOf 已搬到 luckyPrizeStock，俾輪盤同抽獎劵庫存卡共用同一口径。
 
 type Participant = { id: number; name: string; phone: string };
 
@@ -1127,52 +1110,14 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
             </div>
             )}
 
-            {/* 揀獎品（未抽出嘅先抽得；號碼同下面獎品管理卡一致，直播嗌「N 號」對到） */}
-            <div className="flex w-full flex-wrap items-center justify-center gap-2">
-              {availablePrizes.length === 0 ? (
-                <p className="py-2 text-[13px] text-txt-3">
-                  呢場冇抽得嘅獎品——去下面「獎品管理」加返，或者轉場次繼續抽
-                </p>
-              ) : (
-                availablePrizes.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => phase === 'idle' && setPrizeId(p.id)}
-                    disabled={phase !== 'idle'}
-                    className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12.5px] transition-colors disabled:opacity-60 ${
-                      prize?.id === p.id ? 'text-txt-1' : 'text-txt-2 hover:text-txt-1'
-                    }`}
-                    style={{
-                      borderColor: prize?.id === p.id ? GOLD : 'var(--space-line)',
-                      background: prize?.id === p.id ? 'rgba(245,197,24,0.12)' : 'transparent',
-                    }}
-                  >
-                    <span
-                      className="flex h-5 w-5 items-center justify-center rounded-full font-mono text-[11px] font-bold"
-                      style={{
-                        background: prize?.id === p.id ? GOLD : 'rgba(245,197,24,0.15)',
-                        color: prize?.id === p.id ? '#241505' : 'var(--gold-soft)',
-                      }}
-                    >
-                      {prizeNos.get(p.id)}
-                    </span>
-                    {p.imagePath ? (
-                      <img src={p.imagePath} alt="" className="h-6 w-6 rounded-full object-cover" />
-                    ) : (
-                      <span
-                        className="flex h-6 w-6 items-center justify-center rounded-full border text-txt-3"
-                        style={{ borderColor: 'var(--space-line)' }}
-                      >
-                        <Gift size={12} aria-hidden="true" />
-                      </span>
-                    )}
-                    {p.name || p.sku}
-                    <span className="font-mono text-[11px] text-txt-3">HK${p.price}</span>
-                  </button>
-                ))
-              )}
-            </div>
+            {/* 輪盤／抽獎劵共用逐款庫存台：剩 0 件都留低並停用，唔會開獎時先發現跳款。 */}
+            <LuckyPrizePicker
+              prizes={sessionPrizes}
+              prizeNos={prizeNos}
+              selectedPrizeId={(source === 'ticket' ? ticketPrize : prize)?.id ?? null}
+              locked={source === 'ticket' ? ticketPhase !== 'idle' : phase !== 'idle'}
+              onSelect={setPrizeId}
+            />
             {/* 指定抽安全網：指定嗰件抽晒唔會靜靜雞跳去第一件，明講等揀返 */}
             {source === 'roster' && drawMode === 'pick' && prizeId != null && !prize && (
               <p className="mt-1.5 w-full text-center text-[12.5px] text-gold-soft">
@@ -1356,9 +1301,12 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                     仲未通知客人——撳「✓ 冇問題，抽下一件」先會正式寄中獎 email＋推送；客人登入會見到中獎賀卡揀地址。
                   </p>
                 )}
-                <p className="mt-1.5 text-[14px] text-txt-2">
-                  呢件抽完，仲剩 {remainingUnits} 件獎品
+                <p className="mt-1.5 text-[14px] font-semibold text-gold-soft">
+                  {prizesQuery.isFetching
+                    ? '呢款剩餘數更新緊…'
+                    : `呢款最新剩餘 ${Math.max(0, remainingOf(prizes.find((p) => p.id === result.prize.id) ?? result.prize))} 件`}
                 </p>
+                <p className="mt-1 text-[12.5px] text-txt-2">全場合計仲剩 {remainingUnits} 件獎品</p>
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                   {lastDrawKind === 'manual' ? (
                     <>
@@ -1452,6 +1400,7 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                     name: ticketPrize ? ticketPrize.name || ticketPrize.sku : '（未揀獎品）',
                     imageUrl: ticketPrize?.imagePath ?? null,
                     value: ticketPrize ? `HK$${ticketPrize.price}` : null,
+                    remainingQuantity: ticketPrize ? Math.max(0, remainingOf(ticketPrize)) : null,
                   }}
                   phase={ticketPhase}
                   winner={
@@ -1550,7 +1499,12 @@ export default function LuckyDrawPanel({ toast }: { toast: (msg: string, kind?: 
                     </p>
                   </div>
                 </div>
-                <p className="mt-3 text-[12px] text-txt-3">
+                <p className="mt-3 text-[14px] font-semibold text-gold-soft">
+                  {prizesQuery.isFetching
+                    ? '呢款剩餘數更新緊…'
+                    : `呢款最新剩餘 ${Math.max(0, remainingOf(prizes.find((p) => p.id === ticketResult.prize.id) ?? ticketResult.prize))} 件`}
+                </p>
+                <p className="mt-2 text-[12px] text-txt-3">
                   抽中已即時上公告（如公告開啟），唔使會員確認；「確定起單」只係內部出 0 元單去 WMS 等審批，劵持有人唔會收到官網通知。
                 </p>
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-2">

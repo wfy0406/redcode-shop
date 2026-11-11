@@ -5,7 +5,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { fmtDateTime } from './format';
 import { LoadingBlock } from './WishingStar';
 import LuckyDrawExcelImport from './LuckyDrawExcelImport';
+import LuckyEventSwitcher, { type DrawEvent } from './LuckyEventSwitcher';
 import { downloadAnnouncementPng } from '@/lib/luckyAnnouncementPng';
+
+export type { DrawEvent } from './LuckyEventSwitcher';
 import { resetLuckyAnnouncementPublicQueries } from '@/lib/luckyAnnouncementVisibility';
 
 /**
@@ -32,22 +35,6 @@ import { resetLuckyAnnouncementPublicQueries } from '@/lib/luckyAnnouncementVisi
  *     只保留獨立查劵 link；對外可見＝總開關開 AND 該場 winnersPublic。
  * Excel 匯入抽獎劵由 LuckyDrawExcelImport（kind="ticket"）處理。
  */
-
-export type DrawEvent = {
-  id: number;
-  name: string;
-  maxWinsPerPerson: number;
-  scheduledDrawDate: string | null;
-  // v2026.11.08：每場公開中獎公告開關（true＝公開頁／總覽正常顯示；false＝公開收埋，內部照舊）
-  winnersPublic: boolean;
-  entryCount: number;
-  totalTickets: number;
-  drawnCount: number;
-  archivedAt: string | Date | null;
-  archivedByName: string | null;
-  createdAt: string | Date;
-  createdByName: string | null;
-};
 
 const BATCH_DELETE_LIMIT = 500;
 
@@ -566,7 +553,7 @@ export default function LuckyDrawEventPanel({
     }
   };
 
-  /** v2.5.8：下載公告 PNG（1080×1350；內容＝真實中獎結果，同公開頁同一口径） */
+  /** 下載公告長圖 PNG（1080px 闊、高度按完整中獎名單自動增加；同公開頁同一口径） */
   const downloadPng = async () => {
     if (!selected || pngBusy) return;
     setPngBusy(true);
@@ -588,7 +575,7 @@ export default function LuckyDrawEventPanel({
         },
         `RedCode中獎公告-${selected.name.replace(/[\\/:*?"<>|]/g, '')}.png`,
       );
-      if (ok) toast('公告 PNG 已下載（1080×1350）', 'success');
+      if (ok) toast('公告長圖 PNG 已下載（高度已按完整中獎名單自動調整）', 'success');
       else toast('呢個瀏覽器整唔到 PNG，請用 Chrome/Safari 再試', 'error');
     } catch (e) {
       toast(fmtErr(e), 'error');
@@ -652,7 +639,7 @@ export default function LuckyDrawEventPanel({
         </p>
       </div>
 
-      {/* 活動 picker */}
+      {/* 活動 picker：預設只見目前活動；需要時先原位展開完整索引，唔再長期排晒 chips。 */}
       {eventsQuery.isLoading ? (
         <LoadingBlock text="許願星搬緊活動…" />
       ) : eventsQuery.isError ? (
@@ -669,37 +656,25 @@ export default function LuckyDrawEventPanel({
       ) : events.length === 0 ? (
         <p className="text-[12.5px] text-txt-3">仲未有抽獎劵活動，下面開第一個 ✦</p>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          {events.map((ev) => {
-            const active = ev.id === selectedEventId;
-            const archived = ev.archivedAt != null;
-            return (
-              <button
-                key={ev.id}
-                type="button"
-                onClick={() => onSelectEvent(ev.id)}
-                aria-pressed={active}
-                title={ev.name}
-                className={`max-w-full rounded-full border px-2.5 py-1 text-left text-[12.5px] transition-colors ${
-                  active ? 'text-txt-1' : 'text-txt-2 hover:text-txt-1'
-                } ${archived ? 'opacity-55' : ''}`}
-                style={{
-                  borderColor: active ? '#F5C518' : 'var(--space-line)',
-                  background: active ? 'rgba(245,197,24,0.12)' : 'transparent',
-                }}
-              >
-                <span className="inline-block max-w-[200px] truncate align-middle">{ev.name}</span>
-                <span className="ml-1 font-mono text-[11px] text-txt-3">
-                  （{ev.entryCount} 人・{ev.totalTickets} 張{archived ? '・已歸檔' : ''}{ev.winnersPublic === false ? '・公告關' : ''}）
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        <LuckyEventSwitcher events={events} selectedEventId={selectedEventId} onSelectEvent={onSelectEvent} />
       )}
 
-      {/* 開活動：右欄就算得三百幾 px，都保持兩欄清清楚楚，唔再將日期／按鈕迫成直書。 */}
-      <div className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-3 sm:grid-cols-2" style={{ borderColor: 'var(--space-line)' }}>
+      {/* 開活動：保留原流程，用同一黑金材質同選擇器分清「揀現有」同「開新場」。 */}
+      <div
+        className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border p-3 sm:grid-cols-2"
+        style={{
+          borderColor: 'var(--space-line)',
+          background: 'linear-gradient(150deg, rgba(255,255,255,0.028), rgba(245,197,24,0.018))',
+          boxShadow: 'inset 0 1px rgba(255,255,255,0.035)',
+        }}
+      >
+        <div className="flex items-end justify-between gap-3 sm:col-span-2">
+          <div>
+            <p className="font-serif-tc text-[13px] font-bold tracking-[0.12em] text-gold-soft">建立新活動</p>
+            <p className="mt-0.5 font-mono text-[9.5px] uppercase tracking-[0.18em] text-txt-3">New ticket draw</p>
+          </div>
+          <Plus size={16} aria-hidden="true" className="text-gold" />
+        </div>
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}

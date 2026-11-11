@@ -1,11 +1,12 @@
 /**
  * luckyAnnouncementPng 排版核心測試（純函數，注入 stub measure，唔使真 canvas）
- * 覆蓋：CJK／長名截斷唔斷字、活動名自動縮字、多人行高遞減＋「仲有 N 位」、
- * 空名單 empty 狀態、1080×1350 規格常數。
+ * 覆蓋：CJK／長名截斷唔斷字、活動名自動縮字、動態長圖、30／31 位完整名單、
+ * 極端人數明確報錯、空名單 empty 狀態、最短 1080×1350 規格常數。
  */
 import { describe, expect, it } from "vitest";
 import {
   ANNOUNCEMENT_H,
+  ANNOUNCEMENT_MAX_WINNERS,
   ANNOUNCEMENT_W,
   announcementDateLines,
   fitText,
@@ -65,15 +66,42 @@ describe("layoutAnnouncement", () => {
     expect(l.rows).toHaveLength(5);
     expect(l.hiddenCount).toBe(0);
     expect(l.rowFontSize).toBe(40);
+    expect(l.height).toBe(ANNOUNCEMENT_H);
   });
 
-  it("多人（>16）用密行距；放唔晒有 hiddenCount", () => {
-    const winners = Array.from({ length: 30 }, (_, i) => ({ name: `幸運兒${i + 1}號`, prizeName: `精美飾品` }));
+  it("10 位全部顯示，高度由 1350 加長到 1450", () => {
+    const winners = Array.from({ length: 10 }, (_, i) => ({ name: `幸運兒${i + 1}號`, prizeName: "精美飾品" }));
     const l = layoutAnnouncement({ eventName: "壓軸大抽獎", scheduledDrawDateLabel: "2026-11-11", drawnAtLabel: "2026-11-11 22:00", winners }, wideMeasure);
-    expect(l.rows.length).toBeLessThan(30);
-    expect(l.hiddenCount).toBe(30 - l.rows.length);
-    expect(l.hiddenCount).toBeGreaterThan(0);
+    expect(l.rows).toHaveLength(10);
+    expect(l.hiddenCount).toBe(0);
+    expect(l.height).toBe(1450);
+    expect(l.rows[9].name).toBe("幸運兒10號");
+  });
+
+  it("30 位全部逐行顯示，長圖 2050px，冇「仲有 N 位」", () => {
+    const winners = Array.from({ length: 30 }, (_, i) => ({ name: `幸運兒${i + 1}號`, prizeName: "精美飾品" }));
+    const l = layoutAnnouncement({ eventName: "壓軸大抽獎", scheduledDrawDateLabel: "2026-11-11", drawnAtLabel: "2026-11-11 22:00", winners }, wideMeasure);
+    expect(l.rows).toHaveLength(30);
+    expect(l.hiddenCount).toBe(0);
     expect(l.rowFontSize).toBe(24);
+    expect(l.height).toBe(2050);
+    expect(l.rows[29].name).toBe("幸運兒30號");
+    expect(l.rows[29].y + l.rows[29].rowHeight + 170).toBe(l.height);
+  });
+
+  it("31 位起繼續加長，唔會喺 30 位截斷", () => {
+    const winners = Array.from({ length: 31 }, (_, i) => ({ name: `第${i + 1}位`, prizeName: "獎品" }));
+    const l = layoutAnnouncement({ eventName: "加長測試", scheduledDrawDateLabel: null, drawnAtLabel: null, winners }, wideMeasure);
+    expect(l.rows).toHaveLength(31);
+    expect(l.rows[30].name).toBe("第31位");
+    expect(l.height).toBe(2094);
+    expect(l.hiddenCount).toBe(0);
+  });
+
+  it("極端超過安全上限會明確報錯，唔會靜默截斷或產生壞圖", () => {
+    const winners = Array.from({ length: ANNOUNCEMENT_MAX_WINNERS + 1 }, (_, i) => ({ name: `第${i + 1}位`, prizeName: "獎品" }));
+    expect(() => layoutAnnouncement({ eventName: "超長測試", scheduledDrawDateLabel: null, drawnAtLabel: null, winners }, wideMeasure))
+      .toThrow(`超過單張長圖安全上限 ${ANNOUNCEMENT_MAX_WINNERS} 位`);
   });
 
   it("長人名＋長獎品名都會截斷到欄寬之內", () => {
