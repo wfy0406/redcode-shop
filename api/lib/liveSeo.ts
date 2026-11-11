@@ -1,4 +1,9 @@
 import type { RouteMeta } from "./og";
+import {
+  emptyLivePublicCopy,
+  livePublicDescription,
+  type LivePublicSummary,
+} from "@contracts/livePublicSummary";
 
 /**
  * 直播節目頁 SEO（v2026.10.28.2）：`/products?liveDate=YYYYMMDD[&liveSession=N]`
@@ -107,17 +112,15 @@ export function liveRouteMeta(
  * 真空場次（caller 已用公開商品目錄證實零公開商品）嘅 meta：
  * 如實講暫未公開／已下架，noindex＋移除 self canonical——
  * 唔准再用直播專屬 title/description 扮有貨（薄頁誤導 crawler）。
+ * 文案嚟自 contracts/livePublicSummary.emptyLivePublicCopy——React 空場次
+ * meta 分流用同一個 builder，前後端一字唔差。
  * f 係已過 parseLiveQuery 嘅合法值，先會出現喺文案；raw input 永遠唔入。
  */
 export function emptyLiveRouteMeta(f: LiveFilter): RouteMeta {
-  const d = formatLiveDateLabel(f.liveDate);
-  const which = f.liveSession ? `${d} 第${f.liveSession}場直播` : `${d} 直播`;
-  return {
-    title: `${which}暫未有公開商品｜RedCode Fashion Design`,
-    description: `RedCode ${which}而家冇公開商品——可能未開賣、已賣晒或已下架；去全部貨品睇最新直播精選女裝，品名、價錢同庫存以商品頁為準。`,
-    canonical: null,
-    noindex: true,
-  };
+  const copy = emptyLivePublicCopy(f);
+  // 雙重保險：正常唔會 null（f 已過真日曆驗證）；萬一都係保守 noindex
+  if (!copy) return { canonical: null, noindex: true };
+  return { ...copy, canonical: null, noindex: true };
 }
 
 /**
@@ -140,4 +143,71 @@ export function liveSitemapPaths(
     }
   }
   return paths;
+}
+
+/**
+ * 真資料增強版直播 description（v2026.11.11.2）：真日期、場次、公開商品實數、
+ * 真分類組成、代表商品名，全部來自 caller 用公開目錄查出嘅全場商品行
+ * （summary 係真全場，唔係展示 cap 後嘅子集）。
+ * 直接共用 contracts/livePublicSummary.livePublicDescription——React 場次摘要
+ * 到位後嘅 document meta description 用同一個 builder，前後端一字唔差。
+ * 過往場次（todayYmd 由 caller 用香港今日計）用中性「場次商品記錄」文案，
+ * 唔聲稱舊優惠仍有效或一定已完結；冇真開播時間，所以文案絕對唔出時間。
+ * summary 空（唔應該發生——caller 喺有貨先計）→ 跌返舊版通用直播文案。
+ */
+export function liveFactDescription(
+  f: LiveFilter,
+  summary: LivePublicSummary,
+  todayYmd: string,
+): string {
+  return livePublicDescription(f, summary, todayYmd) ?? liveDescription(f);
+}
+
+/** JSON-LD ItemList 入面嘅商品（同首口 HTML 目錄顯示嘅係同一批） */
+export interface LiveFactItem {
+  id: number;
+  name: string;
+}
+
+/**
+ * 有真公開商品嘅直播節目頁 RouteMeta：直播專屬 title、真資料 description、
+ * self canonical，再加只含真資料嘅 CollectionPage／ItemList structured data
+ * （ItemList 就係首口 HTML 商品目錄嗰批真連結，numberOfItems 同顯示一致）。
+ * products 表冇真開播時間／真回放／真 FAQ，所以**唔加** BroadcastEvent／
+ * VideoObject／FAQ——唔准編。title 同 liveTitle 一致（首口同分享預覽唔分叉）。
+ */
+export function liveFactRouteMeta(
+  f: LiveFilter,
+  summary: LivePublicSummary,
+  todayYmd: string,
+  items: readonly LiveFactItem[],
+): RouteMeta {
+  const title = liveTitle(f);
+  const description = liveFactDescription(f, summary, todayYmd);
+  const path = livePath(f);
+  const origin = "https://redcode.red";
+  return {
+    title,
+    description,
+    path,
+    structuredData: {
+      "@context": "https://schema.org",
+      "@type": "CollectionPage",
+      name: title,
+      description,
+      url: `${origin}${path}`,
+      inLanguage: "zh-Hant-HK",
+      isPartOf: { "@type": "WebSite", name: "RedCode Fashion Design", url: `${origin}/` },
+      mainEntity: {
+        "@type": "ItemList",
+        numberOfItems: items.length,
+        itemListElement: items.map((p, i) => ({
+          "@type": "ListItem",
+          position: i + 1,
+          url: `${origin}/products/${p.id}`,
+          name: p.name,
+        })),
+      },
+    },
+  };
 }

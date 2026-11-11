@@ -7,11 +7,20 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  emptyLivePublicCopy,
+  liveEra,
+  liveFactsSentence,
+  livePublicDescription,
+  summarizeLiveProducts,
+} from "@contracts/livePublicSummary";
+import {
   emptyLiveRouteMeta,
   formatLiveDateLabel,
   isValidLiveDate,
   isValidLiveSession,
   liveDescription,
+  liveFactDescription,
+  liveFactRouteMeta,
   livePath,
   liveRouteMeta,
   liveSitemapPaths,
@@ -120,6 +129,17 @@ describe("emptyLiveRouteMeta — 真空場次唔准扮有貨", () => {
     expect(meta.noindex).toBe(true);
     expect(meta.canonical).toBeNull();
   });
+  it("文案同 client 共用 emptyLivePublicCopy，前後端一字唔差", () => {
+    for (const f of [
+      { liveDate: "20261111", liveSession: null },
+      { liveDate: "20261111", liveSession: "3" },
+    ]) {
+      const copy = emptyLivePublicCopy(f);
+      const meta = emptyLiveRouteMeta(f);
+      expect(meta.title).toBe(copy?.title);
+      expect(meta.description).toBe(copy?.description);
+    }
+  });
 });
 
 describe("liveSitemapPaths — sitemap 直播 URL", () => {
@@ -164,5 +184,119 @@ describe("liveRouteMeta — 俾 injectRouteMeta 用", () => {
     expect(liveRouteMeta(null, null)).toBeNull();
     expect(liveRouteMeta("20261340", null)).toBeNull();
     expect(liveRouteMeta("20261028", "0")).toBeNull();
+  });
+});
+
+// 同一批真公開商品行（無 description 欄——證明摘要不依賴舊商品有冇描述）
+const FACT_ROWS = [
+  { id: 11, name: "星空閃石上衣", category: "top" },
+  { id: 12, name: "高腰闊腳褲", category: "pants" },
+  { id: 13, name: "碎花長裙", category: "dress" },
+  { id: 14, name: "針織短上衣", category: "top" },
+];
+const FACT_SUMMARY = summarizeLiveProducts(FACT_ROWS);
+
+describe("liveFactDescription — 真資料摘要（v2026.11.11.2）", () => {
+  it("單場同全日摘要一定唔同（場次號 vs 全日全部場次）", () => {
+    const day = liveFactDescription({ liveDate: "20261111", liveSession: null }, FACT_SUMMARY, "20261111");
+    const session = liveFactDescription({ liveDate: "20261111", liveSession: "2" }, FACT_SUMMARY, "20261111");
+    expect(day).not.toBe(session);
+    expect(day).toContain("全日全部場次直播商品");
+    expect(session).toContain("第2場直播商品");
+  });
+
+  it("包含真日期、公開商品實數、真分類組成、代表商品名", () => {
+    const d = liveFactDescription({ liveDate: "20261111", liveSession: "2" }, FACT_SUMMARY, "20261111");
+    expect(d).toContain("2026年11月11日");
+    expect(d).toContain("共 4 件公開商品");
+    expect(d).toContain("上衣 2 件");
+    expect(d).toContain("褲 1 件");
+    expect(d).toContain("裙 1 件");
+    expect(d).toContain("代表商品：星空閃石上衣、高腰闊腳褲、碎花長裙");
+    expect(d).toContain("以商品頁為準");
+  });
+
+  it("過往場次用中性「場次商品記錄」；唔聲稱舊優惠仍有效、唔斷言已完結、冇編開播時間", () => {
+    const d = liveFactDescription({ liveDate: "20200101", liveSession: "1" }, FACT_SUMMARY, "20261111");
+    expect(d).toContain("場次商品記錄");
+    expect(d).toContain("以商品頁而家顯示為準");
+    expect(d).not.toContain("優惠價發售");
+    expect(d).not.toContain("優惠繼續生效");
+    expect(d).not.toContain("已完結");
+    expect(d).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("冇真商品（空 summary）跌返舊版直播文案，唔出「0 件」假摘要", () => {
+    const empty = summarizeLiveProducts([]);
+    const f = { liveDate: "20261111", liveSession: "2" };
+    expect(liveFactDescription(f, empty, "20261111")).toBe(liveDescription(f));
+  });
+});
+
+describe("liveFactRouteMeta — meta＋CollectionPage/ItemList JSON-LD", () => {
+  const f = { liveDate: "20261111", liveSession: "2" };
+  const meta = liveFactRouteMeta(f, FACT_SUMMARY, "20261111", FACT_ROWS);
+
+  it("title 同 liveTitle 一致；path 係 self canonical", () => {
+    expect(meta.title).toBe(liveTitle(f));
+    expect(meta.path).toBe("/products?liveDate=20261111&liveSession=2");
+    expect(meta.noindex).toBeUndefined();
+  });
+
+  it("structured data 只含真資料：CollectionPage＋ItemList，無 BroadcastEvent／VideoObject／FAQ", () => {
+    const sd = meta.structuredData as Record<string, unknown>;
+    expect(sd["@type"]).toBe("CollectionPage");
+    expect(sd.url).toBe("https://redcode.red/products?liveDate=20261111&liveSession=2");
+    const json = JSON.stringify(sd);
+    expect(json).not.toContain("BroadcastEvent");
+    expect(json).not.toContain("VideoObject");
+    expect(json).not.toContain("FAQPage");
+    expect(json).not.toContain("startDate"); // 冇真開播時間，唔准編
+    const list = sd.mainEntity as {
+      "@type": string;
+      numberOfItems: number;
+      itemListElement: { "@type": string; position: number; url: string; name: string }[];
+    };
+    expect(list["@type"]).toBe("ItemList");
+    expect(list.numberOfItems).toBe(4);
+    expect(list.itemListElement[0]).toEqual({
+      "@type": "ListItem",
+      position: 1,
+      url: "https://redcode.red/products/11",
+      name: "星空閃石上衣",
+    });
+    expect(list.itemListElement.map((e) => e.url)).toEqual(
+      FACT_ROWS.map((p) => `https://redcode.red/products/${p.id}`),
+    );
+  });
+
+  it("首口 description／JSON-LD／React 可見場次區對同一 fixture 一致（同一份事實邏輯）", () => {
+    // React（Products.tsx）逐字 render liveFactsSentence(summary, era)；
+    // server description 同 JSON-LD description 都要包住同一句，crawler 同用戶唔會兩套。
+    const era = liveEra(f.liveDate, "20261111");
+    const reactSentence = liveFactsSentence(FACT_SUMMARY, era);
+    const desc = liveFactDescription(f, FACT_SUMMARY, "20261111");
+    expect(desc).toContain(reactSentence);
+    const sd = meta.structuredData as { description: string };
+    expect(sd.description).toBe(desc);
+    // React 用 includeHighlights:false 嗰版都要係同一句嘅子集（件數＋分類一致）
+    const reactNoNames = liveFactsSentence(FACT_SUMMARY, era, { includeHighlights: false });
+    expect(desc).toContain("共 4 件公開商品");
+    expect(reactNoNames).toContain("共 4 件公開商品");
+  });
+
+  it("前後端一致：server liveFactDescription === React 用嘅 livePublicDescription（同一 builder）", () => {
+    // Products.tsx 喺全場摘要到位後，用 livePublicDescription 覆寫 document meta
+    // description；server 首口一定要同佢一字唔差（全日／單場、過往／未來都試）。
+    for (const [filter, today] of [
+      [{ liveDate: "20261111", liveSession: null }, "20261111"],
+      [{ liveDate: "20261111", liveSession: "2" }, "20261111"],
+      [{ liveDate: "20200101", liveSession: "1" }, "20261111"],
+      [{ liveDate: "20990101", liveSession: null }, "20261111"],
+    ] as const) {
+      const clientDesc = livePublicDescription(filter, FACT_SUMMARY, today);
+      expect(clientDesc).not.toBeNull();
+      expect(liveFactDescription(filter, FACT_SUMMARY, today)).toBe(clientDesc);
+    }
   });
 });

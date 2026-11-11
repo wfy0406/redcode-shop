@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { PUBLIC_DISPATCH_POLICY } from '@contracts/publicPolicies';
 
 /**
  * 服務條款 /terms（2026-08-05 Glo 要求：全站頁底連結）
@@ -405,11 +406,9 @@ export default function Terms() {
             （免運門檻以結帳頁不時公布為準）即免運費。未滿免運門檻嘅自取訂單、所有送貨上門訂單、以及澳門及海外訂單，運費一律順豐到付，由收件人喺收貨時直接畀順豐；貨品售價唔包運費。順豐運費以其官方收費為準。
           </p>
           <p>
-            11.3 訂單確認後，貨品喺一般情況下會於{' '}
-            <b className="text-txt-1">7–10 個工作天內</b>
-            寄出；惟呢個只屬預計時間，
-            <b className="text-txt-1">如超過上述時限，我哋概不負責</b>
-            。所有送貨及寄出時間只屬估計，我哋會盡力而為，但唔保證完全準確；因順豐或不可抗力（第
+            11.3 <b className="text-txt-1">寄出時間（與退換期限分開）</b>：
+            {PUBLIC_DISPATCH_POLICY.visibleText}{PUBLIC_DISPATCH_POLICY.clarificationText}
+            所有送貨及寄出時間只屬估計，我哋會盡力而為，但唔保證完全準確；因順豐或不可抗力（第
             16.5 條）導致嘅延誤，我哋亦概不負責。
           </p>
           <p>

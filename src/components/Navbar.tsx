@@ -12,6 +12,7 @@ import AnimatedLogo from '@/components/AnimatedLogo';
 import { normalizeVipTier } from '@/components/VipBadge';
 import { vipTierTheme } from '@/lib/vipTheme';
 import { useDialogA11y } from '@/hooks/useDialogA11y';
+import { luckyAnnouncementGateOpen, luckyAnnouncementStatusFresh } from '@/lib/luckyAnnouncementVisibility';
 import { PRODUCT_CATEGORIES } from '@contracts/types';
 
 /**
@@ -241,9 +242,25 @@ export default function Navbar() {
   const suppressMoreFocusOpenRef = useRef(false);
   // v2026.11.09.3：全網「中獎公告」入口跟公開活動狀態走。
   // 載入完成前唔假設有公告；只有至少一場 winnersPublic=true 先顯示。
+  // v2026.11.11.2：入口要先過對外公告總開關 status gate——status 初次 loading／
+  // 讀取失敗／enabled!==true 一律收埋（唔可以只靠 publicEvents 舊快取——
+  // 總開關關閉時舊快取可能仲有活動名）；只有 status 明確 true 兼至少一場公開活動先顯示。
+  // 加強：舊快取 true 喺背景重查（isRefetching）／重查失敗（isError，TanStack 保留舊 data）
+  // 期間都唔算數——只有當次 fresh success 先開閘（luckyAnnouncementStatusFresh）。
   // 呢個判斷只控制 Navbar；獨立查劵頁同查劵 API 完全唔經呢度。
+  const announcementStatusQuery = trpc.luckyDraw.publicAnnouncementStatus.useQuery(undefined, {
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
+    retry: 1,
+  });
+  const announcementGateOpen =
+    luckyAnnouncementStatusFresh(announcementStatusQuery) &&
+    luckyAnnouncementGateOpen(announcementStatusQuery.data?.enabled);
   const publicLuckyEventsQuery = trpc.luckyDraw.publicEvents.useQuery(undefined, {
     // 後台切換會即時更新同一 SPA cache；其他分頁聚焦或每 60 秒重查，唔再長期留舊入口。
+    enabled: announcementGateOpen,
     staleTime: 0,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
@@ -252,10 +269,10 @@ export default function Navbar() {
   });
   const moreLinks = useMemo(
     () =>
-      (publicLuckyEventsQuery.data?.length ?? 0) > 0
+      announcementGateOpen && (publicLuckyEventsQuery.data?.length ?? 0) > 0
         ? MORE_LINKS
         : MORE_LINKS.filter((link) => link.to !== '/lucky-results'),
-    [publicLuckyEventsQuery.data],
+    [announcementGateOpen, publicLuckyEventsQuery.data],
   );
   // 「更多」當前頁高亮：任何一個而家可見嘅子路由都著燈
   const moreActive = moreLinks.some((l) => pathname.startsWith(l.to));

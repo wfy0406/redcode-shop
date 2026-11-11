@@ -20,11 +20,11 @@ import {
   productSizeOptions,
   productTypeLabel,
 } from "./lib/productPublicFacts";
+import { PUBLIC_PAGES } from "./lib/publicSeo";
 
 const SITE_ORIGIN = "https://redcode.red";
-// 首頁 meta description（同 index.html 一致），做 channel description
-const CHANNEL_DESCRIPTION =
-  "RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 每晚為你揀選星空下最閃嘅衫。直播專屬優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。";
+// 首頁 meta description（同 index.html／首口 HTML 一致），做 channel description。
+const CHANNEL_DESCRIPTION = PUBLIC_PAGES["/"].description;
 
 /** XML escape：品名/描述入面嘅 & " < > ' 會整爛 XML */
 function xmlEscape(s: string): string {

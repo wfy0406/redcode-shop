@@ -23,6 +23,8 @@ const h = vi.hoisted(() => {
     tombstoneFind: [] as unknown[],
     update: [] as unknown[],
     insert: [] as unknown[],
+    // liveSummary 全場摘要查詢嘅 select 結果 queue（[]→resolve []；Error→reject）
+    selectQueue: [] as unknown[],
     updates: [] as Array<{ table: unknown; set?: Record<string, unknown>; ops: string[] }>,
     inserts: [] as Array<{ table: unknown; values?: unknown; ops: string[] }>,
   };
@@ -65,7 +67,7 @@ const h = vi.hoisted(() => {
           state.tombstoneFind.length > 0 ? settle(state.tombstoneFind) : Promise.resolve(null),
       },
     },
-    select: () => chain({ ops: [] }, []),
+    select: () => chain({ ops: [] }, state.selectQueue),
     update: (table: unknown) => {
       const rec = { table, ops: [] as string[] };
       state.updates.push(rec as never);
@@ -113,6 +115,7 @@ beforeEach(() => {
   h.state.tombstoneFind = [];
   h.state.update = [];
   h.state.insert = [];
+  h.state.selectQueue = [];
   h.state.updates = [];
   h.state.inserts = [];
   h.logAudit.mockClear();
@@ -160,5 +163,48 @@ describe("create — tombstoned SKU 重建保持停用", () => {
     h.state.productFind.push({ id: 9, sku: "SKU-A" });
     await expect(caller().create(createInput)).rejects.toMatchObject({ code: "CONFLICT" });
     expect(h.state.inserts).toHaveLength(0);
+  });
+});
+
+describe("liveSummary — 直播場次全場公開摘要（v2026.11.11.2）", () => {
+  it("回全場公開 id/name/category，唔設展示 cap（>60 件都照返全場）", async () => {
+    const rows = Array.from({ length: 75 }, (_, i) => ({
+      id: i + 1,
+      name: `場次貨${i + 1}號`,
+      category: i % 2 === 0 ? "top" : "dress",
+    }));
+    h.state.selectQueue.push(rows);
+    const res = await caller().liveSummary({ liveDate: "20261111", liveSession: "2" });
+    expect(res).toHaveLength(75);
+    expect(res[0]).toEqual({ id: 1, name: "場次貨1號", category: "top" });
+    // 只回公開三欄：價錢／庫存／描述以商品頁為準，唔經呢條路徑出
+    expect(res[0]).not.toHaveProperty("price");
+    expect(res[0]).not.toHaveProperty("stock");
+    expect(res[0]).not.toHaveProperty("description");
+  });
+
+  it("liveSession 可加可唔加；無效 liveDate 俾 input 閘擋，唔會打落 DB", async () => {
+    h.state.selectQueue.push([{ id: 1, name: "A", category: "top" }]);
+    await expect(caller().liveSummary({ liveDate: "20261111" })).resolves.toHaveLength(1);
+    await expect(caller().liveSummary({ liveDate: "bad" })).rejects.toThrow();
+    await expect(caller().liveSummary({ liveDate: "2026-11-11" })).rejects.toThrow();
+    // 閘擋成功：queue 淨係俾咗一次有效查詢用
+    h.state.selectQueue.push([]);
+    await expect(caller().liveSummary({ liveDate: "20261111", liveSession: "3" })).resolves.toEqual([]);
+  });
+
+  it("真日曆日期驗證：20230229 reject、20240229 accept（唔係齋 8 位數字 regex）", async () => {
+    await expect(caller().liveSummary({ liveDate: "20230229" })).rejects.toThrow();
+    await expect(caller().liveSummary({ liveDate: "20261301" })).rejects.toThrow();
+    await expect(
+      caller().liveSummary({ liveDate: "20261111", liveSession: "01" }),
+    ).rejects.toThrow();
+    h.state.selectQueue.push([]);
+    await expect(caller().liveSummary({ liveDate: "20240229", liveSession: "1" })).resolves.toEqual([]);
+  });
+
+  it("DB 故障原樣拋出（前端會隱藏摘要，唔會扮空場次）", async () => {
+    h.state.selectQueue.push(new Error("connection refused"));
+    await expect(caller().liveSummary({ liveDate: "20261111" })).rejects.toThrow("connection refused");
   });
 });

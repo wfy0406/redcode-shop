@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Facebook, Link2, MessageCircle, Search, Share2, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
@@ -11,9 +11,18 @@ import {
   liveShareTitle,
   liveShareUrl,
   normalizeLiveShare,
+  scheduleLiveMeta,
   whatsappShareUrl,
 } from '@/lib/liveShare';
+import {
+  hkTodayYmd,
+  resolveLiveMetaUpdate,
+  liveEra,
+  liveFactsSentence,
+  summarizeLiveProducts,
+} from '@contracts/livePublicSummary';
 import ProductCard from '@/components/ProductCard';
+import { resolveSeo } from '@/lib/seo';
 import WishingStar from '@/components/shop/WishingStar';
 import { toCardProduct } from '@/components/shop/shop-utils';
 import type { ShopProduct } from '@/components/shop/shop-utils';
@@ -214,6 +223,48 @@ export default function Products() {
     return liveSessionsQuery.data?.find((g) => g.liveDate === liveDate)?.sessions ?? [];
   }, [liveSessionsQuery.data, liveDate]);
 
+  // v2026.11.11.2 場次真實摘要：專用唯讀 endpoint 回該日／該場**全場**公開商品
+  // （id/name/category，無展示 cap），同 server 首口 HTML／JSON-LD 用埋同一份事實邏輯
+  // （contracts/livePublicSummary）——crawler 同用戶見到嘅件數、分類、代表商品一致。
+  // 唔再用 listQuery.data 計：list 係顯示清單（有 cap／會俾本地篩選收窄），
+  // 摘要講嘅係場次本身，所以獨立攞全場資料；本地 keyword／類別篩選唔影響摘要。
+  // 查詢故障 → liveSummary 係 null，摘要靜靜雞唔出，唔會扮空場次或出假數。
+  const liveSummaryQuery = trpc.products.liveSummary.useQuery(
+    // enabled 閘住：liveDate 空陣唔會真係打出去（輸入已過 isValidLiveDate 先入 state）
+    { liveDate, ...(liveSession ? { liveSession } : {}) },
+    { enabled: !!liveDate, staleTime: 60_000, refetchOnWindowFocus: false, retry: false },
+  );
+  const liveSummary = useMemo(() => {
+    const rows = liveSummaryQuery.data;
+    if (!liveDate || !rows || rows.length === 0) return null;
+    return summarizeLiveProducts(rows);
+  }, [liveDate, liveSummaryQuery.data]);
+
+  // 全場摘要 meta 同步（v2026.11.11.2），決策包 query 狀態、完全可逆
+  // （contracts/livePublicSummary.resolveLiveMetaUpdate，可單元測試）：
+  // ─ success＋有公開商品 → description 做 server 同一條 livePublicDescription，
+  //   並還原 robots index,follow／self canonical（empty→有貨可逆）
+  // ─ success＋零公開商品（真空場次）→ 空場次文案＋noindex＋移除 canonical，
+  //   同 server emptyLiveRouteMeta 一致
+  // ─ pending／error（包括空場次之後 refetch 故障，React Query 會留住舊 data=[]）
+  //   → 恢復通用直播 meta＋index,follow＋self canonical，DB 故障唔當空場
+  // 通用文案直接用 resolveSeo（同 SeoManager 一份，唔複製）；寫入經
+  // scheduleLiveMeta（microtask）：喺 parent SeoManager effect 之後先落 DOM，
+  // cached data 一 mount 就有都唔會被通用句冚走；route search 改變時兩邊都會重跑。
+  useEffect(() => {
+    if (!liveDate) return;
+    const target = normalizeLiveShare(liveDate, liveSession || null);
+    if (!target) return;
+    const generic = resolveSeo('/products', `?${searchParams.toString()}`);
+    const update = resolveLiveMetaUpdate(
+      target,
+      { status: liveSummaryQuery.status, data: liveSummaryQuery.data },
+      hkTodayYmd(),
+      generic,
+    );
+    if (update) scheduleLiveMeta(update);
+  }, [liveDate, liveSession, searchParams, liveSummaryQuery.status, liveSummaryQuery.data]);
+
   // 切換直播日期／場次：保留 category；本地 keyword 絕對唔放入 URL
   const setLiveFilter = (date: string, session: string | null) => {
     const params: Record<string, string> = {};
@@ -331,6 +382,30 @@ export default function Products() {
                 而家睇緊{liveSession ? `第 ${liveSession} 場` : '全日全部場次'}嘅直播商品
                 {daySessions.length > 0 ? `——呢日共 ${daySessions.length} 場，可以即切場次` : ''}
               </p>
+              {/* 場次真實摘要（同 server 首口 HTML／JSON-LD 同一份事實邏輯）：
+                  件數＋真分組成用純文字；代表商品用真商品內鏈。
+                  break-words＋細字數上限（3 件代表、4 類分類）保手機排版唔被長名撑爆。 */}
+              {liveSummary && (
+                <div className="mt-2 break-words text-[13px] leading-relaxed text-black/70">
+                  <p>{liveFactsSentence(liveSummary, liveEra(liveDate, hkTodayYmd()), { includeHighlights: false })}</p>
+                  {liveSummary.highlights.length > 0 && (
+                    <p className="mt-1">
+                      代表商品：
+                      {liveSummary.highlights.map((h, i) => (
+                        <span key={h.id}>
+                          {i > 0 && '、'}
+                          <Link
+                            to={`/products/${h.id}`}
+                            className="font-bold underline underline-offset-2 transition-colors hover:text-black"
+                          >
+                            {h.name}
+                          </Link>
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                </div>
+              )}
               {daySessions.length > 0 && (
                 <div
                   className="mt-3 flex flex-wrap gap-2"

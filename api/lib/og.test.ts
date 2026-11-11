@@ -40,7 +40,7 @@ import { injectProductOg, injectRouteMeta } from "./og";
 const TEMPLATE = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
 const ORIGIN = "https://redcode.red";
 const GENERIC_HOME_DESC =
-  "RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 每晚為你揀選星空下最閃嘅衫。AI 試穿：影張相即刻試穿，即刻睇到著上身效果。直播專屬優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。";
+  "RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 為你揀選星空下最閃嘅衫。AI 試穿：影張相即刻試穿，即刻睇到著上身效果。不定期優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。";
 
 function makeProduct(overrides: Record<string, unknown> = {}) {
   return {
@@ -135,6 +135,8 @@ describe("injectProductOg — 商品存在", () => {
     expect(html).toContain("<p>尺寸：S、M、L</p>");
     expect(html).toContain("<p>HK$199</p>");
     expect(html).toContain("<p>星空閃石上衣，直播限定色，S/M/L 碼齊。</p>");
+    expect(html).toContain("<p>正常情況下，訂單確認後約 7–10 個工作天寄出，惟部分商品可能需要更久。</p>");
+    expect(html).toContain("呢個係寄出時間，唔係保證送達時間，亦唔係收貨後 7 天嘅退換申請期限。");
     expect(html).toContain('<a href="/products">全部貨品</a>');
     expect(html).toContain('<a href="/returns">退換貨政策</a>');
     expect(html).not.toContain("<noscript");
@@ -161,7 +163,19 @@ describe("injectProductOg — 商品存在", () => {
     expect(returnPolicy.itemDefectReturnFees).toBe("https://schema.org/FreeReturn");
     expect(returnPolicy.customerRemorseReturnFees).toBe("https://schema.org/ReturnShippingFees");
     expect(returnPolicy.returnShippingFeesAmount).toBeUndefined();
-    expect(offers.shippingDetails).toBeUndefined();
+    const shippingDetails = offers.shippingDetails as Record<string, unknown>;
+    expect(shippingDetails["@type"]).toBe("OfferShippingDetails");
+    expect(shippingDetails.description).toBe("正常情況下，訂單確認後約 7–10 個工作天寄出，惟部分商品可能需要更久。");
+    expect(shippingDetails.shippingRate).toBeUndefined();
+    const deliveryTime = shippingDetails.deliveryTime as Record<string, unknown>;
+    expect(deliveryTime["@type"]).toBe("ShippingDeliveryTime");
+    expect(deliveryTime.transitTime).toBeUndefined();
+    expect(deliveryTime.handlingTime).toEqual({
+      "@type": "QuantitativeValue",
+      minValue: 7,
+      maxValue: 10,
+      unitCode: "DAY",
+    });
     expect(JSON.stringify(offers)).not.toContain("30.00");
   });
 

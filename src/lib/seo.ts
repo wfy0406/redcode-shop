@@ -14,7 +14,7 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     title: 'RedCode Fashion Design｜香港女裝直播網店',
     // 2026-10-27（老闆批准文案）：AI 試穿賣點入公開 SEO copy（網站本身有 /try-on 功能，屬實）
     description:
-      'RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 每晚為你揀選星空下最閃嘅衫。AI 試穿：影張相即刻試穿，即刻睇到著上身效果。直播專屬優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。',
+      'RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 為你揀選星空下最閃嘅衫。AI 試穿：影張相即刻試穿，即刻睇到著上身效果。不定期優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。',
   },
   '/products': {
     title: '全部貨品｜RedCode Fashion Design',
@@ -25,14 +25,14 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   },
   '/live': {
     title: '直播重溫｜RedCode Fashion Design',
-    // v2026.11.11：同 server 首口逐字一致——唔再無條件承諾「直播優惠繼續生效」。
-    description: '錯過直播唔緊要，RedCode 直播重溫隨時睇，睇中即刻落單；品名、價錢同庫存以商品頁為準。',
+    // 同 server 首口逐字一致：直播出單及收款，官網另有兩種付款方式，唔承諾固定開播頻率。
+    description: 'RedCode 直播出單及收款，亦可重溫直播再揀商品；官網購物支援付款截圖人工審核或 Airwallex 即時支付。品名、價錢同庫存以商品頁為準。',
   },
   '/about': {
     title: '關於我們｜RedCode Fashion Design',
-    // 2026-10-27（老闆批准文案）：同 api/lib/vite.ts ROUTE_SEO['/about'] 保持一致
+    // 同 server 首口保持一致；優惠詳情以不定期公佈為準，唔再列舊活動折扣。
     description:
-      'RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。',
+      'RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。',
   },
   '/web-design': {
     title: '香港網站設計｜前台、後台及 SEO 套票｜RedCode',
@@ -58,7 +58,7 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   },
   '/login': {
     title: '會員登入｜RedCode Fashion Design',
-    description: '登入 RedCode 會員帳戶，睇訂單、追蹤 VIP 進度、享受直播專屬優惠。',
+    description: '登入 RedCode 會員帳戶，睇訂單、追蹤 VIP 進度、留意不定期優惠。',
   },
   '/register': {
     title: '會員註冊｜RedCode Fashion Design',
@@ -121,7 +121,7 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   '/returns': {
     title: '退換貨政策｜RedCode Fashion Design',
     description:
-      'RedCode 退換貨政策——收貨 7 天內：貨品破損包換包退（寄出前拍照紀錄），尺寸不合原則上可換貨。',
+      'RedCode 寄出及退換貨政策——正常約 7–10 個工作天寄出，部分商品可能更久；收貨 7 天內可提出退換申請。',
   },
   '/admin': {
     title: '管理後台｜RedCode Fashion Design',
@@ -245,17 +245,31 @@ export function setCanonicalPath(path: string | null): void {
   link.setAttribute('rel', 'canonical');
   link.setAttribute('href', href);
   if (!existing) document.head.appendChild(link);
-  ogUrl?.setAttribute('content', href);
+  // 直播空場會移除 og:url；之後返公開頁要同 canonical 一樣可逆重建，
+  // 唔好齋 setAttribute 喺一個已唔存在嘅元素上。
+  const nextOgUrl = ogUrl ?? document.createElement('meta');
+  nextOgUrl.setAttribute('property', 'og:url');
+  nextOgUrl.setAttribute('content', href);
+  if (!ogUrl) document.head.appendChild(nextOgUrl);
 }
 
-/** SPA 轉頁時只保留屬於本路徑嘅 server route JSON-LD，避免舊 Service schema 殘留。 */
-export function removeStaleRouteSchemas(pathname: string): void {
+/** SPA 轉頁時只保留屬於本路徑嘅 server route JSON-LD，避免舊 Service／直播 ItemList 殘留。 */
+export function removeStaleRouteSchemas(pathname: string, search = ''): void {
   if (typeof document === 'undefined') return;
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  // 直播 schema 嘅身份係 full live path（date＋session），唔係齋 /products。
+  // category 等展示篩選唔入 canonical，所以用呢個 canonical route 比對：
+  // A 場去 B 場／全部商品會即清 A 場 ItemList；同場加 category 就保留。
+  const currentSchemaPath = normalized === '/products'
+    ? resolveCanonicalPath(normalized, search) ?? normalized
+    : normalized;
   document.querySelectorAll<HTMLScriptElement>('script[data-redcode-route-schema]').forEach((script) => {
-    const schemaPath = (script.getAttribute('data-redcode-route-schema') ?? '').split('?')[0];
-    const normalizedSchemaPath = schemaPath.length > 1 ? schemaPath.replace(/\/+$/, '') : schemaPath;
-    if (normalizedSchemaPath !== normalized) script.remove();
+    const rawSchemaPath = script.getAttribute('data-redcode-route-schema') ?? '';
+    const schemaPath = normalized === '/products' ? rawSchemaPath : rawSchemaPath.split('?')[0];
+    const normalizedSchemaPath = schemaPath.length > 1 && !schemaPath.includes('?')
+      ? schemaPath.replace(/\/+$/, '')
+      : schemaPath;
+    if (normalizedSchemaPath !== currentSchemaPath) script.remove();
   });
 }
 
@@ -272,7 +286,7 @@ export function SeoManager() {
       .querySelector('meta[name="robots"]')
       ?.setAttribute('content', isNoIndexPath(pathname) ? 'noindex, nofollow' : 'index, follow');
     setCanonicalPath(resolveCanonicalPath(pathname, search));
-    removeStaleRouteSchemas(pathname);
+    removeStaleRouteSchemas(pathname, search);
   }, [pathname, search]);
   return null;
 }

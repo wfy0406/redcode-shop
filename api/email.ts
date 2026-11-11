@@ -30,6 +30,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildVipCertJpeg, buildVipVerifyUrl } from "./vipCert";
+import { PUBLIC_DISPATCH_POLICY } from "@contracts/publicPolicies";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 /* ── 精裝紙單色板（同 WMS BillPage §0 設計錨逐字對齊） ── */
@@ -653,7 +654,7 @@ function buildInvoiceHtml(args: {
       </table>
       <hr />
       <p style="margin:0;font-size:13px;color:${INK_SOFT};">
-        同事會安排出貨，一般情況下會喺 <b>7-10 個工作天</b>內寄出，請留意收件。<br />
+        同事會安排出貨，<b>${PUBLIC_DISPATCH_POLICY.emailText}</b>請留意收件。<br />
         如有疑問，請到 <a href="${site}">redcode.red</a> 「我的訂單」揾返呢張單。
       </p>
       <div class="foot">
@@ -917,7 +918,7 @@ function buildInvoiceSvg(args: InvoiceArgs): string {
   }
 
   // ---- 出貨說明（一字冇少） ----
-  parts.push(`<text x="${L}" y="${y + 20}" font-family="${F}" font-size="14.5" fill="${INK_SOFT}">同事會安排出貨，一般情況下會喺 7-10 個工作天內寄出，請留意收件。</text>`);
+  parts.push(`<text x="${L}" y="${y + 20}" font-family="${F}" font-size="14.5" fill="${INK_SOFT}">同事會安排出貨，${xe(PUBLIC_DISPATCH_POLICY.emailText)}請留意收件。</text>`);
   parts.push(`<text x="${L}" y="${y + 44}" font-family="${F}" font-size="14.5" fill="${INK_SOFT}">如有疑問，請到 redcode.red 「我的訂單」揾返呢張單。</text>`);
   y += 96;
 
@@ -1117,7 +1118,7 @@ export async function sendOrderPendingEmail(args: {
   }
 }
 
-/** ③ 審批通過後：訂單已確認（7-10 個工作天寄出）＋附訂單單據 PDF 附件（v2.5.5 第8版起，HTML 只做兜底） */
+/** ③ 審批通過後：訂單已確認（統一寄出時間說明）＋附訂單單據 PDF 附件（v2.5.5 第8版起，HTML 只做兜底） */
 export async function sendOrderApprovedEmail(args: {
   to: string;
   name: string;
@@ -1156,7 +1157,7 @@ export async function sendOrderApprovedEmail(args: {
           </p>
         </td></tr>
       </table>
-      <p style="margin:22px 0 0;">同事將安排出貨，一般情況下會喺 <b>7-10 個工作天</b>內寄出，請留意收件。</p>
+      <p style="margin:22px 0 0;">同事將安排出貨，<b>${PUBLIC_DISPATCH_POLICY.emailText}</b>請留意收件。</p>
       ${ctaButton("查看我嘅訂單", `${siteUrl()}/#/orders`)}
     `;
     return await sendEmail({
@@ -1262,7 +1263,7 @@ export async function sendWelcomeEmail(args: {
     const site = siteUrl();
     const content = `
       <p style="margin:0 0 14px;">${escapeHtml(args.name)}寶寶，你好呀 💕</p>
-      <p style="margin:0;">歡迎你正式成為 RedCode 嘅一份子！由今日起，每晚 Glo Glo 都會喺 Facebook 直播同你逐件衫慢慢揀、講質地、講襯法。我地官網成日都會有衫、褲、鞋、襪、小飾物或其他唔同貨推出 ♡</p>
+      <p style="margin:0;">歡迎你正式成為 RedCode 嘅一份子！Glo Glo 會喺 Facebook 直播同你逐件衫慢慢揀、講質地、講襯法。我地官網會有衫、褲、鞋、襪、小飾物或其他唔同貨推出 ♡</p>
       <img src="${site}/email/welcome-hero.jpg" alt="迎新小禮物" width="504"
         style="display:block;width:100%;max-width:100%;height:auto;margin:22px 0;" />
       <p style="margin:0;">第一次見面，Glo Glo 一早準備咗份迎新小禮物俾你 ✨</p>
@@ -1275,7 +1276,7 @@ export async function sendWelcomeEmail(args: {
         </td></tr>
       </table>
       ${ctaButton("去揀今日嘅靚衫", `${site}/#/products`)}
-      <img src="${site}/email/welcome-dress.jpg" alt="今晚直播見" width="390"
+      <img src="${site}/email/welcome-dress.jpg" alt="直播間見" width="390"
         style="display:block;width:78%;max-width:390px;height:auto;margin:26px auto 6px;" />
       ${note(`以後有咩唔明，隨時 WhatsApp <a href="https://wa.me/85254835368" style="color:${GOLD};text-decoration:none;">5483 5368</a> 或者 E-Mail 去 <a href="mailto:service.support@ows.redcode.red" style="color:${GOLD};text-decoration:none;">service.support@ows.redcode.red</a> 搵我哋，Glo Glo 同小幫手會好快覆你 💕`)}
       <p style="margin:18px 0 0;">期待喺直播間見到你 ✦<br />Glo Glo 上</p>

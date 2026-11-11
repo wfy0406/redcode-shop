@@ -37,6 +37,7 @@ import { tryOnPrivateMedia, tryOnSharedMedia } from "./tryonHttp";
 import { tryOnAdminMedia } from "./tryonAdminMedia";
 import { startTryOnMediaSweeper } from "./tryonService";
 import { publicLuckyEventSitemapPaths, SITEMAP_STATIC_PATHS } from "./lib/publicSeo";
+import { isLuckyAnnouncementPublic } from "./lib/luckyAnnouncementVisibility";
 import { listPublicLiveFilters } from "./lib/catalogSeo";
 import { liveSitemapPaths } from "./lib/liveSeo";
 import { webDesignProofUpload } from "./webDesignUpload";
@@ -546,8 +547,14 @@ app.get("/sitemap.xml", async (c) => {
     entries.push(`<url><loc>${xmlEscape(loc)}</loc>${inner}</url>`);
   };
   addUrl("https://redcode.red/", "<changefreq>daily</changefreq><priority>1.0</priority>");
+  // v2026.11.11.2（老闆指令）：對外抽獎公告總開關——關閉（或未明確開啟）時 sitemap
+  // 唔列 /lucky-results 總覽，下面單場公告 URL 段都成段跳過（獨立查劵 /lucky-tickets/:id
+  // 從來都唔入 sitemap，唔受影響）。設定讀取失敗當關閉（fail-closed）：
+  // DB 一時故障唔會將公告 URL 放出嚟，都唔會 500（獨立 catch，唔連累其他段落）。
+  const luckyAnnouncementOn = await isLuckyAnnouncementPublic().catch(() => false);
   // 公開靜態頁同首口 HTML 使用同一路由清單：只放 canonical、可收錄網址。
   for (const path of SITEMAP_STATIC_PATHS) {
+    if (path === "/lucky-results" && !luckyAnnouncementOn) continue;
     addUrl(`https://redcode.red${path}`, "<changefreq>weekly</changefreq><priority>0.6</priority>");
   }
   try {
@@ -593,20 +600,23 @@ app.get("/sitemap.xml", async (c) => {
   }
   // 公開單場公告同查劵係兩條獨立路徑：只有 winnersPublic=true 嘅公告先入 sitemap；
   // 私人查劵 URL 永不加入。活動查詢失敗唔會連累已成功讀取嘅商品 URL。
-  try {
-    const db = getDb();
-    const eventRows = await db
-      .select({ id: luckyDrawEvents.id })
-      .from(luckyDrawEvents)
-      .where(eq(luckyDrawEvents.winnersPublic, true));
-    for (const path of publicLuckyEventSitemapPaths(eventRows.map((event) => event.id))) {
-      addUrl(`https://redcode.red${path}`, "<priority>0.6</priority>");
+  // v2026.11.11.2：對外公告總開關關閉 → 成段跳過（總開關開 AND 該場 winnersPublic 先入）。
+  if (luckyAnnouncementOn) {
+    try {
+      const db = getDb();
+      const eventRows = await db
+        .select({ id: luckyDrawEvents.id })
+        .from(luckyDrawEvents)
+        .where(eq(luckyDrawEvents.winnersPublic, true));
+      for (const path of publicLuckyEventSitemapPaths(eventRows.map((event) => event.id))) {
+        addUrl(`https://redcode.red${path}`, "<priority>0.6</priority>");
+      }
+    } catch (e) {
+      console.error(
+        "[sitemap] 讀公開中獎公告出錯（保留首頁＋靜態頁＋商品＋直播版）:",
+        maskForLog(e instanceof Error ? e.message : String(e)),
+      );
     }
-  } catch (e) {
-    console.error(
-      "[sitemap] 讀公開中獎公告出錯（保留首頁＋靜態頁＋商品＋直播版）:",
-      maskForLog(e instanceof Error ? e.message : String(e)),
-    );
   }
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  ${entries.join("\n  ")}\n</urlset>`;
   return c.body(xml, 200, {

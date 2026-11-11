@@ -42,7 +42,22 @@ const h = vi.hoisted(() => {
   };
 });
 
-vi.mock("./queries/connection", () => ({ getDb: h.db }));
+import { resetLuckyAnnouncementPublicCache } from "./lib/luckyAnnouncementVisibility";
+
+vi.mock("./queries/connection", () => ({
+  getDb: () => ({
+    ...h.db(),
+    query: {
+      siteSettings: {
+        // v2026.11.11.2：對外公告總開關設定（(h.state as any).announcement；Error＝讀取失敗；null＝唔存在＝預設關閉）
+        findFirst: () =>
+          (h.state as any).announcement instanceof Error
+            ? Promise.reject((h.state as any).announcement)
+            : Promise.resolve((h.state as any).announcement ?? null),
+      },
+    },
+  }),
+}));
 
 import app from "./boot";
 
@@ -51,6 +66,9 @@ beforeEach(() => {
   h.state.live = [];
   h.state.events = [];
   h.state.selectCount = 0;
+  // v2026.11.11.2：沿用舊測試假設公告公開（總開關開）；關閉情境由新測試逐個改 null/Error。
+  (h.state as any).announcement = { key: "lucky_announcement_public", value: "true" };
+  resetLuckyAnnouncementPublicCache();
 });
 
 async function getSitemap(): Promise<{ status: number; xml: string }> {
@@ -143,5 +161,28 @@ describe("/sitemap.xml", () => {
     expect(xml).not.toContain("/products/8");
     expect(xml).not.toContain("liveDate=");
     expect(xml).not.toContain("/lucky-results/1");
+  });
+
+  it("(7) 總開關設定不存在＝預設關閉：總覽同所有單場公告都唔入 sitemap", async () => {
+    (h.state as any).announcement = null;
+    h.state.products = [{ id: 85 }];
+    h.state.live = [{ liveDate: "20261111", liveSession: "1" }];
+    h.state.events = [{ id: 12 }];
+    const { status, xml } = await getSitemap();
+    expect(status).toBe(200);
+    expect(xml).toContain("/products/85");
+    expect(xml).toContain("liveSession=1");
+    expect(xml).not.toContain("/lucky-results");
+    expect(xml).not.toContain("/lucky-tickets/");
+  });
+
+  it("(8) 總開關讀取失敗都 fail-closed：唔 500，亦唔留總覽或單場公告 URL", async () => {
+    (h.state as any).announcement = new Error("settings down");
+    h.state.events = [{ id: 12 }];
+    const { status, xml } = await getSitemap();
+    expect(status).toBe(200);
+    expect(xml).toContain("<loc>https://redcode.red/</loc>");
+    expect(xml).not.toContain("/lucky-results");
+    expect(xml).not.toContain("/lucky-tickets/");
   });
 });

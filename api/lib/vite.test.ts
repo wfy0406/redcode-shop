@@ -31,16 +31,31 @@ vi.mock("@hono/node-server/serve-static", () => ({
 }));
 
 // ── mock 3：DB（rows 控制商品存在與否；queryError 模擬 DB 故障）──
+import { resetLuckyAnnouncementPublicCache } from "./luckyAnnouncementVisibility";
+
 let mockRows: unknown[] = [];
 let queryError: Error | null = null;
+// v2026.11.11.2：對外公告總開關 mock——預設開（沿用舊測試假設）；null＝設定唔存在＝預設關閉；Error＝讀取失敗
+let mockAnnouncement: { value: string } | Error | null = { value: "true" };
 vi.mock("../queries/connection", () => ({
   getDb: () => ({
+    query: {
+      siteSettings: {
+        findFirst: () =>
+          mockAnnouncement instanceof Error
+            ? Promise.reject(mockAnnouncement)
+            : Promise.resolve(mockAnnouncement),
+      },
+    },
     select: () => ({
       from: () => ({
         where: () => ({
           limit: () => (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)),
           orderBy: () => ({
             limit: () => (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)),
+            // listPublicLiveCatalog 唔設 limit（全場真數）：orderBy 之後直接 await
+            then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+              (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)).then(resolve, reject),
           }),
         }),
       }),
@@ -95,6 +110,8 @@ function canonicalHref(html: string): string | null {
 beforeEach(() => {
   mockRows = [];
   queryError = null;
+  mockAnnouncement = { value: "true" };
+  resetLuckyAnnouncementPublicCache();
   // mock 2：攔截 handler 嘅 index.html read，回 fixture（每個 test 前裝，完即還原）
   vi.spyOn(fs, "readFileSync").mockImplementation(() => TEMPLATE);
 });
@@ -239,7 +256,10 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain(
       "<title>2026年10月28日 第2場直播商品｜RedCode Fashion Design</title>",
     );
-    expect(html).toContain("即睇直播商品");
+    // v2026.11.11.2：fixture 日期係過往場次——description 用中性「場次商品記錄」，
+    // 唔再講「即睇直播商品」（唔准暗示舊場次仲直播緊或優惠仍有效）
+    expect(html).toContain("場次商品記錄");
+    expect(html).toContain("共 1 件公開商品");
     expect(canonicalHref(html)).toBe(
       "https://redcode.red/products?liveDate=20261028&amp;liveSession=2",
     );
@@ -289,14 +309,14 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(canonicalHref(html)).toBeNull();
   });
 
-  it("(8e) 直播頁 DB 故障 → 通用 /products meta，唔好誤報空場次／404", async () => {
+  it("(8e) 直播頁 DB 故障 → 同 React 一致嘅通用直播 meta，唔好誤報空場次／404", async () => {
     queryError = new Error("connection refused");
     const res = await makeApp().request("/products?liveDate=20261028&liveSession=2");
     expect(res.status).toBe(200);
     const html = await res.text();
-    // 回通用 /products（canonical 指去真內容），唔出「暫未有公開商品」嘅假確定
-    expect(html).toContain("<title>全部貨品｜RedCode Fashion Design</title>");
-    expect(canonicalHref(html)).toBe("https://redcode.red/products");
+    // 同 React pending/error 一樣用直播專屬通用句，唔出「暫未有公開商品」嘅假確定
+    expect(html).toContain("<title>2026年10月28日 第2場直播商品｜RedCode Fashion Design</title>");
+    expect(canonicalHref(html)).toBe("https://redcode.red/products?liveDate=20261028&amp;liveSession=2");
     expect(html).not.toContain("暫未有公開商品");
     expect(html).not.toContain("noindex");
     expect(html).not.toContain('id="redcode-catalog-seo"');
@@ -431,13 +451,57 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).not.toContain('property="og:url"');
   });
 
-  it("(15c) 單場公告 DB 故障 → 通用 200，唔好將可能公開嘅活動誤當 404", async () => {
+  it("(15c) 單場公告 DB 故障 → 中性 503＋noindex，唔出公告宣傳；查劵入口保留", async () => {
     queryError = new Error("connection refused");
     const res = await makeApp().request("/lucky-results/12");
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
     const html = await res.text();
-    expect(html).toContain("<title>中獎名單｜RedCode Fashion Design</title>");
-    expect(canonicalHref(html)).toBe("https://redcode.red/lucky-results/12");
+    expect(html).toContain("<title>中獎公告暫時未能顯示｜RedCode Fashion Design</title>");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(canonicalHref(html)).toBeNull();
+    expect(html).not.toContain('property="og:url"');
+    expect(html).toContain('<a href="/lucky-tickets/12">查自己有幾多張抽獎劵</a>');
+    expect(html).not.toContain("真實幸運兒名單");
+  });
+
+  it("(15e) 總開關設定讀取失敗 → 總覽同單場都 fail-closed 503，唔當開亦唔虛構已關閉", async () => {
+    mockAnnouncement = new Error("settings unavailable");
+    for (const path of ["/lucky-results", "/lucky-results/12"]) {
+      const res = await makeApp().request(path);
+      expect(res.status).toBe(503);
+      const html = await res.text();
+      expect(html).toContain("<title>中獎公告暫時未能顯示｜RedCode Fashion Design</title>");
+      expect(html).toContain("對外中獎公告暫時未能顯示");
+      expect(html).not.toContain("對外中獎公告已關閉");
+      expect(html).not.toContain("真實幸運兒名單");
+      expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+      expect(canonicalHref(html)).toBeNull();
+      resetLuckyAnnouncementPublicCache();
+    }
+    // 查劵乾淨路徑唔經總開關：同一故障下仍然 200。
+    const ticket = await makeApp().request("/lucky-tickets/12");
+    expect(ticket.status).toBe(200);
+    expect(await ticket.text()).toContain("<title>抽獎劵查詢｜RedCode Fashion Design</title>");
+  });
+
+  it("(15f) 總開關設定不存在＝預設關閉：總覽 200、單場 404，全部 noindex 零公告", async () => {
+    mockAnnouncement = null;
+    const index = await makeApp().request("/lucky-results");
+    expect(index.status).toBe(200);
+    const indexHtml = await index.text();
+    expect(indexHtml).toContain("<title>中獎公告已關閉｜RedCode Fashion Design</title>");
+    expect(indexHtml).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(indexHtml).not.toContain("真實幸運兒名單");
+    expect(canonicalHref(indexHtml)).toBeNull();
+
+    resetLuckyAnnouncementPublicCache();
+    const event = await makeApp().request("/lucky-results/12");
+    expect(event.status).toBe(404);
+    const eventHtml = await event.text();
+    expect(eventHtml).toContain("對外中獎公告已關閉");
+    expect(eventHtml).toContain('<a href="/lucky-tickets/12">查自己有幾多張抽獎劵</a>');
+    expect(eventHtml).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(canonicalHref(eventHtml)).toBeNull();
   });
 
   it("(17) /lucky-tickets/12 → 200＋專屬 title/description＋self canonical＋noindex；零參加者資料", async () => {
@@ -493,5 +557,100 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).not.toContain("搵唔到呢件商品");
     expect(html).not.toContain("noindex");
     expect(canonicalHref(html)).toBe("https://redcode.red/");
+  });
+
+  it("(6b) DB timeout error（rejected Promise）→ 同故障分支一樣 200，唔誤當商品不存在", async () => {
+    queryError = new Error("query timeout");
+    const res = await makeApp().request("/products/85", { headers: PROXY_HEADERS });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toContain("搵唔到呢件商品");
+    expect(html).not.toContain("noindex");
+    expect(html).not.toContain('id="redcode-product-seo"');
+    expect(canonicalHref(html)).toBe("https://redcode.red/");
+  });
+
+  // ── v2026.11.11.2：直播場次真資料摘要（SEO／GEO 自動化）──
+
+  it("(19) 未來場次首口 HTML：真件數＋真分類＋代表商品＋CollectionPage/ItemList JSON-LD", async () => {
+    mockRows = [
+      makeProduct({ id: 11, name: "星空閃石上衣", category: "top", liveDate: "20990101", liveSession: "2" }),
+      makeProduct({ id: 12, name: "高腰闊腳褲", category: "pants", liveDate: "20990101", liveSession: "2" }),
+      makeProduct({ id: 13, name: "針織短上衣", category: "top", liveDate: "20990101", liveSession: "2" }),
+    ];
+    const res = await makeApp().request("/products?liveDate=20990101&liveSession=2");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+
+    // meta description 係真資料摘要（未來場次唔會誤標做歷史記錄）
+    const desc = html.match(/<meta\s+name="description"\s+content="([^"]*)"\s*\/>/)?.[1] ?? "";
+    expect(desc).toContain("共 3 件公開商品");
+    expect(desc).toContain("上衣 2 件");
+    expect(desc).toContain("褲 1 件");
+    expect(desc).toContain("代表商品：星空閃石上衣、高腰闊腳褲、針織短上衣");
+    expect(desc).toContain("以商品頁為準");
+    expect(desc).not.toContain("場次商品記錄");
+    // og:description 同 meta description 一致（crawler 同瀏覽器同一套事實）
+    expect(html).toContain(`<meta property="og:description" content="${desc}" />`);
+
+    // JSON-LD：CollectionPage＋ItemList，只含真資料；無 BroadcastEvent／VideoObject／FAQ
+    const ldMatch = html.match(
+      /<script type="application\/ld\+json" data-redcode-route-schema="[^"]*">([^<]*)<\/script>/,
+    );
+    expect(ldMatch).not.toBeNull();
+    const ld = JSON.parse(ldMatch![1]);
+    expect(ld["@type"]).toBe("CollectionPage");
+    expect(ld.url).toBe("https://redcode.red/products?liveDate=20990101&liveSession=2");
+    expect(ld.description).toContain("共 3 件公開商品");
+    expect(ld.mainEntity["@type"]).toBe("ItemList");
+    expect(ld.mainEntity.numberOfItems).toBe(3);
+    expect(ld.mainEntity.itemListElement.map((e: { url: string }) => e.url)).toEqual([
+      "https://redcode.red/products/11",
+      "https://redcode.red/products/12",
+      "https://redcode.red/products/13",
+    ]);
+    expect(JSON.stringify(ld)).not.toMatch(/BroadcastEvent|VideoObject|FAQPage|startDate/);
+
+    // 首口商品目錄照舊出真連結（無 JS crawler 都撳得入商品頁）
+    expect(html).toContain('<a href="/products/11"><strong>星空閃石上衣</strong></a>');
+  });
+
+  it("(20) 統計唔受 48/60 展示 cap 影響：75 件公開商品，摘要數真全場 75、目錄照舊顯示頭 48 件", async () => {
+    mockRows = Array.from({ length: 75 }, (_, i) =>
+      makeProduct({
+        id: 100 + i,
+        name: `場次商品${i + 1}號`,
+        category: i % 2 === 0 ? "top" : "dress",
+        liveDate: "20990101",
+        liveSession: "1",
+      }),
+    );
+    const res = await makeApp().request("/products?liveDate=20990101&liveSession=1");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(html).toContain("共 75 件公開商品");
+    expect(html).toContain("上衣 38 件");
+    expect(html).toContain("裙 37 件");
+    const catalogCount = html.match(/<li><a href="\/products\/\d+">/g)?.length ?? 0;
+    expect(catalogCount).toBe(48); // 展示 cap 照舊，統計用全場
+    const ldMatch = html.match(
+      /<script type="application\/ld\+json" data-redcode-route-schema="[^"]*">([^<]*)<\/script>/,
+    );
+    expect(JSON.parse(ldMatch![1]).mainEntity.numberOfItems).toBe(48); // ItemList 同顯示出嚟嘅一致
+  });
+
+  it("(21) 過往場次首口 HTML：中性「場次商品記錄」，唔承諾優惠、唔編時間", async () => {
+    mockRows = [
+      makeProduct({ id: 21, name: "舊場次上衣", category: "top", liveDate: "20200101", liveSession: "1" }),
+    ];
+    const res = await makeApp().request("/products?liveDate=20200101&liveSession=1");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    const desc = html.match(/<meta\s+name="description"\s+content="([^"]*)"\s*\/>/)?.[1] ?? "";
+    expect(desc).toContain("場次商品記錄");
+    expect(desc).toContain("以商品頁而家顯示為準");
+    expect(desc).not.toContain("優惠");
+    expect(desc).not.toContain("已完結");
+    expect(desc).not.toMatch(/\d{1,2}:\d{2}/);
   });
 });

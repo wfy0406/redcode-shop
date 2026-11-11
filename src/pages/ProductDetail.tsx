@@ -6,6 +6,7 @@ import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { productCategoryLabel, productSeoDescription } from '@contracts/types';
 import { resolveTryOnProductKind } from '@contracts/tryon';
+import { PUBLIC_DISPATCH_POLICY } from '@contracts/publicPolicies';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/admin/WishingStar';
 import {
@@ -527,6 +528,17 @@ export default function ProductDetail() {
           {/* 商品小筆記（editorial 描述區）：暖紙卡 + 重點 tags；冇描述但有 tags 都出，
               兩樣都冇 ProductStory 自己回 null */}
           <ProductStory description={product.description} aiTags={aiTags} className="mt-9" />
+
+          <div className="mt-6 border-t pt-5" style={{ borderColor: 'var(--space-line)' }}>
+            <h2 className="text-[15px] font-bold text-txt-1">寄出時間</h2>
+            <p className="mt-2 text-sm leading-[1.8] text-txt-2">{PUBLIC_DISPATCH_POLICY.visibleText}</p>
+            <p className="mt-1 text-[13px] leading-[1.8] text-txt-3">
+              {PUBLIC_DISPATCH_POLICY.clarificationText}
+              <Link to="/returns" className="ml-1 text-pink-soft underline underline-offset-4">
+                睇退換貨政策
+              </Link>
+            </p>
+          </div>
         </div>
       </div>
 

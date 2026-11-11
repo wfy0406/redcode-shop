@@ -65,6 +65,9 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(html).toContain('<a href="/returns">退換貨政策</a>');
     expect(html).toContain("24 小時效果連結同公開商品資料");
     expect(html).toContain("主要分享按鈕會直接傳出 PNG 效果圖");
+    expect(html).toContain("30 分鐘付款時限只適用於官網訪客訂單；會員可於 48 小時內支付，以完成下單流程。");
+    expect(html).toContain("按官網付款資料轉帳或支付，再上傳截圖供人工審核；或者使用 Airwallex 即時支付工具直接付款。");
+    expect(html).toContain("正常情況下，訂單確認後約 7–10 個工作天寄出，惟部分商品可能需要更久。");
     expect(html).not.toContain("私人試穿結果唔會自動附加");
     expect(faqSource).toContain("24 小時效果連結同公開商品資料");
     expect(faqSource).toContain("已下載或已傳出嘅 PNG 無法撤回");
@@ -85,6 +88,8 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
   it("退換貨首口內容同公開政策一致", () => {
     const html = renderPublicContent("/returns");
     expect(html).toContain("收到貨 7 天內");
+    expect(html).toContain("正常情況下，訂單確認後約 7–10 個工作天寄出，惟部分商品可能需要更久。");
+    expect(html).toContain("呢個係寄出時間，唔係保證送達時間，亦唔係收貨後 7 天嘅退換申請期限。");
     expect(html).toContain("未經穿著或使用、吊牌未剪、原包裝完整");
     expect(html).toContain("附上訂單編號同貨品相片");
   });
@@ -139,6 +144,53 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     for (const page of Object.values(PUBLIC_PAGES)) {
       expect(page.description).not.toMatch(/保證|排名第一|第一名|好評|評分/);
     }
+  });
+
+  it("直播付款、不定期優惠及寄出政策喺 React 同首口 HTML 同步", () => {
+    const liveSource = readFileSync(new URL("../../src/pages/Live.tsx", import.meta.url), "utf8");
+    const aboutSource = readFileSync(new URL("../../src/pages/About.tsx", import.meta.url), "utf8");
+    const returnsSource = readFileSync(new URL("../../src/pages/Returns.tsx", import.meta.url), "utf8");
+    const productSource = readFileSync(new URL("../../src/pages/ProductDetail.tsx", import.meta.url), "utf8");
+    expect(liveSource).toContain("PUBLIC_PAYMENT_POLICY.liveText");
+    expect(liveSource).toContain("PUBLIC_PAYMENT_POLICY.methodsText");
+    expect(liveSource).not.toContain("every night");
+    expect(liveSource).not.toContain("今晚，直播間見");
+    expect(aboutSource).toContain("PUBLIC_OFFER_POLICY_TEXT");
+    for (const stale of ["3件再包郵", "即日入數全單減 $15", "外地滿 $450 包郵", "全單再減 $10"]) {
+      expect(aboutSource).not.toContain(stale);
+    }
+    expect(returnsSource).toContain("PUBLIC_DISPATCH_POLICY.visibleText");
+    expect(returnsSource).toContain("PUBLIC_RETURN_POLICY.applicationDays");
+    expect(productSource).toContain("PUBLIC_DISPATCH_POLICY.visibleText");
+    const liveHtml = renderPublicContent("/live");
+    expect(liveHtml).toContain("直播出單及收款");
+    expect(liveHtml).toContain("30 分鐘付款時限只適用於官網訪客訂單；會員可於 48 小時內支付");
+    const aboutHtml = renderPublicContent("/about");
+    expect(aboutHtml).toContain("不定期推出優惠");
+    expect(aboutHtml).not.toContain("全單再減 $10");
+  });
+
+  it("條款、FAQ、首頁、頁腳及 PWA 都唔再殘留舊寄出或固定每晚承諾", () => {
+    const paths = [
+      "../../src/pages/Terms.tsx",
+      "../../src/pages/Faq.tsx",
+      "../../src/pages/Home.tsx",
+      "../../src/components/Footer.tsx",
+      "../../public/manifest.webmanifest",
+      "../../index.html",
+    ] as const;
+    for (const path of paths) {
+      const source = readFileSync(new URL(path, import.meta.url), "utf8");
+      expect(source, path).not.toContain("每晚");
+      expect(source, path).not.toContain("7-10 個工作天</b>內寄出");
+      expect(source, path).not.toContain("7–10 個工作天內");
+    }
+    const terms = readFileSync(new URL("../../src/pages/Terms.tsx", import.meta.url), "utf8");
+    expect(terms).toContain("PUBLIC_DISPATCH_POLICY.visibleText");
+    expect(terms).toContain("PUBLIC_DISPATCH_POLICY.clarificationText");
+    const faq = readFileSync(new URL("../../src/pages/Faq.tsx", import.meta.url), "utf8");
+    expect(faq).toContain("PUBLIC_PAYMENT_POLICY.guestMethodText");
+    expect(renderPublicContent("/faq")).toContain("訪客快速結帳只使用 Airwallex 即時支付");
   });
 
   it("注入只發生一次；未知路徑同冇 </body> 嘅 HTML 原樣返回", () => {

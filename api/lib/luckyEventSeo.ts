@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { luckyDrawEvents } from "@db/schema";
 import { getDb } from "../queries/connection";
 import type { RouteMeta } from "./og";
+import { isLuckyAnnouncementPublic, luckyAnnouncementVisible } from "./luckyAnnouncementVisibility";
 
 export interface PublicLuckyEventSeo {
   id: number;
@@ -9,8 +10,14 @@ export interface PublicLuckyEventSeo {
   scheduledDrawDate: string | null;
 }
 
-/** 未公開同唔存在都回 null；DB 錯誤交 caller 用通用 200，唔好誤報 404。 */
+/* v2026.11.11.2：關閉專用首口 meta／無 JS 內容由主線 publicSeo.ts 嘅
+ * LUCKY_ANNOUNCEMENT_CLOSED_SEO／injectLuckyAnnouncementClosedContent 提供（唔好喺度重複造字）。 */
+
+/** v2026.11.11.2（老闆指令）：對外公告總開關關閉（或未明確開啟）時，首口 HTML 一律唔注入
+ *  活動／公告內容——同未公開／唔存在一樣回 null（caller 出 noindex 404），唔查活動表。
+ *  DB 錯誤（包括總開關讀取失敗）會 throw 交 caller 用中性 503＋noindex，唔好誤報 404 或出公告內容。 */
 export async function getPublicLuckyEventSeo(eventId: number): Promise<PublicLuckyEventSeo | null> {
+  if (!(await isLuckyAnnouncementPublic())) return null;
   const [event] = await getDb()
     .select({
       id: luckyDrawEvents.id,
@@ -23,8 +30,10 @@ export async function getPublicLuckyEventSeo(eventId: number): Promise<PublicLuc
   return event ?? null;
 }
 
-/** 公告總頁首口內部連結：同 publicEvents 一樣只列 winnersPublic=true，最多 50 場。 */
+/** 公告總頁首口內部連結：同 publicEvents 一樣只列 winnersPublic=true，最多 50 場。
+ *  v2026.11.11.2：總開關關閉 → 空陣列（唔注入任何活動連結，唔查活動表）。 */
 export async function listPublicLuckyEventSeo(limit = 50): Promise<PublicLuckyEventSeo[]> {
+  if (!(await isLuckyAnnouncementPublic())) return [];
   const cap = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 50;
   return getDb()
     .select({
@@ -36,6 +45,12 @@ export async function listPublicLuckyEventSeo(limit = 50): Promise<PublicLuckyEv
     .where(eq(luckyDrawEvents.winnersPublic, true))
     .orderBy(desc(luckyDrawEvents.id))
     .limit(cap);
+}
+
+/** 單場公告首口 SEO 可見性規則同 API 對齊：總開關開 AND 該場 winnersPublic。
+ *  （vite.ts 透過上面兩個 gated 查詢套用呢條規則；呢個 export 主要畀測試鎖口径。） */
+export function luckyEventSeoVisible(announcementPublic: boolean, winnersPublic: boolean): boolean {
+  return luckyAnnouncementVisible(announcementPublic, winnersPublic);
 }
 
 export function luckyEventRouteMeta(event: PublicLuckyEventSeo): RouteMeta {

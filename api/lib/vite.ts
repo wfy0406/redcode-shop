@@ -4,8 +4,11 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import fs from "fs";
 import path from "path";
 import {
+  injectLuckyAnnouncementClosedContent,
+  injectLuckyAnnouncementUnavailableContent,
   injectPublicSeoContent,
-  LUCKY_EVENT_SEO,
+  LUCKY_ANNOUNCEMENT_CLOSED_SEO,
+  LUCKY_ANNOUNCEMENT_UNAVAILABLE_SEO,
   PUBLIC_PAGES,
   stripPublicSeoContent,
 } from "./publicSeo";
@@ -148,26 +151,43 @@ export function serveStaticFiles(app: App) {
       } else if (luckyEventMatch) {
         // 單場公告必須真係存在兼 winnersPublic=true；否則任何數字 id 都會變 200 soft-404。
         const { getPublicLuckyEventSeo, injectLuckyEventSeoContent, luckyEventRouteMeta } = await import("./luckyEventSeo");
+        const { isLuckyAnnouncementPublic } = await import("./luckyAnnouncementVisibility");
+        const eventId = Number(luckyEventMatch[1]);
+        const validEventId = Number.isSafeInteger(eventId) && eventId >= 1 && eventId <= 2147483647;
         try {
-          const eventId = Number(luckyEventMatch[1]);
-          const validEventId = Number.isSafeInteger(eventId) && eventId >= 1 && eventId <= 2147483647;
+          // v2026.11.11.2：先查對外公告總開關——global off 用關閉專用文案（同未公開/唔存在分清，
+          // 唔再公開舊公告 SEO「請返回中獎公告總頁」），一樣 404＋noindex＋canonical:null。
+          // 總開關／活動讀取 DB error → 中性 503＋noindex，唔虛構已關閉，亦唔公開通用公告內容。
+          const announcementOn = await isLuckyAnnouncementPublic();
           // 超出 pg integer 嘅 ID 直接當唔存在，唔好誤觸 DB error 嘅通用 200。
-          const event = validEventId ? await getPublicLuckyEventSeo(eventId) : null;
+          const event = validEventId && announcementOn ? await getPublicLuckyEventSeo(eventId) : null;
           if (!event) {
-            content = injectRouteMeta(content, {
-              title: "中獎公告未公開或唔存在｜RedCode Fashion Design",
-              description: "呢場中獎公告未公開、已移除或唔存在，請返回中獎公告總頁睇最新公開活動。",
-              canonical: null,
-              noindex: true,
-            });
+            content = injectRouteMeta(content, announcementOn
+              ? {
+                  title: "中獎公告未公開或唔存在｜RedCode Fashion Design",
+                  description: "呢場中獎公告未公開、已移除或唔存在，請返回中獎公告總頁睇最新公開活動。",
+                  canonical: null,
+                  noindex: true,
+                }
+              : { ...LUCKY_ANNOUNCEMENT_CLOSED_SEO, canonical: null, noindex: true });
+            if (!announcementOn) {
+              // 關閉專用無 JS 內容（主線 publicSeo 提供）：關閉說明＋呢場獨立查劵入口，零公告內容
+              content = injectLuckyAnnouncementClosedContent(content, validEventId ? eventId : undefined);
+            }
             return c.html(content, 404);
           }
           content = injectRouteMeta(content, luckyEventRouteMeta(event));
           content = injectLuckyEventSeoContent(content, event);
         } catch {
-          // DB 一時故障唔好誤當未公開：保留通用 200，等之後重新檢索。
-          content = injectRouteMeta(content, { ...LUCKY_EVENT_SEO, path: normPath });
-          content = injectPublicSeoContent(content, "/lucky-results");
+          // 讀取失敗時唔知道真開關狀態：中性 503＋noindex，零公告宣傳／活動／中獎者；
+          // 合法 eventId 嘅獨立查劵入口照常，稍後可以重新檢索。
+          content = injectRouteMeta(content, {
+            ...LUCKY_ANNOUNCEMENT_UNAVAILABLE_SEO,
+            canonical: null,
+            noindex: true,
+          });
+          content = injectLuckyAnnouncementUnavailableContent(content, validEventId ? eventId : undefined);
+          return c.html(content, 503);
         }
       } else if (normPath === "/products") {
         // v2026.11.11：直播節目頁唔再齋驗格式就當可索引薄頁——
@@ -175,23 +195,46 @@ export function serveStaticFiles(app: App) {
         // ─ 有真公開商品 → 直播專屬 title/description＋self canonical＋該場商品清單
         // ─ 查詢成功但零公開商品（未開賣／已下架空場次）→ noindex＋移除 self canonical，
         //   如實講暫未有公開商品，唔准扮有貨
-        // ─ DB 故障 → 通用 /products meta，唔好將可能存貨嘅場次誤報做空場次
+        // ─ DB 故障 → 同 React 一致嘅通用直播 meta（無效 query 先通用 /products），
+        //   唔好將可能存貨嘅場次誤報做空場次
         // 無效日期／場次（parseLiveQuery 回 null）行通用 /products，絕不反射輸入。
-        const { emptyLiveRouteMeta, liveRouteMeta, parseLiveQuery } = await import("./liveSeo");
-        const { injectPublicCatalog, listPublicCatalog } = await import("./catalogSeo");
+        const { emptyLiveRouteMeta, liveFactRouteMeta, liveRouteMeta, parseLiveQuery } = await import("./liveSeo");
+        const { injectPublicCatalog, listPublicCatalog, listPublicLiveCatalog } = await import("./catalogSeo");
+        const { hkTodayYmd, summarizeLiveProducts } = await import("@contracts/livePublicSummary");
         const q = new URL(c.req.url).searchParams;
         const liveFilter = parseLiveQuery(q.get("liveDate"), q.get("liveSession"));
         let catalogItems: Awaited<ReturnType<typeof listPublicCatalog>> | null = null;
+        let liveSummary: ReturnType<typeof summarizeLiveProducts> | null = null;
         try {
-          catalogItems = await listPublicCatalog(48, liveFilter ?? undefined);
+          if (liveFilter) {
+            // 一次查詢攞全場公開商品（唔受展示 cap 影響）：統計用全場行，
+            // 首口目錄照舊淨係顯示頭 48 件——同一份 rows，唔好多打一次 DB。
+            const liveRows = await listPublicLiveCatalog(liveFilter);
+            catalogItems = liveRows.slice(0, 48);
+            liveSummary = liveRows.length > 0 ? summarizeLiveProducts(liveRows) : null;
+          } else {
+            catalogItems = await listPublicCatalog(48);
+          }
         } catch {
           catalogItems = null; // DB 一時故障：同「真零商品」分清，下面行通用 fallback
+          liveSummary = null;
         }
         if (liveFilter && catalogItems !== null && catalogItems.length === 0) {
           content = injectRouteMeta(content, emptyLiveRouteMeta(liveFilter));
           content = injectPublicSeoContent(content, "/products");
         } else if (liveFilter && catalogItems !== null) {
-          const liveMeta = liveRouteMeta(q.get("liveDate"), q.get("liveSession"));
+          // 有真公開商品：title 照舊，description 升級做真日期＋場次＋實數＋分類＋
+          // 代表商品嘅事實摘要（同 React 場次區同一份事實邏輯），並注入只含真資料嘅
+          // CollectionPage／ItemList JSON-LD。liveSummary 理論上一定有（有貨先計），
+          // 雙重保險：計唔到就跌返舊版直播文案，唔會出「0 件」假摘要。
+          const liveMeta = liveSummary
+            ? liveFactRouteMeta(
+                liveFilter,
+                liveSummary,
+                hkTodayYmd(),
+                catalogItems.map((p) => ({ id: p.id, name: p.name })),
+              )
+            : liveRouteMeta(q.get("liveDate"), q.get("liveSession"));
           content = injectRouteMeta(
             content,
             liveMeta ?? { ...PUBLIC_PAGES["/products"], path: "/products" },
@@ -200,21 +243,55 @@ export function serveStaticFiles(app: App) {
           const heading = liveMeta?.title?.replace("｜RedCode Fashion Design", "");
           content = injectPublicCatalog(content, catalogItems, heading);
         } else {
-          content = injectRouteMeta(content, { ...PUBLIC_PAGES["/products"], path: "/products" });
+          // 無效直播 query 先行通用 /products；合法直播 query 嘅 DB 故障就用
+          // 同 React pending/error 完全一致嘅通用直播 title/description/self canonical，
+          // 唔好一邊寫全部貨品、另一邊寫場次直播，亦唔誤報空場。
+          const fallbackMeta = liveFilter
+            ? liveRouteMeta(q.get("liveDate"), q.get("liveSession"))
+            : null;
+          content = injectRouteMeta(
+            content,
+            fallbackMeta ?? { ...PUBLIC_PAGES["/products"], path: "/products" },
+          );
           content = injectPublicSeoContent(content, "/products");
           // DB 一時故障照出通用公開摘要；唔好將在架商品頁誤報做空目錄或 404。
           if (catalogItems) content = injectPublicCatalog(content, catalogItems);
         }
       } else if (pageSeo) {
-        content = injectRouteMeta(content, { ...pageSeo, path: normPath });
-        content = injectPublicSeoContent(content, normPath);
         if (normPath === "/lucky-results") {
+          // v2026.11.11.2：對外公告總開關先決——關閉時注入關閉專用 title/description＋
+          // noindex＋canonical:null（200 照出 SPA，前端顯示「對外公告已關閉」＋查劵指引），
+          // 唔注入 PUBLIC_PAGES['/lucky-results'] 通用公告 meta／內容，亦唔注入活動連結。
+          // 設定讀取 DB error → 中性 503＋noindex，唔當開啟、唔虛構已關閉、唔出通用公告內容。
+          const { isLuckyAnnouncementPublic } = await import("./luckyAnnouncementVisibility");
+          const { injectLuckyEventIndexContent, listPublicLuckyEventSeo } = await import("./luckyEventSeo");
+          let announcementOn: boolean;
           try {
-            const { injectLuckyEventIndexContent, listPublicLuckyEventSeo } = await import("./luckyEventSeo");
+            announcementOn = await isLuckyAnnouncementPublic();
+          } catch {
+            content = injectRouteMeta(content, {
+              ...LUCKY_ANNOUNCEMENT_UNAVAILABLE_SEO,
+              canonical: null,
+              noindex: true,
+            });
+            content = injectLuckyAnnouncementUnavailableContent(content);
+            return c.html(content, 503);
+          }
+          if (!announcementOn) {
+            content = injectRouteMeta(content, { ...LUCKY_ANNOUNCEMENT_CLOSED_SEO, canonical: null, noindex: true });
+            content = injectLuckyAnnouncementClosedContent(content);
+            return c.html(content);
+          }
+          content = injectRouteMeta(content, { ...pageSeo, path: normPath });
+          content = injectPublicSeoContent(content, normPath);
+          try {
             content = injectLuckyEventIndexContent(content, await listPublicLuckyEventSeo());
           } catch {
             // 活動 DB 一時故障保留公告總頁通用摘要，唔好回假空名單或 404。
           }
+        } else {
+          content = injectRouteMeta(content, { ...pageSeo, path: normPath });
+          content = injectPublicSeoContent(content, normPath);
         }
       } else if (
         NOINDEX_EXACT.includes(normPath) ||

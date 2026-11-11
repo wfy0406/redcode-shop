@@ -2,6 +2,7 @@ import { Facebook, MessageCircle } from 'lucide-react';
 import MovingPhoto from '@/components/MovingPhoto';
 import { useReveal } from '@/hooks/useReveal';
 import MessengerIcon from '@/components/MessengerIcon';
+import { PUBLIC_OFFER_POLICY_TEXT } from '@contracts/publicPolicies';
 
 /**
  * RedCode 關於我們（design-system.md §P4）
@@ -47,15 +48,15 @@ const TIMELINE = [
   },
   {
     title: '「寶寶」們聚埋一齊',
-    body: 'Red Code HK直播台（redcodexhk）累積咗約 4,390 位粉絲，仲有超過 4,000 人經常討論緊我哋——相對粉絲數係極高互動，因為每晚留言區都真係好熱鬧。',
+    body: 'Red Code HK直播台（redcodexhk）累積咗約 4,390 位粉絲，仲有超過 4,000 人經常討論緊我哋——相對粉絲數係極高互動，因為直播留言區都真係好熱鬧。',
   },
   {
     title: '直播帶貨文化成形',
-    body: '留言下單、3件再包郵、即日入數全單減 $15；有啲場次「僅限直播下單，不設加單」。睇直播唔再係睇嘢咁簡單，係一齊搶心水款嘅儀式。',
+    body: `留言下單、直播出單及收款；有啲場次「僅限直播下單，不設加單」。${PUBLIC_OFFER_POLICY_TEXT}睇直播唔再係睇嘢咁簡單，係一齊搶心水款嘅儀式。`,
   },
   {
     title: '台灣聯乘直運場',
-    body: '「RedCode X 台灣服裝設計店家聯乘」系列開跑，台灣直運、外地滿 $450 包郵。仲有一年一度「Glo Glo誕」寵粉場——留言「生日快樂」全單再減 $10。',
+    body: '「RedCode X 台灣服裝設計店家聯乘」系列開跑，帶嚟台灣直運款色。優惠同寄運安排會按不同活動調整，以當次公佈為準。',
   },
 ];
 
@@ -64,17 +65,17 @@ const REASONS = [
   {
     num: '01',
     title: '直播互動，睇真啲先買',
-    body: '每晚直播即場著身示範，質地、尺寸、上身效果一目了然。有問題即場留言問，Glo Glo 即場答。',
+    body: '直播即場著身示範，質地、尺寸、上身效果一目了然。有問題即場留言問，Glo Glo 即場答。',
   },
   {
     num: '02',
-    title: '寵粉優惠，場場有驚喜',
-    body: '3件再包郵、即日入數全單減 $15、「Glo Glo誕」生日場全單再減 $10——寶寶們嘅福利，從來唔會少。',
+    title: '寵粉優惠，不定期有驚喜',
+    body: PUBLIC_OFFER_POLICY_TEXT,
   },
   {
     num: '03',
     title: '台灣聯乘，直運到你手',
-    body: '同台灣服裝設計店家聯乘開直播，款色香港搵唔到。台灣直運，外地滿 $450 包郵。',
+    body: '同台灣服裝設計店家聯乘開直播，款色香港搵唔到。部分聯乘商品由台灣直運，實際寄運安排以商品及當次活動公佈為準。',
   },
   {
     num: '04',
@@ -160,11 +161,11 @@ export default function About() {
               style={{ animationDelay: '0.6s' }}
             >
               <p>
-                每晚我都會喺 Facebook 開直播，同寶寶們逐件衫慢慢睇。
+                我會喺 Facebook 開直播，同寶寶們逐件衫慢慢睇。
                 邊個款顯瘦、邊隻色啱黃皮膚、彈性夠唔夠——你想知嘅，我著上身話你知。
               </p>
               <p>
-                RedCode 唔係一間舖頭咁簡單，係一個每晚都開住燈等你嘅直播房。
+                RedCode 唔係一間舖頭咁簡單，係一個開住燈等你嘅直播房。
                 留言落單、吹水開賣、生日一齊慶祝——呢啲先係我哋嘅日常。
               </p>
             </div>
@@ -269,7 +270,7 @@ export default function About() {
             <p className="font-mono text-xs tracking-[0.2em] text-pink-tint">FAN CLUB CULTURE</p>
             <p className="mt-3 max-w-3xl text-[15px] leading-[1.75] text-txt-2">
               喺 RedCode，粉絲唔叫粉絲，叫<strong className="font-bold text-pink-soft">「寶寶」</strong>。
-              每年「Glo Glo誕」，留言一句「生日快樂」全單再減 $10；
+              {PUBLIC_OFFER_POLICY_TEXT}
               直播留言區嘅熟面孔，Glo Glo 個個都記得。
               呢種互相撐住嘅關係，先係 RedCode 最值錢嘅嘢。
             </p>
@@ -399,7 +400,7 @@ export default function About() {
         >
           <p className="script text-2xl md:text-3xl">see you in the live room ♡</p>
           <h2 className="mx-auto mt-3 max-w-xl font-serif-tc text-2xl font-semibold leading-[1.3] text-starlight md:text-[32px]">
-            今晚，直播房見
+            直播房見
           </h2>
           <p className="mx-auto mt-4 max-w-md text-[15px] leading-[1.75] text-txt-2">
             追蹤 Facebook 專頁就唔會錯過任何一場；

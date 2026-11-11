@@ -21,6 +21,9 @@ vi.mock("../queries/connection", () => ({
                 seenLimit = n;
                 return queryError ? Promise.reject(queryError) : Promise.resolve(mockRows);
               },
+              // listPublicLiveCatalog 唔設 limit：orderBy 之後直接 await（thenable）
+              then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+                (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)).then(resolve, reject),
             }),
           };
         },
@@ -38,7 +41,7 @@ vi.mock("../queries/connection", () => ({
   }),
 }));
 
-import { injectPublicCatalog, listPublicCatalog, listPublicLiveFilters, renderPublicCatalog } from "./catalogSeo";
+import { injectPublicCatalog, listPublicCatalog, listPublicLiveCatalog, listPublicLiveFilters, renderPublicCatalog } from "./catalogSeo";
 
 const item = {
   id: 85,
@@ -103,6 +106,41 @@ describe("公開商品目錄首口 HTML", () => {
   it("直播目錄可以用日期場次做真標題，唔再只得通用全部貨品", () => {
     const html = renderPublicCatalog([item], "2026年11月3日 第1場直播商品");
     expect(html).toContain("<h2>2026年11月3日 第1場直播商品</h2>");
+  });
+});
+
+describe("listPublicLiveCatalog — 直播全場公開商品（唔受展示 cap 影響統計）", () => {
+  const liveItem = { ...item, category: "top" };
+
+  it("唔設任何 limit：DB 回幾多件就係幾多件（>60 都照出，全場先係真數）", async () => {
+    // 75 件（超過舊 48/60 展示 cap）→ 全部照返，caller 用佢計真總數
+    mockRows = Array.from({ length: 75 }, (_, i) => ({ ...liveItem, id: 100 + i }));
+    seenLimit = -1;
+    const rows = await listPublicLiveCatalog({ liveDate: "20261111", liveSession: null });
+    expect(rows).toHaveLength(75);
+    expect(seenLimit).toBe(-1); // 從未叫過 .limit()
+  });
+
+  it("直播日期／場次落入 SQL filter，同時保留公開上架條件；冇場次就唔會多餘條件", async () => {
+    mockRows = [liveItem];
+    await listPublicLiveCatalog({ liveDate: "20261111", liveSession: "3" });
+    let query = new PgDialect().sqlToQuery(seenWhere as never);
+    expect(query.sql).toMatch(/"isActive" = \$1/);
+    expect(query.sql).toMatch(/"liveDate" = \$4/);
+    expect(query.sql).toMatch(/"liveSession" = \$5/);
+    expect(query.params.slice(3)).toEqual(["20261111", "3"]);
+
+    await listPublicLiveCatalog({ liveDate: "20261111", liveSession: null });
+    query = new PgDialect().sqlToQuery(seenWhere as never);
+    expect(query.sql).toMatch(/"liveDate" = \$4/);
+    expect(query.sql).not.toContain("liveSession");
+  });
+
+  it("DB 錯誤原樣抛出畀 caller 分清故障（唔好誤報空場次）", async () => {
+    queryError = new Error("connection refused");
+    await expect(
+      listPublicLiveCatalog({ liveDate: "20261111", liveSession: null }),
+    ).rejects.toThrow("connection refused");
   });
 });
 

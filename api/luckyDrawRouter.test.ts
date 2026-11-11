@@ -52,6 +52,11 @@ const h = vi.hoisted(() => {
     executeCount: 0,
     // db.transaction 呼叫次數（「一定要行 transaction」斷言用）
     txCount: 0,
+    // v2026.11.11.2 對外公告總開關：siteSettings key="lucky_announcement_public" 嘅 mock 值——
+    // {value}＝設定行；null＝設定唔存在（fail-closed）；Error＝DB 讀取失敗（throw 給上層 catch）。
+    // 預設 { value: "true" }（總開），等既有公開公告測試唔被新總開關截停；
+    // 總開關測試會顯式覆寫做 null／{value:"false"}。
+    announcementSetting: { value: "true" } as null | { value: string } | Error,
   };
   const pop = () => (state.queue.length > 0 ? state.queue.shift() : []);
   // Error 實例 → reject（模擬 DB 層錯誤，例如 unique 23505）
@@ -131,6 +136,17 @@ const h = vi.hoisted(() => {
       state.executes.push(q);
       return makeChain();
     },
+    // drizzle relational query API：api/lib/luckyAnnouncementVisibility.ts 用
+    // getDb().query.siteSettings.findFirst 讀對外公告總開關；冇呢個 mock 會 TypeError（唔係預期嘅 fail-closed）。
+    query: {
+      siteSettings: {
+        findFirst: async () => {
+          const s = state.announcementSetting;
+          if (s instanceof Error) throw s;
+          return s;
+        },
+      },
+    },
   };
   return { state, db };
 });
@@ -146,7 +162,8 @@ vi.mock("./livePush", () => ({ sendPrizeWinPush: vi.fn(async () => undefined) })
 vi.mock("./wmsSync", () => ({ forwardOrderToWms: vi.fn(async () => undefined) }));
 
 import { luckyDrawRouter } from "./luckyDrawRouter";
-import { luckyDraws, luckyDrawEventEntries, luckyDrawEvents, luckyDrawLists, orderItems, orderShipments, orders, paymentProofs, users, wmsSyncLog } from "@db/schema";
+import { resetLuckyAnnouncementPublicCache } from "./lib/luckyAnnouncementVisibility";
+import { luckyDraws, luckyDrawEventEntries, luckyDrawEvents, luckyDrawLists, orderItems, orderShipments, orders, paymentProofs, siteSettings, users, wmsSyncLog } from "@db/schema";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { writeZipDeflate } from "./xlsxZip";
 import { expectedHeaders, hasPkMagic, parseXlsxRows } from "./luckyDrawXlsx";
@@ -183,6 +200,9 @@ function reset(
   h.state.executes = [];
   h.state.executeCount = 0;
   h.state.txCount = 0;
+  // 總開關 mock 預設開（既有公開公告測試唔被截停）；60 秒 TTL 快取逐次清，唔准跨 test 漏。
+  h.state.announcementSetting = { value: "true" };
+  resetLuckyAnnouncementPublicCache();
 }
 
 // ─── 守衛 SQL 斷言（v2.5.7 覆核補強）───
@@ -2534,5 +2554,171 @@ describe("myPendingWin 排除活動劵中獎（v2026.11.08：活動中獎唔入�
     expect(r).toBeNull();
     const sel = h.state.selects[h.state.selects.length - 1];
     expectWhere(sel.where, ['"winnerUserId" = $1', '"status" = $2', '"eventId" is null'], [42, "pending"]);
+  });
+});
+
+// ───────────────────────── v2026.11.11.2：對外公告總開關（siteSettings lucky_announcement_public）─────────────────────────
+// mock 預設 { value: "true" }（見 reset()）；呢度顯式覆寫做 null／false 先測關閉路徑。
+// 注意：isLuckyAnnouncementPublic 行 db.query.siteSettings.findFirst（唔經 queue/selects），
+// 所以「零活動查詢」可以用 h.state.selects.length 精準斷言。
+
+describe("對外公告總開關關閉（預設 fail-closed）", () => {
+  it("設定唔存在（null）→ publicAnnouncementStatus 回 {enabled:false}", async () => {
+    reset(null);
+    h.state.announcementSetting = null;
+    const r = await caller().publicAnnouncementStatus();
+    expect(r).toEqual({ enabled: false });
+  });
+
+  it("設定唔存在 → publicEvents 即刻空陣列，零活動表查詢（唔會靠 winnersPublic 過濾兜底）", async () => {
+    reset(null);
+    h.state.announcementSetting = null;
+    const r = await caller().publicEvents();
+    expect(r).toEqual([]);
+    expect(h.state.selects).toHaveLength(0); // 連活動 select 都唔執行
+  });
+
+  it("設定值 false → publicEvents 一樣空陣列零查詢", async () => {
+    reset(null);
+    h.state.announcementSetting = { value: "false" };
+    const r = await caller().publicEvents();
+    expect(r).toEqual([]);
+    expect(h.state.selects).toHaveLength(0);
+  });
+
+  it("垃圾值（『yes』『TRUE』『1』唔係精確 true）→ 一樣當關閉", async () => {
+    for (const garbage of ["yes", "TRUE", "1"]) {
+      reset(null);
+      h.state.announcementSetting = { value: garbage };
+      const status = await caller().publicAnnouncementStatus();
+      expect(status).toEqual({ enabled: false });
+      expect(await caller().publicEvents()).toEqual([]);
+      expect(h.state.selects).toHaveLength(0);
+    }
+  });
+
+  it("設定唔存在 → publicEventResults NOT_FOUND「中獎公告未公開或活動唔存在」，零 event/winner 查詢", async () => {
+    reset(null);
+    h.state.announcementSetting = null;
+    await expect(caller().publicEventResults({ eventId: 7 })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "中獎公告未公開或活動唔存在",
+    });
+    expect(h.state.selects).toHaveLength(0); // 活動查詢都唔執行（同 winnersPublic 關閉嘅 1 次 event select 唔同）
+  });
+
+  it("DB 讀取失敗 → 錯誤 throw 給上層（500），唔會靜默當開亦唔會靜默當關", async () => {
+    reset(null);
+    h.state.announcementSetting = new Error("connection refused");
+    await expect(caller().publicAnnouncementStatus()).rejects.toThrow("connection refused");
+    reset(null);
+    h.state.announcementSetting = new Error("connection refused");
+    await expect(caller().publicEvents()).rejects.toThrow("connection refused");
+    expect(h.state.selects).toHaveLength(0);
+  });
+});
+
+describe("總開啟都要兩層 AND（winnersPublic 每場把關）", () => {
+  const EVENT_PUB = { id: 7, name: "雙十一．壓軸狂歡", createdAt: new Date(), scheduledDrawDate: "20261111", maxWinsPerPerson: 2, winnersPublic: true };
+
+  it("總開＋該場 winnersPublic=false → publicEventResults NOT_FOUND，只查 event 唔執行 winner query", async () => {
+    reset(null);
+    h.state.announcementSetting = { value: "true" };
+    h.state.queue = [
+      [{ ...EVENT_PUB, winnersPublic: false }], // event select
+    ];
+    await expect(caller().publicEventResults({ eventId: 7 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(h.state.selects).toHaveLength(1); // winner query 絕唔執行
+  });
+
+  it("總開＋winnersPublic=true → 正常回公告（兩層都開先出）", async () => {
+    reset(null);
+    h.state.announcementSetting = { value: "true" };
+    h.state.queue = [[EVENT_PUB], []];
+    const r = await caller().publicEventResults({ eventId: 7 });
+    expect(r.event).toMatchObject({ id: 7, winnersPublic: true });
+    expect(r.winners).toEqual([]);
+  });
+
+  it("總開＋publicEvents 活動查詢仍然帶 winnersPublic=true 守衛 SQL", async () => {
+    reset(null);
+    h.state.announcementSetting = { value: "true" };
+    h.state.queue = [
+      [{ id: 8, name: "壓軸狂歡", createdAt: new Date(), scheduledDrawDate: "20261201" }],
+      [{ eventId: 8, n: 2 }],
+    ];
+    const r = await caller().publicEvents();
+    expect(r).toHaveLength(1);
+    expectWhere(h.state.selects[0].where, ['"winnersPublic" = $1'], [true]);
+  });
+});
+
+describe("查劵兩個 endpoint 唔受總開關影響", () => {
+  it("總關閉下 publicTicketEvent 照回活動 metadata；publicLookupEventTicket 照查劵數", async () => {
+    reset(null);
+    h.state.announcementSetting = null; // 總開關關閉
+    h.state.queue = [
+      [{ id: 7, name: "週年慶", scheduledDrawDate: "20261201", maxWinsPerPerson: 2, winnersPublic: false }],
+    ];
+    const ev = await caller().publicTicketEvent({ eventId: 7 });
+    expect(ev.event).toMatchObject({ id: 7, name: "週年慶", winnersPublic: false });
+    expect(h.state.selects).toHaveLength(1); // 只查活動，唔經總開關
+
+    h.state.queue = [[{ id: 7 }], [{ ticketCount: 4 }]];
+    const r = await caller().publicLookupEventTicket({ eventId: 7, holderName: "陳小明" });
+    expect(r).toEqual({ found: true, ticketCount: 4 });
+  });
+});
+
+describe("adminGetAnnouncementPublic／adminSetAnnouncementPublic 權限", () => {
+  it("adminSetAnnouncementPublic 係管理員專用：member/staff/supervisor → FORBIDDEN；未登入 → UNAUTHORIZED", async () => {
+    for (const u of [{ userId: 4, role: "member" }, { userId: 3, role: "staff" }, { userId: 2, role: "supervisor" }]) {
+      reset(u);
+      await expect(caller().adminSetAnnouncementPublic({ enabled: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+    reset(null);
+    await expect(caller().adminSetAnnouncementPublic({ enabled: true })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(h.state.inserts).toHaveLength(0); // 全部擋喺權限關，零 DB 寫
+  });
+
+  it("adminGetAnnouncementPublic 主管可讀現況；member → FORBIDDEN；未登入 → UNAUTHORIZED", async () => {
+    reset({ userId: 2, role: "supervisor" });
+    h.state.announcementSetting = null; // 預設關
+    expect(await caller().adminGetAnnouncementPublic()).toEqual({ enabled: false });
+    reset({ userId: 4, role: "member" });
+    await expect(caller().adminGetAnnouncementPublic()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    reset(null);
+    await expect(caller().adminGetAnnouncementPublic()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("admin 開啟：upsert siteSettings value='true'（onConflictDoUpdate）＋audit 寫「開啟」", async () => {
+    reset({ userId: 1, role: "admin" });
+    h.state.announcementSetting = null; // DB 而家關緊
+    h.state.queue = [[]]; // insert...onConflictDoUpdate pop
+    const r = await caller().adminSetAnnouncementPublic({ enabled: true });
+    expect(r).toEqual({ ok: true, enabled: true });
+    const ins = insertsOf(siteSettings);
+    expect(ins).toHaveLength(1);
+    expect(ins[0].values).toMatchObject({ key: "lucky_announcement_public", value: "true" });
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.setAnnouncementPublic",
+      targetType: "setting",
+      targetId: "lucky_announcement_public",
+      detail: expect.stringContaining("開啟"),
+    }));
+  });
+
+  it("admin 關閉：upsert value='false'＋audit 寫「關閉」", async () => {
+    reset({ userId: 1, role: "admin" });
+    h.state.queue = [[]];
+    const r = await caller().adminSetAnnouncementPublic({ enabled: false });
+    expect(r).toEqual({ ok: true, enabled: false });
+    const ins = insertsOf(siteSettings);
+    expect(ins).toHaveLength(1);
+    expect(ins[0].values).toMatchObject({ key: "lucky_announcement_public", value: "false" });
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "luckyDraw.setAnnouncementPublic",
+      detail: expect.stringContaining("關閉"),
+    }));
   });
 });

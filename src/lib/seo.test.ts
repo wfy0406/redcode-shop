@@ -180,4 +180,22 @@ describe("SPA route JSON-LD 清理", () => {
     removeStaleRouteSchemas("/");
     expect(current.removed).toBe(true);
   });
+
+  it("直播 ItemList 用 full date＋session 身份：A→B／全部商品即清；同場加 category 保留", () => {
+    const makeSchema = (path: string) => ({
+      removed: false,
+      getAttribute: () => path,
+      remove() { this.removed = true; },
+    });
+    const a = makeSchema("/products?liveDate=20261103&liveSession=1");
+    const b = makeSchema("/products?liveDate=20261111&liveSession=2");
+    vi.stubGlobal("document", { querySelectorAll: () => [a, b] });
+
+    removeStaleRouteSchemas("/products", "?liveDate=20261111&liveSession=2&category=top");
+    expect(a.removed).toBe(true);
+    expect(b.removed).toBe(false);
+
+    removeStaleRouteSchemas("/products", "?category=top");
+    expect(b.removed).toBe(true);
+  });
 });

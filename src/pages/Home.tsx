@@ -825,7 +825,7 @@ export default function Home() {
               className="hero-enter mt-6 max-w-lg text-[15px] leading-[1.75] text-txt-2 md:text-base"
               style={{ animationDelay: '0.6s' }}
             >
-              RedCode Fashion Design —— 香港女裝直播品牌。主播 Glo Glo 每晚喺 Facebook
+              RedCode Fashion Design —— 香港女裝直播品牌。主播 Glo Glo 喺 Facebook
               開直播，即場著身、即場開賣。睇啱嘅款，呢度全部搵得返。
             </p>
             {/* Hero CTA 掣組（musepool 方向）：pill cluster，手機 2×2 grid（primary 全闊做主角），
@@ -1148,8 +1148,8 @@ export default function Home() {
         <div ref={liveRef} className="reveal">
           <SectionHeading en="Live Room" zh="Facebook 直播專區" />
           <p className="mt-3 max-w-xl text-[15px] text-txt-2">
-            每晚 Glo Glo 都會喺 Facebook 同大家見面。錯過咗直播？
-            入專頁可以重溫晒所有場次。
+            Glo Glo 會喺 Facebook 同大家見面。錯過咗直播？
+            入專頁可以重溫已發佈場次。
           </p>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-5">
@@ -1167,10 +1167,10 @@ export default function Home() {
                 Live on Facebook
               </p>
               <p className="font-serif-tc text-xl font-semibold leading-[1.4] text-txt-1">
-                每晚開播，即場著身、即場開賣
+                直播開播時，即場著身、即場開賣
               </p>
               <p className="text-[14px] leading-[1.75] text-txt-2">
-                留意專頁直播通知，開播即刻入嚟搶心水款。錯過咗都可以喺專頁重溫所有場次。
+                留意專頁直播通知，開播即刻入嚟搶心水款。錯過咗都可以喺專頁重溫已發佈場次。
               </p>
               <a
                 href={FACEBOOK_URL}
@@ -1279,7 +1279,7 @@ export default function Home() {
               </h2>
               <div className="mx-auto mt-5 max-w-xl space-y-4 text-[15px] leading-[1.75] text-txt-2">
                 <p>
-                  RedCode 由一個小小嘅香港直播房開始。Glo Glo 每晚開住 Facebook
+                  RedCode 由一個小小嘅香港直播房開始。Glo Glo 開住 Facebook
                   直播，逐件衫著上身俾大家睇，邊講邊笑，好似同閨蜜視像咁。
                 </p>
                 <p>

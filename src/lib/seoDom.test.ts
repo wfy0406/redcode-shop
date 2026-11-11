@@ -39,7 +39,8 @@ describe('SPA canonical DOM 管理（輕量 DOM stub，唔加 jsdom 依賴）', 
     vi.stubGlobal('document', {
       head: {
         appendChild(element: FakeElement) {
-          canonical = element;
+          if (element.attrs.rel === 'canonical') canonical = element;
+          if (element.attrs.property === 'og:url') ogUrl = element;
           return element;
         },
       },
@@ -77,5 +78,8 @@ describe('SPA canonical DOM 管理（輕量 DOM stub，唔加 jsdom 依賴）', 
     expect(document.querySelector('meta[property="og:url"]')).toBeNull();
     setCanonicalPath('/products');
     expect(document.querySelectorAll('link[rel="canonical"]')).toHaveLength(1);
+    expect(document.querySelector('meta[property="og:url"]')?.getAttribute('content')).toBe(
+      'https://redcode.red/products',
+    );
   });
 });

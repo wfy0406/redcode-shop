@@ -4,12 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let mockRows: unknown[] = [];
 let seenWhere: unknown = null;
+// v2026.11.11.2：對外公告總開關 mock——null＝設定唔存在（預設關閉）；Error＝DB 讀取失敗
+let mockAnnouncement: { value: string } | Error | null = { value: "true" };
+let selectCalls = 0;
 
 vi.mock("../queries/connection", () => ({
   getDb: () => ({
     select: () => ({
       from: () => ({
         where: (where: unknown) => {
+          selectCalls += 1;
           seenWhere = where;
           return {
             limit: () => Promise.resolve(mockRows),
@@ -18,6 +22,14 @@ vi.mock("../queries/connection", () => ({
         },
       }),
     }),
+    query: {
+      siteSettings: {
+        findFirst: () =>
+          mockAnnouncement instanceof Error
+            ? Promise.reject(mockAnnouncement)
+            : Promise.resolve(mockAnnouncement),
+      },
+    },
   }),
 }));
 
@@ -27,13 +39,18 @@ import {
   injectLuckyEventSeoContent,
   listPublicLuckyEventSeo,
   luckyEventRouteMeta,
+  luckyEventSeoVisible,
 } from "./luckyEventSeo";
+import { resetLuckyAnnouncementPublicCache } from "./luckyAnnouncementVisibility";
 
 const event = { id: 12, name: "雙十一．壓軸狂歡", scheduledDrawDate: "20261111" };
 
 beforeEach(() => {
   mockRows = [];
   seenWhere = null;
+  mockAnnouncement = { value: "true" };
+  selectCalls = 0;
+  resetLuckyAnnouncementPublicCache();
 });
 
 describe("公開單場中獎公告 SEO", () => {
@@ -83,5 +100,42 @@ describe("公開單場中獎公告 SEO", () => {
     expect(clientSource).toContain('`RedCode《${data.event.name}》直播抽獎公告——查閱公開活動資料、預定抽獎日同已公佈嘅真實中獎結果。`');
     expect(clientSource).toContain("中獎公告未公開或唔存在｜RedCode Fashion Design");
     expect(clientSource).toContain("呢場中獎公告未公開、已移除或唔存在，請返回中獎公告總頁睇最新公開活動。");
+  });
+});
+
+describe("v2026.11.11.2 對外公告總開關（luckyEventSeo gate）", () => {
+  it("預設關閉（設定唔存在）：單場回 null、總覽回 []，兼唔查活動表", async () => {
+    mockAnnouncement = null;
+    resetLuckyAnnouncementPublicCache();
+    mockRows = [event]; // 即使活動 winnersPublic=true 都唔准出
+    await expect(getPublicLuckyEventSeo(12)).resolves.toBeNull();
+    await expect(listPublicLuckyEventSeo()).resolves.toEqual([]);
+    expect(selectCalls).toBe(0);
+  });
+
+  it("明確 false／垃圾值一律當關閉", async () => {
+    for (const v of ["false", "yes", "1", "TRUE", ""]) {
+      mockAnnouncement = { value: v };
+      resetLuckyAnnouncementPublicCache();
+      mockRows = [event];
+      await expect(getPublicLuckyEventSeo(12)).resolves.toBeNull();
+      await expect(listPublicLuckyEventSeo()).resolves.toEqual([]);
+    }
+    expect(selectCalls).toBe(0);
+  });
+
+  it("總開關設定讀取失敗 → throw（交 caller 通用 200，唔好誤報 404／關閉）", async () => {
+    mockAnnouncement = new Error("settings down");
+    resetLuckyAnnouncementPublicCache();
+    await expect(getPublicLuckyEventSeo(12)).rejects.toThrow("settings down");
+    await expect(listPublicLuckyEventSeo()).rejects.toThrow("settings down");
+    expect(selectCalls).toBe(0);
+  });
+
+  it("對外可見＝總開 AND 該場 winnersPublic（luckyEventSeoVisible 鎖口径）", () => {
+    expect(luckyEventSeoVisible(true, true)).toBe(true);
+    expect(luckyEventSeoVisible(true, false)).toBe(false);
+    expect(luckyEventSeoVisible(false, true)).toBe(false);
+    expect(luckyEventSeoVisible(false, false)).toBe(false);
   });
 });

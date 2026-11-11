@@ -14,6 +14,7 @@ import {
   liveShareTitle,
   liveShareUrl,
   normalizeLiveShare,
+  scheduleLiveMeta,
   whatsappShareUrl,
 } from './liveShare';
 
@@ -128,5 +129,126 @@ describe('Facebook／WhatsApp share link', () => {
     expect(wa).toContain(encodeURIComponent(url));
     // raw & 唔准出現喺 text 參數入面（會截斷文案）
     expect(wa).not.toContain('&liveSession');
+  });
+});
+
+// scheduleLiveMeta 嘅假 document（node 環境冇 DOM）
+function makeFakeDoc() {
+  const store = new Map<string, { attrs: Record<string, string>; removed: boolean }>();
+  const appended: { attrs: Record<string, string> }[] = [];
+  const doc = {
+    title: '',
+    appended,
+    head: {
+      appendChild(el: { setAttribute(n: string, v: string): void }) {
+        appended.push((el as unknown as { __rec: { attrs: Record<string, string> } }).__rec);
+      },
+    },
+    createElement: () => {
+      const rec = { attrs: {} as Record<string, string> };
+      return Object.assign(
+        {
+          setAttribute: (n: string, v: string) => {
+            rec.attrs[n] = v;
+          },
+          remove: () => {},
+        },
+        { __rec: rec },
+      );
+    },
+    querySelector(sel: string) {
+      if (!store.has(sel)) store.set(sel, { attrs: {}, removed: false });
+      const rec = store.get(sel)!;
+      if (rec.removed) return null; // 移除咗嘅元素 querySelector 搵唔到
+      return {
+        setAttribute: (n: string, v: string) => {
+          rec.attrs[n] = v;
+        },
+        remove: () => {
+          rec.removed = true;
+        },
+      };
+    },
+    attr(sel: string, name: string) {
+      return store.get(sel)?.attrs[name];
+    },
+    removed(sel: string) {
+      return store.get(sel)?.removed === true;
+    },
+  };
+  return doc;
+}
+
+describe('scheduleLiveMeta — 場次動態 meta（v2026.11.11.2）', () => {
+  it('microtask 寫入喺同步 effect flush 之後先落 DOM（cached-mount 唔會被 parent 通用句冚走）', async () => {
+    const doc = makeFakeDoc();
+    // child（Products）effect 先跑：排入真摘要
+    scheduleLiveMeta({ description: '真全場摘要' }, doc);
+    // parent（SeoManager）effect 後跑：同步用通用句冚
+    doc.querySelector('meta[name="description"]')!.setAttribute('content', '通用直播句');
+    // 同步階段完結時仲係通用句
+    expect(doc.attr('meta[name="description"]', 'content')).toBe('通用直播句');
+    // microtask flush 之後：真摘要先係最終值
+    await Promise.resolve();
+    expect(doc.attr('meta[name="description"]', 'content')).toBe('真全場摘要');
+  });
+
+  it('空場次分流：title／description／noindex／移除 canonical＋og:url 一次過寫', async () => {
+    const doc = makeFakeDoc();
+    scheduleLiveMeta(
+      {
+        title: '2026年11月11日 第2場直播暫未有公開商品｜RedCode Fashion Design',
+        description: 'RedCode 2026年11月11日 第2場直播而家冇公開商品……',
+        robots: 'noindex, nofollow',
+        canonicalPath: null,
+      },
+      doc,
+    );
+    await Promise.resolve();
+    expect(doc.title).toContain('暫未有公開商品');
+    expect(doc.attr('meta[name="robots"]', 'content')).toBe('noindex, nofollow');
+    expect(doc.removed('link[rel="canonical"]')).toBe(true);
+    expect(doc.removed('meta[property="og:url"]')).toBe(true);
+  });
+
+  it('可逆：空場次之後恢復（error 或有貨）→ index,follow＋重建 canonical＋og:url', async () => {
+    const doc = makeFakeDoc();
+    // 先入空場（移除 canonical／og:url、noindex）
+    scheduleLiveMeta({ robots: 'noindex, nofollow', canonicalPath: null }, doc);
+    await Promise.resolve();
+    expect(doc.removed('link[rel="canonical"]')).toBe(true);
+    // 之後恢復：robots 還原、canonical link 重建、og:url 重建入 head
+    scheduleLiveMeta(
+      { robots: 'index, follow', canonicalPath: '/products?liveDate=20261111&liveSession=2' },
+      doc,
+    );
+    await Promise.resolve();
+    expect(doc.attr('meta[name="robots"]', 'content')).toBe('index, follow');
+    expect(doc.appended.some((el) => el.attrs.rel === 'canonical'
+      && el.attrs.href === 'https://redcode.red/products?liveDate=20261111&liveSession=2')).toBe(true);
+    expect(doc.appended.some((el) => el.attrs.property === 'og:url'
+      && el.attrs.content === 'https://redcode.red/products?liveDate=20261111&liveSession=2')).toBe(true);
+  });
+
+  it('canonicalPath undefined → canonical 完全唔郁', async () => {
+    const doc = makeFakeDoc();
+    scheduleLiveMeta({ description: '只改描述' }, doc);
+    await Promise.resolve();
+    expect(doc.removed('link[rel="canonical"]')).toBe(false);
+    expect(doc.appended).toHaveLength(0);
+  });
+
+  it('error／真空場決策可清走首口舊直播 ItemList，唔留過時貨品事實', async () => {
+    const schema = {
+      removed: false,
+      setAttribute: () => {},
+      remove() { this.removed = true; },
+    };
+    const doc = Object.assign(makeFakeDoc(), {
+      querySelectorAll: () => [schema],
+    });
+    scheduleLiveMeta({ clearRouteSchema: true }, doc);
+    await Promise.resolve();
+    expect(schema.removed).toBe(true);
   });
 });

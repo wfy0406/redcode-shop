@@ -35,7 +35,7 @@ export default function Footer() {
             <img src="/logo.png" alt="RedCode Fashion Design" className="h-12 w-auto" />
             <p className="script mt-4 text-2xl">Every order is a little wish come true ✦</p>
             <p className="mt-4 max-w-sm text-sm leading-relaxed text-txt-3">
-              香港女裝直播品牌，主播 Glo Glo 每晚喺 Facebook 直播同你揀衫。
+              香港女裝直播品牌，主播 Glo Glo 喺 Facebook 直播同你揀衫。
               睇啱就落單，有咩唔明 WhatsApp 搵我哋。
             </p>
           </div>

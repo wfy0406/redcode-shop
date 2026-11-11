@@ -4,6 +4,7 @@ import { and, eq, gt, ilike, inArray, isNotNull, isNull, or, desc } from "drizzl
 import { getDb } from "./queries/connection";
 import { cartItems, listingBatchItems, listingBatches, orderItems, productAiTagsTombstones, productImageArchive, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
+import { isValidLiveDateYmd } from "@contracts/livePublicSummary";
 import { createRouter, publicQuery, staffProcedure, supervisorProcedure } from "./middleware";
 import { logAudit } from "./audit";
 import { requestApprovalIfStaff } from "./approvalGuard";
@@ -302,6 +303,41 @@ export const productsRouter = createRouter({
         sessions: [...set].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b)),
       }));
   }),
+
+  /**
+   * 直播場次全場公開摘要（v2026.11.11.2，／products 場次區真資料摘要用）：
+   * 回該日／該場**全場**公開商品嘅 id／name／category——淨係三個公開欄位，
+   * 唔回價錢／庫存／描述（嗰啲以商品頁為準），亦唔改 list 嘅 shape。
+   * **唔設展示 cap**：摘要要數晒全場先係真數（場次商品量自然有限）；
+   * 顯示清單嘅 cap 係 Products 頁 list 嗰邊嘅事，兩者分開。
+   * DB 故障原樣抛出，由前端隱藏摘要，唔會扮空場次。
+   */
+  liveSummary: publicQuery
+    .input(
+      z.object({
+        // 真日曆日期驗證（唔止 8 位數字：20230229／20261301 唔收），同直播 SEO 共用規則
+        liveDate: z.string().refine(isValidLiveDateYmd, "直播日期要係真實日曆日期 YYYYMMDD"),
+        // 場次：正整數字串 1–999（前導零／小數／負數唔收）
+        liveSession: z.string().regex(/^[1-9]\d{0,2}$/).optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const db = getDb();
+      const conditions = [
+        eq(products.isActive, true),
+        notAutoDelisted(),
+        eq(products.liveDate, input.liveDate),
+      ];
+      // 場次淨係配住 liveDate 先有意義（同 list 語義一致）
+      if (input.liveSession) {
+        conditions.push(eq(products.liveSession, input.liveSession));
+      }
+      return db
+        .select({ id: products.id, name: products.name, category: products.category })
+        .from(products)
+        .where(and(...conditions))
+        .orderBy(desc(products.listedDate), desc(products.id));
+    }),
 
   /**
    * WMS 批量上架紀錄（2026-09-29 F8，後台「上架紀錄」卡用）：

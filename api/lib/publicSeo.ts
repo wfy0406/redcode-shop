@@ -1,3 +1,9 @@
+import {
+  PUBLIC_DISPATCH_POLICY,
+  PUBLIC_OFFER_POLICY_TEXT,
+  PUBLIC_PAYMENT_POLICY,
+} from "@contracts/publicPolicies";
+
 export interface PublicSeoSection {
   heading: string;
   text: string;
@@ -30,7 +36,7 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
   "/": {
     title: "RedCode Fashion Design｜香港女裝直播網店",
     description:
-      "RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 每晚為你揀選星空下最閃嘅衫。AI 試穿：影張相即刻試穿，即刻睇到著上身效果。直播專屬優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。",
+      "RedCode Fashion Design 官方購物網站 — 香港女裝直播，主播 Glo Glo 為你揀選星空下最閃嘅衫。AI 試穿：影張相即刻試穿，即刻睇到著上身效果。不定期優惠、直播重溫、順豐站自取，VIP 會員尊享禮遇。",
     heading: "RedCode Fashion Design｜香港女裝直播網店",
     summary:
       "RedCode Fashion Design（Red Code HK直播台，@redcodexhk）係香港女裝直播網店，提供直播精選女裝、直播重溫、AI 試穿、順豐自取及 VIP 會員禮遇。",
@@ -65,23 +71,36 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
   },
   "/live": {
     title: "直播重溫｜RedCode Fashion Design",
-    // 唔准無條件承諾「直播優惠繼續生效」——客人可見嘅 /live 頁只講部分場次有
-    // 限時快閃價；品名／價錢／庫存一律以商品頁為準。
+    // 唔准無條件承諾「直播優惠繼續生效」或固定開播頻率；品名／價錢／庫存以商品頁為準。
     description:
-      "錯過直播唔緊要，RedCode 直播重溫隨時睇，睇中即刻落單；品名、價錢同庫存以商品頁為準。",
+      "RedCode 直播出單及收款，亦可重溫直播再揀商品；官網購物支援付款截圖人工審核或 Airwallex 即時支付。品名、價錢同庫存以商品頁為準。",
     heading: "RedCode 直播重溫",
     summary:
-      "重溫 RedCode 香港女裝直播，了解主播示範嘅款式同上身效果，再前往公開商品頁選購。",
+      "重溫 RedCode 香港女裝直播，了解主播示範嘅款式同上身效果，再前往公開商品頁選購；直播訂單由 RedCode 出單及收款。",
+    sections: [
+      {
+        heading: "直播出單及收款",
+        text: PUBLIC_PAYMENT_POLICY.liveText,
+      },
+      {
+        heading: "官網購物兩種付款方式",
+        text: `${PUBLIC_PAYMENT_POLICY.methodsText}${PUBLIC_PAYMENT_POLICY.timeLimitsText}`,
+      },
+      {
+        heading: "直播重溫同商品資料",
+        text: "錯過直播都可以重溫已發佈場次，再前往公開商品頁選購；品名、價錢同庫存以商品頁為準，開播時間以 Facebook 專頁公佈為準。",
+      },
+    ],
     links: [
       { href: "/products", label: "全部貨品" },
       { href: "/about", label: "認識 Glo Glo 同 RedCode" },
-      { href: "/faq", label: "開播通知教學" },
+      { href: "/faq", label: "付款及開播通知常見問題" },
     ],
   },
   "/about": {
     title: "關於我們｜RedCode Fashion Design",
     description:
-      "RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 每晚直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。",
+      "RedCode Fashion Design 係香港女裝直播網店，主播 Glo Glo 直播揀衫，為你帶嚟星空下最閃嘅款式。網站設 AI 試穿——影張相即刻試穿，即刻睇到著上身效果。",
     heading: "關於 RedCode Fashion Design",
     summary:
       "RedCode Fashion Design 係香港女裝直播網店。主播 Glo Glo 喺直播逐件示範質地、尺寸同上身效果，官方網站提供商品選購、直播重溫及 AI 試穿。",
@@ -89,6 +108,10 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
       {
         heading: "品牌名稱同官方渠道",
         text: "RedCode Fashion Design 亦以 RedCode、Red Code HK直播台及 @redcodexhk 為人認識；官方網站係 redcode.red，官方 Facebook 專頁係 facebook.com/redcodexhk。",
+      },
+      {
+        heading: "不定期優惠",
+        text: PUBLIC_OFFER_POLICY_TEXT,
       },
     ],
     links: [
@@ -194,11 +217,15 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
   "/returns": {
     title: "退換貨政策｜RedCode Fashion Design",
     description:
-      "RedCode 退換貨政策——收貨 7 天內：貨品破損包換包退（寄出前拍照紀錄），尺寸不合原則上可換貨。",
+      "RedCode 寄出及退換貨政策——正常約 7–10 個工作天寄出，部分商品可能更久；收貨 7 天內可提出退換申請。",
     heading: "RedCode 退換貨政策",
     summary:
-      "收到貨 7 天內，貨品有破損或寄錯貨，經核實可更換或退款；尺寸不合，同款有存貨時原則上可安排換貨。",
+      "正常情況下，訂單確認後約 7–10 個工作天寄出，惟部分商品可能需要更久。收到貨 7 天內，貨品有破損或寄錯貨，經核實可更換或退款；尺寸不合，同款有存貨時原則上可安排換貨。",
     sections: [
+      {
+        heading: "寄出時間（與退換期限分開）",
+        text: `${PUBLIC_DISPATCH_POLICY.visibleText}${PUBLIC_DISPATCH_POLICY.clarificationText}`,
+      },
       {
         heading: "申請期限同貨品狀態",
         text: "退換申請須喺收到貨品當日起計 7 天內提出；貨品須未經穿著或使用、吊牌未剪、原包裝完整，唔影響二次銷售。",
@@ -224,19 +251,19 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
     sections: [
       {
         heading: "唔開帳號買唔買到？",
-        text: "買到！用訪客快速結帳，填稱呼、電話同 email 就落得單，網上即時付款，記住喺 30 分鐘內完成付款，逾時訂單會自動取消。之後喺「我的訂單」頁用訂單編號＋電話就查到進度。不過開個帳號更著數——有積分同 VIP 折扣。",
+        text: `買到！用訪客快速結帳，填稱呼、電話同 email 就落得單。${PUBLIC_PAYMENT_POLICY.guestMethodText}${PUBLIC_PAYMENT_POLICY.timeLimitsText}訪客訂單逾時會自動取消。之後喺「我的訂單」頁用訂單編號＋電話就查到進度。不過開個帳號更著數——有積分同 VIP 折扣。`,
       },
       {
         heading: "付款方便嗎？",
-        text: "好方便！我哋支援即時支付（信用卡等），撳幾下就搞掂，唔使等過數、唔使入數紙。",
+        text: `好方便！${PUBLIC_PAYMENT_POLICY.methodsText}請按結帳頁提供嘅方式完成付款。`,
       },
       {
         heading: "落單過程係點？",
-        text: "整個流程好簡單，得四步：購買（揀貨落單）→ 付款（即時支付）→ 審批（我哋同事核實）→ 確認訂單（審批通過後訂單正式成立，等出貨）。",
+        text: "整個流程好簡單，得四步：購買（揀貨落單）→ 付款（即時支付，或按付款資料轉帳／支付後上傳截圖）→ 審批（我哋同事核實）→ 確認訂單（審批通過後訂單正式成立，等出貨）。",
       },
       {
         heading: "出貨時間？",
-        text: "訂單確認之後，大約 7–10 個工作天出貨。出咗貨會有通知話你知，記得留意。",
+        text: `${PUBLIC_DISPATCH_POLICY.visibleText}${PUBLIC_DISPATCH_POLICY.clarificationText}出咗貨會有通知話你知，記得留意。`,
       },
       {
         heading: "即時支付安全嗎？",
@@ -352,6 +379,61 @@ export const LUCKY_EVENT_SEO = {
   title: "中獎名單｜RedCode Fashion Design",
   description: "RedCode 直播抽獎中獎公告——即場抽出嘅真實幸運兒名單，下一個可能係你。",
 };
+
+/** 對外公告總開關關閉時嘅首口 SEO；同 client 關閉頁用字一致，唔再公開舊公告摘要。 */
+export const LUCKY_ANNOUNCEMENT_CLOSED_SEO = {
+  title: "中獎公告已關閉｜RedCode Fashion Design",
+  description:
+    "RedCode 對外抽獎公告功能暫時關閉；持有抽獎劵嘅客人可繼續用店家提供嘅專屬查劵連結自助查詢。",
+} as const;
+
+/**
+ * 總開關關閉時嘅無 JS 首口內容：唔注入任何活動名、場次資料或中獎者；
+ * 有合法 eventId 就先保留該場獨立查劵入口，查劵功能唔受公告開關影響。
+ */
+export function injectLuckyAnnouncementClosedContent(html: string, eventId?: number): string {
+  try {
+    if (html.includes('id="redcode-public-seo"')) return html;
+    const validEventId = Number.isSafeInteger(eventId) && Number(eventId) > 0 ? Number(eventId) : null;
+    const ticketLink = validEventId
+      ? `<p><a href="/lucky-tickets/${validEventId}">查自己有幾多張抽獎劵</a></p>`
+      : "";
+    const block =
+      `<main id="redcode-public-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8">` +
+      `<h1>對外中獎公告已關閉</h1>` +
+      `<p>${esc(LUCKY_ANNOUNCEMENT_CLOSED_SEO.description)}</p>${ticketLink}` +
+      `<nav aria-label="相關公開頁面"><ul><li><a href="/">返回 RedCode 首頁</a></li></ul></nav></main>`;
+    return html.replace("</body>", `    ${block}\n  </body>`);
+  } catch {
+    return html;
+  }
+}
+
+/** 總開關／活動資料讀取失敗：中性暫時不可用，唔虛構成已關閉，亦唔 fallback 出公告宣傳。 */
+export const LUCKY_ANNOUNCEMENT_UNAVAILABLE_SEO = {
+  title: "中獎公告暫時未能顯示｜RedCode Fashion Design",
+  description:
+    "RedCode 中獎公告暫時未能顯示，請稍後再試；持有抽獎劵嘅客人可繼續用店家提供嘅專屬查劵連結自助查詢。",
+} as const;
+
+/** 讀取失敗時嘅無 JS 首口內容：零活動名、零中獎者；查劵入口照常保留。 */
+export function injectLuckyAnnouncementUnavailableContent(html: string, eventId?: number): string {
+  try {
+    if (html.includes('id="redcode-public-seo"')) return html;
+    const validEventId = Number.isSafeInteger(eventId) && Number(eventId) > 0 ? Number(eventId) : null;
+    const ticketLink = validEventId
+      ? `<p><a href="/lucky-tickets/${validEventId}">查自己有幾多張抽獎劵</a></p>`
+      : "";
+    const block =
+      `<main id="redcode-public-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8">` +
+      `<h1>對外中獎公告暫時未能顯示</h1>` +
+      `<p>${esc(LUCKY_ANNOUNCEMENT_UNAVAILABLE_SEO.description)}</p>${ticketLink}` +
+      `<nav aria-label="相關公開頁面"><ul><li><a href="/">返回 RedCode 首頁</a></li></ul></nav></main>`;
+    return html.replace("</body>", `    ${block}\n  </body>`);
+  } catch {
+    return html;
+  }
+}
 
 /** Sitemap 只放 canonical、公開、可收錄嘅靜態頁；商品網址由現有 DB 查詢加入。 */
 export const SITEMAP_STATIC_PATHS = [

@@ -2,6 +2,7 @@ import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { products } from "@db/schema";
 import { productCategoryLabel, productSeoDescription } from "@contracts/types";
+import { PUBLIC_DISPATCH_POLICY, PUBLIC_RETURN_POLICY } from "@contracts/publicPolicies";
 import { stripPublicSeoContent } from "./publicSeo";
 import { publicAiTags } from "../productAiContent";
 import {
@@ -254,6 +255,8 @@ export async function injectProductOg(
       `<p>${esc(stockText)}</p>` +
       `<p>${esc(prerenderDesc)}</p>` +
       `${aiTags.length ? `<p>重點：${esc(aiTags.join("、"))}</p>` : ""}` +
+      `<p>${esc(PUBLIC_DISPATCH_POLICY.visibleText)}</p>` +
+      `<p>${esc(PUBLIC_DISPATCH_POLICY.clarificationText)}</p>` +
       `<nav aria-label="購物相關頁面"><ul><li><a href="/products">全部貨品</a></li><li><a href="/try-on">AI 試穿</a></li><li><a href="/returns">退換貨政策</a></li></ul></nav></main>`;
     out = out.replace("</body>", `    ${prerender}\n  </body>`);
 
@@ -288,14 +291,31 @@ export async function injectProductOg(
             "@type": "MerchantReturnPolicy",
             applicableCountry: "HK",
             returnPolicyCategory: "https://schema.org/MerchantReturnFiniteReturnWindow",
-            merchantReturnDays: 7,
+            merchantReturnDays: PUBLIC_RETURN_POLICY.applicationDays,
             merchantReturnLink: "https://redcode.red/returns",
             returnMethod: "https://schema.org/ReturnByMail",
             itemDefectReturnFees: "https://schema.org/FreeReturn",
             customerRemorseReturnFees: "https://schema.org/ReturnShippingFees",
           },
-          // 唔寫固定 shippingDetails：上門及未符合免運條件嘅訂單係順豐到付，
-          // 指定自取方式滿額又會免運，運費要由結帳按方式及小計計，唔係每件貨一律 HK$30。
+          // 只描述正常寄出 handling estimate；7–10 個工作天唔係送達保證，更加唔係退貨期限。
+          // 冇確認 transitTime，所以唔寫；運費亦要由結帳按收貨方式及小計計，唔寫固定 shippingRate。
+          shippingDetails: {
+            "@type": "OfferShippingDetails",
+            description: PUBLIC_DISPATCH_POLICY.visibleText,
+            shippingDestination: {
+              "@type": "DefinedRegion",
+              addressCountry: "HK",
+            },
+            deliveryTime: {
+              "@type": "ShippingDeliveryTime",
+              handlingTime: {
+                "@type": "QuantitativeValue",
+                minValue: PUBLIC_DISPATCH_POLICY.minBusinessDays,
+                maxValue: PUBLIC_DISPATCH_POLICY.maxBusinessDays,
+                unitCode: "DAY",
+              },
+            },
+          },
         },
       };
       // SEO（v2.2.21 E2）：BreadcrumbList JSON-LD（首頁 > 全部貨品 > 產品名），

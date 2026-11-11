@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import AppInstallGuide from '@/components/AppInstallGuide';
 import { AI_TRYON_TUTORIAL_POSTER, AI_TRYON_TUTORIAL_SRC } from '@/components/AiTryOnTutorial';
+import { PUBLIC_DISPATCH_POLICY, PUBLIC_PAYMENT_POLICY } from '@contracts/publicPolicies';
 
 /**
  * 常見問題 FAQ /faq
@@ -27,9 +28,8 @@ const FAQ_ITEMS: FaqItem[] = [
     a: (
       <>
         買到！用<span className="faq-key">訪客快速結帳</span>
-        ，填稱呼、電話同 email 就落得單，網上即時付款，記住喺
-        <span className="faq-mark">30 分鐘內</span>
-        完成付款，逾時訂單會自動取消。之後喺「我的訂單」頁用訂單編號＋電話就查到進度。
+        ，填稱呼、電話同 email 就落得單。{PUBLIC_PAYMENT_POLICY.guestMethodText}
+        {PUBLIC_PAYMENT_POLICY.timeLimitsText}訪客訂單逾時會自動取消。之後喺「我的訂單」頁用訂單編號＋電話就查到進度。
         不過開個帳號更著數——有積分同 VIP 折扣。
       </>
     ),
@@ -38,8 +38,8 @@ const FAQ_ITEMS: FaqItem[] = [
     q: '付款方便嗎？',
     a: (
       <>
-        好方便！我哋支援<span className="faq-key">即時支付</span>
-        （信用卡等），撳幾下就搞掂，唔使等過數、唔使入數紙。
+        好方便！{PUBLIC_PAYMENT_POLICY.methodsText}
+        請按結帳頁提供嘅方式完成付款。
       </>
     ),
   },
@@ -48,8 +48,8 @@ const FAQ_ITEMS: FaqItem[] = [
     a: (
       <>
         整個流程好簡單，得<span className="faq-mark">四步</span>：
-        <span className="faq-key">購買</span>（揀貨落單）→ 付款（即時支付）→ 審批（我哋同事核實）
-        → 確認訂單（審批通過後訂單正式成立，等出貨）。
+        <span className="faq-key">購買</span>（揀貨落單）→ 付款（即時支付，或按付款資料轉帳／支付後上傳截圖）
+        → 審批（我哋同事核實）→ 確認訂單（審批通過後訂單正式成立，等出貨）。
       </>
     ),
   },
@@ -57,8 +57,8 @@ const FAQ_ITEMS: FaqItem[] = [
     q: '出貨時間？',
     a: (
       <>
-        訂單確認之後，大約 <span className="faq-key">7–10 個工作天</span>
-        出貨。出咗貨會有通知話你知，記得留意。
+        <span className="faq-key">{PUBLIC_DISPATCH_POLICY.visibleText}</span>
+        {PUBLIC_DISPATCH_POLICY.clarificationText}出咗貨會有通知話你知，記得留意。
       </>
     ),
   },

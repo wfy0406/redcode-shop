@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { PUBLIC_DISPATCH_POLICY, PUBLIC_RETURN_POLICY } from '@contracts/publicPolicies';
 
 /**
  * 退換貨政策 /returns（2026-10-06 老闆要求）
@@ -74,7 +75,7 @@ export default function Returns() {
           RETURN &amp; EXCHANGE POLICY
         </p>
         <p className="mt-3 font-mono text-[13px] tracking-[0.08em] text-txt-3">
-          RedCode Fashion Design · 最近更新：2026 年 10 月
+          RedCode Fashion Design · 最近更新：2026 年 11 月 11 日
         </p>
       </header>
 
@@ -90,11 +91,21 @@ export default function Returns() {
         </div>
       </KeyBox>
 
+      <section className="mt-10 border-t pt-8" style={{ borderColor: 'var(--space-line)' }}>
+        <h2 className="font-serif-tc text-xl font-semibold leading-[1.35] text-txt-1 md:text-2xl">
+          寄出時間（與退換期限分開）
+        </h2>
+        <div className="mt-4 space-y-3 text-[15px] leading-[1.85] text-txt-2">
+          <p>{PUBLIC_DISPATCH_POLICY.visibleText}</p>
+          <p>{PUBLIC_DISPATCH_POLICY.clarificationText}</p>
+        </div>
+      </section>
+
       <div className="mt-10 space-y-10">
         <Section num="01" title="退換期限">
           <p>
-            1.1 所有退換申請，請喺<b className="text-txt-1">收到貨品當日起計 7 天內</b>
-            提出（以順豐簽收紀錄為準）。超過 7 天嘅申請，恕未能受理。
+            1.1 所有退換申請，請喺<b className="text-txt-1">收到貨品當日起計 {PUBLIC_RETURN_POLICY.applicationDays} 天內</b>
+            提出（以順豐簽收紀錄為準）。超過 {PUBLIC_RETURN_POLICY.applicationDays} 天嘅申請，恕未能受理。
           </p>
           <p>
             1.2 退換貨品必須<b className="text-txt-1">未經穿著或使用、吊牌未剪、原包裝完整</b>

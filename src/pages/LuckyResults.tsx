@@ -4,6 +4,7 @@ import { Gift, PartyPopper, Sparkles, Trophy } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { LuckyPublicActions } from '@/components/lucky/LuckyPublicActions';
 import { setCanonicalPath } from '@/lib/seo';
+import { holdClosedAnnouncementSeo, luckyAnnouncementGateOpen, luckyAnnouncementStatusFresh } from '@/lib/luckyAnnouncementVisibility';
 
 /**
  * LuckyResults（v2.5.8，老闆指令「公開抽獎公告要特別華麗動態引流」）
@@ -19,6 +20,12 @@ import { setCanonicalPath } from '@/lib/seo';
  *   直播開播通知（重用現有 browser push／會員流程）＋ AI 試穿（/try-on）＋
  *   Facebook 專頁＋ Facebook 分享（真 sharer URL）＋複製公開連結。
  * - 華麗動畫全部淨 transform／opacity（GPU-only），prefers-reduced-motion 自動停。
+ *
+ * v2026.11.11.2（老闆指令：對外抽獎公告總開關，預設關閉）：
+ * - luckyDraw.publicAnnouncementStatus 回 {enabled:false} → 成個功能對外收埋：
+ *   總頁同單場頁都顯示「對外中獎公告已關閉」＋獨立查劵入口，客戶端即刻 noindex，
+ *   **唔會再渲染任何舊 React Query 快取入面嘅活動名／中獎名單**（closed branch 先於 data branch）。
+ * - 查劵頁（/lucky-tickets/:eventId）係獨立路徑，唔受總開關影響——呢度只提供入口。
  */
 
 /** YYYYMMDD → YYYY-MM-DD */
@@ -49,16 +56,74 @@ export default function LuckyResults() {
   return <LuckyResultsEvent eventIdRaw={params.eventId} />;
 }
 
+/* ---------- 總開關關閉時嘅統一對外文案（v2026.11.11.2） ----------
+ * 零活動名／零中獎名單（唔渲染任何舊快取資料）；只保留獨立查劵指引——
+ * 查劵頁係獨立路徑，公告關閉唔影響客人查自己嘅劵。 */
+function AnnouncementClosedCard({ eventId }: { eventId?: number }) {
+  return (
+    <div className="lr-state" role="status">
+      <Gift size={22} aria-hidden="true" className="mx-auto mb-3 text-gold" />
+      <p className="font-serif-tc text-lg font-semibold text-txt-1">對外中獎公告已關閉</p>
+      <p className="mt-2 text-[13.5px] leading-relaxed text-txt-3">
+        RedCode 暫停公開抽獎公告；之前已公佈嘅活動同中獎名單已經全部收埋。
+      </p>
+      {eventId ? (
+        <>
+          <p className="mt-2 text-[13.5px] leading-relaxed text-txt-3">
+            持有呢場抽獎劵嘅客人唔受影響，仍然可以用獨立查劵連結睇自己有幾多張劵：
+          </p>
+          <p className="lr-lookup-cta-wrap">
+            <Link to={`/lucky-tickets/${eventId}`} className="lr-lookup-link">
+              🔍查自己有幾多張抽獎劵
+            </Link>
+          </p>
+        </>
+      ) : (
+        <p className="mt-2 text-[13.5px] leading-relaxed text-txt-3">
+          持有抽獎劵嘅客人唔受影響：用店家提供嘅專屬查劵連結（/lucky-tickets/活動編號），照舊查到自己有幾多張劵。
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ---------- 公告總頁：全部公開活動一覽（新→舊） ---------- */
 function LuckyResultsIndex() {
-  const query = trpc.luckyDraw.publicEvents.useQuery(undefined, {
+  // v2026.11.11.2（加強版）：只有總開關明確 enabled===true 先准出公告——
+  // status 初次 loading／讀取失敗／舊快取 true 待重查期間，一律當「未確認」：
+  // 唔打 publicEvents、**唔渲染任何舊快取嘅活動名**（舊 React Query 快取唔可以再公開）。
+  const statusQuery = trpc.luckyDraw.publicAnnouncementStatus.useQuery(undefined, {
     retry: false,
     staleTime: 0,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     refetchInterval: 30_000,
   });
-  const events = query.data ?? [];
+  const announcementOpen =
+    luckyAnnouncementStatusFresh(statusQuery) && luckyAnnouncementGateOpen(statusQuery.data?.enabled);
+  const announcementClosed = statusQuery.data?.enabled === false;
+  // 舊快取 true 唔算數：背景重查（isRefetching）期間 gate 暫時關——呢段窗口要出中性
+  // 「重新確認」態，絕唔好跌入 events=[] 嘅「仲未有抽獎活動」（會誤導客人以為活動消失）。
+  const reconfirming =
+    !statusQuery.isLoading && !statusQuery.isError && !announcementClosed && !announcementOpen;
+  const query = trpc.luckyDraw.publicEvents.useQuery(undefined, {
+    enabled: announcementOpen,
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
+  });
+  const events = announcementOpen ? (query.data ?? []) : [];
+
+  // 關閉時客戶端 SEO：noindex＋清 canonical（首口 HTML 已由 server 保證唔注入公告內容）。
+  // hold 住：SeoManager（App root，parent effect 後跑）會喺路由變化時重設 index,follow，
+  // 關閉期間一翻轉即刻還原（見 src/lib/luckyAnnouncementVisibility.ts）。
+  useEffect(() => {
+    if (!announcementClosed) return;
+    return holdClosedAnnouncementSeo();
+  }, [announcementClosed]);
+
   return (
     <div className="lr-page">
       <div aria-hidden="true" className="lr-stars">
@@ -75,7 +140,30 @@ function LuckyResultsIndex() {
         </h1>
         <div className="lr-enter lr-card mt-8" style={{ animationDelay: '0.25s' }}>
           <span aria-hidden="true" className="lr-card-shine" />
-          {query.isLoading ? (
+          {statusQuery.isLoading ? (
+            // 總開關狀態未確認：中性載入態，零活動資料（舊快取唔准閃現）
+            <p className="lr-state" role="status">
+              <Sparkles size={16} aria-hidden="true" className="mr-2 inline-block text-gold" />
+              許願星確認緊公告狀態…
+            </p>
+          ) : statusQuery.isError ? (
+            // 狀態讀取失敗：中性錯誤態＋重試，一樣零活動資料
+            <div className="lr-state" role="alert">
+              <p className="font-serif-tc text-lg font-semibold text-txt-1">載入失敗</p>
+              <p className="mt-2 text-[13.5px] text-txt-3">{statusQuery.error.message}</p>
+              <button type="button" onClick={() => void statusQuery.refetch()} className="lr-cta lr-cta-gold mx-auto mt-5">
+                重試
+              </button>
+            </div>
+          ) : announcementClosed ? (
+            <AnnouncementClosedCard />
+          ) : reconfirming ? (
+            // 舊 status 重查緊（fresh gate 暫時關）：中性重新確認態，零活動資料
+            <p className="lr-state" role="status">
+              <Sparkles size={16} aria-hidden="true" className="mr-2 inline-block text-gold" />
+              許願星重新確認緊公告狀態…
+            </p>
+          ) : query.isLoading ? (
             <p className="lr-state" role="status">
               <Sparkles size={16} aria-hidden="true" className="mr-2 inline-block text-gold" />
               許願星搬緊活動一覽…
@@ -137,10 +225,28 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
   const eventId = Number(eventIdRaw);
   const validId = Number.isInteger(eventId) && eventId > 0;
 
+  // v2026.11.11.2（加強版）：只有總開關明確 enabled===true 先准打名單 query／渲染——
+  // status 初次 loading／讀取失敗／舊快取 true 待重查期間一律當「未確認」，
+  // 唔渲染任何舊快取嘅活動名／中獎名單（舊 React Query 快取唔可以再公開）。
+  const statusQuery = trpc.luckyDraw.publicAnnouncementStatus.useQuery(undefined, {
+    enabled: validId,
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
+  });
+  const statusFresh = luckyAnnouncementStatusFresh(statusQuery);
+  const announcementOpen = validId && statusFresh && luckyAnnouncementGateOpen(statusQuery.data?.enabled);
+  const announcementClosed = validId && statusQuery.data?.enabled === false;
+  // 舊快取 true 喺背景重查期間 gate 暫時關：出中性「重新確認」態（唔好出白卡／唔好出舊名單）
+  const reconfirming =
+    validId && !statusQuery.isLoading && !statusQuery.isError && !announcementClosed && !announcementOpen;
+
   const query = trpc.luckyDraw.publicEventResults.useQuery(
     { eventId: validId ? eventId : 0 },
     {
-      enabled: validId,
+      enabled: announcementOpen,
       retry: false,
       // 公告開關會喺另一分頁改；唔可以俾 60 秒 fresh cache 令舊名單無限期留喺畫面。
       // 後台切換會即時 remove 同一 SPA 快取；其他已開分頁就喺聚焦或下一次 30 秒重查時收起。
@@ -151,7 +257,8 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
     },
   );
 
-  const data = query.data ?? null;
+  // 總開關未確認／關閉時 query 停用，但 data 可能係舊快取——只有 announcementOpen 先准讀佢
+  const data = announcementOpen ? (query.data ?? null) : null;
   // v2026.10.26.2 活動日期顯示資料：
   // scheduledLabel＝活動級預定抽獎日（scheduledDrawDate，null＝舊活動未定，如實寫待公佈）；
   // actualDrawDates＝真實 winner 紀錄嘅實際抽出日（luckyDraws.drawDate，去重排序）——同預定日分開標示。
@@ -166,6 +273,11 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
 
   useEffect(() => {
     const robots = document.querySelector('meta[name="robots"]');
+    // v2026.11.11.2：總開關關閉 → 客戶端即刻 noindex＋清 canonical，兼 hold 住唔俾
+    // SeoManager（parent effect 後跑）喺路由變化時翻轉返 index,follow。
+    if (announcementClosed) {
+      return holdClosedAnnouncementSeo();
+    }
     if (!validId || notFound) {
       document.title = '中獎公告未公開或唔存在｜RedCode Fashion Design';
       document
@@ -185,7 +297,7 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
       );
     robots?.setAttribute('content', 'index, follow');
     setCanonicalPath(`/lucky-results/${data.event.id}`);
-  }, [data, eventId, notFound, validId]);
+  }, [data, eventId, notFound, validId, announcementClosed]);
 
   return (
     <div className="lr-page">
@@ -218,6 +330,34 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
 
           {!validId ? (
             <p className="lr-state" role="alert">連結唔啱——請向店家攞正確嘅公告連結。</p>
+          ) : statusQuery.isLoading ? (
+            // 總開關狀態未確認：中性載入態，零活動名零中獎者（舊快取唔准閃現）
+            <p className="lr-state" role="status">
+              <Sparkles size={16} aria-hidden="true" className="mr-2 inline-block text-gold" />
+              許願星確認緊公告狀態…
+            </p>
+          ) : statusQuery.isError ? (
+            // 狀態讀取失敗：中性錯誤態＋重試，一樣零活動資料
+            <div className="lr-state" role="alert">
+              <p className="font-serif-tc text-lg font-semibold text-txt-1">載入失敗</p>
+              <p className="mt-2 text-[13.5px] text-txt-3">{statusQuery.error.message}</p>
+              <button
+                type="button"
+                onClick={() => void statusQuery.refetch()}
+                className="lr-cta lr-cta-gold mx-auto mt-5"
+              >
+                重試
+              </button>
+            </div>
+          ) : announcementClosed ? (
+            // 總開關關閉：唔打名單 query、唔渲染舊快取名單；提供呢場獨立查劵入口
+            <AnnouncementClosedCard eventId={eventId} />
+          ) : reconfirming ? (
+            // 舊 status 重查緊（fresh gate 暫時關）：中性重新確認態，零活動名零中獎者
+            <p className="lr-state" role="status">
+              <Sparkles size={16} aria-hidden="true" className="mr-2 inline-block text-gold" />
+              許願星重新確認緊公告狀態…
+            </p>
           ) : query.isLoading ? (
             <p className="lr-state" role="status">
               <Sparkles size={16} aria-hidden="true" className="mr-2 inline-block text-gold" />
@@ -309,15 +449,23 @@ function LuckyResultsEvent({ eventIdRaw }: { eventIdRaw: string }) {
           ) : null}
         </div>
 
-        {/* 引流 CTA 區（同查劵頁共用；保持原公告頁行為／文案） */}
-        <div className="lr-enter mt-10" style={{ animationDelay: '0.5s' }}>
-          <LuckyPublicActions shareUrl={pageUrl} copyLabel="複製公告連結" />
-          <p className="mt-4 text-center text-[12px] text-txt-3">
+        {/* 引流 CTA 區（同查劵頁共用；保持原公告頁行為／文案）。v2026.11.11.2：總開關關閉時唔出引流 CTA，只留返首頁。 */}
+        {announcementClosed ? (
+          <p className="mt-6 text-center text-[12px] text-txt-3">
             <Link to="/" className="underline underline-offset-4 transition-opacity hover:opacity-75">
               返去 RedCode 首頁
             </Link>
           </p>
-        </div>
+        ) : (
+          <div className="lr-enter mt-10" style={{ animationDelay: '0.5s' }}>
+            <LuckyPublicActions shareUrl={pageUrl} copyLabel="複製公告連結" />
+            <p className="mt-4 text-center text-[12px] text-txt-3">
+              <Link to="/" className="underline underline-offset-4 transition-opacity hover:opacity-75">
+                返去 RedCode 首頁
+              </Link>
+            </p>
+          </div>
+        )}
       </section>
       <LuckyResultsStyles />
     </div>

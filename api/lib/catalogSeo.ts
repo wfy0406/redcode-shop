@@ -37,6 +37,42 @@ export async function listPublicCatalog(limit = 48, live?: LiveFilter): Promise<
     .limit(cap);
 }
 
+export interface PublicLiveCatalogItem extends PublicCatalogItem {
+  category: string | null;
+}
+
+/**
+ * 直播節目頁專用（v2026.11.11.2）：攞該日／該場**全場**公開商品，
+ * 同 listPublicCatalog 同一套公開上架條件，但**唔設展示 cap**——
+ * SEO／GEO 摘要（件數、分類組成、代表商品）要數晒全場先係真數，
+ * 唔好用 48/60 或任何硬上限冒充總數（場次商品量自然有限，係真場次先會有頁）。
+ * 展示清單由 caller 自己 slice（首口 HTML 目錄照舊淨係出頭 48 件）。
+ */
+export async function listPublicLiveCatalog(
+  live: LiveFilter,
+): Promise<PublicLiveCatalogItem[]> {
+  return getDb()
+    .select({
+      id: products.id,
+      sku: products.sku,
+      name: products.name,
+      price: products.price,
+      discountPrice: products.discountPrice,
+      stock: products.stock,
+      category: products.category,
+    })
+    .from(products)
+    .where(
+      and(
+        eq(products.isActive, true),
+        or(eq(products.delistEnabled, false), isNull(products.delistAt), gt(products.delistAt, new Date())),
+        eq(products.liveDate, live.liveDate),
+        ...(live.liveSession ? [eq(products.liveSession, live.liveSession)] : []),
+      ),
+    )
+    .orderBy(desc(products.listedDate), desc(products.id));
+}
+
 /**
  * sitemap 用：公開商品實際出現過嘅直播日期／場次組合（distinct）。
  * 同 listPublicCatalog 同一套公開條件（上架中＋未自動下架），

@@ -5,6 +5,7 @@ import FacebookPageEmbed from '@/components/FacebookPageEmbed';
 import LiveNowSection from '@/components/push/LiveNowSection';
 import LiveHistorySection from '@/components/push/LiveHistorySection';
 import { useReveal } from '@/hooks/useReveal';
+import { PUBLIC_PAYMENT_POLICY } from '@contracts/publicPolicies';
 
 /**
  * RedCode 直播專區（/live）
@@ -20,7 +21,7 @@ import { useReveal } from '@/hooks/useReveal';
 const WHATSAPP_URL = 'https://wa.me/85254835368';
 const FACEBOOK_URL = 'https://www.facebook.com/redcodexhk';
 
-/* ---------- 直播場次（唔寫死時間，以 FB 公佈為準） ---------- */
+/* ---------- 直播場次（唔寫死時間或頻率，以 FB 公佈為準） ---------- */
 const SCHEDULE = [
   {
     icon: Sunrise,
@@ -39,9 +40,9 @@ const SCHEDULE = [
   {
     icon: Moon,
     tag: '#晚上場',
-    time: '每晚',
+    time: '晚上',
     title: '晚上場',
-    body: '每晚開播，新品著身、快閃價、留言下單。單場可以長達 3 小時以上，慢慢揀唔使急。',
+    body: '晚上開播時會有新品著身、快閃價同留言下單。單場可以長達 3 小時以上，慢慢揀唔使急。',
   },
   {
     icon: Zap,
@@ -52,7 +53,7 @@ const SCHEDULE = [
   },
 ];
 
-/* ---------- 落單四步 ---------- */
+/* ---------- 落單四步：直播出單及收款，唔同官網兩種付款方式混為一談 ---------- */
 const STEPS = [
   {
     num: '01',
@@ -66,13 +67,13 @@ const STEPS = [
   },
   {
     num: '03',
-    title: '我哋確認訂單 · INBOX 出單',
-    body: '我哋核對訂單後，會經 INBOX 出單俾你，列明款色、數量同金額。核對無誤，就可以安排付款。',
+    title: '直播出單及收款',
+    body: PUBLIC_PAYMENT_POLICY.liveText,
   },
   {
     num: '04',
-    title: '付款完成',
-    body: '跟單上嘅方法付款（轉數快／銀行入數），上傳入數截圖。我哋確認後，即刻安排發貨。',
+    title: '核實訂單 · 安排寄貨',
+    body: '我哋核實款項同訂單內容後，會按確認資料安排後續寄貨；訂單進度以通知為準。',
   },
 ];
 
@@ -189,14 +190,14 @@ export default function Live() {
               className="script hero-enter mt-3 text-[26px] leading-[1.3] md:text-[34px]"
               style={{ animationDelay: '0.6s' }}
             >
-              every night, live from Hong Kong ✦
+              live from Hong Kong ✦
             </p>
             <p
               className="hero-enter mt-5 max-w-lg text-[15px] leading-[1.75] text-txt-2 md:text-base"
               style={{ animationDelay: '0.65s' }}
             >
-              Glo Glo 每晚喺 Facebook 開直播，即場著身、即場開賣、留言落單。
-              錯過咗都唔緊要——入專頁可以重溫晒所有場次。
+              Glo Glo 喺 Facebook 開直播，即場著身、即場開賣、留言落單。
+              錯過咗都唔緊要——入專頁可以重溫直播場次，開播時間以專頁公佈為準。
             </p>
             <div
               className="hero-enter mt-8 flex flex-col gap-4 sm:flex-row sm:items-center"
@@ -344,6 +345,18 @@ export default function Live() {
               </div>
             ))}
           </div>
+          <div
+            className="mt-10 rounded-2xl border bg-space-2 px-6 py-6 md:px-8"
+            style={{ borderColor: 'var(--glass-border)' }}
+          >
+            <h3 className="text-lg font-bold text-txt-1">官網購物付款方式</h3>
+            <p className="mt-3 max-w-4xl text-[15px] leading-[1.8] text-txt-2">
+              {PUBLIC_PAYMENT_POLICY.methodsText}
+            </p>
+            <p className="mt-2 max-w-4xl text-sm leading-[1.8] text-txt-3">
+              {PUBLIC_PAYMENT_POLICY.timeLimitsText}
+            </p>
+          </div>
         </div>
       </section>
 
@@ -356,7 +369,7 @@ export default function Live() {
         >
           <p className="font-mono text-xs tracking-[0.2em] text-pink-tint">#不一樣的靚衫</p>
           <h2 className="mx-auto mt-3 max-w-xl font-serif-tc text-2xl font-semibold leading-[1.3] text-starlight md:text-[32px]">
-            今晚，直播間見
+            開播時間以專頁公佈為準
           </h2>
           <p className="mx-auto mt-4 max-w-md text-[15px] leading-[1.75] text-txt-2">
             追蹤專頁，開播即刻收到通知；想問款或者確認訂單，WhatsApp 隨時搵我哋。

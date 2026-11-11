@@ -62,6 +62,19 @@
  *   myPendingWin 排除 eventId 非 null 嘅活動劵中獎——活動中獎唔走入官網會員確認彈窗
  *     （adminDrawEvent 維持 pending 作內部起單狀態，公開公告本來已計 pending+confirmed）。
  *
+ * v2026.11.11.2（老闆指令：成個對外抽獎公告功能要可以一掣關閉，預設關閉）：
+ *   總開關存 siteSettings key="lucky_announcement_public"（見 api/lib/luckyAnnouncementVisibility.ts）——
+ *   **設定唔存在一律當關閉**；日後管理員明確開啟先恢復。對外可見＝總開關開 AND 該場 winnersPublic
+ *   （每場開關照舊保留，兩層 AND 先出）。後台切換位：「直播抽獎 → 抽獎劵活動（開獎舞台）」。
+ *   adminGetAnnouncementPublic（主管＋管理員睇現況）／adminSetAnnouncementPublic（**管理員專用**，
+ *   寫入即時 reset server 快取＋audit；權限後端強制，唔係齋收 UI）／
+ *   publicAnnouncementStatus（公開，只回 {enabled}，唔回任何活動／中獎資料，
+ *   畀公告頁分清「已關閉」同「冇公開活動」）。
+ *   關閉時一刀切：publicEvents 即刻空陣列（Navbar 入口自動收埋）、publicEventResults 一律
+ *   NOT_FOUND（同未公開／唔存在完全同樣，唔執行 event/winner 查詢，零活動資料外洩）、
+ *   首口 HTML（luckyEventSeo）唔注入公告內容、sitemap 唔列 /lucky-results*；
+ *   獨立查劵（publicTicketEvent／publicLookupEventTicket／/lucky-tickets/:id）唔經總開關，照常可用。
+ *
  * 客人（authedProcedure）：
  *   myPendingWin——全域彈窗用：最新一筆 pending 中獎（＋獎品資料）
  *   respondWin——「多謝，請寄送」（preset 用會員預設順豐站／地址；station 揀新站點）
@@ -126,6 +139,11 @@ import { sendPrizeWinEmail } from "./email";
 import { sendPrizeWinPush } from "./livePush";
 import { forwardOrderToWms } from "./wmsSync";
 import { logAudit } from "./audit";
+import {
+  LUCKY_ANNOUNCEMENT_PUBLIC_SETTING_KEY,
+  isLuckyAnnouncementPublic,
+  setLuckyAnnouncementPublic,
+} from "./lib/luckyAnnouncementVisibility";
 
 /** 消費計數嘅訂單狀態：批咗／出咗貨／完成先算真消費（待審批／取消唔計） */
 const PAID_STATUSES = ["approved", "shipped", "completed"] as const;
@@ -2059,6 +2077,28 @@ export const luckyDrawRouter = createRouter({
       return { ok: true as const, winnersPublic: actualWinnersPublic };
     }),
 
+  /** v2026.11.11.2（老闆指令）：對外抽獎公告「總開關」讀取——主管＋管理員都睇到現況，
+   *  但切換係管理員專用（adminSetAnnouncementPublic）。預設關閉（設定唔存在＝關）。 */
+  adminGetAnnouncementPublic: supervisorProcedure.query(async () => ({
+    enabled: await isLuckyAnnouncementPublic(),
+  })),
+
+  /** v2026.11.11.2（老闆指令）：對外抽獎公告「總開關」寫入——**管理員專用**（權限後端強制）。
+   *  關閉＝成個對外公告功能收埋（總覽／單場公告 URL／Navbar 入口／首口 HTML／sitemap），
+   *  只保留獨立查劵 link／查劵 API；每場 winnersPublic 開關保留但唔會單獨生效（兩層 AND）。
+   *  寫入即時 reset server 快取（luckyAnnouncementVisibility），同一 process 即刻生效。 */
+  adminSetAnnouncementPublic: adminProcedure
+    .input(z.object({ enabled: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      await setLuckyAnnouncementPublic(input.enabled);
+      void logAudit({
+        actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.setAnnouncementPublic",
+        targetType: "setting", targetId: LUCKY_ANNOUNCEMENT_PUBLIC_SETTING_KEY,
+        detail: `對外抽獎公告總開關 → ${input.enabled ? "開啟（每場 winnersPublic 開關照舊各自把關）" : "關閉（成個對外公告收埋，只保留獨立查劵 link）"}`,
+      });
+      return { ok: true as const, enabled: input.enabled };
+    }),
+
   /** v2.5.8（老闆指令）：刪除成個活動——確認後先郁手。
    *  鐵律：唔波及訂單或其他業務資料——呢個活動抽出嚟嘅 luckyDraws 中獎紀錄全部留底
    *  （eventId/eventEntryId 解綁 SET NULL，winnerName 快照、orderId、狀態全部唔郁），
@@ -2733,13 +2773,23 @@ export const luckyDrawRouter = createRouter({
 
   // ───────────────────────── 公開：中獎公告（v2.5.8）─────────────────────────
 
+  /** v2026.11.11.2：對外公告總開關狀態（唔使登入）——只回 {enabled}，
+   *  唔回任何活動／中獎資料；畀公告頁分清「成個功能已關閉」同「冇公開活動」兩種情況，
+   *  亦畀前端正確收埋舊 React Query 快取（關閉時唔再渲染任何舊名單）。 */
+  publicAnnouncementStatus: publicProcedure.query(async () => ({
+    enabled: await isLuckyAnnouncementPublic(),
+  })),
+
   /** 公開公告總頁（唔使登入）：全部未刪除活動一覽（新→舊），
    *  連「企得硬」中獎數（pending+confirmed，同 adminListEvents drawnCount 同一口径）。
    *  只放活動名＋預定抽獎日（scheduledDrawDate，null＝待公佈）＋建立時間＋中獎數；
    *  唔放任何參加者／中獎人資料（名單去逐場公告頁睇）。
    *  v2026.11.08：只回 winnersPublic=true 活動——關閉公告嘅活動唔會出現喺總頁，
-   *  但唔影響其他活動入口（逐場查劵 link 唔經呢度）。 */
+   *  但唔影響其他活動入口（逐場查劵 link 唔經呢度）。
+   *  v2026.11.11.2：對外公告總開關關閉 → 即刻空陣列（唔查活動表，零活動資料外洩；
+   *  Navbar「中獎公告」入口靠空陣列自動收埋）。 */
   publicEvents: publicProcedure.query(async () => {
+    if (!(await isLuckyAnnouncementPublic())) return [];
     const db = getDb();
     const events = await db
       .select({
@@ -2771,10 +2821,16 @@ export const luckyDrawRouter = createRouter({
    *  活動唔存在／已刪除 → NOT_FOUND（公開頁顯示「活動唔存在或已刪除」）；
    *  仲未抽獎 → winners 空陣列（公開頁顯示「中獎名單即將公佈」）。
    *  v2026.11.08：winnersPublic=false（公告關閉）一律 NOT_FOUND——同唔存在／已刪除完全同樣，
-   *  唔執行 winner query、唔回活動名或任何 winner rows（舊 direct URL 都收埋）。 */
+   *  唔執行 winner query、唔回活動名或任何 winner rows（舊 direct URL 都收埋）。
+   *  v2026.11.11.2：對外公告總開關關閉 → 一樣 NOT_FOUND（同一 message，先檢查、唔執行
+   *  event/winner 查詢；查劵路徑 publicTicketEvent／publicLookupEventTicket 唔受影響）。 */
   publicEventResults: publicProcedure
     .input(z.object({ eventId: z.number().int().positive() }))
     .query(async ({ input }) => {
+      // 總開關關閉＝成個功能對外收埋：同「未公開／唔存在」完全同樣 NOT_FOUND，零活動資料外洩
+      if (!(await isLuckyAnnouncementPublic())) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "中獎公告未公開或活動唔存在" });
+      }
       const db = getDb();
       const [event] = await db
         .select({
@@ -2828,6 +2884,7 @@ export const luckyDrawRouter = createRouter({
 
   /** 公開查劵頁活動資料（唔使登入）：唔受 winnersPublic 公告開關影響——公告關閉只收埋中獎名單，
    *  查劵係另一條獨立公開路徑（歸檔活動都可以查歷史資料；活動刪除 → NOT_FOUND）。
+   *  v2026.11.11.2：對外公告總開關都唔影響呢度——查劵 link／查劵 API 獨立照常可用。
    *  私隱鐵律：只回 id／活動名／預定抽獎日／每人限中次數／winnersPublic；
    *  唔回參加者數、總劵數或任何名單。 */
   publicTicketEvent: publicProcedure
@@ -2854,7 +2911,8 @@ export const luckyDrawRouter = createRouter({
    *  必須 mutation（POST）：查詢輸入係個人資料，唔入 GET query string／access log／browser history。
    *  私隱鐵律：成功只回 found:true＋ticketCount；找不到只回 found:false；
    *  絕唔回名單／其他參加者／entry id／holderName；唔支援空白、部份名、wildcard、列表或自動建議。
-   *  活動刪除 → NOT_FOUND；歸檔仍可查歷史劵數（唔擋）。 */
+   *  活動刪除 → NOT_FOUND；歸檔仍可查歷史劵數（唔擋）。
+   *  v2026.11.11.2：對外公告總開關都唔影響呢度——客人憑獨立 link 照舊查到自己有幾多張劵。 */
   publicLookupEventTicket: publicProcedure
     .input(
       z.object({

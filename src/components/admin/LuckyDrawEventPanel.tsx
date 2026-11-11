@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, ArchiveRestore, Copy, Facebook, ImageDown, Pencil, Plus, Share2, Ticket, TicketCheck, Trash2, Trophy } from 'lucide-react';
+import { Archive, ArchiveRestore, Copy, Facebook, ImageDown, Megaphone, Pencil, Plus, Share2, Ticket, TicketCheck, Trash2, Trophy } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
+import { useAuth } from '@/hooks/useAuth';
 import { fmtDateTime } from './format';
 import { LoadingBlock } from './WishingStar';
 import LuckyDrawExcelImport from './LuckyDrawExcelImport';
 import { downloadAnnouncementPng } from '@/lib/luckyAnnouncementPng';
+import { resetLuckyAnnouncementPublicQueries } from '@/lib/luckyAnnouncementVisibility';
 
 /**
  * LuckyDrawEventPanel —— 抽獎劵活動管理（v2.5.6，LuckyDrawPanel 劵模式右欄）
@@ -24,6 +26,10 @@ import { downloadAnnouncementPng } from '@/lib/luckyAnnouncementPng';
  *     內部中獎名單主管照舊睇到）；adminAddEventEntry（手動新增姓名＋劵數，同名 server 加劵）；
  *     adminSetEventEntryTicketCount（每列改總劵數）；adminDeleteEventEntries（批量刪除，
  *     任何已中獎者整批拒絕）；查劵公開 link（/lucky-tickets/:eventId）永遠可複製／預覽／FB 分享。
+ *   v2026.11.11.2（老闆指令）：adminGetAnnouncementPublic／adminSetAnnouncementPublic——
+ *     對外抽獎公告「總開關」（預設關閉；切換係管理員專用、後端強制，主管只睇到現況）。
+ *     關閉＝成個對外公告功能收埋（總覽／單場 URL／Navbar 入口／首口 HTML／sitemap），
+ *     只保留獨立查劵 link；對外可見＝總開關開 AND 該場 winnersPublic。
  * Excel 匯入抽獎劵由 LuckyDrawExcelImport（kind="ticket"）處理。
  */
 
@@ -144,6 +150,9 @@ export default function LuckyDrawEventPanel({
   toast: (msg: string, kind?: 'success' | 'error') => void;
 }) {
   const utils = trpc.useUtils();
+  // v2026.11.11.2：對外公告總開關係管理員專用（後端 adminProcedure 強制）；主管只睇現況
+  const { user: me } = useAuth();
+  const isAdmin = me?.role === 'admin';
   const [newName, setNewName] = useState('');
   const [newMaxWins, setNewMaxWins] = useState('1');
   // v2026.10.26.2：開活動必填預定抽獎日（date input 值 YYYY-MM-DD）
@@ -263,6 +272,38 @@ export default function LuckyDrawEventPanel({
     },
     onError: (e) => toast(fmtErr(e), 'error'),
   });
+  // v2026.11.11.2：對外抽獎公告「總開關」（預設關閉）。
+  // 讀取主管＋管理員都得；切換係管理員專用（後端 adminProcedure 強制，UI 只係提示）。
+  const announcementQuery = trpc.luckyDraw.adminGetAnnouncementPublic.useQuery(undefined, { refetchOnWindowFocus: false });
+  // 未讀到／讀取失敗時保守當關閉顯示（server 本身預設關閉）
+  const announcementOn = announcementQuery.data?.enabled === true;
+  const announcementMut = trpc.luckyDraw.adminSetAnnouncementPublic.useMutation({
+    onSuccess: (r) => {
+      toast(
+        r.enabled
+          ? '對外抽獎公告總開關已開啟——每場 winnersPublic 開關照舊各自把關（總開＋該場公開先會出）；查劵 link 一直可用'
+          : '對外抽獎公告總開關已關閉——對外總覽／單場公告／Navbar 入口／sitemap 即時收晒；查劵 link 唔受影響',
+        'success',
+      );
+      void utils.luckyDraw.adminGetAnnouncementPublic.invalidate();
+      // 即時清對外舊快取：總覽／Navbar／**全部 eventId** 嘅單場公告都 reset（唔只係揀中嗰場），
+      // 唔准重播舊活動或舊名單（見 src/lib/luckyAnnouncementVisibility.ts；
+      // 其他已開分頁聚焦或 ≤60 秒重查亦會收）。
+      resetLuckyAnnouncementPublicQueries(utils);
+    },
+    onError: (e) => toast(fmtErr(e), 'error'),
+  });
+  /** 總開關切換（管理員專用；兩個方向都 confirm 講明後果；pending 防雙擊） */
+  const toggleAnnouncementPublic = () => {
+    if (!isAdmin || announcementMut.isPending) return;
+    const target = !announcementOn;
+    const ok = window.confirm(
+      target
+        ? '重新開啟成個對外抽獎公告功能？\n\n・對外公告總覽、單場公告 URL、Navbar「中獎公告」入口同 sitemap 會即時恢復\n・每場 winnersPublic 開關照舊各自把關——總開關開 AND 該場公開先會對外顯示\n・獨立抽獎劵查詢 link 一直唔受影響'
+        : '關閉成個對外抽獎公告功能？\n\n・對外公告總覽、全部單場公告 URL、Navbar「中獎公告」入口同 sitemap 嘅公告 URL 會即時收埋（SEO noindex／首口 HTML 唔再注入公告內容）\n・舊公告連結會顯示「對外公告已關閉」，唔會殘留任何中獎名單\n・獨立抽獎劵查詢 link 同查劵 API 照常可用',
+    );
+    if (ok) announcementMut.mutate({ enabled: target });
+  };
   // v2026.11.08：手動新增姓名＋劵數（同人 normalizedName 精確重複 → server 自動加劵）
   const addEntryMut = trpc.luckyDraw.adminAddEventEntry.useMutation({
     onSuccess: (r) => {
@@ -365,7 +406,8 @@ export default function LuckyDrawEventPanel({
     winnersPublicMut.isPending ||
     addEntryMut.isPending ||
     setTicketCountMut.isPending ||
-    deleteEntriesMut.isPending;
+    deleteEntriesMut.isPending ||
+    announcementMut.isPending;
 
   /** v2.5.8：改名提交（空名／無改動唔出 request） */
   const commitRename = () => {
@@ -557,6 +599,59 @@ export default function LuckyDrawEventPanel({
 
   return (
     <div className="mt-3 space-y-3">
+      {/* v2026.11.11.2（老闆指令）：對外抽獎公告「總開關」——預設關閉；切換係管理員專用
+          （後端 adminProcedure 強制），主管只睇到現況。關閉＝成個對外公告收埋，
+          只保留獨立查劵 link（下面「抽獎劵查詢連結」永遠可用）。 */}
+      <div
+        className="rounded-lg border px-2.5 py-2"
+        style={{
+          borderColor: announcementOn ? 'rgba(123,216,143,0.5)' : 'rgba(255,0,84,0.45)',
+          background: announcementOn ? 'rgba(123,216,143,0.06)' : 'rgba(255,0,84,0.05)',
+        }}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="min-w-0 flex-1 text-[12px] font-semibold text-gold-soft">
+            <Megaphone size={12} aria-hidden="true" className="mr-1 inline-block text-gold" />
+            對外抽獎公告總開關（成個對外公告功能；預設關閉）
+          </p>
+          <button
+            type="button"
+            onClick={toggleAnnouncementPublic}
+            disabled={!isAdmin || announcementMut.isPending || announcementQuery.isLoading}
+            aria-pressed={announcementOn}
+            title={
+              !isAdmin
+                ? '只有管理員可以切換對外公告總開關（後端強制）'
+                : announcementOn
+                  ? '撳一下關閉成個對外公告功能（總覽／單場公告／Navbar 入口／sitemap 即時收埋）'
+                  : '撳一下重新開啟對外公告（每場 winnersPublic 開關照舊各自把關）'
+            }
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] font-bold transition-colors disabled:opacity-40"
+            style={
+              announcementOn
+                ? { borderColor: 'rgba(123,216,143,0.5)', color: '#7BD88F', background: 'rgba(123,216,143,0.10)' }
+                : { borderColor: 'rgba(255,0,84,0.4)', color: 'var(--pink-soft)', background: 'rgba(255,0,84,0.08)' }
+            }
+          >
+            <span
+              aria-hidden="true"
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ background: announcementOn ? '#7BD88F' : 'var(--pink-soft)' }}
+            />
+            {announcementMut.isPending ? '切換緊…' : announcementOn ? '對外公告：開啟中' : '對外公告：已關閉'}
+          </button>
+        </div>
+        <p className="mt-2 text-[11.5px] leading-relaxed text-txt-3">
+          {announcementQuery.isError
+            ? '總開關狀態載入失敗——server 預設係關閉；請重新整理或搵管理員確認。'
+            : announcementOn
+              ? '對外公告開啟中：對外總覽／單場公告 URL／Navbar「中獎公告」入口／sitemap 生效；每場 winnersPublic 開關照舊各自把關。'
+              : '對外公告已關閉：對外總覽、全部單場公告 URL、Navbar「中獎公告」入口同 sitemap 都收埋晒，舊公告連結只會見到「對外公告已關閉」同查劵入口；每場 winnersPublic 開關保留但唔會單獨生效。'}
+          獨立抽獎劵查詢 link（/lucky-tickets/:eventId）同查劵 API 唔受總開關影響，客人照舊查到自己有幾多張劵。
+          {!isAdmin && '（切換要管理員權限）'}
+        </p>
+      </div>
+
       {/* 活動 picker */}
       {eventsQuery.isLoading ? (
         <LoadingBlock text="許願星搬緊活動…" />
@@ -882,7 +977,7 @@ export default function LuckyDrawEventPanel({
           <div className="rounded-lg border px-2.5 py-2" style={{ borderColor: 'rgba(245,197,24,0.35)' }}>
             <div className="flex flex-wrap items-center gap-2">
               <p className="min-w-0 flex-1 text-[12px] font-semibold text-gold-soft">
-                公開中獎公告／全網選單開關（每場獨立；對外唔放電話／會員編號／地址）
+                公開中獎公告／全網選單開關（每場獨立；對外唔放電話／會員編號／地址；要上面總開關開啟先會對外顯示）
               </p>
               {/* v2026.11.08：公告開關（每場獨立；關閉有確認講明後果） */}
               <button
@@ -908,6 +1003,7 @@ export default function LuckyDrawEventPanel({
             </div>
             <p className="mt-2 text-[11.5px] leading-relaxed text-txt-3">
               全部活動嘅公告都關閉後，全網「更多」選單會自動收埋「中獎公告」；下面嘅獨立查劵 link 唔受呢個開關影響。
+              {announcementOn ? '' : '⚠️ 而家對外公告總開關係關閉中——就算呢場開咗公告，對外都唔會顯示（總開關開 AND 此場公開先會出）。'}
             </p>
             {selected.winnersPublic ? (
               <div className="mt-2 flex flex-wrap items-center gap-2">
