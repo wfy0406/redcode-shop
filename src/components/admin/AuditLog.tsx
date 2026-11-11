@@ -36,6 +36,8 @@ const ACTION_LABEL: Record<string, string> = {
   'order.ship': '轉出貨',
   'order.cancel': '取消訂單',
   'order.resyncWms': '重試WMS同步',
+  'order.wmsAutoResync': 'WMS自動重試成功',
+  'order.recoverLuckyWms': '補送中獎訂單到WMS',
   'product.create': '新增商品',
   'product.update': '更新商品',
   'product.remove': '刪除商品',

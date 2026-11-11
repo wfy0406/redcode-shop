@@ -14,7 +14,9 @@
  *   ③ 停送 customerEmail／paymentMethod／sessionNo／color；remark 唔再包「尺寸」段；
  *   ④ 回調 decision=rejected 新增 rejectType：cancel＝訂單取消（終態）／reupload＝付款重傳
  *     （冇 rejectType 嘅舊格式 rejected 一律當 cancel，跟文檔向後兼容指引）；
- *   ⑤ 客人重傳截圖時 ordersRouter 會先清走 wmsSyncLog，等重審件可以重新送落 WMS。
+ *   ⑤ 客人重傳截圖時 ordersRouter 會重置 wmsSyncLog，等重審件可以重新送落 WMS。
+ * v1.4（2026-11-11 中獎單漏送修復）：起單同事務持久排隊、原子認領、逐件保存、
+ *   成功必須有 webhookOrderId、退避自動重試；只有新排隊／主管確認補救嘅單會自動重播。
  *
  * 方向一（官網 → WMS）：客人上傳付款截圖之後，訂單逐件貨 call WMS `order.receiveWebhook`，
  *   WMS 管理員/主管喺「審批中心 → 官網訂單審批」見到（連截圖 base64），批准/拒絕。
@@ -23,7 +25,8 @@
  *   兼寫入審計日誌（actorRole=system），後台「日誌」頁可以翻查 WMS 審批結果。
  *
  * 防重複：一單一列 wmsSyncLog，webhookOrderIds 同 orderItems 對位；已成功嘅件 skip；
- *   客人重傳截圖時會先清走嗰列，否則重審件永遠送唔到（v1.3 §2.3）。
+ *   WMS 對相同 sourceRef＋貨品 key 嘅 pending／approved 行另有 dedup 並回現有 ID；
+ *   客人重傳截圖時會先重置嗰列，否則重審件永遠送唔到（v1.3 §2.3）。
  *
  * Env：
  *   WMS_API_KEY          WMS 管理員提供嘅 apiKey（未設 → 同步記錄標 disabled，官網照行）
@@ -33,8 +36,9 @@
  *   PUBLIC_BASE_URL      預設 https://redcode.red（screenshotUrl 用）
  */
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, like, lt, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { getDb } from "./queries/connection";
 import { orders, paymentProofs, products, wmsSyncLog } from "@db/schema";
@@ -51,6 +55,16 @@ const DEFAULT_PUBLIC_BASE_URL = "https://redcode.red";
 const PER_CALL_TIMEOUT_MS = 90_000;
 // 大過呢個 size 就唔附 base64（WMS 可經 sourcePayload.screenshotUrl 睇原圖）
 const MAX_SCREENSHOT_BYTES = 1_800_000;
+
+// 可靠投遞：沿用現有 wmsSyncLog，唔加 migration。lastError 開頭標記只代表「呢個版本新建立、
+// 或主管明確批准補救」嘅單可以先自動重試；歷史失敗紀錄唔會因部署而被無差別重播。
+export const WMS_AUTO_RETRY_PREFIX = "[wms-auto:v1]";
+export const WMS_AUTO_QUEUE_MESSAGE = `${WMS_AUTO_RETRY_PREFIX} 等待送往 WMS`;
+const WMS_SYNCING_PREFIX = "[wms-syncing:v1:";
+const WMS_CLAIM_STALE_MS = 4 * 60_000;
+const WMS_MAX_AUTO_ATTEMPTS = 6;
+const WMS_RETRY_BATCH_LIMIT = 2;
+const WMS_RETRY_DELAYS_MS = [5 * 60_000, 15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
 
 export type SyncStatus = "pending" | "sent" | "partial" | "failed" | "disabled";
 
@@ -243,6 +257,55 @@ export interface ForwardResult {
   lastError: string | null;
 }
 
+function validWebhookOrderId(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+/** 舊紀錄 JSON 有可能缺件／格式壞；只承認正整數 ID，null 會保留做未成功件。 */
+export function parseWebhookOrderIds(raw: string | null): (number | null)[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((value) => (validWebhookOrderId(value) ? value : null));
+  } catch {
+    return [];
+  }
+}
+
+function hasAutoRetryMarker(lastError: string | null): boolean {
+  return Boolean(lastError?.startsWith(WMS_AUTO_RETRY_PREFIX));
+}
+
+function syncingMarker(autoRetry: boolean, token: string): string {
+  return `${autoRetry ? WMS_AUTO_RETRY_PREFIX : ""}${WMS_SYNCING_PREFIX}${token}]`;
+}
+
+function isSyncingMessage(lastError: string | null): boolean {
+  return Boolean(lastError?.includes(WMS_SYNCING_PREFIX));
+}
+
+function withAutoRetryMarker(autoRetry: boolean, message: string): string {
+  return `${autoRetry ? `${WMS_AUTO_RETRY_PREFIX} ` : ""}${message}`;
+}
+
+/** attempts=0 係從未嘗試嘅新排隊；其後按上次嘗試次數退避。 */
+export function wmsRetryDelayMs(attempts: number): number {
+  if (attempts <= 0) return 0;
+  return WMS_RETRY_DELAYS_MS[Math.min(attempts - 1, WMS_RETRY_DELAYS_MS.length - 1)];
+}
+
+export function isWmsAutoRetryDue(
+  row: { status: string; attempts: number; updatedAt: Date; lastError: string | null },
+  now = new Date(),
+): boolean {
+  if (!["pending", "partial", "failed", "disabled"].includes(row.status)) return false;
+  if (!hasAutoRetryMarker(row.lastError) || row.attempts >= WMS_MAX_AUTO_ATTEMPTS) return false;
+  const age = now.getTime() - row.updatedAt.getTime();
+  if (isSyncingMessage(row.lastError)) return age >= WMS_CLAIM_STALE_MS;
+  return age >= wmsRetryDelayMs(row.attempts);
+}
+
 interface OrderItemRow {
   productName: string;
   size: string | null;
@@ -288,7 +351,10 @@ function allocateActualPrices(
  * 將一張官網訂單逐件貨送去 WMS（每 call 一件，sourceRef 全部都係官網單號）。
  * 永遠唔 throw：結果寫落 wmsSyncLog，官網落單流程唔受 WMS 狀態影響。
  */
-export async function forwardOrderToWms(orderId: number): Promise<ForwardResult> {
+export async function forwardOrderToWms(
+  orderId: number,
+  options: { autoRetry?: boolean } = {},
+): Promise<ForwardResult> {
   const db = getDb();
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, orderId),
@@ -301,40 +367,123 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
   const proof = pickProof(order.proofs);
   const lineCount = order.items.length;
 
-  // 之前嘅同步記錄（一單一列）
-  const prev = await db.query.wmsSyncLog.findFirst({
+  // 未送網絡之前先落持久排隊；onConflict 解決同一張單雙擊／開機重試同時插入。
+  let prev = await db.query.wmsSyncLog.findFirst({
     where: eq(wmsSyncLog.orderId, orderId),
   });
-  const prevIds: (number | null)[] = prev?.webhookOrderIds
-    ? (JSON.parse(prev.webhookOrderIds) as (number | null)[])
-    : [];
-
-  const upsertSync = async (patch: Partial<typeof wmsSyncLog.$inferInsert>) => {
-    if (prev) {
-      await db
-        .update(wmsSyncLog)
-        .set({ ...patch, updatedAt: new Date() })
-        .where(eq(wmsSyncLog.id, prev.id));
-    } else {
-      await db.insert(wmsSyncLog).values({
-        orderId,
-        proofId: proof?.id ?? null,
-        ...patch,
-      });
-    }
-  };
-
-  if (!wmsConfigured()) {
-    const lastError = "未設定 WMS_API_KEY（或者 WMS_SYNC_DISABLED=1）";
-    await upsertSync({
-      status: "disabled",
+  let autoRetry = options.autoRetry === true || !prev || hasAutoRetryMarker(prev.lastError);
+  if (!prev) {
+    await db.insert(wmsSyncLog).values({
+      orderId,
+      proofId: proof?.id ?? null,
+      status: "pending",
       lineCount,
       okCount: 0,
-      lastError,
-      attempts: (prev?.attempts ?? 0) + 1,
+      attempts: 0,
+      lastError: autoRetry ? WMS_AUTO_QUEUE_MESSAGE : "等待送往 WMS",
+    }).onConflictDoNothing({ target: wmsSyncLog.orderId });
+    prev = await db.query.wmsSyncLog.findFirst({
+      where: eq(wmsSyncLog.orderId, orderId),
     });
-    return { status: "disabled", lineCount, okCount: 0, lastError };
+    autoRetry = autoRetry || hasAutoRetryMarker(prev?.lastError ?? null);
   }
+  if (!prev) {
+    return { status: "failed", lineCount, okCount: 0, lastError: "未能建立 WMS 同步排隊" };
+  }
+
+  const prevIds = parseWebhookOrderIds(prev.webhookOrderIds);
+  const prevOkCount = prevIds.filter(validWebhookOrderId).length;
+  if (prev.status === "sent" && lineCount > 0 && prevIds.slice(0, lineCount).every(validWebhookOrderId) && prevOkCount >= lineCount) {
+    return { status: "sent", lineCount, okCount: lineCount, lastError: null };
+  }
+
+  // 已批准／拒絕／取消嘅單唔可以靠人手重試或舊工作者再次開單。
+  if (order.status !== "payment_review") {
+    return {
+      status: "failed",
+      lineCount,
+      okCount: prevOkCount,
+      lastError: `訂單狀態係 ${order.status}，唔再送往 WMS`,
+    };
+  }
+
+  // 進行中嘅工作者每件貨都會 heartbeat；只有超過 stale 時限先俾另一工作者接手。
+  if (isSyncingMessage(prev.lastError) && Date.now() - prev.updatedAt.getTime() < WMS_CLAIM_STALE_MS) {
+    return { status: "pending", lineCount, okCount: prevOkCount, lastError: "WMS 同步進行中，唔會重複推送" };
+  }
+
+  if (!wmsConfigured()) {
+    const lastError = withAutoRetryMarker(autoRetry, "未設定 WMS_API_KEY（或者 WMS_SYNC_DISABLED=1）");
+    const updated = await db
+      .update(wmsSyncLog)
+      .set({
+        status: "disabled",
+        lineCount,
+        okCount: prevOkCount,
+        proofId: proof?.id ?? null,
+        lastError,
+        attempts: prev.attempts + 1,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(wmsSyncLog.id, prev.id),
+        sql`${wmsSyncLog.lastError} IS NOT DISTINCT FROM ${prev.lastError}`,
+      ))
+      .returning({ id: wmsSyncLog.id });
+    if (updated.length !== 1) {
+      return { status: "pending", lineCount, okCount: prevOkCount, lastError: "WMS 同步狀態啱啱更新咗，請稍後再試" };
+    }
+    return { status: "disabled", lineCount, okCount: prevOkCount, lastError };
+  }
+
+  if (lineCount === 0) {
+    const lastError = withAutoRetryMarker(autoRetry, "訂單冇貨品，未能送往 WMS");
+    await db
+      .update(wmsSyncLog)
+      .set({ status: "failed", lineCount: 0, okCount: 0, lastError, updatedAt: new Date() })
+      .where(and(
+        eq(wmsSyncLog.id, prev.id),
+        sql`${wmsSyncLog.lastError} IS NOT DISTINCT FROM ${prev.lastError}`,
+      ));
+    return { status: "failed", lineCount: 0, okCount: 0, lastError };
+  }
+
+  // 樂觀鎖原子認領：最後訊息係狀態版本，舊值一變，第二個工作者就認領失敗；
+  // 唔單靠毫秒級 updatedAt。DB transaction 唔包住 HTTP call。
+  const claimToken = randomUUID();
+  const claimMessage = syncingMarker(autoRetry, claimToken);
+  const claimedAt = new Date();
+  const claimed = await db
+    .update(wmsSyncLog)
+    .set({
+      status: "pending",
+      lineCount,
+      proofId: proof?.id ?? null,
+      lastError: claimMessage,
+      attempts: prev.attempts + 1,
+      updatedAt: claimedAt,
+    })
+    .where(and(
+      eq(wmsSyncLog.id, prev.id),
+      sql`${wmsSyncLog.lastError} IS NOT DISTINCT FROM ${prev.lastError}`,
+    ))
+    .returning({ id: wmsSyncLog.id });
+  if (claimed.length !== 1) {
+    return { status: "pending", lineCount, okCount: prevOkCount, lastError: "另一個 WMS 同步工作者已接手，唔會重複推送" };
+  }
+
+  const ids: (number | null)[] = Array.from({ length: lineCount }, (_, i) => prevIds[i] ?? null);
+  const errors: string[] = [];
+  const updateOwned = async (patch: Partial<typeof wmsSyncLog.$inferInsert>) => {
+    const rows = await db
+      .update(wmsSyncLog)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(wmsSyncLog.id, prev.id), eq(wmsSyncLog.lastError, claimMessage)))
+      .returning({ id: wmsSyncLog.id });
+    if (rows.length !== 1) throw new Error("WMS 同步認領已轉手，停止覆寫進度");
+  };
+
+  try {
 
   const screenshot = proof ? await loadScreenshot(proof.imagePath) : null;
   const actualPrices = allocateActualPrices(
@@ -411,13 +560,21 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     screenshotUrl: proof ? `${publicBaseUrl()}${proof.imagePath}` : null,
   });
 
-  const results: WmsCallResult[] = [];
   for (let i = 0; i < order.items.length; i++) {
-    // 已成功嘅件 skip——WMS 唔 dedup sourceRef，重複 send 會重複出單
-    if (prevIds[i]) {
-      results.push({ webhookOrderId: prevIds[i], error: null });
-      continue;
+    // WMS 對相同 sourceRef＋貨品 key 嘅 pending／approved 行有 dedup；
+    // 已保存成功 ID 嘅件仍然直接 skip，唔依賴網絡重送去對數。
+    if (validWebhookOrderId(ids[i])) continue;
+
+    // 審批回調可能喺上一 call 之後先到；一離開 payment_review 就停止，唔再開新一輪。
+    const current = await db.query.orders.findFirst({
+      where: eq(orders.id, orderId),
+      columns: { status: true },
+    });
+    if (current?.status !== "payment_review") {
+      errors.push(`訂單狀態已轉做 ${current?.status ?? "不存在"}，停止後續 WMS 推送`);
+      break;
     }
+
     const item = order.items[i];
     const remark = [
       `官網訂單 ${order.orderNo}${lineCount > 1 ? `（共 ${lineCount} 件，第 ${i + 1} 件）` : ""}`,
@@ -445,7 +602,7 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
     ]
       .filter(Boolean)
       .join("｜");
-    const r = await callReceiveWebhook({
+    const raw = await callReceiveWebhook({
       customerName: order.user ? order.user.name : `【訪客】${order.guestName ?? "客人"}`,
       customerPhone: order.user ? order.user.phone : (order.guestPhone ?? ""),
       // 2026-07-28 WMS《貨號欄位修正請求》：productCode 改送貨號 sku，
@@ -464,33 +621,149 @@ export async function forwardOrderToWms(orderId: number): Promise<ForwardResult>
       paymentScreenshot: screenshot?.base64,
       paymentScreenshotMimeType: screenshot?.mimeType,
     });
-    results.push(r);
+    const r: WmsCallResult = !raw.error && !validWebhookOrderId(raw.webhookOrderId)
+      ? { webhookOrderId: null, error: "WMS 回覆成功但欠 webhookOrderId，未能確認收單編號" }
+      : raw;
+    if (r.error) {
+      errors.push(r.error);
+    } else {
+      ids[i] = r.webhookOrderId;
+    }
+
+    // 每一件完成即刻保存 ID＋heartbeat；Render 重啟都唔會丢低已確認嘅進度。
+    await updateOwned({
+      lineCount,
+      okCount: ids.filter(validWebhookOrderId).length,
+      webhookOrderIds: JSON.stringify(ids),
+    });
   }
 
-  const okCount = results.filter((r) => !r.error).length;
-  const status: SyncStatus =
-    okCount === lineCount ? "sent" : okCount === 0 ? "failed" : "partial";
-  const lastError = results.find((r) => r.error)?.error ?? null;
-  await upsertSync({
+  const okCount = ids.filter(validWebhookOrderId).length;
+  const status: SyncStatus = okCount === lineCount ? "sent" : okCount === 0 ? "failed" : "partial";
+  const lastError = errors.length > 0 ? withAutoRetryMarker(autoRetry, errors[0]) : null;
+  await updateOwned({
     status,
     lineCount,
     okCount,
-    webhookOrderIds: JSON.stringify(results.map((r) => r.webhookOrderId)),
+    webhookOrderIds: JSON.stringify(ids),
     lastError,
-    attempts: (prev?.attempts ?? 0) + 1,
   });
   console.log(`[wms] forward ${order.orderNo}: ${status} (${okCount}/${lineCount})`);
   return { status, lineCount, okCount, lastError };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "WMS 同步例外";
+    const okCount = ids.filter(validWebhookOrderId).length;
+    const status: SyncStatus = okCount > 0 ? "partial" : "failed";
+    const lastError = withAutoRetryMarker(autoRetry, message.slice(0, 1000));
+    // 認領已轉手／DB 暫時寫唔到都唔可以再 throw 返去落單流程；保留 loud log。
+    await db
+      .update(wmsSyncLog)
+      .set({
+        status,
+        lineCount,
+        okCount,
+        webhookOrderIds: JSON.stringify(ids),
+        lastError,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(wmsSyncLog.id, prev.id), eq(wmsSyncLog.lastError, claimMessage)))
+      .catch(() => undefined);
+    console.error(`[wms] forward order #${orderId} 例外：${message}`);
+    return { status, lineCount, okCount, lastError };
+  }
+}
+
+export interface WmsRetrySweepResult {
+  scanned: number;
+  attempted: number;
+  sent: number;
+  failed: number;
+}
+
+/**
+ * 開機／每 5 分鐘掃描：只處理有 auto:v1 標記、官網仍係 payment_review、未到重試上限嘅單。
+ * 歷史紀錄同 sent 單唔會無差別重播；已拒絕但回調正常到達嘅單亦會畀 orders.status 擋住。
+ */
+export async function retryPendingWmsSync(now = new Date()): Promise<WmsRetrySweepResult> {
+  if (!wmsConfigured()) return { scanned: 0, attempted: 0, sent: 0, failed: 0 };
+  const db = getDb();
+  const rows = await db
+    .select({
+      orderId: wmsSyncLog.orderId,
+      status: wmsSyncLog.status,
+      attempts: wmsSyncLog.attempts,
+      updatedAt: wmsSyncLog.updatedAt,
+      lastError: wmsSyncLog.lastError,
+    })
+    .from(wmsSyncLog)
+    .innerJoin(orders, eq(orders.id, wmsSyncLog.orderId))
+    .where(and(
+      eq(orders.status, "payment_review"),
+      inArray(wmsSyncLog.status, ["pending", "partial", "failed", "disabled"]),
+      like(wmsSyncLog.lastError, `${WMS_AUTO_RETRY_PREFIX}%`),
+      lt(wmsSyncLog.attempts, WMS_MAX_AUTO_ATTEMPTS),
+    ))
+    .orderBy(asc(wmsSyncLog.updatedAt))
+    .limit(50);
+
+  const due = rows.filter((row) => isWmsAutoRetryDue(row, now)).slice(0, WMS_RETRY_BATCH_LIMIT);
+  let sent = 0;
+  let failed = 0;
+  for (const row of due) {
+    try {
+      const result = await forwardOrderToWms(row.orderId, { autoRetry: true });
+      if (result.status === "sent") {
+        sent += 1;
+        void logAudit({
+          actorId: null,
+          actorRole: "system",
+          actorNameFallback: "WMS 同步排程",
+          action: "order.wmsAutoResync",
+          targetType: "order",
+          targetId: row.orderId,
+          detail: `WMS 同步自動重試成功（${result.okCount}/${result.lineCount} 件，第 ${row.attempts + 1} 次嘗試）`,
+        });
+      } else if (result.status !== "pending") {
+        failed += 1;
+      }
+    } catch (e) {
+      failed += 1;
+      console.error(`[wms] 自動重試訂單 #${row.orderId} 失敗:`, e);
+    }
+  }
+  return { scanned: rows.length, attempted: due.length, sent, failed };
 }
 
 /**
  * 客人重傳付款截圖（attachPaymentProof，訂單由 rejected 再入 payment_review）之前必做：
- * 清走嗰單嘅 wmsSyncLog，等 forwardOrderToWms 唔會 skip 舊成功件（v1.3 §2.3）。
+ * 重置而非刪除同步列，等 forwardOrderToWms 唔會 skip 舊成功件（v1.3 §2.3）。
+ * lastError 一變，舊工作者嘅 owner guard 會即時失效，唔可以覆寫新一輪進度。
  * WMS 端保證舊 rejected 紀錄唔會觸發 dedup 阻擋，重送會開新一輪 pending。
  */
 export async function resetWmsSyncLogForReupload(orderId: number): Promise<void> {
   const db = getDb();
-  await db.delete(wmsSyncLog).where(eq(wmsSyncLog.orderId, orderId));
+  await db.insert(wmsSyncLog).values({
+    orderId,
+    proofId: null,
+    status: "pending",
+    lineCount: 0,
+    okCount: 0,
+    webhookOrderIds: null,
+    lastError: WMS_AUTO_QUEUE_MESSAGE,
+    attempts: 0,
+  }).onConflictDoUpdate({
+    target: wmsSyncLog.orderId,
+    set: {
+      proofId: null,
+      status: "pending",
+      lineCount: 0,
+      okCount: 0,
+      webhookOrderIds: null,
+      lastError: WMS_AUTO_QUEUE_MESSAGE,
+      attempts: 0,
+      updatedAt: new Date(),
+    },
+  });
 }
 
 /**

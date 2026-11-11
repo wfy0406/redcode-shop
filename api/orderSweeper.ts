@@ -11,6 +11,7 @@ import {
   type ShipmentEmailBatch,
 } from "./email";
 import { returnWalletForOrder } from "./wallet";
+import { retryPendingWmsSync } from "./wmsSync";
 
 /**
  * 待付款訂單自動取消（2026-07-30 Glo 規則；2026-08-04 起收緊做 2 天）
@@ -367,15 +368,22 @@ async function sendDueShipmentEmails(now = new Date()): Promise<number> {
   return sent;
 }
 
-/** 開機啟動：即刻掃一次，之後每 5 分鐘掃一次（會員 48h＋訪客 30min＋充值單 48h＋出貨信 debounce 同一輪掃） */
+/** 開機啟動：即刻掃一次，之後每 5 分鐘掃一次（逾期取消＋出貨信＋WMS 持久排隊重試同一輪掃） */
 export function startOrderSweeper(): void {
   const run = (label: string) =>
-    Promise.all([sweepExpiredPendingOrders(), sweepExpiredGuestOrders(), sweepExpiredWalletTopups(), sendDueShipmentEmails()])
-      .then(([n, g, w, s]) => {
+    Promise.all([
+      sweepExpiredPendingOrders(),
+      sweepExpiredGuestOrders(),
+      sweepExpiredWalletTopups(),
+      sendDueShipmentEmails(),
+      retryPendingWmsSync(),
+    ])
+      .then(([n, g, w, s, r]) => {
         if (n > 0) console.log(`[sweeper] ${label}：自動取消咗 ${n} 張逾期待付款訂單`);
         if (g > 0) console.log(`[sweeper] ${label}：自動取消咗 ${g} 張訪客逾時訂單（30 分鐘未付款）`);
         if (w > 0) console.log(`[sweeper] ${label}：自動取消咗 ${w} 張購物金充值單（30 分鐘未付款）`);
         if (s > 0) console.log(`[sweeper] ${label}：寄出咗 ${s} 封出貨通知（10 分鐘 debounce 合併）`);
+        if (r.attempted > 0) console.log(`[sweeper] ${label}：WMS 自動重試 ${r.attempted} 張（成功 ${r.sent}、仍待處理 ${r.failed}）`);
       })
       .catch((e) => console.error(`[sweeper] ${label}失敗:`, e));
 

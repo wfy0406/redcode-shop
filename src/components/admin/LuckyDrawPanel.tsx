@@ -9,6 +9,7 @@ import TicketDrawStage from './TicketDrawStage';
 import LuckyDrawEventPanel from './LuckyDrawEventPanel';
 import type { DrawEvent } from './LuckyDrawEventPanel';
 import LuckyDrawExcelImport from './LuckyDrawExcelImport';
+import LuckyWmsRecovery from './LuckyWmsRecovery';
 
 /**
  * v2.2.46 直播抽獎大輪盤（老闆 2026-10-03 指令：「整到好華麗，會直播比客睇」）
@@ -3011,6 +3012,15 @@ function DrawHistorySection({
                           >
                             {meta.label}
                           </span>
+                          {r.status === 'confirmed' && r.orderStatus === 'payment_review' && r.orderId != null && (
+                            <LuckyWmsRecovery
+                              orderId={r.orderId}
+                              onRecovered={() => {
+                                void utils.luckyDraw.adminHistory.invalidate();
+                                void utils.orders.wmsSyncStates.invalidate();
+                              }}
+                            />
+                          )}
                           {r.status === 'pending' && !shadowAccount && !r.notifiedAt && (
                             <button
                               type="button"

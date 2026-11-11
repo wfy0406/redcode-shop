@@ -137,7 +137,7 @@ import {
 } from "./luckyDrawXlsx";
 import { sendPrizeWinEmail } from "./email";
 import { sendPrizeWinPush } from "./livePush";
-import { forwardOrderToWms } from "./wmsSync";
+import { forwardOrderToWms, parseWebhookOrderIds, WMS_AUTO_QUEUE_MESSAGE } from "./wmsSync";
 import { logAudit } from "./audit";
 import {
   LUCKY_ANNOUNCEMENT_PUBLIC_SETTING_KEY,
@@ -1799,6 +1799,17 @@ export const luckyDrawRouter = createRouter({
           price: 0, // 中獎商品入 0 元（老闆指定）
           quantity: 1,
         });
+        // 同一 transaction 留低持久排隊：commit 後即使 Render 重啟殺死背景 promise，
+        // 開機／定時掃描仍可按 orderId 接手，唔會再出現「WMS 審批中」但全無同步紀錄。
+        await tx.insert(wmsSyncLog).values({
+          orderId: inserted.id,
+          proofId: null,
+          status: "pending",
+          lineCount: 1,
+          okCount: 0,
+          attempts: 0,
+          lastError: WMS_AUTO_QUEUE_MESSAGE,
+        });
         const bound = await tx
           .update(luckyDraws)
           .set({ orderId: inserted.id })
@@ -1810,8 +1821,8 @@ export const luckyDrawRouter = createRouter({
         return inserted;
       });
 
-      // 背景飛 WMS（唔阻回應；失敗淨係寫 wmsSyncLog，後台可重試）
-      void forwardOrderToWms(order.id).catch(() => undefined);
+      // 背景飛 WMS（唔阻回應）；持久排隊已同事務寫入，失敗會由排程重試，例外唔靜默。
+      void forwardOrderToWms(order.id).catch((e) => console.error(`[wms] 中獎訂單 #${order.id} 同步例外:`, e));
 
       void logAudit({
         actorId: ctx.user.userId, actorRole: ctx.user.role, action: "luckyDraw.confirmManual",
@@ -1819,6 +1830,79 @@ export const luckyDrawRouter = createRouter({
         detail: `自訂名單中獎確定：${prize.name} → ${draw.winnerName} → 訂單 ${order.orderNo}（0 元包郵）`,
       });
       return { ok: true as const, orderId: order.id, orderNo: order.orderNo };
+    }),
+
+  /**
+   * 舊中獎單 WMS 補救：預設 dry-run，逐張明確指定 orderId。
+   * 只有「confirmed 中獎＋payment_review＋冇任何成功 WMS ID」先可以申請補送；
+   * apply 必須由主管確認已用單號查過 WMS 冇 pending／approved／rejected 紀錄。
+   */
+  adminRecoverWms: supervisorProcedure
+    .input(z.object({
+      orderId: z.number().int().positive(),
+      apply: z.boolean().optional().default(false),
+      confirmWmsAbsent: z.boolean().optional().default(false),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+      const [row] = await db
+        .select({
+          drawId: luckyDraws.id,
+          drawStatus: luckyDraws.status,
+          orderId: orders.id,
+          orderNo: orders.orderNo,
+          orderStatus: orders.status,
+          syncStatus: wmsSyncLog.status,
+          lineCount: wmsSyncLog.lineCount,
+          okCount: wmsSyncLog.okCount,
+          attempts: wmsSyncLog.attempts,
+          lastError: wmsSyncLog.lastError,
+          webhookOrderIds: wmsSyncLog.webhookOrderIds,
+          syncUpdatedAt: wmsSyncLog.updatedAt,
+        })
+        .from(luckyDraws)
+        .innerJoin(orders, eq(luckyDraws.orderId, orders.id))
+        .leftJoin(wmsSyncLog, eq(wmsSyncLog.orderId, orders.id))
+        .where(eq(luckyDraws.orderId, input.orderId))
+        .limit(1);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "搵唔到呢張中獎訂單" });
+
+      const webhookOrderIds = parseWebhookOrderIds(row.webhookOrderIds).filter((id): id is number => id != null);
+      const sync = row.syncStatus == null ? null : {
+        status: row.syncStatus,
+        lineCount: row.lineCount,
+        okCount: row.okCount,
+        attempts: row.attempts,
+        lastError: row.lastError,
+        webhookOrderIds,
+        updatedAt: row.syncUpdatedAt,
+      };
+      let reason: string | null = null;
+      if (row.drawStatus !== "confirmed") reason = `中獎紀錄狀態係 ${row.drawStatus}，唔可以補送`;
+      else if (row.orderStatus !== "payment_review") reason = `訂單狀態係 ${row.orderStatus}，唔再係 WMS 審批中`;
+      else if (row.syncStatus === "sent" && webhookOrderIds.length > 0) reason = "同步紀錄已係 sent 並有收單 ID：請查 WMS 審批紀錄同回調，唔好重送";
+      else if (webhookOrderIds.length > 0) reason = "已有成功 WMS 收單 ID：可能係部分送達或回調缺口，請人手對數，唔好重送";
+      // 舊版可能 success:true 但冇 ID 都寫 sent；呢種矛盾紀錄喺主管確認 WMS 全無紀錄後可補送。
+      const canApply = reason == null;
+
+      if (!input.apply) {
+        return { dryRun: true as const, canApply, reason, orderId: row.orderId, orderNo: row.orderNo, drawId: row.drawId, sync };
+      }
+      if (!canApply) throw new TRPCError({ code: "CONFLICT", message: reason ?? "呢張單唔符合補送條件" });
+      if (!input.confirmWmsAbsent) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "請先乾跑，並確認已用官網單號喺 WMS 查過冇待批、已批准或已拒絕紀錄" });
+      }
+
+      const result = await forwardOrderToWms(input.orderId, { autoRetry: true });
+      void logAudit({
+        actorId: ctx.user.userId,
+        actorRole: ctx.user.role,
+        action: "order.recoverLuckyWms",
+        targetType: "order",
+        targetId: row.orderNo,
+        detail: `主管確認 WMS 冇現有紀錄後補送中獎訂單（${result.status}，${result.okCount}/${result.lineCount} 件成功）${result.lastError ? `；${result.lastError}` : ""}`,
+      });
+      return { dryRun: false as const, canApply, reason, orderId: row.orderId, orderNo: row.orderNo, drawId: row.drawId, sync, result };
     }),
 
   /** 中獎紀錄：按抽獎日分組（新→舊），撳某日展開睇邊個中咗咩 */
@@ -3102,6 +3186,17 @@ export const luckyDrawRouter = createRouter({
           price: 0, // 中獎商品入 0 元（老闆指定）
           quantity: 1,
         });
+        // 同一 transaction 留低持久排隊：commit 後即使 Render 重啟殺死背景 promise，
+        // 開機／定時掃描仍可按 orderId 接手，唔會再出現「WMS 審批中」但全無同步紀錄。
+        await tx.insert(wmsSyncLog).values({
+          orderId: inserted.id,
+          proofId: null,
+          status: "pending",
+          lineCount: 1,
+          okCount: 0,
+          attempts: 0,
+          lastError: WMS_AUTO_QUEUE_MESSAGE,
+        });
         const bound = await tx
           .update(luckyDraws)
           .set({ orderId: inserted.id })
@@ -3113,8 +3208,8 @@ export const luckyDrawRouter = createRouter({
         return inserted;
       });
 
-      // 背景飛 WMS（唔阻回應；失敗淨係寫 wmsSyncLog，後台可重試）
-      void forwardOrderToWms(order.id).catch(() => undefined);
+      // 背景飛 WMS（唔阻回應）；持久排隊已同事務寫入，失敗會由排程重試，例外唔靜默。
+      void forwardOrderToWms(order.id).catch((e) => console.error(`[wms] 中獎訂單 #${order.id} 同步例外:`, e));
 
       void logAudit({
         actorId: ctx.user.userId, actorRole: "member", action: "luckyDraw.claimShip",

@@ -159,7 +159,11 @@ vi.mock("./auth", () => ({
 vi.mock("./audit", () => ({ logAudit: vi.fn() }));
 vi.mock("./email", () => ({ sendPrizeWinEmail: vi.fn(async () => undefined) }));
 vi.mock("./livePush", () => ({ sendPrizeWinPush: vi.fn(async () => undefined) }));
-vi.mock("./wmsSync", () => ({ forwardOrderToWms: vi.fn(async () => undefined) }));
+vi.mock("./wmsSync", () => ({
+  forwardOrderToWms: vi.fn(async () => undefined),
+  parseWebhookOrderIds: (raw: string | null) => raw ? JSON.parse(raw) : [],
+  WMS_AUTO_QUEUE_MESSAGE: "[wms-auto:v1] 等待送往 WMS",
+}));
 
 import { luckyDrawRouter } from "./luckyDrawRouter";
 import { resetLuckyAnnouncementPublicCache } from "./lib/luckyAnnouncementVisibility";
@@ -1190,6 +1194,7 @@ describe("adminConfirmManual 認領＋起單同一 transaction", () => {
       [{ id: 90 }], // tx claim returning affected=1
       [{ id: 600, orderNo: "RC202610240001" }], // tx insert orders returning
       [], // tx insert orderItems
+      [], // tx insert wmsSyncLog 持久排隊
       [{ id: 90 }], // tx 綁 orderId（status=confirmed＋orderId IS NULL 守衛）affected=1
     ];
     const r = await caller().adminConfirmManual({ drawId: 90 });
@@ -1205,13 +1210,25 @@ describe("adminConfirmManual 認領＋起單同一 transaction", () => {
     const claimIdx = h.state.ops.findIndex((o) => o.op === "update" && o.table === luckyDraws);
     const ordInsIdx = h.state.ops.findIndex((o) => o.op === "insert" && o.table === orders);
     const itemInsIdx = h.state.ops.findIndex((o) => o.op === "insert" && o.table === orderItems);
+    const queueInsIdx = h.state.ops.findIndex((o) => o.op === "insert" && o.table === wmsSyncLog);
     const bindIdx = h.state.ops.findIndex((o, i) => o.op === "update" && o.table === luckyDraws && i > claimIdx);
     expect(ordInsIdx).toBeGreaterThan(claimIdx); // 認領先於起單（同一 tx，cancel 穿唔入中間）
     expect(itemInsIdx).toBeGreaterThan(ordInsIdx);
-    expect(bindIdx).toBeGreaterThan(itemInsIdx);
+    expect(queueInsIdx).toBeGreaterThan(itemInsIdx);
+    expect(bindIdx).toBeGreaterThan(queueInsIdx);
     const ordIns = insertsOf(orders);
     expect(ordIns).toHaveLength(1);
     expect(ordIns[0].values).toMatchObject({ total: 0, status: "payment_review", shippingFree: true, userId: 900 });
+    const syncIns = insertsOf(wmsSyncLog);
+    expect(syncIns).toHaveLength(1);
+    expect(syncIns[0].values).toMatchObject({
+      orderId: 600,
+      status: "pending",
+      lineCount: 1,
+      okCount: 0,
+      attempts: 0,
+      lastError: "[wms-auto:v1] 等待送往 WMS",
+    });
     expect(vi.mocked(forwardOrderToWms)).toHaveBeenCalledWith(600);
   });
 
@@ -1231,7 +1248,8 @@ describe("adminConfirmManual 認領＋起單同一 transaction", () => {
       ...confirmQueueBase(),
       [{ id: 90 }],
       [{ id: 600, orderNo: "RC202610240001" }],
-      [],
+      [], // orderItems
+      [], // wmsSyncLog 持久排隊
       [], // bind returning 0 rows
     ];
     await expect(caller().adminConfirmManual({ drawId: 90 })).rejects.toMatchObject({ code: "CONFLICT" });
@@ -1259,6 +1277,7 @@ describe("respondWin ship 認領＋起單同一 transaction", () => {
       [{ id: 95 }], // claim
       [{ id: 601, orderNo: "RC202610240002" }], // insert orders
       [], // insert orderItems
+      [], // insert wmsSyncLog 持久排隊
       [{ id: 95 }], // bind
     ];
     const r = await caller().respondWin({ drawId: 95, action: "ship", choice: "preset" });
@@ -1276,6 +1295,9 @@ describe("respondWin ship 認領＋起單同一 transaction", () => {
     const ordIns = insertsOf(orders);
     expect(ordIns).toHaveLength(1);
     expect(ordIns[0].values).toMatchObject({ total: 0, userId: 42, address: "香港九龍測試道1號", shippingFree: true });
+    expect(insertsOf(wmsSyncLog)).toHaveLength(1);
+    expect(insertsOf(wmsSyncLog)[0].values).toMatchObject({ orderId: 601, status: "pending", lineCount: 1, attempts: 0 });
+    expect(vi.mocked(forwardOrderToWms)).toHaveBeenCalledWith(601);
   });
 
   it("hardening：claim affected=0（雙擊/已取消）→ CONFLICT，唔起單唔飛 WMS", async () => {
@@ -1283,6 +1305,83 @@ describe("respondWin ship 認領＋起單同一 transaction", () => {
     h.state.queue = [...respondQueueBase(), []];
     await expect(caller().respondWin({ drawId: 95, action: "ship", choice: "preset" })).rejects.toMatchObject({ code: "CONFLICT" });
     expect(insertsOf(orders)).toHaveLength(0);
+    expect(vi.mocked(forwardOrderToWms)).not.toHaveBeenCalled();
+  });
+});
+
+// ───────────────────────── 舊中獎單 WMS 乾跑／確認補送 ─────────────────────────
+
+describe("adminRecoverWms 舊中獎單安全補救", () => {
+  const row = (patch: Record<string, unknown> = {}) => ({
+    drawId: 900,
+    drawStatus: "confirmed",
+    orderId: 101,
+    orderNo: "RC202611110101",
+    orderStatus: "payment_review",
+    syncStatus: null,
+    lineCount: null,
+    okCount: null,
+    attempts: null,
+    lastError: null,
+    webhookOrderIds: null,
+    syncUpdatedAt: null,
+    ...patch,
+  });
+
+  it("預設乾跑：無 log 都列出可補送計劃，唔 call WMS、唔寫 audit", async () => {
+    h.state.queue = [[row()]];
+    const r = await caller().adminRecoverWms({ orderId: 101 });
+    expect(r).toMatchObject({ dryRun: true, canApply: true, orderId: 101, orderNo: "RC202611110101", sync: null });
+    expect(vi.mocked(forwardOrderToWms)).not.toHaveBeenCalled();
+    expect(vi.mocked(logAudit)).not.toHaveBeenCalled();
+  });
+
+  it("apply 冇明確 WMS 核查確認 → BAD_REQUEST，唔 call WMS", async () => {
+    h.state.queue = [[row()]];
+    await expect(caller().adminRecoverWms({ orderId: 101, apply: true })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(vi.mocked(forwardOrderToWms)).not.toHaveBeenCalled();
+  });
+
+  it("確認後補送：明確 orderId＋autoRetry，結果寫 audit", async () => {
+    h.state.queue = [[row({ syncStatus: "failed", lineCount: 1, okCount: 0, attempts: 2, webhookOrderIds: "[null]" })]];
+    vi.mocked(forwardOrderToWms).mockResolvedValueOnce({ status: "sent", lineCount: 1, okCount: 1, lastError: null });
+    const r = await caller().adminRecoverWms({ orderId: 101, apply: true, confirmWmsAbsent: true });
+    expect(r).toMatchObject({ dryRun: false, canApply: true, result: { status: "sent", okCount: 1 } });
+    expect(vi.mocked(forwardOrderToWms)).toHaveBeenCalledWith(101, { autoRetry: true });
+    expect(vi.mocked(logAudit)).toHaveBeenCalledWith(expect.objectContaining({ action: "order.recoverLuckyWms", targetId: "RC202611110101" }));
+  });
+
+  it("舊版 sent 但完全冇收單 ID：乾跑標明矛盾；主管確認 WMS 全無紀錄後可補送", async () => {
+    h.state.queue = [[row({ syncStatus: "sent", lineCount: 1, okCount: 0, attempts: 1, webhookOrderIds: null })]];
+    const dry = await caller().adminRecoverWms({ orderId: 101 });
+    expect(dry).toMatchObject({ canApply: true, sync: { status: "sent", webhookOrderIds: [] } });
+    expect(vi.mocked(forwardOrderToWms)).not.toHaveBeenCalled();
+
+    h.state.queue = [[row({ syncStatus: "sent", lineCount: 1, okCount: 0, attempts: 1, webhookOrderIds: "[null]" })]];
+    vi.mocked(forwardOrderToWms).mockResolvedValueOnce({ status: "sent", lineCount: 1, okCount: 1, lastError: null });
+    await caller().adminRecoverWms({ orderId: 101, apply: true, confirmWmsAbsent: true });
+    expect(vi.mocked(forwardOrderToWms)).toHaveBeenCalledWith(101, { autoRetry: true });
+  });
+
+  it("sent 或已有成功 WMS ID：只准人手對數，apply 都擋", async () => {
+    h.state.queue = [[row({ syncStatus: "sent", lineCount: 1, okCount: 1, webhookOrderIds: "[777]" })]];
+    const dry = await caller().adminRecoverWms({ orderId: 101 });
+    expect(dry.canApply).toBe(false);
+    expect(dry.reason).toContain("sent");
+
+    h.state.queue = [[row({ syncStatus: "partial", lineCount: 2, okCount: 1, webhookOrderIds: "[777,null]" })]];
+    await expect(caller().adminRecoverWms({ orderId: 101, apply: true, confirmWmsAbsent: true })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(vi.mocked(forwardOrderToWms)).not.toHaveBeenCalled();
+  });
+
+  it("非中獎審批中狀態／staff 權限都唔准補送", async () => {
+    h.state.queue = [[row({ orderStatus: "approved" })]];
+    const dry = await caller().adminRecoverWms({ orderId: 101 });
+    expect(dry).toMatchObject({ canApply: false });
+    expect(dry.reason).toContain("approved");
+
+    reset({ userId: 3, role: "staff" });
+    await expect(caller().adminRecoverWms({ orderId: 101 })).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(vi.mocked(forwardOrderToWms)).not.toHaveBeenCalled();
   });
 });
