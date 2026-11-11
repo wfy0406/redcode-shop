@@ -5,6 +5,8 @@
  * v2026.11.09.4：原生 WebGL GPU 逐幀渲染（4 列 × 18 行，每幀 720×1125，
  * 每張 row 2880×1125 按需要載入，GPU texture cache 穩定後只保留 current±1）。
  * WebGL／圖片失敗或 context lost 會降級顯示靜態 /web-design/character-hero.webp。
+ * v2026.11.11.4：canvas 同 texture 統一 premultiplied alpha，並保留最後繪製幀，
+ * 避免部分 Chrome GPU 合成路徑出現透明白邊／格狀殘影；人物素材、幀序及外觀不變。
  * 原西裝影片只作離線動作參考；頁面冇嵌入或播放原片。
  */
 import { useEffect, useRef } from 'react';
@@ -170,7 +172,10 @@ export default function SuitScroll({ spacerVh = 250 }: SuitScrollProps) {
         depth: false,
         stencil: false,
         antialias: false,
-        premultipliedAlpha: false,
+        // Chrome 部分 GPU 對 non-premultiplied canvas 合成會出白邊；跟返瀏覽器原生透明格式。
+        premultipliedAlpha: true,
+        // 呢個播放器只喺改幀時繪製；保留最後幀，避免靜止後重合成攞到已釋放 buffer。
+        preserveDrawingBuffer: true,
         powerPreference: 'high-performance',
       });
       if (!context) {
@@ -216,7 +221,7 @@ export default function SuitScroll({ spacerVh = 250 }: SuitScrollProps) {
       context.enableVertexAttribArray(posAttrib);
       context.vertexAttribPointer(posAttrib, 2, context.FLOAT, false, 0, 0);
       context.uniform1i(texUniform, 0);
-      // 單一透明 quad 直接寫入；non-premultiplied canvas 保留真實 alpha 邊緣。
+      // 單一透明 quad 直接寫入；canvas 同 texture 都用 premultiplied alpha，避免白邊。
       context.disable(context.BLEND);
       context.clearColor(0, 0, 0, 0);
       canvas.addEventListener('webglcontextlost', onContextLost);
@@ -272,6 +277,8 @@ export default function SuitScroll({ spacerVh = 250 }: SuitScrollProps) {
           return;
         }
         gl.bindTexture(gl.TEXTURE_2D, texture);
+        // WebP 原本係 straight alpha；上載時預乘，先同 canvas 嘅合成格式一致。
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
         try {
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
