@@ -25,6 +25,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import ProductCard from '@/components/ProductCard';
+import { normalizeAiTags } from '@/components/shop/shop-utils';
 import DuotoneImage from '@/components/DuotoneImage';
 import MovingPhoto from '@/components/MovingPhoto';
 import GloCutout from '@/components/GloCutout';
@@ -46,7 +47,7 @@ import LiveTopBanner from '@/components/push/LiveTopBanner';
 import PushPermissionGuide from '@/components/push/PushPermissionGuide';
 
 /** DB 商品 row → ProductCard 用嘅 Product 形狀 */
-function mapDbProduct(p: {
+export function mapDbProduct(p: {
   id: number;
   name: string;
   sku: string;
@@ -56,7 +57,9 @@ function mapDbProduct(p: {
   listedDate: Date;
   image: string;
   stock: number;
+  aiTags?: string[];
 }): Product {
+  const aiTags = normalizeAiTags(p.aiTags);
   return {
     id: String(p.id),
     name: p.name,
@@ -67,6 +70,7 @@ function mapDbProduct(p: {
     listedAt: p.listedDate.toISOString().slice(0, 10),
     image: p.image,
     soldOut: p.stock <= 0,
+    aiTags: aiTags.length > 0 ? aiTags : undefined,
   };
 }
 
