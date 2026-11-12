@@ -368,14 +368,15 @@ export default function ProductDetail() {
             )}
           </div>
 
-          <p className="mt-4 flex items-baseline gap-3">
-            <span className="font-mono text-[30px] font-medium text-pink">
-              {formatHKD(effPrice)}
-            </span>
+          {/* 商品小筆記（深色細框卡 + 重點 tags）：放喺價錢上面，
+              冇描述但有 tags 都出，兩樣都冇 ProductStory 自己回 null */}
+          <ProductStory description={product.description} aiTags={aiTags} className="mt-6" />
+
+          {/* 售價帶：同小筆記同一視覺語言（pd-price 系列喺 product-story.css） */}
+          <p className="pd-price mt-6">
+            <span className="pd-price-amount">{formatHKD(effPrice)}</span>
             {discounted && (
-              <span className="font-mono text-[16px] text-txt-3 line-through">
-                {formatHKD(product.price)}
-              </span>
+              <span className="pd-price-was">{formatHKD(product.price)}</span>
             )}
           </p>
 
@@ -524,10 +525,6 @@ export default function ProductDetail() {
               </p>
             </div>
           )}
-
-          {/* 商品小筆記（editorial 描述區）：暖紙卡 + 重點 tags；冇描述但有 tags 都出，
-              兩樣都冇 ProductStory 自己回 null */}
-          <ProductStory description={product.description} aiTags={aiTags} className="mt-9" />
 
           <div className="mt-6 border-t pt-5" style={{ borderColor: 'var(--space-line)' }}>
             <h2 className="text-[15px] font-bold text-txt-1">寄出時間</h2>

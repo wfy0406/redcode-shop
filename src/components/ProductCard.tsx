@@ -1,5 +1,5 @@
 import { memo, useRef, useState } from 'react';
-import type { MouseEvent } from 'react';
+import type { CSSProperties, MouseEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { Check, Heart, ShoppingBag } from 'lucide-react';
 import type { Product } from '@/data/products';
@@ -8,6 +8,7 @@ import { productCategoryLabel } from '@contracts/types';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
+import './product-card.css';
 
 /**
  * RedCode 設計系統 §4.4 —— 商品卡
@@ -232,18 +233,17 @@ function ProductCard({ product, className, demo = false }: ProductCardProps) {
           <h3 className="line-clamp-2 text-[18px] font-bold leading-[1.4] text-txt-1">
             {product.name}
           </h3>
-          {/* 重點標籤（已批准先有）：品名下方小圓角 chip，flex wrap 手機兩欄都睇到；
-              放資訊區唔會遮住圖或快速加車 CTA。冇 tags 就唔出 */}
+          {/* 重點標籤（已批准先有）：桃紅細框 pill＋菱形記號（product-card.css），
+              flex wrap 手機兩欄都睇到；首次渲染一次性 cascade（55ms stagger、
+              transform/opacity only 冇 layout shift），reduced-motion 停用。
+              放資訊區唔會遮住圖、貨號、價錢或快速加車 CTA。冇 tags 就唔出 */}
           {product.aiTags && product.aiTags.length > 0 && (
-            <ul className="flex flex-wrap gap-1.5" aria-label="商品重點標籤">
-              {product.aiTags.map((tag) => (
+            <ul className="pc-tags" aria-label="商品重點標籤">
+              {product.aiTags.map((tag, i) => (
                 <li
                   key={tag}
-                  className="rounded-md border px-2 py-0.5 text-[12px] leading-[1.6] text-lavender"
-                  style={{
-                    borderColor: 'var(--glass-border)',
-                    background: 'var(--glass-bg)',
-                  }}
+                  className="pc-tag"
+                  style={{ '--pc-tag-delay': `${Math.min(i, 7) * 55}ms` } as CSSProperties}
                 >
                   {tag}
                 </li>

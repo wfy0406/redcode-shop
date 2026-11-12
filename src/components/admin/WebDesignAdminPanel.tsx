@@ -487,7 +487,7 @@ function OrderCard({ order, toast, canReview }: { order: WdAdminOrderDto; toast:
             <p className="mb-1 text-[12px] font-bold text-txt-1">WMS 同步</p>
             <p className="text-[12px] text-txt-3">
               狀態：{order.wmsStatus ?? '—'}
-              {order.wmsWebhookOrderId ? `｜WMS 單號：${order.wmsWebhookOrderId}` : ''}
+              {order.wmsWebhookOrderId ? `｜WMS 專案編號：${order.wmsWebhookOrderId}` : ''}
             </p>
             {order.wmsError && (
               <p className="mt-1 text-[12px] text-pink-soft">{order.wmsError}</p>

@@ -118,6 +118,9 @@ vi.mock("./airwallex", () => ({
 vi.mock("./wmsSync", () => ({
   wmsConfigured: vi.fn(() => true),
   callReceiveWebhook: vi.fn(async () => ({ error: null, webhookOrderId: 987 })),
+  // v2026.11.12：新路 transport（webDesignProject.receiveWebsite）一齊 mock，
+  // webDesignWms 本體 importOriginal 會綁定呢個 named export
+  callReceiveWebDesignProject: vi.fn(async () => ({ error: null, projectNo: "WD202611090001", deduped: false })),
 }));
 vi.mock("./webDesignWms", async (importOriginal) => {
   const mod = await importOriginal<typeof import("./webDesignWms")>();

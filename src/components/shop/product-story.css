@@ -1,58 +1,53 @@
 /*
- * product-story.css —— 商品詳情頁「商品小筆記」（editorial 區塊）
+ * product-story.css —— 商品詳情頁「商品小筆記」＋售價帶（同一視覺語言）
  *
- * 深色主頁入面一張暖紙色卡片：暖紙底 + 深啡字 + burnt-orange 點綴，
- * 同四周深色玻璃介面形成精緻層次。
- * 標題用 CJK serif（Noto Serif TC）、正文用 sans（Noto Sans TC）；
- * 唔用 font-style: italic —— 中文字假斜體會變形難睇。
- * 所有動效只係 transition；prefers-reduced-motion 全部停用。
+ * 2026-11-12 改版：舊版暖紙卡同全站黑底桃紅唔夾，成區改用官網深色材質——
+ * space-2 深空底 + 1px glass-border 細框 + 桃紅點綴（同 ProductCard 同一材質），
+ * 右上角一抹 pink-haze 暈光，唔再係奶油紙。
+ * 標題用 CJK serif（Noto Serif TC，同全站標題），kicker／售價用 mono，
+ * 正文用 Noto Sans TC；中文字唔用 font-style: italic（假斜體會變形）。
+ * 裝飾記號用品牌菱形（同頁面金色菱形一致），唔用 emoji。
+ * 售價帶（.pd-price）沿用同一組記號：菱形 + mono 桃紅 + hairline 分隔線。
+ * 動效只係 transition；prefers-reduced-motion 全部停用。
  */
 
 .ps-story {
-  --ps-paper: #f7efdf;
-  --ps-paper-deep: #f1e4cc;
-  --ps-ink: #3a2a1c;
-  --ps-ink-soft: #6d5942;
-  --ps-accent: #c1502e; /* burnt orange */
-  --ps-accent-deep: #9a3f22;
-  --ps-line: #e2cfa9;
-
   position: relative;
   overflow: hidden;
-  border-radius: 20px;
-  padding: 28px 24px 24px;
-  background: linear-gradient(155deg, var(--ps-paper) 0%, var(--ps-paper-deep) 100%);
-  color: var(--ps-ink);
-  box-shadow:
-    0 1px 0 rgba(58, 42, 28, 0.06),
-    0 16px 40px rgba(0, 0, 0, 0.38);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 26px 24px 22px;
+  background:
+    radial-gradient(130% 90% at 100% 0%, var(--pink-haze) 0%, transparent 55%),
+    var(--space-2);
+  color: var(--text-1);
 }
 
-/* 右上角 burnt-orange 小圓點裝飾（非對稱細節） */
+/* 右上角桃紅小菱形裝飾（非對稱細節，同頁面菱形記號一致） */
 .ps-story::after {
   content: '';
   position: absolute;
-  top: 18px;
-  right: 20px;
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  background: var(--ps-accent);
-  opacity: 0.85;
+  top: 22px;
+  right: 22px;
+  width: 7px;
+  height: 7px;
+  transform: rotate(45deg);
+  background: var(--pink-soft);
+  opacity: 0.9;
 }
 
-/* 非對稱小標：短 burnt-orange 橫劃 + 細字 kicker，向左縮排唔置中 */
+/* 非對稱小標：短桃紅橫劃 + mono 細字 kicker，向左縮排唔置中 */
 .ps-kicker {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 0 0 10px 2px;
-  font-family: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--ps-accent-deep);
+  color: var(--pink-soft);
 }
 
 .ps-kicker::before {
@@ -61,30 +56,30 @@
   width: 22px;
   height: 2px;
   border-radius: 2px;
-  background: var(--ps-accent);
+  background: var(--pink);
 }
 
 .ps-title {
   margin: 0 0 4px;
-  font-family: 'Noto Serif TC', serif;
+  font-family: var(--font-serif-tc);
   font-size: 24px;
   font-weight: 700;
   line-height: 1.35;
-  color: var(--ps-ink);
+  color: var(--text-1);
 }
 
-/* 重點標籤： burnt-orange 描邊 chip，flex wrap，手機都睇到 */
+/* 重點標籤：桃紅細框 pill + 菱形記號，同列表卡標籤同一語言 */
 .ps-tags-block {
   margin-top: 14px;
 }
 
 .ps-tags-label {
   margin: 0 0 8px;
-  font-family: 'Noto Serif TC', serif;
+  font-family: var(--font-serif-tc);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.12em;
-  color: var(--ps-accent-deep);
+  color: var(--pink-tint);
 }
 
 .ps-tags {
@@ -97,26 +92,40 @@
 }
 
 .ps-tag {
-  border: 1px solid var(--ps-accent);
-  border-radius: 8px;
-  padding: 3px 10px;
-  background: rgba(193, 80, 46, 0.08);
-  color: var(--ps-accent-deep);
-  font-family: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  border: 1px solid rgba(255, 77, 141, 0.38);
+  border-radius: 9999px;
+  padding: 3px 11px;
+  background: rgba(255, 0, 84, 0.07);
+  color: var(--pink-tint);
+  font-family: var(--font-body);
   font-size: 12.5px;
   font-weight: 500;
   line-height: 1.6;
-  transition: background-color 160ms ease, border-color 160ms ease;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.ps-tag::before {
+  content: '';
+  flex: none;
+  width: 4px;
+  height: 4px;
+  transform: rotate(45deg);
+  background: var(--pink-soft);
 }
 
 .ps-tag:hover {
-  background: rgba(193, 80, 46, 0.16);
+  border-color: var(--pink-soft);
+  background: var(--pink-haze);
 }
 
 /* 正文：段落之間留白清楚；段內保留單行換行（pre-line） */
 .ps-body {
   margin-top: 16px;
-  border-top: 1px solid var(--ps-line);
+  border-top: 1px solid var(--space-line);
   padding-top: 16px;
 }
 
@@ -127,10 +136,10 @@
 
 .ps-para {
   margin: 0;
-  font-family: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  font-family: var(--font-body);
   font-size: 16px;
   line-height: 1.85;
-  color: var(--ps-ink);
+  color: var(--text-2);
   white-space: pre-line;
 }
 
@@ -138,21 +147,59 @@
   margin-top: 14px;
 }
 
-/* 配搭免責句：內文提到配搭先出；短句、柔和啡色，唔搶戲 */
+/* 配搭免責句：內文提到配搭先出；短句、柔和文字色，唔搶戲 */
 .ps-disclaimer {
   margin: 16px 0 0;
   padding-left: 10px;
-  border-left: 3px solid var(--ps-accent);
-  font-family: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  border-left: 3px solid var(--pink);
+  font-family: var(--font-body);
   font-size: 12.5px;
   line-height: 1.7;
-  color: var(--ps-ink-soft);
+  color: var(--text-3);
+}
+
+/* ===== 售價帶：同小筆記同一視覺語言（菱形 + mono 桃紅 + hairline） ===== */
+.pd-price {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--space-line);
+}
+
+.pd-price-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--pink);
+}
+
+/* 桃紅小菱形記號（同小筆記標籤一致），放金額左邊 */
+.pd-price-amount::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  background: var(--pink);
+}
+
+.pd-price-was {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--text-3);
+  text-decoration: line-through;
 }
 
 /* 手機間距收緊，字級保持清楚 */
 @media (max-width: 640px) {
   .ps-story {
-    border-radius: 16px;
+    border-radius: 14px;
     padding: 22px 18px 20px;
   }
 
@@ -164,13 +211,19 @@
     font-size: 16px;
     line-height: 1.8;
   }
+
+  .pd-price-amount {
+    font-size: 27px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ps-story,
   .ps-story *,
   .ps-story *::before,
-  .ps-story *::after {
+  .ps-story *::after,
+  .pd-price,
+  .pd-price * {
     transition: none !important;
     animation: none !important;
   }

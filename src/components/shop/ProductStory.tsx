@@ -5,8 +5,9 @@ import './product-story.css';
 /**
  * ProductStory —— 商品詳情頁「商品小筆記」（editorial 描述區）
  *
- * 取代舊 border-top 描述格：暖紙底 + 深啡字 + burnt-orange 點綴，
- * 非對稱小標（kicker + serif 標題）、清楚段落、重點 tags chip。
+ * 2026-11-12 改版：舊暖紙卡同全站黑底桃紅唔夾，改用深色細框卡
+ * （space-2 底 + glass-border + 桃紅點綴），同售價帶同一視覺語言；
+ * 非對稱小標（mono kicker + serif 標題）、清楚段落、重點 tags pill。
  * 描述只用 React text render（whitespace pre-line 分段），唔用 dangerouslySetInnerHTML。
  * 冇描述但有 tags 都會出（淨係顯示重點）；兩樣都冇就回 null。
  */

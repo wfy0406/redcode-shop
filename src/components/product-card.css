@@ -1,0 +1,65 @@
+/*
+ * product-card.css —— 商品列表卡「重點標籤」chip
+ *
+ * 品牌深色語言：桃紅 1px 細框 pill + 菱形記號（同詳情頁小筆記標籤一致），
+ * 唔再用灰紫玻璃 chip。文字用 pink-tint，細屏 flex-wrap 唔會爆寬、
+ * 唔會遮住貨號／價錢（標籤喺資訊區內自己換行）。
+ *
+ * 動效（只此一種）：首次渲染一次性 cascade——每粒 chip 由 4px 下方向上到位，
+ * 逐粒延遲 55ms（--pc-tag-delay 由 component inline 注入，cap 7 粒），
+ * 360ms var(--ease-expo)，transform/opacity only → 冇 layout shift、唔循環、
+ * 唔阻點擊。prefers-reduced-motion 下完全停用。
+ */
+
+.pc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pc-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid rgba(255, 77, 141, 0.32);
+  border-radius: 9999px;
+  padding: 1px 9px;
+  background: rgba(255, 0, 84, 0.06);
+  color: var(--pink-tint);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.6;
+  animation: pc-tag-in 360ms var(--ease-expo) both;
+  animation-delay: var(--pc-tag-delay, 0ms);
+}
+
+/* 品牌菱形記號（同詳情頁小筆記標籤、售價帶一致） */
+.pc-tag::before {
+  content: '';
+  flex: none;
+  width: 4px;
+  height: 4px;
+  transform: rotate(45deg);
+  background: var(--pink-soft);
+}
+
+@keyframes pc-tag-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-tag {
+    animation: none;
+  }
+}

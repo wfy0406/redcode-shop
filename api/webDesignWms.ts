@@ -1,26 +1,29 @@
 /**
- * 網站設計服務 ↔ WMS（v2026.11.09）：
- * - forwardWebDesignOrderToWms：付款確認後將服務單送去 WMS `order.receiveWebhook`
- *   （一項「網頁設計（前台／前台＋後台）」；remark 包含要求／風格／全部功能／月費；
- *   sourcePayload.items 帶正式訂單圖絕對 URL；**淨送 URL，唔送 base64**——paymentScreenshot 有 500k 字限制）。
- *   sourcePayload.items[0].sku 同 productCode 完全一致（用訂單號，保證單單獨立）。
- * - webDesignReviewCallback／webDesignShipmentCallback：WMS callback 嘅 WD 前綴分流
+ * 網站設計服務 ↔ WMS（v2026.11.12，網頁設計獨立專案管理 SPEC）：
+ * - forwardWebDesignOrderToWms：付款確認後將服務單送去 WMS `webDesignProject.receiveWebsite`
+ *   （**唔再經 order.receiveWebhook**——WMS 直接建立獨立專案，唔寫 orders/shipments/webhookOrders；
+ *   payload 傳齊 orderNo、客戶、方案、功能、款項、要求、風格、orderDate、paidAt、
+ *   orderImageUrl、paymentNote、sourcePayload；圖淨送絕對 URL，唔送 base64）。
+ *   WMS 冪等：同一 orderNo 重複送回 { success:true, deduped:true, projectNo }，照樣記 sent。
+ *   現有 varchar `wmsWebhookOrderId` 沿用儲存新 projectNo（唔改 schema），後台顯示「WMS 專案編號」。
+ * - webDesignReviewCallback／webDesignShipmentCallback：WMS callback 嘅 WD 前綴分流**保留畀歷史舊單**
  *   （由 api/wmsSync.ts／api/wmsShipment.ts 舊 handler 開頭 delegate 落嚟；普通商品路徑逐字不變）。
  *
  * WMS 未配置／失敗：訂單照保存，wmsStatus/wmsError 落 DB＋loud console.error，後台可 retryWms，唔靜默。
+ * 部署順序 WMS 先官網後：若 WMS 未有 receiveWebsite，會如實 failed（唔會寫假 sent），retryWms 可補送。
  */
 import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { getDb } from "./queries/connection";
 import { webDesignOrders, webDesignPaymentProofs } from "@db/schema";
 import { logAudit } from "./audit";
+import { planLabel } from "@contracts/webDesign";
 import {
-  buildWmsRemark,
   mapWmsReviewForWebDesign,
   mapWmsShipmentForWebDesign,
   wmsServiceItemName,
 } from "./webDesignCore";
-import { callReceiveWebhook, wmsConfigured } from "./wmsSync";
+import { callReceiveWebDesignProject, wmsConfigured } from "./wmsSync";
 
 const DEFAULT_PUBLIC_BASE_URL = "https://redcode.red";
 
@@ -41,7 +44,7 @@ export interface WdForwardResult {
 
 /**
  * 將一張網站設計單送去 WMS（never-throw；結果寫落 webDesignOrders.wms* 欄）。
- * 冪等：WMS 以 sourceRef（＝orderNo）對單；已成功（wmsStatus='sent' 且有 webhookOrderId）直接回。
+ * 冪等：WMS 以 orderNo 對專案（重複回 deduped）；已成功（wmsStatus='sent' 且有 webhookOrderId）直接回。
  */
 export async function forwardWebDesignOrderToWms(orderId: number): Promise<WdForwardResult> {
   const db = getDb();
@@ -77,15 +80,21 @@ export async function forwardWebDesignOrderToWms(orderId: number): Promise<WdFor
 
   const plan = order.plan === "full_stack" ? ("full_stack" as const) : ("front_only" as const);
   const itemName = wmsServiceItemName(plan);
-  const featureNames = order.items
-    .filter((i) => !i.itemKey.startsWith("plan_"))
-    .map((i) => (i.billing === "monthly" ? `${i.name}（每月 HK$${i.price}）` : i.name));
   const orderImageUrl = order.orderImagePath ? `${publicBaseUrl()}${order.orderImagePath}` : null;
   const paymentNote =
     order.paymentChannel === "airwallex"
       ? `Airwallex 網上收款已確認${order.airwallexIntentId ? `（${order.airwallexIntentId}）` : ""}，無需付款截圖`
       : "手動過數，付款證明已喺官網後台核實";
+  // 落單快照嘅全部行（方案基本價行＋功能行）：WMS 專案 serviceItems 直接用呢份，
+  // 款項 oneOffTotal＋monthlyTotal 可以逐行對返
+  const serviceItems = order.items.map((i) => ({
+    name: i.name,
+    billing: i.billing === "monthly" ? ("monthly" as const) : ("one_off" as const),
+    price: i.price,
+  }));
+  const paidAt = order.paidAt ? order.paidAt.toISOString() : null;
 
+  // sourcePayload：完整落單快照（同舊 receiveWebhook 時期同形），WMS 原封存入專案做 audit trail
   const sourcePayload = JSON.stringify({
     orderNo: order.orderNo,
     orderDateHKT: hktDate(order.createdAt),
@@ -101,7 +110,7 @@ export async function forwardWebDesignOrderToWms(orderId: number): Promise<WdFor
     customer: { name: order.name, phone: order.phone, email: order.email ?? null },
     items: [
       {
-        // 契約：sku 必須同上面 productCode 完全一致（用訂單號，單單獨立）
+        // 契約：sku 用訂單號（單單獨立），同舊 receiveWebhook 時期一致
         sku: order.orderNo,
         name: itemName,
         quantity: 1,
@@ -112,39 +121,48 @@ export async function forwardWebDesignOrderToWms(orderId: number): Promise<WdFor
     orderImageUrl,
   });
 
-  const remark = buildWmsRemark({
+  const r = await callReceiveWebDesignProject({
     orderNo: order.orderNo,
+    title: `官網服務單 ${order.orderNo}（${order.name}）`,
+    clientName: order.name,
+    phone: order.phone,
+    email: order.email ?? null,
     plan,
-    itemNames: featureNames,
+    planLabel: planLabel(plan),
+    serviceItems,
+    oneOffTotal: order.oneOffTotal,
+    monthlyTotal: order.monthlyTotal,
+    total: order.total,
     requirements: order.requirements,
     styleNotes: order.styleNotes,
-    monthlyTotal: order.monthlyTotal,
-    paymentNote,
-  });
-
-  const r = await callReceiveWebhook({
-    customerName: order.name,
-    customerPhone: order.phone,
-    productCode: order.orderNo,
-    amount: "1",
-    actualPrice: String(order.total),
     orderDate: hktDate(order.createdAt),
-    remark,
-    source: "website",
-    sourceRef: order.orderNo,
+    paidAt,
+    orderImageUrl,
+    paymentNote,
     sourcePayload,
     // 服務單淨送 URL，唔送 base64（paymentScreenshot base64 有 500k 字限制）
   });
 
   if (r.error) {
     await save({ wmsStatus: "failed", wmsError: r.error });
-    console.error(`[wms] 網站設計單 ${order.orderNo} 轉 WMS 失敗：${r.error}（訂單已保存，後台可 retry）`);
+    console.error(`[wms] 網站設計單 ${order.orderNo} 轉 WMS 專案失敗：${r.error}（訂單已保存，後台可 retry）`);
     return { status: "failed", wmsWebhookOrderId: null, error: r.error };
   }
-  const webhookOrderId = r.webhookOrderId != null ? String(r.webhookOrderId) : null;
-  await save({ wmsStatus: "sent", wmsError: null, wmsWebhookOrderId: webhookOrderId });
-  console.log(`[wms] 網站設計單 ${order.orderNo} 已轉 WMS（webhookOrderId ${webhookOrderId ?? "?"}）`);
-  return { status: "sent", wmsWebhookOrderId: webhookOrderId, error: null };
+  // 安全閘：transport 已擋 success 缺 projectNo，呢度再守一次——
+  // 無論點都唔准寫「sent＋null」假成功（冇 projectNo 對唔返 WMS 專案，sent 閘又會擋死 retry）
+  const projectNo = r.projectNo != null ? String(r.projectNo).trim() : "";
+  if (!projectNo) {
+    const error = "WMS 回應缺少專案編號";
+    await save({ wmsStatus: "failed", wmsError: error });
+    console.error(`[wms] 網站設計單 ${order.orderNo} 轉 WMS 專案失敗：${error}（訂單已保存，後台可 retry）`);
+    return { status: "failed", wmsWebhookOrderId: null, error };
+  }
+  // 成功（包括 WMS deduped 重複回）：wmsWebhookOrderId 沿用存 projectNo（唔改 schema）
+  await save({ wmsStatus: "sent", wmsError: null, wmsWebhookOrderId: projectNo });
+  console.log(
+    `[wms] 網站設計單 ${order.orderNo} 已轉 WMS 專案（projectNo ${projectNo}${r.deduped ? "，deduped" : ""}）`,
+  );
+  return { status: "sent", wmsWebhookOrderId: projectNo, error: null };
 }
 
 // ─── WMS → 官網 callback 分流（WD 前綴；secret 已喺舊 handler 驗完）──────────
