@@ -64,6 +64,8 @@ vi.mock("../queries/connection", () => ({
 }));
 
 import { serveStaticFiles } from "./vite";
+// 喺 fs.readFileSync spy 裝上之前預載公開單據 gateway；否則 Node 動態載入 dotenv 時會誤讀 HTML fixture。
+import "../webDesignPublicBill";
 
 // fixture：repo 真 index.html（module 頂用真 fs 預讀，唔經 mock 2 嘅 spy）
 const TEMPLATE = fs.readFileSync(new URL("../../index.html", import.meta.url), "utf8");
@@ -407,17 +409,84 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).not.toContain('property="og:url"');
   });
 
-  it("(14a) 公開單據深層 route → 200＋專用載入標題＋noindex，token 無效都唔變通用 404", async () => {
-    for (const path of [`/web-design-bill/${"a".repeat(32)}`, "/web-design-bill/not-a-valid-token"]) {
-      const res = await makeApp().request(path);
-      expect(res.status, path).toBe(200);
-      const html = await res.text();
-      expect(html, path).toContain("<title>單據載入中｜RedCode Fashion Design</title>");
-      expect(html, path).not.toContain("搵唔到呢頁");
-      expect(html, path).toContain('<meta name="robots" content="noindex, nofollow" />');
-      expect(html, path).not.toContain('id="redcode-public-seo"');
-      expect(canonicalHref(html), path).toBeNull();
-    }
+  it("(14a) WhatsApp crawler 首口 HTML 直接出真單號／類型＋黑金專屬 OG 圖，唔再係載入中", async () => {
+    const token = "a".repeat(32);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      result: { data: { json: {
+        billNo: "WD-202611-0001",
+        kind: "project",
+        projectTitle: "承諾服務官方網站",
+        customerName: "陳小姐",
+        publicToken: token,
+        finalCents: 540000,
+        // 非白名單內部欄位：sanitizer 必須剥走，絕唔准入 HTML
+        internalOperator: "唔准外洩",
+        feeCents: 99999,
+      } } },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const res = await makeApp().request(`/web-design-bill/${token}`, {
+      headers: { ...PROXY_HEADERS, accept: "*/*" },
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>WD-202611-0001｜專案單據｜RedCode Fashion Design</title>");
+    expect(html).toContain('<meta property="og:title" content="WD-202611-0001｜專案單據｜RedCode Fashion Design" />');
+    expect(html).toContain("承諾服務官方網站——單據編號 WD-202611-0001");
+    expect(html).toContain('<meta property="og:image" content="https://redcode.red/web-design-bill-og.png" />');
+    expect(html).toContain('<meta property="og:image:width" content="1200" />');
+    expect(html).toContain('<meta property="og:image:height" content="630" />');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+    expect(html).not.toContain("單據載入中");
+    expect(html).not.toContain("https://redcode.red/og-image.jpg");
+    expect(html).not.toContain("internalOperator");
+    expect(html).not.toContain("唔准外洩");
+    expect(html).not.toContain("feeCents");
+    expect(html).not.toContain("red-code-wms.onrender.com");
+    expect(html).not.toContain(token);
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(canonicalHref(html)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/trpc/webDesignBilling.getPublic?input=");
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("GET");
+  });
+
+  it("(14a-ii) 無效 token 首口直接出連結無效＋專屬 OG 圖，唔打上游、唔反射 token", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const res = await makeApp().request("/web-design-bill/not-a-valid-token", { headers: { accept: "*/*" } });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>單據連結無效｜RedCode Fashion Design</title>");
+    expect(html).toContain('<meta property="og:image" content="https://redcode.red/web-design-bill-og.png" />');
+    expect(html).not.toContain("單據載入中");
+    expect(html).not.toContain("not-a-valid-token");
+    expect(html).not.toContain("搵唔到呢頁");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(canonicalHref(html)).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("(14a-iii) 單據失效同系統故障各有中性標題；兩者都唔出載入中或內部資料", async () => {
+    const missingToken = "b".repeat(32);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      error: { json: { message: "upstream raw detail 唔准外洩", data: { code: "NOT_FOUND", httpStatus: 404 } } },
+    }), { status: 404, headers: { "Content-Type": "application/json" } }));
+    const missingRes = await makeApp().request(`/web-design-bill/${missingToken}`);
+    const missingHtml = await missingRes.text();
+    expect(missingRes.status).toBe(200);
+    expect(missingHtml).toContain("<title>單據不存在或已失效｜RedCode Fashion Design</title>");
+    expect(missingHtml).not.toContain("upstream raw detail");
+    expect(missingHtml).not.toContain(missingToken);
+
+    const errorToken = "c".repeat(32);
+    fetchMock.mockRejectedValueOnce(new Error("private connection detail"));
+    const errorRes = await makeApp().request(`/web-design-bill/${errorToken}`);
+    const errorHtml = await errorRes.text();
+    expect(errorRes.status).toBe(200);
+    expect(errorHtml).toContain("<title>單據暫時未能顯示｜RedCode Fashion Design</title>");
+    expect(errorHtml).not.toContain("private connection detail");
+    expect(errorHtml).not.toContain(errorToken);
+    expect(errorHtml).toContain('<meta property="og:image" content="https://redcode.red/web-design-bill-og.png" />');
+    expect(errorHtml).not.toContain("單據載入中");
   });
 
   it("(14b) /lucky-results 總頁首口列真公開活動連結，唔再只有通用摘要", async () => {

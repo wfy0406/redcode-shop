@@ -127,9 +127,10 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     title: '管理後台｜RedCode Fashion Design',
     description: 'RedCode 店舖管理後台（內部使用）。',
   },
-  // v2026.11.13.2：專屬 token 公開單據唔係 404；有效單號由頁面載入後再覆寫。
+  // v2026.11.13.4：專屬 token 公開單據唔係 404；client 初始 title 用正式文件名，唔再寫「載入中」。
+  // server 首口 HTML 會按真實公開單據注入單號／類型；頁面載入後再覆寫 browser title。
   '/web-design-bill/:token': {
-    title: '單據載入中｜RedCode Fashion Design',
+    title: 'RedCode 專屬網上單據｜RedCode Fashion Design',
     description: 'RedCode 專屬網上單據，查看服務項目、費用、備註及付款資料。',
   },
   // 動態段路由：SeoManager 用 pattern 對返呢兩條

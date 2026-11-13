@@ -42,8 +42,8 @@ import './WebDesignPublicBillPage.css';
 
 // 公司顯示名 fallback — 後端 getPublic 有返 companyName 會優先用佢
 const COMPANY_NAME = 'RedCode HK直播台';
-// 官網現有原裝 logo（public/logo.png）；WMS 嗰隻 redcode-web-design-logo.png 官網冇，唔好抄過嚟
-const LOGO_SRC = '/logo.png';
+// 網頁設計業務專用：同 WMS 網頁設計介面同一個原裝透明 PNG；商城 FASHION DESIGN logo 唔用喺呢類單據。
+const LOGO_SRC = '/redcode-web-design-logo.png';
 
 // ---------- Airwallex.js SDK loader（redirectToCheckout 托管收銀台，同 WMS BillPage 路線 B）----------
 // SDK script 只載入一次（module-level promise 記住），失敗會 reject 畀 caller 喺頁內顯示錯誤

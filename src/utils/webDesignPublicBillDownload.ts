@@ -52,8 +52,8 @@ const CJK = `'PingFang HK','PingFang TC','PingFang SC','Microsoft JhengHei','Mic
 const SERIF = `'Noto Serif TC','Noto Serif SC','Songti TC','PMingLiU','SimSun',Georgia,serif`;
 
 const COMPANY_FALLBACK = 'RedCode HK直播台';
-// 官網現有原裝 logo（public/logo.png）；WMS 嗰隻 redcode-web-design-logo.png 官網冇，唔好抄過嚟
-export const WD_PUBLIC_BILL_LOGO_SRC = '/logo.png';
+// 網頁設計業務專用：同 WMS 網頁設計介面同一個原裝透明 PNG；商城 FASHION DESIGN logo 唔用喺呢類文件。
+export const WD_PUBLIC_BILL_LOGO_SRC = '/redcode-web-design-logo.png';
 
 // VOID 單據唯一一句有效性聲明（唔係付未付狀態）；其他 status 文件完全唔顯示
 export const VOID_ARCHIVE_NOTE = '此單據已作廢，只供紀錄留底';
@@ -296,7 +296,8 @@ function drawSheet(
   // ===== 頁首：logo 置中 + 公司名 + serif 大標題（project 單用專案標題，SPEC §5）=====
   let y = 54;
   if (logo) {
-    const lh = 52;
+    // v2026.11.13.4：WEBSITE BUILDING 原裝透明 logo 放大 52 → 82；只改顯示尺寸，唔重繪、唔加底。
+    const lh = 82;
     const lw = (logo.naturalWidth / logo.naturalHeight) * lh;
     ctx.drawImage(logo, cx - lw / 2, y, lw, lh); // 透明 PNG 原裝直接落深色底，唔加白底
     y += lh + 20;

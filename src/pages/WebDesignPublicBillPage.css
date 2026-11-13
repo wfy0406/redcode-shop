@@ -53,11 +53,12 @@
   align-items: center;
   gap: 16px;
   padding: 0 24px;
-  min-height: 84px;
+  min-height: 104px;
   border-bottom: 1px solid var(--wdb-line);
   flex-wrap: wrap;
 }
-.wdb-logo { height: 48px; width: auto; display: block; }
+/* 網頁設計專用原裝透明 logo：48 → 76px；唔加底色、唔裁切。 */
+.wdb-logo { height: 76px; width: auto; max-width: 210px; object-fit: contain; display: block; }
 .wdb-company {
   font-family: var(--wdb-serif);
   font-size: 17px;
@@ -171,6 +172,9 @@
 }
 
 @media (max-width: 560px) {
+  .wdb-topbar { padding: 4px 18px; gap: 10px; }
+  .wdb-logo { height: 64px; max-width: 160px; }
+  .wdb-company { font-size: 14px; letter-spacing: 0.14em; }
   .wdb-sheet { margin: 24px 12px 0; }
   .wdb-sec { padding: 22px 18px; }
 }

@@ -294,14 +294,42 @@ export function serveStaticFiles(app: App) {
           content = injectPublicSeoContent(content, normPath);
         }
       } else if (/^\/web-design-bill\/[^/]+$/.test(normPath)) {
-        // v2026.11.13.2：公開單據係真 SPA 深層 route，唔係 NotFound。
-        // token 有效與否由白名單 getPublic 判斷；首口唔反射 token、唔查內部 DB，保持 200＋noindex。
-        content = injectRouteMeta(content, {
-          title: "單據載入中｜RedCode Fashion Design",
+        // v2026.11.13.4：WhatsApp／link crawler 唔執行 React，首口 HTML 必須直接出正式單據 meta。
+        // 只經現有 getPublic 白名單 gateway 讀 public-safe 欄位；route token 永遠唔反射入 HTML，
+        // 內部 WMS origin／upstream error／操作員資料亦唔會外洩。無效或故障都唔再出「載入中」。
+        const { getPublicBillForOg, PUBLIC_BILL_TOKEN_RE } = await import("../webDesignPublicBill");
+        // 只讀 proxy IP 做同頁 rate-limit key；唔引入成個訪客結帳模組及其無關副作用。
+        const forwardedIp = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+        const clientIp = forwardedIp || c.req.header("x-real-ip")?.trim() || "unknown";
+        const token = normPath.slice("/web-design-bill/".length);
+        const meta = {
+          title: "RedCode 專屬網上單據｜RedCode Fashion Design",
           description: "RedCode 專屬網上單據，查看服務項目、費用、備註及付款資料。",
+          image: "/web-design-bill-og.png",
           canonical: null,
           noindex: true,
-        });
+        };
+        if (!PUBLIC_BILL_TOKEN_RE.test(token)) {
+          meta.title = "單據連結無效｜RedCode Fashion Design";
+          meta.description = "呢個單據連結格式唔正確，請確認連結完整無誤，或聯絡 Red Code 重新發出單據。";
+        } else {
+          try {
+            const bill = await getPublicBillForOg(token, clientIp);
+            const kindTitle = bill.kind === "project" ? "專案單據" : "月費單據";
+            const subject = bill.projectTitle?.trim() || (bill.customerName.trim() ? `客戶 ${bill.customerName.trim()}` : "RedCode 專屬網上單據");
+            meta.title = `${bill.billNo}｜${kindTitle}｜RedCode Fashion Design`;
+            meta.description = `${subject}——單據編號 ${bill.billNo}。查看服務項目、費用、備註及付款資料。`;
+          } catch (error) {
+            const missing = (error as { code?: string })?.code === "NOT_FOUND";
+            meta.title = missing
+              ? "單據不存在或已失效｜RedCode Fashion Design"
+              : "單據暫時未能顯示｜RedCode Fashion Design";
+            meta.description = missing
+              ? "呢張單據唔存在或連結已失效，請聯絡 Red Code 重新發出單據。"
+              : "單據系統暫時未能回應，請稍後再開啟連結；你嘅單據資料唔會喺分享預覽顯示。";
+          }
+        }
+        content = injectRouteMeta(content, meta);
       } else if (
         NOINDEX_EXACT.includes(normPath) ||
         normPath.startsWith("/receipt/") ||

@@ -146,6 +146,11 @@ describe('v2026-11-13-2 WebDesignPublicBillPage.tsx（source 層契約）', () =
     expect(src).toContain('awSdkPromise = null');
   });
 
+  it('網頁設計單只用 WEBSITE BUILDING 原裝透明 logo，唔用商城 FASHION DESIGN', () => {
+    expect(src).toContain("const LOGO_SRC = '/redcode-web-design-logo.png'");
+    expect(src).not.toContain("const LOGO_SRC = '/logo.png'");
+  });
+
   it('冇 SEC 標籤殘留喺 tsx', () => {
     expect(src).not.toMatch(/SEC\s*\d+\s*—/);
   });
@@ -167,6 +172,12 @@ describe('v2026-11-13-2 WebDesignPublicBillPage.css（黑金文件感）', () =>
     expect(css).toContain('--wdb-gold');
     expect(css).toContain('border-box'); // 漸變金屬邊框（border-image / background border-box）
     expect(css).toContain('background-clip: text');
+  });
+
+  it('WEBSITE BUILDING logo 放大到 76px，手機 64px；object-fit contain 保留完整透明原圖', () => {
+    expect(css).toContain('height: 76px');
+    expect(css).toContain('height: 64px');
+    expect(css).toContain('object-fit: contain');
   });
 
   it('中文唔用假斜體', () => {

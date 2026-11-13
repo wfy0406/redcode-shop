@@ -266,6 +266,21 @@ export function sanitizePublicBill(raw: unknown, token: string): PublicBillPaylo
   };
 }
 
+/**
+ * WhatsApp／社交 crawler 首口 HTML 專用讀取：沿用同一個白名單 upstream＋public-safe sanitizer。
+ * 唔另開 DB／通用 proxy 路線；token 格式先擋，rate limit 同頁內 getPublic 同一標準。
+ * 回傳只供 server 產生 title／description；內部 base、upstream error 同非白名單欄位唔會入 HTML。
+ */
+export async function getPublicBillForOg(token: string, clientIp: string): Promise<PublicBillPayload> {
+  if (!PUBLIC_BILL_TOKEN_RE.test(token)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "單據連結格式唔正確" });
+  }
+  assertAllowed(getPublicIpLimiter, `og:${clientIp}`);
+  assertAllowed(getPublicIpTokenLimiter, `og:${clientIp}:${token}`);
+  const raw = await callUpstream("getPublic", { token });
+  return sanitizePublicBill(raw, token);
+}
+
 // ───────────────────────── confirmAndPay 合約（同 WMS public bill 一字不變）─────────────
 
 // 同 WMS v2026.11.12.1：returnUrl 必填、只接受 http/https（防 javascript: 偽協議）。

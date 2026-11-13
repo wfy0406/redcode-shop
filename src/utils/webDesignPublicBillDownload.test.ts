@@ -131,8 +131,10 @@ describe('BILL_THEME（黑金文件主題）', () => {
     expect(SOURCE).not.toContain('#ff3d7f');
   });
 
-  it('logo 用官網原裝透明 PNG 路徑（唔加白底）', () => {
-    expect(WD_PUBLIC_BILL_LOGO_SRC).toBe('/logo.png');
+  it('網頁設計單用 WEBSITE BUILDING 原裝透明 PNG，並放大頁首 logo（唔加白底）', () => {
+    expect(WD_PUBLIC_BILL_LOGO_SRC).toBe('/redcode-web-design-logo.png');
+    expect(SOURCE).toContain('const lh = 82');
+    expect(SOURCE).toContain('ctx.drawImage(logo, cx - lw / 2, y, lw, lh)');
   });
 });
 
