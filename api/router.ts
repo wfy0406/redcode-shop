@@ -18,6 +18,7 @@ import { luckyDrawRouter } from "./luckyDrawRouter";
 import { walletRouter } from "./walletRouter";
 import { tryonRouter } from "./tryonRouter";
 import { webDesignRouter } from "./webDesignRouter";
+import { webDesignPublicBillRouter } from "./webDesignPublicBill";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -46,6 +47,9 @@ export const appRouter = createRouter({
   tryon: tryonRouter,
   // 網站設計服務：獨立服務訂單鏈，唔落入普通商品 orders／orderItems
   webDesign: webDesignRouter,
+  // v2026.11.13.1（SPEC §9，老闆新要求）：redcode.red/web-design-bill/<token> 公開單據入口——
+  // server-side 白名單代理 WMS webDesignBilling.getPublic／confirmAndPay（唔洩漏 WMS 域名）
+  webDesignPublicBill: webDesignPublicBillRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -35,6 +35,7 @@ const TryOnShared = lazy(() => import('@/pages/TryOnShared')); // 有時限分�
 const LuckyResults = lazy(() => import('@/pages/LuckyResults')); // v2.5.8：公開中獎公告頁（唔使登入）
 const LuckyTicketLookup = lazy(() => import('@/pages/LuckyTicketLookup')); // 2026-11-08：公開抽獎劵查詢頁（noindex）
 const WebDesignPage = lazy(() => import('@/pages/WebDesignPage')); // 2026-11-09：獨立網站設計銷售頁（唔共用星空 Layout）
+const WebDesignPublicBillPage = lazy(() => import('@/pages/WebDesignPublicBillPage')); // v2026.11.13.1（SPEC §9）：公開單據頁（唔共用 Layout，乾淨 path 直達）
 const NotFound = lazy(() => import('@/pages/NotFound')); // 未知網址：人類用戶 404 頁
 
 /**
@@ -91,6 +92,8 @@ export default function App() {
       <Suspense fallback={<PageLoading />}>
         <Routes>
           <Route path="web-design" element={<WebDesignPage />} />
+          {/* SPEC §9：公開單據 https://redcode.red/web-design-bill/<token> 直達（唔准 iframe/redirect） */}
+          <Route path="web-design-bill/:token" element={<WebDesignPublicBillPage />} />
           <Route element={<Layout />}>
             <Route index element={<Home />} />
             <Route path="products" element={<Products />} />

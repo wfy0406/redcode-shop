@@ -1,0 +1,551 @@
+/* ===== v2026.11.13.1 redcode.red 公開單據頁 — dark mission-control 資料單 =====
+   同 WMS WebDesignBillPage.css 一套設計語言（排版／顏色／狀態字句一致）：
+   near-black #050810 / panel #0c1220 / 1px hairline #1a2540；
+   cyan 只做 active/live 狀態同付款 CTA；品牌 magenta 只做 logo 邊的小重點（billNo node）。
+   mono 數字及 metadata；CJK system stack；無 emoji、無巢狀卡片、無藍紫漸變、中文唔用斜體。
+   細 grid 背景 + persistent hairlines + 狀態 node；CTA 高對比實心 ≥44px；reduced-motion；手機無橫向溢出。
+   SPEC §9 新增：網上單據 QR 區（.wdb-online/.wdb-qr）＋備註紀錄區（.wdb-notes）。 */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+.wdb-root {
+  --wdb-bg: #050810;
+  --wdb-panel: #0c1220;
+  --wdb-line: #1a2540;
+  --wdb-line-strong: #26324e;
+  --wdb-text: #dbe4f2;
+  --wdb-soft: #93a1b8;
+  --wdb-faint: #5f6b80;
+  --wdb-cyan: #3ee6ff;
+  --wdb-cyan-dim: rgba(62, 230, 255, 0.14);
+  --wdb-magenta: #ff3d7f;
+  --wdb-amber: #ffc24b;
+  --wdb-err: #ff6b6b;
+  --wdb-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --wdb-cjk: 'PingFang HK', 'PingFang TC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft JhengHei',
+    'Microsoft YaHei', 'Noto Sans CJK TC', 'Noto Sans TC', sans-serif;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: var(--wdb-bg);
+  /* 細 grid 結構：同色 hard-stop 線（唔係色彩漸變） */
+  background-image:
+    repeating-linear-gradient(0deg, rgba(26, 37, 64, 0.3) 0 1px, transparent 1px 56px),
+    repeating-linear-gradient(90deg, rgba(26, 37, 64, 0.3) 0 1px, transparent 1px 56px);
+  color: var(--wdb-text);
+  font-family: var(--wdb-cjk);
+  font-style: normal;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden; /* 手機唔准橫向溢出 */
+  padding: 0 0 64px;
+  box-sizing: border-box;
+}
+.wdb-root *, .wdb-root *::before, .wdb-root *::after { box-sizing: border-box; }
+
+.wdb-num { font-family: var(--wdb-mono); font-variant-numeric: tabular-nums; }
+
+/* 進場：輕微 rise（淨係 opacity/transform） */
+@keyframes wdbRise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- 頂欄（全寬 band，persistent hairline） ---------- */
+.wdb-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 20px;
+  min-height: 76px;
+  border-bottom: 1px solid var(--wdb-line);
+  flex-wrap: wrap;
+}
+.wdb-logo { height: 48px; width: auto; display: block; }
+.wdb-company {
+  font-family: var(--wdb-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--wdb-soft);
+}
+.wdb-topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 狀態 node：8px 圓點 + mono label */
+.wdb-node {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--wdb-faint);
+  background: transparent;
+  flex: none;
+}
+.wdb-node.wdb-tone-live {
+  border-color: var(--wdb-cyan);
+  background: var(--wdb-cyan);
+  animation: wdbPulse 1.8s ease-in-out infinite;
+}
+.wdb-node.wdb-tone-done { border-color: var(--wdb-cyan); background: var(--wdb-cyan); }
+.wdb-node.wdb-tone-muted { border-color: var(--wdb-soft); }
+.wdb-node.wdb-tone-dead { border-color: var(--wdb-faint); }
+@keyframes wdbPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.wdb-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--wdb-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--wdb-soft);
+}
+.wdb-status-chip.wdb-tone-live, .wdb-status-chip.wdb-tone-done { color: var(--wdb-cyan); }
+
+/* TEST badge（功能標記，無 emoji） */
+.wdb-test-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid var(--wdb-amber);
+  color: var(--wdb-amber);
+  background: rgba(255, 194, 75, 0.08);
+  font-family: var(--wdb-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+}
+
+/* ---------- 單據 sheet ---------- */
+.wdb-sheet {
+  max-width: 680px;
+  margin: 32px auto 0;
+  background: var(--wdb-panel);
+  border: 1px solid var(--wdb-line);
+  animation: wdbRise 480ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.wdb-sheet.wdb-is-void { filter: grayscale(1); opacity: 0.72; }
+
+.wdb-sec { padding: 22px 24px; border-bottom: 1px solid var(--wdb-line); }
+.wdb-sec:last-child { border-bottom: 0; }
+.wdb-sec-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-family: var(--wdb-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  color: var(--wdb-faint);
+  text-transform: uppercase;
+}
+.wdb-sec-tag::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  background: var(--wdb-line-strong);
+  flex: none;
+}
+
+@media (max-width: 560px) {
+  .wdb-sheet { margin: 20px 12px 0; }
+  .wdb-sec { padding: 18px 16px; }
+}
+
+/* ---------- header section ---------- */
+.wdb-doc-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.wdb-doc-title { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0.08em; }
+.wdb-doc-sub {
+  margin: 6px 0 0;
+  font-family: var(--wdb-mono);
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  color: var(--wdb-faint);
+  text-transform: uppercase;
+}
+.wdb-billno {
+  margin: 20px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--wdb-mono);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+}
+/* 品牌 magenta 小重點：單號前面嘅 node（全頁得呢度用 magenta 實色塊） */
+.wdb-billno::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  background: var(--wdb-magenta);
+  flex: none;
+}
+.wdb-date-line {
+  margin: 8px 0 0;
+  font-family: var(--wdb-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--wdb-soft);
+}
+
+/* ---------- meta ---------- */
+.wdb-meta { margin: 0; display: grid; grid-template-columns: 84px 1fr; gap: 0; }
+.wdb-meta dt, .wdb-meta dd {
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--wdb-line);
+}
+.wdb-meta dt {
+  font-family: var(--wdb-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--wdb-faint);
+  padding-top: 13px;
+  white-space: nowrap;
+}
+.wdb-meta dd {
+  text-align: right;
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.wdb-meta .wdb-meta-end { border-bottom: 0; }
+
+/* ---------- 明細表 ---------- */
+.wdb-items { width: 100%; border-collapse: collapse; }
+.wdb-items th {
+  font-family: var(--wdb-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  color: var(--wdb-faint);
+  text-align: left;
+  padding: 0 6px 10px;
+  border-bottom: 1px solid var(--wdb-line-strong);
+  white-space: nowrap;
+}
+.wdb-items th.wdb-col-num, .wdb-items td.wdb-col-num { text-align: right; }
+.wdb-items td {
+  padding: 12px 6px;
+  border-bottom: 1px solid var(--wdb-line);
+  vertical-align: top;
+  font-size: 13.5px;
+  overflow-wrap: anywhere; /* 長項目名換行 */
+}
+.wdb-items td.wdb-col-num {
+  font-family: var(--wdb-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.wdb-item-name { display: block; }
+@media (max-width: 420px) {
+  .wdb-items td { padding: 10px 4px; font-size: 12.5px; }
+  .wdb-items td.wdb-col-num { font-size: 11.5px; }
+  .wdb-items th { padding: 0 4px 8px; }
+}
+.wdb-orig {
+  display: block;
+  font-size: 10.5px;
+  color: var(--wdb-faint);
+  text-decoration: line-through;
+}
+.wdb-disc-tag {
+  display: inline-block;
+  margin-top: 6px;
+  font-family: var(--wdb-mono);
+  font-size: 10px;
+  color: var(--wdb-soft);
+  border: 1px solid var(--wdb-line-strong);
+  padding: 2px 7px;
+  letter-spacing: 0.06em;
+}
+
+/* ---------- 合計 ---------- */
+.wdb-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 8px 0;
+  font-size: 13.5px;
+}
+.wdb-total-row .wdb-l { font-size: 12px; letter-spacing: 0.14em; color: var(--wdb-soft); }
+.wdb-total-row .wdb-v {
+  font-family: var(--wdb-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.wdb-total-row.wdb-kind-orig .wdb-l, .wdb-total-row.wdb-kind-orig .wdb-v {
+  color: var(--wdb-faint);
+  text-decoration: line-through;
+}
+.wdb-total-row.wdb-kind-adjustReason {
+  padding: 2px 0 8px;
+  font-size: 11.5px;
+  color: var(--wdb-faint);
+  justify-content: flex-end;
+  text-align: right;
+}
+.wdb-total-row.wdb-kind-adjustReason .wdb-v { font-family: var(--wdb-cjk); font-weight: 400; white-space: normal; }
+.wdb-grand {
+  margin-top: 10px;
+  border-top: 1px solid var(--wdb-line-strong);
+  border-bottom: 1px solid var(--wdb-line-strong);
+  padding: 16px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+}
+.wdb-grand .wdb-l { font-size: 13px; font-weight: 700; letter-spacing: 0.2em; }
+.wdb-grand .wdb-v {
+  font-family: var(--wdb-mono);
+  font-size: 25px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  white-space: nowrap;
+}
+@media (max-width: 380px) { .wdb-grand .wdb-v { font-size: 21px; } }
+.wdb-saved {
+  text-align: right;
+  font-family: var(--wdb-mono);
+  font-size: 11px;
+  color: var(--wdb-soft);
+  padding-top: 8px;
+  letter-spacing: 0.06em;
+}
+
+/* ---------- 狀態區 ---------- */
+.wdb-status-box { border: 1px solid var(--wdb-line); padding: 16px; }
+.wdb-status-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--wdb-mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+}
+.wdb-status-head.wdb-tone-live, .wdb-status-head.wdb-tone-done { color: var(--wdb-cyan); }
+.wdb-status-head.wdb-tone-muted, .wdb-status-head.wdb-tone-dead { color: var(--wdb-soft); }
+.wdb-status-head .wdb-en { color: var(--wdb-faint); font-size: 10px; letter-spacing: 0.22em; }
+.wdb-paid-detail {
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 2;
+  color: var(--wdb-text);
+}
+.wdb-paid-detail .wdb-v { font-family: var(--wdb-mono); font-weight: 700; font-variant-numeric: tabular-nums; }
+.wdb-paid-detail .wdb-warn { color: var(--wdb-amber); }
+.wdb-refund-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--wdb-soft);
+  letter-spacing: 0.06em;
+  line-height: 1.8;
+}
+
+/* ---------- 付款 CTA（高對比實心，≥44px） ---------- */
+.wdb-pay-btn {
+  margin-top: 4px;
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: 0;
+  background: var(--wdb-cyan);
+  color: var(--wdb-bg);
+  font-family: var(--wdb-cjk);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  padding: 13px 16px;
+  cursor: pointer;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.wdb-pay-btn:hover:not(:disabled) { opacity: 0.88; }
+.wdb-pay-btn:active:not(:disabled) { transform: translateY(1px); }
+.wdb-pay-btn:disabled { opacity: 0.5; cursor: default; }
+.wdb-disclaimer {
+  margin: 14px 0 0;
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--wdb-faint);
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+/* 頁內錯誤行（唔准 alert） */
+.wdb-error-line {
+  margin: 14px 0 0;
+  border-top: 1px solid var(--wdb-err);
+  padding: 10px 2px 0;
+  color: var(--wdb-err);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  line-height: 1.7;
+}
+
+/* ---------- 備註紀錄（SPEC §5：text + updatedAt，唔公開操作人） ---------- */
+.wdb-notes { margin: 0; padding: 0; list-style: none; }
+.wdb-note { padding: 10px 0; border-bottom: 1px solid var(--wdb-line); }
+.wdb-note:last-child { border-bottom: 0; }
+.wdb-note-text { font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; white-space: pre-wrap; }
+.wdb-note-at {
+  margin: 4px 0 0;
+  font-family: var(--wdb-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--wdb-faint);
+}
+
+/* ---------- 網上單據（QR + onlineUrl；SPEC §9） ---------- */
+.wdb-online {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.wdb-qr {
+  width: 120px;
+  height: 120px;
+  display: block;
+  flex: none;
+  background: #ffffff; /* 深底上 QR 一定要白底深字先掃到 */
+}
+.wdb-qr-loading {
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--wdb-line-strong);
+  color: var(--wdb-faint);
+  font-family: var(--wdb-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-align: center;
+  padding: 8px;
+  flex: none;
+}
+.wdb-online-text { flex: 1; min-width: 220px; }
+.wdb-online-hint { font-size: 11px; color: var(--wdb-soft); letter-spacing: 0.06em; }
+.wdb-online-url {
+  display: block;
+  margin: 8px 0 0;
+  font-family: var(--wdb-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--wdb-faint);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+.wdb-online-url:hover { color: var(--wdb-cyan); }
+@media (max-width: 420px) {
+  .wdb-online { gap: 14px; }
+  .wdb-qr, .wdb-qr-loading { width: 104px; height: 104px; }
+}
+
+/* ---------- 下載工具掣（sheet 外） ---------- */
+.wdb-dl-row {
+  max-width: 680px;
+  margin: 16px auto 0;
+  display: flex;
+  gap: 10px;
+  padding: 0 0;
+}
+@media (max-width: 560px) { .wdb-dl-row { margin: 16px 12px 0; } }
+.wdb-dl-btn {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid var(--wdb-line-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--wdb-text);
+  font-family: var(--wdb-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  padding: 12px 10px;
+  cursor: pointer;
+  transition: background 160ms ease, opacity 160ms ease, transform 160ms ease;
+}
+.wdb-dl-btn:hover:not(:disabled) { background: rgba(38, 50, 78, 0.35); }
+.wdb-dl-btn:active:not(:disabled) { transform: translateY(1px); }
+.wdb-dl-btn:disabled { opacity: 0.5; cursor: default; }
+.wdb-dl-hint {
+  max-width: 680px;
+  margin: 10px auto 0;
+  text-align: center;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--wdb-faint);
+}
+@media (max-width: 560px) { .wdb-dl-hint { margin: 10px 12px 0; } }
+
+/* ---------- footer ---------- */
+.wdb-foot { text-align: center; }
+.wdb-foot-main { font-size: 12.5px; letter-spacing: 0.12em; }
+.wdb-foot-sub {
+  margin: 8px 0 0;
+  font-family: var(--wdb-mono);
+  font-size: 10px;
+  color: var(--wdb-faint);
+  letter-spacing: 0.18em;
+}
+
+/* ---------- loading / error ---------- */
+@keyframes wdbBreathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.wdb-loading {
+  max-width: 680px;
+  margin: 20vh auto 0;
+  padding: 0 20px;
+  text-align: center;
+  font-family: var(--wdb-mono);
+  letter-spacing: 0.26em;
+  text-indent: 0.26em;
+  font-size: 12px;
+  color: var(--wdb-soft);
+  animation: wdbBreathe 1.8s ease-in-out infinite;
+  will-change: opacity;
+}
+.wdb-loading-rule { margin: 18px auto 0; width: 64px; border: 0; border-top: 1px solid var(--wdb-cyan); }
+.wdb-error-body {
+  padding: 48px 24px;
+  text-align: center;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  line-height: 2.1;
+}
+.wdb-error-sub { font-size: 11.5px; color: var(--wdb-faint); letter-spacing: 0.08em; }
+
+/* ---------- 無障礙 / motion ---------- */
+.wdb-root button:focus-visible, .wdb-root a:focus-visible {
+  outline: 2px solid var(--wdb-cyan);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wdb-root *, .wdb-root *::before, .wdb-root *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
