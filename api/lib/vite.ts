@@ -293,6 +293,15 @@ export function serveStaticFiles(app: App) {
           content = injectRouteMeta(content, { ...pageSeo, path: normPath });
           content = injectPublicSeoContent(content, normPath);
         }
+      } else if (/^\/web-design-bill\/[^/]+$/.test(normPath)) {
+        // v2026.11.13.2：公開單據係真 SPA 深層 route，唔係 NotFound。
+        // token 有效與否由白名單 getPublic 判斷；首口唔反射 token、唔查內部 DB，保持 200＋noindex。
+        content = injectRouteMeta(content, {
+          title: "單據載入中｜RedCode Fashion Design",
+          description: "RedCode 專屬網上單據，查看服務項目、費用、備註及付款資料。",
+          canonical: null,
+          noindex: true,
+        });
       } else if (
         NOINDEX_EXACT.includes(normPath) ||
         normPath.startsWith("/receipt/") ||

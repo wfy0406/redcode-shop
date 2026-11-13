@@ -127,6 +127,11 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     title: '管理後台｜RedCode Fashion Design',
     description: 'RedCode 店舖管理後台（內部使用）。',
   },
+  // v2026.11.13.2：專屬 token 公開單據唔係 404；有效單號由頁面載入後再覆寫。
+  '/web-design-bill/:token': {
+    title: '單據載入中｜RedCode Fashion Design',
+    description: 'RedCode 專屬網上單據，查看服務項目、費用、備註及付款資料。',
+  },
   // 動態段路由：SeoManager 用 pattern 對返呢兩條
   '/products/:id': {
     title: '商品詳情｜RedCode Fashion Design',
@@ -180,6 +185,8 @@ export function resolveSeo(pathname: string, search = ''): { title: string; desc
       };
     }
   }
+  // token 有效定無效由公開單據頁處理；深層 route 永遠唔應落入通用 404 標題。
+  if (/^\/web-design-bill\/[^/]+\/?$/.test(pathname)) return PAGE_SEO['/web-design-bill/:token'];
   if (/^\/products\/\d+/.test(pathname)) return PAGE_SEO['/products/:id'];
   if (/^\/receipt\//.test(pathname)) return PAGE_SEO['/receipt/:orderId'];
   if (/^\/lucky-results\/\d+/.test(pathname)) return PAGE_SEO['/lucky-results/:eventId'];

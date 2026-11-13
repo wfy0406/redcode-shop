@@ -1,10 +1,13 @@
-// ===== v2026.11.13.1 redcode.red 公開單據頁（SPEC §9；公開頁，唔使登入）=====
+// ===== v2026.11.13.2 redcode.red 公開單據頁（SPEC §9；公開頁，唔使登入）=====
 // 路由：/web-design-bill/:token（App.tsx 掛 lazy route，BrowserRouter 乾淨 path 直達）
 // 契約：
 //   trpc.webDesignPublicBill.getPublic.useQuery({ token })      — 官網白名單代理 WMS getPublic
 //   trpc.webDesignPublicBill.confirmAndPay.useMutation({ token, returnUrl }) — 代理 WMS confirmAndPay
 // 頁面／QR／下載全部只用官網 canonical URL（https://redcode.red/web-design-bill/<token>），
 // 唔會出現 WMS 內部域名；禁止 iframe／redirect。
+// v2026.11.13.2：黑金高級文件感重做 — 單欄文件流、serif 大標題、香檳金箔 hairline；
+// 中文人性分節標籤（單據資料／服務明細／費用總計／付款資料／備註紀錄／網上單據），
+// document.title 跟載入／有效／失效三態（見下面 useEffect）。
 // 注意：本頁係客戶經專屬 token 連結直達嘅公開頁，永遠唔准加會員登入要求，
 // 亦唔准顯示內部資料（sourcePayload／開支／fee/net／操作人）。
 
@@ -158,10 +161,8 @@ export default function WebDesignPublicBillPage() {
       try {
         const env: 'demo' | 'prod' = res?.env === 'prod' ? 'prod' : 'demo';
         const sdk = await loadAirwallexSdk();
-        await sdk.init({ env, enabledElements: ['payments'] });
-        // 官方文件寫 sdk.payments，但 v1.35.0 loader 實測佢永遠唔會挂上嚟 —
-        // 真正 instance 喺 window._AirwallexSDKs.payment（同 WMS BillPage 實測口徑一致）
-        const payments = sdk?.payments ?? (window as any)?._AirwallexSDKs?.payment;
+        const initialized = await sdk.init({ env, enabledElements: ['payments'] });
+        const payments = initialized?.payments ?? sdk?.payments ?? (window as any)?._AirwallexSDKs?.payment;
         if (!payments || typeof payments.redirectToCheckout !== 'function') {
           throw new Error('支付元件未就緒');
         }
@@ -192,7 +193,23 @@ export default function WebDesignPublicBillPage() {
     pay.mutate({ token, returnUrl: window.location.href.split('#')[0] });
   };
 
-  // 下載單據（canvas 手畫深色科技風成張單 → PNG 直出 / jsPDF 製 PDF；QR 同頁面一致）
+  // 分頁標題跟單據狀態（v2026.11.13.2）：hook 一定要喺 early return 之前呼叫。
+  // 載入中 → 「單據載入中」；有效單據 → 「單號｜單據類型」；無效 token／查詢失敗／無單據 → 「不存在或已失效」。
+  // SeoManager 喺轉頁時先設一次靜態 title，呢個 effect 喺佢之後按真實資料覆寫，唔會改 seo.ts。
+  useEffect(() => {
+    if (tokenValid && query.isLoading) {
+      document.title = '單據載入中｜RedCode Fashion Design';
+      return;
+    }
+    if (bill) {
+      document.title = `${bill.billNo}｜${billTitles(bill.kind).zh}｜RedCode Fashion Design`;
+      return;
+    }
+    // 呢度即下面 error 分支嘅同一條件（!tokenValid || query.isError || !bill）
+    document.title = '單據不存在或已失效｜RedCode Fashion Design';
+  }, [tokenValid, query.isLoading, query.isError, bill]);
+
+  // 下載單據（下載版係中性留底格式：項目／金額／備註／網上單據 QR；版面唔需要同互動頁一樣）
   const handleDownload = async (kind: 'png' | 'pdf') => {
     if (!bill || downloading) return;
     setDownloading(kind);
@@ -263,7 +280,7 @@ export default function WebDesignPublicBillPage() {
 
   return (
     <div className="wdb-root">
-      {/* 頂欄：logo + 公司名 + 即時狀態 node + test badge */}
+      {/* 頂欄：logo + 公司名 + 狀態印記 + test badge */}
       <header className="wdb-topbar">
         <img className="wdb-logo" src={LOGO_SRC} alt={company} />
         <div className="wdb-company">{company}</div>
@@ -277,9 +294,9 @@ export default function WebDesignPublicBillPage() {
       </header>
 
       <div className={`wdb-sheet${isVoid ? ' wdb-is-void' : ''}`}>
-        {/* SEC 01：單據標題 + 單號 + 日期（project 單用專案標題） */}
+        {/* 單據資料：標題 + 單號 + 日期（project 單用專案標題） */}
         <section className="wdb-sec">
-          <p className="wdb-sec-tag">SEC 01 — BILL</p>
+          <p className="wdb-sec-tag">單據資料</p>
           <div className="wdb-doc-row">
             <div>
               <h1 className="wdb-doc-title">{titles.zh}</h1>
@@ -294,9 +311,9 @@ export default function WebDesignPublicBillPage() {
           {dateLine && <div className="wdb-date-line">{dateLine}</div>}
         </section>
 
-        {/* SEC 02：客戶 / 帳期 / 專案 / 備註 */}
+        {/* 客戶資料：客戶 / 帳期 / 專案 / 備註 */}
         <section className="wdb-sec">
-          <p className="wdb-sec-tag">SEC 02 — CLIENT</p>
+          <p className="wdb-sec-tag">客戶資料</p>
           <dl className="wdb-meta">
             {meta.map(([k, v], i) => (
               <div key={i} style={{ display: 'contents' }}>
@@ -307,9 +324,9 @@ export default function WebDesignPublicBillPage() {
           </dl>
         </section>
 
-        {/* SEC 03：明細 */}
+        {/* 服務明細 */}
         <section className="wdb-sec">
-          <p className="wdb-sec-tag">SEC 03 — ITEMS</p>
+          <p className="wdb-sec-tag">服務明細</p>
           <table className="wdb-items">
             <thead>
               <tr>
@@ -348,9 +365,9 @@ export default function WebDesignPublicBillPage() {
           </table>
         </section>
 
-        {/* SEC 04：合計 */}
+        {/* 費用總計 */}
         <section className="wdb-sec">
-          <p className="wdb-sec-tag">SEC 04 — TOTAL</p>
+          <p className="wdb-sec-tag">費用總計</p>
           {totals.map((r, i) =>
             r.kind === 'grand' ? (
               <div className="wdb-grand" key={i}>
@@ -370,9 +387,9 @@ export default function WebDesignPublicBillPage() {
           )}
         </section>
 
-        {/* SEC 05：狀態 + 付款 */}
+        {/* 付款資料：狀態 + 已付／退款／作廢資訊 + 付款 CTA */}
         <section className="wdb-sec">
-          <p className="wdb-sec-tag">SEC 05 — STATUS</p>
+          <p className="wdb-sec-tag">付款資料</p>
           <div className="wdb-status-box">
             <div className={`wdb-status-head wdb-tone-${st.tone}`}>
               <span className={`wdb-node wdb-tone-${st.tone}`} aria-hidden="true" />
@@ -440,10 +457,10 @@ export default function WebDesignPublicBillPage() {
           {payError && <div className="wdb-error-line">{payError}</div>}
         </section>
 
-        {/* SEC 06：備註紀錄（專案單據 notes snapshot；text + updatedAt，唔公開操作人） */}
+        {/* 備註紀錄（專案單據 notes snapshot；text + updatedAt，唔公開操作人） */}
         {bill.notes.length > 0 && (
           <section className="wdb-sec">
-            <p className="wdb-sec-tag">SEC 06 — NOTES</p>
+            <p className="wdb-sec-tag">備註紀錄</p>
             <ul className="wdb-notes">
               {bill.notes.map((n, i) => (
                 <li key={n.id ?? i} className="wdb-note">
@@ -455,9 +472,9 @@ export default function WebDesignPublicBillPage() {
           </section>
         )}
 
-        {/* SEC：網上單據（QR + onlineUrl；QR payload 同呢度顯示一字不變，SPEC §9 驗收） */}
+        {/* 網上單據（QR + onlineUrl；QR payload 同呢度顯示一字不變，SPEC §9 驗收） */}
         <section className="wdb-sec">
-          <p className="wdb-sec-tag">ONLINE — 網上單據</p>
+          <p className="wdb-sec-tag">網上單據</p>
           {onlineUrl ? (
             <div className="wdb-online">
               <BillQr payload={onlineUrl} />
@@ -484,7 +501,7 @@ export default function WebDesignPublicBillPage() {
         </section>
       </div>
 
-      {/* 下載單據（圖片 / PDF）— sheet 外工具掣，任何狀態都用得；格式／QR 同頁面一致 */}
+      {/* 下載單據（圖片 / PDF）— 同單據本體分層嘅工具區，任何狀態都用得 */}
       <div className="wdb-dl-row">
         <button className="wdb-dl-btn" onClick={() => handleDownload('png')} disabled={downloading !== null}>
           {downloading === 'png' ? '製作中…' : '下載圖片 PNG'}
@@ -498,7 +515,9 @@ export default function WebDesignPublicBillPage() {
           {dlError}
         </div>
       ) : (
-        <div className="wdb-dl-hint">圖片同 PDF 都係成張單據完整落嚟（連二維碼），可以直接轉發或存檔</div>
+        <div className="wdb-dl-hint">
+          下載版係中性留底單據，包含項目、金額、備註同網上單據 QR；網上付款請用本頁付款掣。
+        </div>
       )}
     </div>
   );

@@ -116,6 +116,19 @@ describe("resolveSeo 路由對應", () => {
     expect(resolveSeo("/no-such-page")).toEqual(NOT_FOUND_SEO);
   });
 
+  it("公開單據深層 route（有效格式或無效 token）都唔再落入通用 404 標題", () => {
+    for (const path of [
+      `/web-design-bill/${"a".repeat(32)}`,
+      `/web-design-bill/${"a".repeat(32)}/`,
+      "/web-design-bill/not-a-valid-token",
+    ]) {
+      expect(resolveSeo(path), path).toEqual(PAGE_SEO["/web-design-bill/:token"]);
+      expect(resolveSeo(path).title, path).not.toContain("搵唔到呢頁");
+      expect(isNoIndexPath(path), path).toBe(true);
+      expect(resolveCanonicalPath(path), path).toBeNull();
+    }
+  });
+
   it("FAQ、AI 試穿及有時限分享都有對應前端 meta", () => {
     expect(resolveSeo("/faq")).toEqual(PAGE_SEO["/faq"]);
     expect(resolveSeo("/try-on")).toEqual(PAGE_SEO["/try-on"]);

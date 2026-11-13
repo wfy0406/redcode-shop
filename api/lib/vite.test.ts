@@ -407,6 +407,19 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).not.toContain('property="og:url"');
   });
 
+  it("(14a) 公開單據深層 route → 200＋專用載入標題＋noindex，token 無效都唔變通用 404", async () => {
+    for (const path of [`/web-design-bill/${"a".repeat(32)}`, "/web-design-bill/not-a-valid-token"]) {
+      const res = await makeApp().request(path);
+      expect(res.status, path).toBe(200);
+      const html = await res.text();
+      expect(html, path).toContain("<title>單據載入中｜RedCode Fashion Design</title>");
+      expect(html, path).not.toContain("搵唔到呢頁");
+      expect(html, path).toContain('<meta name="robots" content="noindex, nofollow" />');
+      expect(html, path).not.toContain('id="redcode-public-seo"');
+      expect(canonicalHref(html), path).toBeNull();
+    }
+  });
+
   it("(14b) /lucky-results 總頁首口列真公開活動連結，唔再只有通用摘要", async () => {
     mockRows = [{ id: 12, name: "雙十一．壓軸狂歡", scheduledDrawDate: "20261111" }];
     const res = await makeApp().request("/lucky-results");

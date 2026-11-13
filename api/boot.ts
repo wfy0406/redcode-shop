@@ -80,11 +80,13 @@ app.use("*", async (c, next) => {
 const CSP_BOOT_RESCUE_HASH = "'sha256-Rod+6dyjxEnJyP7XdhEC+PG4wfEePSEz1iHNAoTu38E='"; // index.html 8 秒白屏自救 inline script；CSP hash source 必須連單引號
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  `script-src 'self' ${CSP_BOOT_RESCUE_HASH} https://static.airwallex.com https://connect.facebook.net https://accounts.google.com`,
+  // Airwallex Components SDK 入口會按 env 再載入 sdk-controller／payments bundle；
+  // 呢四個 host 係官方 loader 實際 script 請求，缺一不可（唔係舊產品碼 hardcode）。
+  `script-src 'self' ${CSP_BOOT_RESCUE_HASH} https://static.airwallex.com https://static-demo.airwallex.com https://checkout.airwallex.com https://checkout-demo.airwallex.com https://connect.facebook.net https://accounts.google.com`,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: blob: https://*.fbcdn.net https://images.weserv.nl https://www.facebook.com",
   "font-src 'self' https://fonts.gstatic.com",
-  "connect-src 'self' https://api.airwallex.com https://api-demo.airwallex.com https://accounts.google.com https://www.facebook.com https://connect.facebook.net",
+  "connect-src 'self' https://api.airwallex.com https://api-demo.airwallex.com https://o11y.airwallex.com https://o11y-demo.airwallex.com https://accounts.google.com https://www.facebook.com https://connect.facebook.net",
   "frame-src https://www.facebook.com https://staticxx.facebook.com https://static.airwallex.com https://api.airwallex.com https://api-demo.airwallex.com https://accounts.google.com",
   "media-src 'self' blob:",
   "worker-src 'self'",
