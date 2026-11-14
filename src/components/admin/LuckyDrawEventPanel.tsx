@@ -7,6 +7,7 @@ import { LoadingBlock } from './WishingStar';
 import LuckyDrawExcelImport from './LuckyDrawExcelImport';
 import LuckyEventSwitcher, { type DrawEvent } from './LuckyEventSwitcher';
 import { downloadAnnouncementPng } from '@/lib/luckyAnnouncementPng';
+import { handleEnterToSubmit } from '@/lib/keyboard';
 
 export type { DrawEvent } from './LuckyEventSwitcher';
 import { resetLuckyAnnouncementPublicQueries } from '@/lib/luckyAnnouncementVisibility';
@@ -737,7 +738,7 @@ export default function LuckyDrawEventPanel({
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitRename();
+                    handleEnterToSubmit(e, commitRename);
                     if (e.key === 'Escape') setRenaming(false);
                   }}
                   maxLength={128}
@@ -780,7 +781,7 @@ export default function LuckyDrawEventPanel({
                   value={dateValue}
                   onChange={(e) => setDateValue(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') commitDrawDate();
+                    handleEnterToSubmit(e, commitDrawDate);
                     if (e.key === 'Escape') setEditingDate(false);
                   }}
                   aria-label="新預定抽獎日"
@@ -1097,7 +1098,7 @@ export default function LuckyDrawEventPanel({
                     value={addName}
                     onChange={(e) => setAddName(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') addEntry();
+                      handleEnterToSubmit(e, addEntry);
                     }}
                     placeholder="持有人姓名"
                     maxLength={255}
@@ -1223,7 +1224,7 @@ export default function LuckyDrawEventPanel({
                                     value={entryTicketsValue}
                                     onChange={(e) => setEntryTicketsValue(e.target.value)}
                                     onKeyDown={(e) => {
-                                      if (e.key === 'Enter') commitEntryTickets(en);
+                                      handleEnterToSubmit(e, () => commitEntryTickets(en));
                                       if (e.key === 'Escape') {
                                         setEditingEntryId(null);
                                         setEntryTicketsValue('');

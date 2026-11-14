@@ -16,6 +16,7 @@ import {
 import {
   emptyLiveRouteMeta,
   formatLiveDateLabel,
+  injectPublicLiveIndex,
   isValidLiveDate,
   isValidLiveSession,
   liveDescription,
@@ -26,6 +27,7 @@ import {
   liveSitemapPaths,
   liveTitle,
   parseLiveQuery,
+  renderPublicLiveIndex,
 } from "./liveSeo";
 
 describe("isValidLiveDate — 真實日曆日期", () => {
@@ -168,6 +170,43 @@ describe("liveSitemapPaths — sitemap 直播 URL", () => {
       { liveDate: "20261111", liveSession: "1" },
     ]);
     expect(paths).toEqual(["/products?liveDate=20261111&liveSession=1"]);
+  });
+});
+
+describe("/live 首口真節目索引", () => {
+  it("最新日期排先、同日出全日及場次真內鏈；非法 DB 值唔反射", () => {
+    const html = renderPublicLiveIndex([
+      { liveDate: "20261103", liveSession: "2" },
+      { liveDate: "20261111", liveSession: "2" },
+      { liveDate: "20261111", liveSession: null },
+      { liveDate: "20261111", liveSession: "1" },
+      { liveDate: "20261340", liveSession: null },
+      { liveDate: '20261111"><script>', liveSession: null },
+    ]);
+    expect(html).toContain('id="redcode-live-index-seo"');
+    expect(html.indexOf("2026年11月11日 全日直播商品")).toBeLessThan(
+      html.indexOf("2026年11月11日 第1場直播商品"),
+    );
+    expect(html.indexOf("2026年11月11日 第1場直播商品")).toBeLessThan(
+      html.indexOf("2026年11月11日 第2場直播商品"),
+    );
+    expect(html).toContain('<a href="/products?liveDate=20261111&amp;liveSession=2">');
+    expect(html.indexOf("2026年11月11日")).toBeLessThan(html.indexOf("2026年11月3日"));
+    expect(html).not.toContain("2026年13月40日");
+    expect(html).not.toContain("<script>");
+  });
+
+  it("注入單次、冇場次時原樣；非法 limit 都有界", () => {
+    const template = '<main><nav aria-label="相關公開頁面"></nav></main>';
+    const once = injectPublicLiveIndex(template, [{ liveDate: "20261111", liveSession: "1" }]);
+    expect(once).toContain('id="redcode-live-index-seo"');
+    expect(injectPublicLiveIndex(once, [{ liveDate: "20261111", liveSession: "1" }])).toBe(once);
+    expect(injectPublicLiveIndex(template, [])).toBe(template);
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      liveDate: `2026${String(Math.floor(i / 28) + 1).padStart(2, "0")}${String((i % 28) + 1).padStart(2, "0")}`,
+      liveSession: null,
+    }));
+    expect((renderPublicLiveIndex(many, 999).match(/<li>/g) ?? [])).toHaveLength(48);
   });
 });
 

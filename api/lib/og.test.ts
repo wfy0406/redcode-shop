@@ -148,7 +148,7 @@ describe("injectProductOg — 商品存在", () => {
   it("Product JSON-LD：價錢係港元整數 toFixed（唔係 cents），貨存狀態正確", async () => {
     mockRows = [makeProduct()];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
-    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)];
     const productLd = ldBlocks
       .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
       .find((j) => j["@type"] === "Product");
@@ -182,7 +182,7 @@ describe("injectProductOg — 商品存在", () => {
   it("brand 冇真欄位：Product JSON-LD 唔再硬編碼 RedCode 品牌（同 Feed 唔出 g:brand 一致）", async () => {
     mockRows = [makeProduct()];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
-    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)];
     const productLd = ldBlocks
       .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
       .find((j) => j["@type"] === "Product");
@@ -193,7 +193,7 @@ describe("injectProductOg — 商品存在", () => {
   it("JSON-LD image 用晒成個真 photos 相簿（同 Feed image_link＋additional_image_link 一致）", async () => {
     mockRows = [makeProduct()];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
-    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)];
     const productLd = ldBlocks
       .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
       .find((j) => j["@type"] === "Product");
@@ -207,7 +207,7 @@ describe("injectProductOg — 商品存在", () => {
     mockRows = [makeProduct({ discountPrice: 399 })];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
     expect(html).toContain("<p>HK$299</p>");
-    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)];
     const productLd = ldBlocks
       .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
       .find((j) => j["@type"] === "Product");
@@ -218,7 +218,7 @@ describe("injectProductOg — 商品存在", () => {
     mockRows = [makeProduct({ sizeEnabled: false, sizes: "S,M,L" })];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
     expect(html).not.toContain("<p>尺寸：");
-    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    const ldBlocks = [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)];
     const productLd = ldBlocks
       .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
       .find((j) => j["@type"] === "Product");

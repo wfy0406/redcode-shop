@@ -12,6 +12,7 @@ import LuckyDrawExcelImport from './LuckyDrawExcelImport';
 import LuckyWmsRecovery from './LuckyWmsRecovery';
 import LuckyPrizePicker from './LuckyPrizePicker';
 import { remainingOf, type Prize } from '@/lib/luckyPrizeStock';
+import { handleEnterToSubmit } from '@/lib/keyboard';
 
 /**
  * v2.2.46 直播抽獎大輪盤（老闆 2026-10-03 指令：「整到好華麗，會直播比客睇」）
@@ -2092,7 +2093,7 @@ function NameListPicker({
                     value={renameValue}
                     onChange={(e) => setRenameValue(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
+                      handleEnterToSubmit(e, () => {
                         const name = renameValue.trim();
                         if (!name) {
                           toast('名單名唔准空', 'error');
@@ -2100,7 +2101,7 @@ function NameListPicker({
                         }
                         if (name !== l.name) onRename(l.id, name);
                         setRenamingId(null);
-                      }
+                      });
                       if (e.key === 'Escape') setRenamingId(null);
                     }}
                     onBlur={() => setRenamingId(null)}
@@ -2386,7 +2387,7 @@ function SessionSelect({
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
+            handleEnterToSubmit(e, commit);
             if (e.key === 'Escape') {
               setMaking(false);
               setNewName('');

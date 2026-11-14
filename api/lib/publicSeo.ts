@@ -375,6 +375,28 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
   },
 };
 
+/**
+ * FAQPage 由同一份可見 Q&A 即時生成，避免結構化資料同頁面答案漂移。
+ * 只描述 /faq 真正公開嘅問題同答案；唔代表 Google 一定展示 FAQ rich result。
+ */
+export function faqPageStructuredData(): Record<string, unknown> {
+  const page = PUBLIC_PAGES["/faq"];
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    url: "https://redcode.red/faq",
+    inLanguage: "zh-Hant-HK",
+    mainEntity: (page.sections ?? []).map((section) => ({
+      "@type": "Question",
+      name: section.heading,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: section.text,
+      },
+    })),
+  };
+}
+
 export const LUCKY_EVENT_SEO = {
   title: "中獎名單｜RedCode Fashion Design",
   description: "RedCode 直播抽獎中獎公告——即場抽出嘅真實幸運兒名單，下一個可能係你。",

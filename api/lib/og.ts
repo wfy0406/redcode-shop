@@ -329,10 +329,13 @@ export async function injectProductOg(
           { "@type": "ListItem", position: 3, name: p.name, item: pageUrl },
         ],
       };
-      const breadcrumbTag = `<script type="application/ld+json">${JSON.stringify(breadcrumbLd).replace(/</g, "\\u003c")}</script>`;
+      const routeSchema = (schema: Record<string, unknown>) =>
+        `<script type="application/ld+json" data-redcode-route-schema="/products/${p.id}">${JSON.stringify(schema).replace(/</g, "\\u003c")}</script>`;
+      const breadcrumbTag = routeSchema(breadcrumbLd);
       out = out.replace("</head>", `    ${breadcrumbTag}\n  </head>`);
-      // 防 </script> 截斷：JSON 入面所有 < 換做 \u003c
-      const jsonLdTag = `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>`;
+      // SPA 轉頁會按 data-redcode-route-schema 清走舊商品 Product／BreadcrumbList；
+      // JSON-LD 本體不變，並繼續將 < 轉義防止 </script> 截斷。
+      const jsonLdTag = routeSchema(jsonLd);
       out = out.replace("</head>", `    ${jsonLdTag}\n  </head>`);
     } catch {
       /* JSON-LD 注入失敗唔影響已經做好嘅 OG meta */

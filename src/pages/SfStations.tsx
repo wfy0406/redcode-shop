@@ -5,6 +5,7 @@ import { ChevronDown, LocateFixed, MapPin, Search, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import AccountToastStack, { useAccountToasts } from '@/components/account/Toast';
+import { handleEnterToSubmit } from '@/lib/keyboard';
 
 /**
  * v2.2.0 公開順豐站點查詢頁（/#/sf-stations，客人同員工都用）
@@ -474,7 +475,9 @@ export default function SfStations() {
                 value={addressInput}
                 onChange={(e) => setAddressInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') void findByAddress();
+                  handleEnterToSubmit(e, () => {
+                    void findByAddress();
+                  });
                 }}
                 aria-label="輸入地址搵最近站點"
                 placeholder="打地址（中／英都得），例如：土瓜灣傲雲峰 / Nathan Road Mong Kok…"

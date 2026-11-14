@@ -4,6 +4,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import fs from "fs";
 import path from "path";
 import {
+  faqPageStructuredData,
   injectLuckyAnnouncementClosedContent,
   injectLuckyAnnouncementUnavailableContent,
   injectPublicSeoContent,
@@ -290,8 +291,32 @@ export function serveStaticFiles(app: App) {
             // 活動 DB 一時故障保留公告總頁通用摘要，唔好回假空名單或 404。
           }
         } else {
-          content = injectRouteMeta(content, { ...pageSeo, path: normPath });
+          content = injectRouteMeta(content, {
+            ...pageSeo,
+            path: normPath,
+            structuredData: normPath === "/faq" ? faqPageStructuredData() : pageSeo.structuredData,
+          });
           content = injectPublicSeoContent(content, normPath);
+          if (normPath === "/") {
+            // 首頁無 JS 內容補上同 React「新品上架」一致嘅真公開商品內鏈；
+            // 限量 8 件、純文字，唔加入額外圖片以免拖慢 LCP。DB 故障保留品牌摘要。
+            try {
+              const { injectPublicCatalog, listPublicCatalog } = await import("./catalogSeo");
+              content = injectPublicCatalog(content, await listPublicCatalog(8));
+            } catch {
+              // 保留現有首頁公開摘要，唔將一時 DB 故障當成零商品。
+            }
+          } else if (normPath === "/live") {
+            // 直播總頁直接列出真日期／場次連結，非 JS crawler 都能行到商品節目頁。
+            // 冇場次或 DB 故障時保留現有付款／重溫摘要，唔虛構節目。
+            try {
+              const { listPublicLiveFilters } = await import("./catalogSeo");
+              const { injectPublicLiveIndex } = await import("./liveSeo");
+              content = injectPublicLiveIndex(content, await listPublicLiveFilters());
+            } catch {
+              // 保留現有直播公開摘要。
+            }
+          }
         }
       } else if (/^\/web-design-bill\/[^/]+$/.test(normPath)) {
         // v2026.11.13.4：WhatsApp／link crawler 唔執行 React，首口 HTML 必須直接出正式單據 meta。

@@ -223,11 +223,11 @@ export const authRouter = createRouter({
       return { token, user: publicUser(user) };
     }),
 
-  // Google 登入（零新 dependency：直接用 Google tokeninfo endpoint 驗 id_token）
-  // 搵人次序（2026-08-04 連結功能後）：
-  //   1) googleSub 搵 —— 已連結嘅帳號（改 email 都唔會斷）
-  //   2) email 搵 —— 撞中舊帳號 → 順手補寫 googleSub（等如自動連結）
-  //   3) 都冇 → 自動開會員戶口（phone 用 g-<sub> 佔位、隨機密碼、一開始就寫埋 googleSub）
+  // Google 登入搵人次序：
+  //   1) googleSub 搵 —— 已喺登入狀態明確連結嘅帳號（改 email 都唔會斷）
+  //   2) 未連結但 email 撞中舊帳號 → 拒絕自動連結；本站 email 從未驗證擁有權，
+  //      用戶必須先用電話＋密碼登入，再經會員中心 linkGoogle 明確綁定。
+  //   3) email 都冇人用 → 自動開會員戶口（phone 用 g-<sub> 佔位、隨機密碼、一開始就寫埋 googleSub）
   googleLogin: publicQuery
     .input(z.object({ idToken: z.string().min(10) }))
     .mutation(async ({ input }) => {
@@ -280,24 +280,14 @@ export const authRouter = createRouter({
         }
       }
       if (!user) {
-        // 2) email 撞中舊帳號（例如之前用電話註冊、會員資料填咗同一個 email）
-        user = await db.query.users.findFirst({ where: eq(users.email, email) });
-        if (user && user.googleSub !== sub) {
-          // 順手補寫／校正 googleSub：Google 保證 email 由呢個帳號控制，安全
-          await db
-            .update(users)
-            .set({ googleSub: sub, googleEmail: email, googleName: gName })
-            .where(eq(users.id, user.id));
-          user = { ...user, googleSub: sub, googleEmail: email, googleName: gName };
-          // 2026-08-04（Glo 要求）：舊會員經 Google 登入自動連結咗 Google，日誌要記低
-          void logAudit({
-            actorId: user.id,
-            actorRole: user.role,
-            actorNameFallback: user.name,
-            action: "member.linkGoogle",
-            targetType: "member",
-            targetId: user.id,
-            detail: `會員「${user.name}」經 Google 登入自動連結 Google 帳號（${email}）`,
+        // 本站註冊／會員資料嘅 email 從未驗證擁有權，唔可以因 Google 證明咗
+        // 呢個 email 就自動接管同 email 舊戶。否則攻擊者可先用受害人 email
+        // 電話註冊，等受害人 Google 登入時跌入攻擊者仍持有密碼嘅帳號。
+        const emailOwner = await db.query.users.findFirst({ where: eq(users.email, email) });
+        if (emailOwner) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "呢個 Email 已經有會員帳號，請用電話同密碼登入，再喺會員中心連結 Google",
           });
         }
       }
@@ -325,10 +315,9 @@ export const authRouter = createRouter({
           isNewMember = true;
           user = await db.query.users.findFirst({ where: eq(users.id, id) });
         } catch {
-          // 並發撞 unique（email / 佔位 phone / googleSub）→ 重讀一次當登入
-          user =
-            (await db.query.users.findFirst({ where: eq(users.googleSub, sub) })) ??
-            (await db.query.users.findFirst({ where: eq(users.email, email) }));
+          // 並發撞 unique 只可以重讀同一個 googleSub；絕唔用 email fallback
+          // 當登入，否則 unique constraint 分支會繞過上面嘅防帳號接管檢查。
+          user = await db.query.users.findFirst({ where: eq(users.googleSub, sub) });
         }
         if (!user) throw googleFail();
         if (isNewMember) {

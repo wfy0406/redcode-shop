@@ -139,6 +139,7 @@ import { sendPrizeWinEmail } from "./email";
 import { sendPrizeWinPush } from "./livePush";
 import { forwardOrderToWms, parseWebhookOrderIds, WMS_AUTO_QUEUE_MESSAGE } from "./wmsSync";
 import { logAudit } from "./audit";
+import { RateLimiter, clientIpFromRequest } from "./guestUtils";
 import {
   LUCKY_ANNOUNCEMENT_PUBLIC_SETTING_KEY,
   isLuckyAnnouncementPublic,
@@ -147,6 +148,10 @@ import {
 
 /** 消費計數嘅訂單狀態：批咗／出咗貨／完成先算真消費（待審批／取消唔計） */
 const PAID_STATUSES = ["approved", "shipped", "completed"] as const;
+
+// 公開查劵只回 exact-match 結果，但仍可能被人逐個姓名試。每 IP 每分鐘 20 次，
+// 一般客人綽綽有餘；超限喺 DB 查詢前擋，避免將私隱查詢變成免費名單 oracle。
+const publicTicketLookupLimiter = new RateLimiter(20, 60 * 1000);
 
 /** 香港時間今日 → YYYYMMDD（抽獎日；一人一日一件、紀錄分組都靠佢） */
 function hktToday(): string {
@@ -3004,7 +3009,10 @@ export const luckyDrawRouter = createRouter({
         holderName: z.string().max(255, "姓名太長"),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      if (!publicTicketLookupLimiter.allow(clientIpFromRequest(ctx.req))) {
+        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "查詢次數太多，請一分鐘後再試" });
+      }
       const db = getDb();
       const normalized = normalizeListName(input.holderName);
       if (!normalized) throw new TRPCError({ code: "BAD_REQUEST", message: "請輸入完整姓名" });

@@ -33,6 +33,7 @@ import {
   adminProcedure,
 } from "./middleware";
 import { logAudit } from "./audit";
+import { uploadedImagePathSchema } from "./lib/uploadedImagePath";
 import { notifyWmsTopupReview } from "./wmsSync";
 import {
   sendWalletTopupPendingEmail,
@@ -301,7 +302,7 @@ export const walletRouter = createRouter({
     .input(
       z.object({
         topupId: z.number().int().positive(),
-        imagePath: z.string().trim().min(1).max(512),
+        imagePath: uploadedImagePathSchema,
       }),
     )
     .mutation(async ({ ctx, input }) => {

@@ -145,6 +145,64 @@ export function liveSitemapPaths(
   return paths;
 }
 
+function escapeLiveHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * /live 首口真節目內鏈：同一個公開商品查詢得出嘅日期／場次先會出現，
+ * 假日曆日期、無效場次同 raw 注入字串一律由 liveSitemapPaths 過濾。
+ * 最新日期排先、同日主頁後按場次號排序；上限避免首口 HTML 無限膨脹。
+ */
+export function renderPublicLiveIndex(
+  filters: readonly (LiveFilter | null | undefined)[],
+  limit = 24,
+): string {
+  const entries = liveSitemapPaths(filters)
+    .map((path) => {
+      const url = new URL(path, "https://redcode.red");
+      const filter = parseLiveQuery(url.searchParams.get("liveDate"), url.searchParams.get("liveSession"));
+      return filter ? { path, filter } : null;
+    })
+    .filter((entry): entry is { path: string; filter: LiveFilter } => entry !== null)
+    .sort((a, b) => {
+      const byDate = b.filter.liveDate.localeCompare(a.filter.liveDate);
+      if (byDate !== 0) return byDate;
+      if (a.filter.liveSession === null) return b.filter.liveSession === null ? 0 : -1;
+      if (b.filter.liveSession === null) return 1;
+      return Number(a.filter.liveSession) - Number(b.filter.liveSession);
+    });
+  const cap = Number.isFinite(limit) ? Math.max(1, Math.min(48, Math.floor(limit))) : 24;
+  const rows = entries.slice(0, cap).map(({ path, filter }) => {
+    const label = `${formatLiveDateLabel(filter.liveDate)} ${filter.liveSession ? `第${filter.liveSession}場` : "全日"}直播商品`;
+    return `<li><a href="${escapeLiveHtml(path)}">${escapeLiveHtml(label)}</a></li>`;
+  });
+  if (rows.length === 0) return "";
+  return `<section id="redcode-live-index-seo"><h2>直播節目商品</h2><p>按日期或場次直接睇當日公開商品；品名、價錢同庫存以商品頁為準。</p><ul>${rows.join("")}</ul></section>`;
+}
+
+/** 加落 /live 已注入嘅公開摘要；冇真場次或注入失敗時保留原內容。 */
+export function injectPublicLiveIndex(
+  html: string,
+  filters: readonly (LiveFilter | null | undefined)[],
+): string {
+  try {
+    if (html.includes('id="redcode-live-index-seo"')) return html;
+    const block = renderPublicLiveIndex(filters);
+    if (!block) return html;
+    return html.replace(
+      '<nav aria-label="相關公開頁面">',
+      `${block}<nav aria-label="相關公開頁面">`,
+    );
+  } catch {
+    return html;
+  }
+}
+
 /**
  * 真資料增強版直播 description（v2026.11.11.2）：真日期、場次、公開商品實數、
  * 真分類組成、代表商品名，全部來自 caller 用公開目錄查出嘅全場商品行

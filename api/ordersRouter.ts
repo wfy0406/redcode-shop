@@ -34,6 +34,7 @@ import {
 } from "./guestUtils";
 import { tryOnPurchaseItemsSchema, tryOnPurchaseRequestIdSchema } from "@contracts/purchase";
 import { loadTryOnPurchaseItems, resolveTryOnPurchaseItems } from "./purchase";
+import { uploadedImagePathSchema } from "./lib/uploadedImagePath";
 
 const orderStatusEnum = z.enum([
   "pending_payment",
@@ -1257,7 +1258,7 @@ export const ordersRouter = createRouter({
     .input(
       z.object({
         orderId: z.number().int().positive(),
-        imagePath: z.string().min(1),
+        imagePath: uploadedImagePathSchema,
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -1295,7 +1296,7 @@ export const ordersRouter = createRouter({
     .input(
       z.object({
         orderId: z.number().int().positive(),
-        imagePath: z.string().min(1),
+        imagePath: uploadedImagePathSchema,
       }),
     )
     .mutation(async ({ ctx, input }) => {

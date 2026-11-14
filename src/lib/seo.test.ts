@@ -211,4 +211,22 @@ describe("SPA route JSON-LD 清理", () => {
     removeStaleRouteSchemas("/products", "?category=top");
     expect(b.removed).toBe(true);
   });
+
+  it("商品 Product／Breadcrumb schema 用商品路徑做身份：A 貨去 B 貨即清 A，B 貨保留", () => {
+    const makeSchema = (path: string) => ({
+      removed: false,
+      getAttribute: () => path,
+      remove() { this.removed = true; },
+    });
+    const a = makeSchema("/products/85");
+    const b = makeSchema("/products/86");
+    vi.stubGlobal("document", { querySelectorAll: () => [a, b, makeSchema("/products/85")] });
+
+    removeStaleRouteSchemas("/products/86/");
+    expect(a.removed).toBe(true);
+    expect(b.removed).toBe(false);
+
+    removeStaleRouteSchemas("/products");
+    expect(b.removed).toBe(true);
+  });
 });

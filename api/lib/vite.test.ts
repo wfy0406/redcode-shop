@@ -60,6 +60,11 @@ vi.mock("../queries/connection", () => ({
         }),
       }),
     }),
+    selectDistinct: () => ({
+      from: () => ({
+        where: () => (queryError ? Promise.reject(queryError) : Promise.resolve(mockRows)),
+      }),
+    }),
   }),
 }));
 
@@ -141,6 +146,8 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("<h1>067</h1>");
     expect(html).toContain("<p>HK$199</p>");
     expect(html).not.toContain('id="redcode-public-seo"');
+    expect(html.match(/data-redcode-route-schema="\/products\/85"/g)).toHaveLength(2);
+    expect(html).not.toMatch(/<script type="application\/ld\+json">\{"@context":"https:\/\/schema\.org","@type":"(?:Product|BreadcrumbList)"/);
   });
 
   it("(1b) www／代理 host 入嚟都統一用 HTTPS apex canonical，唔會出第二個 self host", async () => {
@@ -223,6 +230,42 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     const fallback = await (await makeApp().request("/products")).text();
     expect(fallback).toContain('id="redcode-public-seo"');
     expect(fallback).not.toContain('id="redcode-catalog-seo"');
+  });
+
+  it("(4c) 首頁首口有 8 件以內真商品內鏈；DB 故障唔會抹走品牌摘要", async () => {
+    mockRows = [makeProduct({ name: "首頁真商品" })];
+    const res = await makeApp().request("/");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(html).toContain('id="redcode-public-seo"');
+    expect(html).toContain('id="redcode-catalog-seo"');
+    expect(html).toContain('<a href="/products/85"><strong>首頁真商品</strong></a>');
+    expect(html).toContain("RedCode Fashion Design｜香港女裝直播網店");
+
+    queryError = new Error("connection refused");
+    const fallback = await (await makeApp().request("/")).text();
+    expect(fallback).toContain('id="redcode-public-seo"');
+    expect(fallback).not.toContain('id="redcode-catalog-seo"');
+  });
+
+  it("(4d) /live 首口列真節目日期及場次連結；DB 故障保留原直播摘要", async () => {
+    mockRows = [
+      makeProduct({ liveDate: "20261103", liveSession: null }),
+      makeProduct({ liveDate: "20261111", liveSession: "2" }),
+      makeProduct({ liveDate: "20261111", liveSession: null }),
+    ];
+    const res = await makeApp().request("/live");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(html).toContain('id="redcode-live-index-seo"');
+    expect(html).toContain('<a href="/products?liveDate=20261111">2026年11月11日 全日直播商品</a>');
+    expect(html).toContain('<a href="/products?liveDate=20261111&amp;liveSession=2">2026年11月11日 第2場直播商品</a>');
+    expect(html.indexOf("2026年11月11日")).toBeLessThan(html.indexOf("2026年11月3日"));
+
+    queryError = new Error("connection refused");
+    const fallback = await (await makeApp().request("/live")).text();
+    expect(fallback).toContain('id="redcode-public-seo"');
+    expect(fallback).not.toContain('id="redcode-live-index-seo"');
   });
 
   it("(5) /about 首口 HTML 有批准文案「影張相即刻試穿」「即刻睇到著上身效果」", async () => {
@@ -357,6 +400,13 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("用 WhatsApp 分享試穿結果安全嗎？");
     expect(html).toContain('<a href="/try-on">AI 試穿</a>');
     expect(html).toContain("index, follow");
+    expect(html).toContain('data-redcode-route-schema="/faq"');
+    const faqLd = [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)]
+      .map((match) => JSON.parse(match[1]) as Record<string, unknown>)
+      .find((schema) => schema["@type"] === "FAQPage");
+    expect(faqLd).toBeTruthy();
+    expect(faqLd!.mainEntity).toHaveLength(19);
+    expect(JSON.stringify(faqLd)).toContain("AI 試穿點玩？");
   });
 
   it("(12) /returns 同 /try-on → 各自 self canonical，唔再指向首頁", async () => {

@@ -76,7 +76,7 @@ function makeProduct(overrides: Record<string, unknown> = {}) {
 
 /** 由 injectProductOg 出嘅 HTML 抽 Product JSON-LD（同 og.test.ts 同款做法） */
 function productJsonLd(html: string): Record<string, unknown> {
-  const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+  const blocks = [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)];
   const ld = blocks
     .map((m) => JSON.parse(m[1]) as Record<string, unknown>)
     .find((j) => j["@type"] === "Product");

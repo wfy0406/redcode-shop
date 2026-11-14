@@ -182,9 +182,14 @@ h.state.userRoleColumn = users.role;
 
 // ───────────────────────── helpers ─────────────────────────
 
-function caller() {
+function caller(ip?: string) {
   return luckyDrawRouter.createCaller({
-    req: new Request("http://test.local/api/trpc", { headers: { authorization: "Bearer x" } }),
+    req: new Request("http://test.local/api/trpc", {
+      headers: {
+        authorization: "Bearer x",
+        ...(ip ? { "x-forwarded-for": ip } : {}),
+      },
+    }),
     resHeaders: new Headers(),
   });
 }
@@ -2615,6 +2620,22 @@ describe("publicLookupEventTicket 公開查劵（mutation POST＋完整姓名 ex
     h.state.queue = [[{ id: 7 }], [{ ticketCount: 6 }]];
     const r = await caller().publicLookupEventTicket({ eventId: 7, holderName: "陳小明" });
     expect(r).toEqual({ found: true, ticketCount: 6 });
+  });
+
+  it("同一 IP 每分鐘第 21 次起擋截，而且唔再觸及 DB", async () => {
+    const ip = "203.0.113.211";
+    for (let i = 0; i < 20; i += 1) {
+      reset(null);
+      h.state.queue = [[{ id: 7 }], []];
+      await expect(
+        caller(ip).publicLookupEventTicket({ eventId: 7, holderName: `測試姓名${i}` }),
+      ).resolves.toEqual({ found: false });
+    }
+    reset(null);
+    await expect(
+      caller(ip).publicLookupEventTicket({ eventId: 7, holderName: "第廿一次" }),
+    ).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS" });
+    expect(h.state.selects).toHaveLength(0);
   });
 });
 

@@ -8,6 +8,7 @@ import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { parseSizes } from '@/components/shop/shop-utils';
 import { emitTryOnGuideAction } from '@/components/globalFairyGuide';
+import { handleEnterToSubmit } from '@/lib/keyboard';
 import {
   readTryOnAddedItems,
   reconcileTryOnAddedItems,
@@ -363,7 +364,9 @@ export default function TryOnPurchase({ job }: { job: TryOnJob }) {
                         value={promoInput}
                         onChange={(event) => { setPromoInput(event.target.value.toUpperCase()); setPromoError(null); }}
                         onKeyDown={(event) => {
-                          if (event.key === 'Enter') { event.preventDefault(); void applyPromo(); }
+                          handleEnterToSubmit(event, () => {
+                            void applyPromo();
+                          });
                         }}
                         placeholder="輸入優惠碼"
                         aria-label="試穿商品優惠碼"

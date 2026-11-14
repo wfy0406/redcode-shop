@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  faqPageStructuredData,
   injectPublicSeoContent,
   PUBLIC_PAGES,
   publicLuckyEventSitemapPaths,
@@ -71,6 +72,25 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(html).not.toContain("私人試穿結果唔會自動附加");
     expect(faqSource).toContain("24 小時效果連結同公開商品資料");
     expect(faqSource).toContain("已下載或已傳出嘅 PNG 無法撤回");
+  });
+
+  it("FAQPage JSON-LD 同 19 條可見 Q&A 同源，答案唔會另一套", () => {
+    const schema = faqPageStructuredData();
+    expect(schema["@type"]).toBe("FAQPage");
+    expect(schema.url).toBe("https://redcode.red/faq");
+    const questions = schema.mainEntity as {
+      "@type": string;
+      name: string;
+      acceptedAnswer: { "@type": string; text: string };
+    }[];
+    expect(questions).toHaveLength(19);
+    expect(questions.map((q) => q.name)).toEqual(
+      (PUBLIC_PAGES["/faq"].sections ?? []).map((section) => section.heading),
+    );
+    expect(questions.map((q) => q.acceptedAnswer.text)).toEqual(
+      (PUBLIC_PAGES["/faq"].sections ?? []).map((section) => section.text),
+    );
+    expect(JSON.stringify(schema)).not.toContain("保證搜尋排名");
   });
 
   it("AI 試穿頁答案先置，並清楚講明視覺預覽唔等於尺碼建議", () => {

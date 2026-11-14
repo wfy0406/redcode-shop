@@ -15,6 +15,7 @@ import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { getToken } from '@/lib/auth';
 import { redirectToAirwallexCheckout } from '@/lib/airwallexCheckout';
+import { handleEnterToSubmit } from '@/lib/keyboard';
 import { normalizeVipTier } from '@/components/VipBadge';
 import VipTierBand from '@/components/VipTierBand';
 import { PAYMENT_METHODS_SETTING_KEY, parsePaymentMethods } from '@contracts/paymentMethods';
@@ -506,10 +507,9 @@ function ConfirmStep({
                   if (promoError) setPromoError(null);
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
+                  handleEnterToSubmit(e, () => {
                     void onApplyPromo();
-                  }
+                  });
                 }}
                 placeholder="輸入優惠碼"
                 aria-label="優惠碼"
