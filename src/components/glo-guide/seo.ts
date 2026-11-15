@@ -17,6 +17,10 @@ import { guideDescription, guidePath } from './guideUtils';
 import type { GuideDetail, GuideListItem } from './types';
 
 export const GLO_GUIDE_ORIGIN = 'https://redcode.red';
+export const GLO_GUIDE_SOCIAL_IMAGE_WIDTH = 1200;
+export const GLO_GUIDE_SOCIAL_IMAGE_HEIGHT = 630;
+/** 每篇專屬 1200×630 社交卡；server 會重新核對文章仍係 published。 */
+export const guideSocialImagePath = (slug: string) => `/og/glo-guide/${slug}.png`;
 
 /** 站內相對路徑 → 絕對 URL（OG 圖／JSON-LD 用絕對，crawler 唔使估 host） */
 export function guideAbsUrl(path: string): string {
@@ -130,6 +134,20 @@ function setMetaProperty(property: string, content: string, snapshots: MetaSnaps
   if (!el) {
     el = document.createElement('meta');
     el.setAttribute('property', property);
+    document.head.appendChild(el);
+    snapshots[snapshots.length - 1] = { el, content: null };
+  }
+  el.setAttribute('content', content);
+}
+
+function setMetaName(name: string, content: string, snapshots: MetaSnapshot[]): void {
+  let el = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
+  if (snapshots.every((s) => s.el !== el)) {
+    snapshots.push({ el, content: el?.getAttribute('content') ?? null });
+  }
+  if (!el) {
+    el = document.createElement('meta');
+    el.setAttribute('name', name);
     document.head.appendChild(el);
     snapshots[snapshots.length - 1] = { el, content: null };
   }
@@ -256,12 +274,22 @@ export function useGloGuideDetailSeo(detail: GuideDetail | null | undefined): vo
       indexable: true,
       canonicalPath: path,
     });
-    // og:image 同 server 口徑：只用 coverImage，唔好用相集第一張頂替
-    const cover = detail.coverImage;
+    // og:image 係該篇專屬社交卡（內含公開封面＋標題），唔再將直度原圖當橫向預覽。
+    // server 每次會重新核對 published；client 只係保持 SPA 轉頁後嘅 head 口徑一致。
+    const socialImage = guideAbsUrl(guideSocialImagePath(detail.slug));
     setMetaProperty('og:type', 'article', snapshots);
     setMetaProperty('og:title', guideDetailTitle(detail), snapshots);
     setMetaProperty('og:description', description, snapshots);
-    if (cover) setMetaProperty('og:image', guideAbsUrl(cover.path), snapshots);
+    setMetaProperty('og:image', socialImage, snapshots);
+    setMetaProperty('og:image:width', String(GLO_GUIDE_SOCIAL_IMAGE_WIDTH), snapshots);
+    setMetaProperty('og:image:height', String(GLO_GUIDE_SOCIAL_IMAGE_HEIGHT), snapshots);
+    const socialImageAlt = `${detail.title}｜Glo Glo 精選指南分享預覽圖`;
+    setMetaProperty('og:image:alt', socialImageAlt, snapshots);
+    setMetaName('twitter:card', 'summary_large_image', snapshots);
+    setMetaName('twitter:title', guideDetailTitle(detail), snapshots);
+    setMetaName('twitter:description', description, snapshots);
+    setMetaName('twitter:image', socialImage, snapshots);
+    setMetaName('twitter:image:alt', socialImageAlt, snapshots);
     setMetaProperty('article:published_time', detail.publishedAt, snapshots);
     setMetaProperty('article:modified_time', detail.updatedAt, snapshots);
     upsertJsonLd(path, buildGuideArticleJsonLd(detail));

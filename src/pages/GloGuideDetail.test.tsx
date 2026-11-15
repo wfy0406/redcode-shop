@@ -16,6 +16,7 @@
 
 // @vitest-environment happy-dom
 
+import { readFileSync } from 'node:fs';
 import { act } from 'react';
 import { renderToString } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
@@ -196,6 +197,17 @@ describe('GloGuideDetail 期刊 lead／正文', () => {
     expect(html).toContain('Glo Glo 簽名');
   });
 
+  it('lead 有「分享」同「複製網址」兩個真按鈕（SSR 已輸出，唔靠 hydration）', () => {
+    setQuery({ data: DETAIL });
+    const html = renderDetail();
+    expect(html.match(/class="gg-share-btn"/g)).toHaveLength(2);
+    expect(html).toContain('分享');
+    expect(html).toContain('複製網址');
+    // 未互動前唔會出現回饋／手動網址框
+    expect(html).not.toContain('gg-share-feedback');
+    expect(html).not.toContain('gg-share-manual-input');
+  });
+
   it('安全顯示粗體、顏色、重點標籤；唔會將標記當正文', () => {
     setQuery({
       data: {
@@ -209,6 +221,22 @@ describe('GloGuideDetail 期刊 lead／正文', () => {
     expect(html).toContain('<mark class="gg-key-tag">返工重點</mark>');
     expect(html).toContain('本篇重點標籤');
     expect(html).not.toContain('[tag]');
+  });
+});
+
+describe('GloGuideDetail 主配搭圖唔裁切（CSS source assertion）', () => {
+  it('.gg-stage-img 按原圖比例完整顯示：無固定 aspect-ratio／object-fit: cover', () => {
+    const css = readFileSync('src/index.css', 'utf8');
+    const blocks = css.match(/\.gg-stage-img\s*\{[^}]*\}/g) ?? [];
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      expect(block).not.toContain('aspect-ratio');
+      expect(block).not.toContain('object-fit: cover');
+      expect(block).not.toContain('object-position');
+    }
+    expect(blocks[0]).toContain('width: 100%');
+    expect(blocks[0]).toContain('height: auto');
+    expect(blocks[0]).toContain('object-fit: contain');
   });
 });
 
@@ -378,5 +406,162 @@ describe('GloGuideDetail 互動：切換配搭圖同步單品', () => {
       buttons[0].dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
     });
     expect(c.querySelector('.gg-stage-panel')?.textContent).toContain('駝色開胸針織褸');
+  });
+});
+
+/* ---------- 互動（happy-dom）：分享／複製網址 ---------- */
+
+const EXPECTED_PATH = '/glo-guide/autumn-knit';
+
+function setNavigatorProp(name: 'share' | 'clipboard', value: unknown) {
+  Object.defineProperty(window.navigator, name, {
+    value,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function shareButtons(c: HTMLElement) {
+  const btns = Array.from(c.querySelectorAll<HTMLButtonElement>('.gg-share-btn'));
+  const share = btns.find((b) => b.textContent?.includes('分享'));
+  const copy = btns.find((b) => b.textContent?.includes('複製網址'));
+  if (!share || !copy) throw new Error('分享列按鈕未渲染');
+  return { share, copy };
+}
+
+async function clickAndFlush(btn: HTMLButtonElement) {
+  await act(async () => {
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+afterEach(() => {
+  // 還原瀏覽器 API mock，避免污染其他測試
+  setNavigatorProp('share', undefined);
+  setNavigatorProp('clipboard', undefined);
+  delete (document as { execCommand?: unknown }).execCommand;
+});
+
+describe('GloGuideDetail 互動：分享／複製網址', () => {
+  it('lead 渲染「分享」同「複製網址」兩個真按鈕（44px 觸控 CTA）', () => {
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    const { share, copy } = shareButtons(c);
+    expect(share.tagName).toBe('BUTTON');
+    expect(copy.tagName).toBe('BUTTON');
+  });
+
+  it('navigator.share 可用時收到正確 title／text／url（origin + 正式路徑）', async () => {
+    const share = vi.fn().mockResolvedValue(undefined);
+    setNavigatorProp('share', share);
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    await clickAndFlush(shareButtons(c).share);
+    expect(share).toHaveBeenCalledTimes(1);
+    const payload = share.mock.calls[0][0] as { title: string; text: string; url: string };
+    expect(payload.title).toBe(DETAIL.title);
+    expect(payload.text).toBe(DETAIL.excerpt);
+    expect(payload.url).toBe(`${window.location.origin}${EXPECTED_PATH}`);
+    expect(payload.url).toMatch(/^https?:\/\/.+\/glo-guide\/autumn-knit$/);
+    // 成功有清晰回饋（role=status）
+    expect(c.querySelector('.gg-share [role="status"]')?.textContent).toContain('已分享');
+  });
+
+  it('用戶取消分享（AbortError）→ 靜默，唔出成功亦唔出失敗', async () => {
+    const abort = new Error('cancelled');
+    abort.name = 'AbortError';
+    setNavigatorProp('share', vi.fn().mockRejectedValue(abort));
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    await clickAndFlush(shareButtons(c).share);
+    expect(c.querySelector('.gg-share-feedback')).toBeNull();
+    expect(c.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('其他分享錯誤 → 明確失敗 alert，建議用「複製網址」，唔假成功', async () => {
+    setNavigatorProp('share', vi.fn().mockRejectedValue(new Error('not allowed')));
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    await clickAndFlush(shareButtons(c).share);
+    const alert = c.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain('分享失敗');
+    expect(alert?.textContent).toContain('複製網址');
+    expect(c.querySelector('.gg-share [role="status"]')).toBeNull();
+  });
+
+  it('瀏覽器冇 navigator.share → 撳分享即自動複製正式網址，唔會扮已開分享面板', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    setNavigatorProp('share', undefined);
+    setNavigatorProp('clipboard', { writeText });
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    await clickAndFlush(shareButtons(c).share);
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}${EXPECTED_PATH}`);
+    expect(c.querySelector('.gg-share [role="status"]')?.textContent).toContain('已複製文章網址');
+    expect(c.querySelector('.gg-share [role="status"]')?.textContent).not.toContain('已分享');
+  });
+
+  it('clipboard.writeText 成功 → 寫入完整網址＋成功 status，2.5 秒後自動消退', async () => {
+    vi.useFakeTimers();
+    try {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      setNavigatorProp('clipboard', { writeText });
+      setQuery({ data: DETAIL });
+      const c = mountDetail();
+      await clickAndFlush(shareButtons(c).copy);
+      expect(writeText).toHaveBeenCalledWith(`${window.location.origin}${EXPECTED_PATH}`);
+      const status = () => c.querySelector('.gg-share [role="status"]');
+      expect(status()?.textContent).toContain('已複製文章網址');
+      // 2.5 秒前仍然喺度；到點即消退
+      act(() => vi.advanceTimersByTime(2499));
+      expect(status()).not.toBeNull();
+      act(() => vi.advanceTimersByTime(1));
+      expect(status()).toBeNull();
+      // unmount（afterEach）之後 timer 已 cleanup，唔會再 setState
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clipboard 失敗 → textarea + execCommand 真 fallback 成功都係真成功', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    setNavigatorProp('clipboard', { writeText });
+    const execCommand = vi.fn().mockReturnValue(true);
+    (document as { execCommand?: unknown }).execCommand = execCommand;
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    await clickAndFlush(shareButtons(c).copy);
+    expect(writeText).toHaveBeenCalled();
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(c.querySelector('[role="status"]')?.textContent).toContain('已複製文章網址');
+    expect(c.querySelector('.gg-share-manual-input')).toBeNull();
+  });
+
+  it('clipboard 同 fallback 都失敗 → alert＋顯示完整網址 readOnly input 俾人手複製', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    setNavigatorProp('clipboard', { writeText });
+    (document as { execCommand?: unknown }).execCommand = vi.fn().mockReturnValue(false);
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    await clickAndFlush(shareButtons(c).copy);
+    expect(c.querySelector('[role="alert"]')?.textContent).toContain('複製唔成功');
+    const input = c.querySelector<HTMLInputElement>('.gg-share-manual-input');
+    expect(input).not.toBeNull();
+    expect(input!.readOnly).toBe(true);
+    expect(input!.value).toBe(`${window.location.origin}${EXPECTED_PATH}`);
+    expect(input!.value).toContain('/glo-guide/autumn-knit');
+    // 失敗訊息常駐（唔自動收），等客人睇到
+    expect(c.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
+  it('clipboard API 完全唔存在（舊瀏覽器）→ 自動落 execCommand fallback', async () => {
+    setNavigatorProp('clipboard', undefined);
+    const execCommand = vi.fn().mockReturnValue(true);
+    (document as { execCommand?: unknown }).execCommand = execCommand;
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    await clickAndFlush(shareButtons(c).copy);
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(c.querySelector('[role="status"]')?.textContent).toContain('已複製文章網址');
   });
 });

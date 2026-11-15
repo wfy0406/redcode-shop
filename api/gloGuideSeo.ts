@@ -16,6 +16,11 @@ import {
 import type { RouteMeta } from "./lib/og";
 import { productCategoryLabel } from "@contracts/types";
 import { isGloGuideImagePath } from "./gloGuideValidation";
+import {
+  GLO_GUIDE_SOCIAL_IMAGE_HEIGHT,
+  GLO_GUIDE_SOCIAL_IMAGE_WIDTH,
+  gloGuideSocialImagePath,
+} from "./gloGuideSocialImage";
 
 const ORIGIN = "https://redcode.red";
 export const GLO_GUIDE_INDEX_PATH = "/glo-guide";
@@ -81,6 +86,7 @@ export function gloGuideSeoKeywords(detail: GuideDetail): string[] {
 export function gloGuideDetailRouteMeta(detail: GuideDetail): RouteMeta {
   const pageUrl = `${ORIGIN}${gloGuidePath(detail.slug)}`;
   const image = detail.coverImage ? absUrl(detail.coverImage.path) : undefined;
+  const socialImage = `${ORIGIN}${gloGuideSocialImagePath(detail.slug)}`;
   const keywords = gloGuideSeoKeywords(detail);
   const graph: Record<string, unknown>[] = [
     {
@@ -121,7 +127,10 @@ export function gloGuideDetailRouteMeta(detail: GuideDetail): RouteMeta {
     title: `${detail.title}｜Glo Glo 精選配搭指南｜RedCode Fashion Design`,
     description: detail.excerpt,
     path: gloGuidePath(detail.slug),
-    image,
+    image: socialImage,
+    imageWidth: GLO_GUIDE_SOCIAL_IMAGE_WIDTH,
+    imageHeight: GLO_GUIDE_SOCIAL_IMAGE_HEIGHT,
+    imageAlt: `${detail.title}｜Glo Glo 精選指南分享預覽圖`,
     ogType: "article",
     articlePublishedTime: detail.publishedAt,
     articleModifiedTime: detail.updatedAt,

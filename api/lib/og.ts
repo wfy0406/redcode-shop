@@ -41,6 +41,10 @@ export interface RouteMeta {
   canonical?: string | null;
   noindex?: boolean;
   image?: string;
+  /** 社交預覽圖實際尺寸／替代文字；唔再讓直圖沿用首頁 1200×630 假聲明。 */
+  imageWidth?: number;
+  imageHeight?: number;
+  imageAlt?: string;
   /** 公開內容類型；文章頁要喺首口 HTML 已經係 article，唔等 React 先補。 */
   ogType?: "website" | "article";
   articlePublishedTime?: string;
@@ -137,11 +141,31 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
         /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/,
         `<meta name="twitter:image" content="${imageUrl}" />`,
       );
+      const imageAlt = esc(meta.imageAlt ?? meta.title ?? "RedCode");
       out = upsertMeta(
         out,
         /<meta\s+property="og:image:alt"\s+content="[^"]*"\s*\/>/,
-        `<meta property="og:image:alt" content="${esc(meta.title ?? "RedCode")}" />`,
+        `<meta property="og:image:alt" content="${imageAlt}" />`,
       );
+      out = upsertMeta(
+        out,
+        /<meta\s+name="twitter:image:alt"\s+content="[^"]*"\s*\/>/,
+        `<meta name="twitter:image:alt" content="${imageAlt}" />`,
+      );
+      if (meta.imageWidth) {
+        out = upsertMeta(
+          out,
+          /<meta\s+property="og:image:width"\s+content="[^"]*"\s*\/>/,
+          `<meta property="og:image:width" content="${meta.imageWidth}" />`,
+        );
+      }
+      if (meta.imageHeight) {
+        out = upsertMeta(
+          out,
+          /<meta\s+property="og:image:height"\s+content="[^"]*"\s*\/>/,
+          `<meta property="og:image:height" content="${meta.imageHeight}" />`,
+        );
+      }
     }
     if (meta.ogType) {
       out = upsertMeta(

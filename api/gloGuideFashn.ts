@@ -6,12 +6,14 @@
  * ─ 飾品／多品（input.experimental=true）：POST /v1/agent/images/run（flat body：prompt＋images[]），
  *   poll GET /v1/agent/status/<id>（predictions[].results[]），屬 experimental 路線；
  * ─ 有文章場景 context（articleTheme/articleBody 任一非空）：一律行同一條 agent/images/run 場景路線——
- *   場景跟文章主題／正文（office 等關鍵詞映射）、每張按 variation 換 pose／構圖、
- *   商品外觀以原商品圖硬參考（見 buildGloGuideScenePrompt）；prompt 唔保證一致性，
+ *   場景跟文章主題／正文（冇指明則隨機香港日常場景）、正文配搭建議直接入 prompt、
+ *   原模特兒服裝唔保留、每張按 variation 換 pose／構圖、商品外觀以原商品圖硬參考
+ *   （見 buildGloGuideScenePrompt）；prompt 唔保證一致性，
  *   最終閘仍係人工逐圖審批（唔會因為 prompt 就當自動合格）；
  * ─ model_image 只准 https 或站內真實授權 /gloglo-3.jpg（GLO_GUIDE_MODEL_IMAGE_URLS 可覆寫）；
  *   絕對唔用 AI 合成模特兒做參考原圖；
- * ─ 4xx／OutOfCredits 唔 retry；network／5xx 最多 2 次有 backoff；
+ * ─ 4xx／OutOfCredits 唔 retry；poll 嘅 network／5xx 最多 2 次有 backoff；
+ *   submit 只 retry 明確被拒嘅 429／5xx；network 斷線可能已開 job，唔自動重開以免重複扣費；
  * ─ 完成後立即經 gloGuideMedia 下載轉存 /uploads/glo-guide/<uuid>.png；短期 CDN URL 唔出喺結果；
  * ─ 絕唔回 mock 圖或假成功；所有失敗 throw GloGuideProviderError。
  *
@@ -20,6 +22,7 @@
  *   resumeGloGuideImage(providerJobId, input): Promise<GloGuideImageGenResult | null>（null＝仲行緊）
  */
 
+import { randomInt } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -228,11 +231,11 @@ export function hasGloGuideSceneContext(
 
 /**
  * 場景關鍵詞映射（主題／正文 → 明文場景）。第一個命中嘅關鍵詞組生效；
- * 冇命中 → 籠統跟主題嘅 lifestyle 場景（照樣明文要求場景跟文章）。
+ * 冇命中 → 香港日常場景池隨機一個；OL 必須係獨立字，唔會誤中 Gold／Cold。
  */
 const SCENE_KEYWORDS: ReadonlyArray<{ re: RegExp; scene: string }> = [
   {
-    re: /辦公室|寫字樓|返工|上班|通勤|商務|OL|\boffice\b/i,
+    re: /辦公室|寫字樓|返工|上班|通勤|商務|\bOL\b|\boffice\b/i,
     scene: "a bright modern office workspace (desk, laptop, office chairs, soft office lighting)",
   },
   { re: /海灘|沙灘|海邊|\bbeach\b/i, scene: "a sunny beach with sea view" },
@@ -250,8 +253,20 @@ const SCENE_KEYWORDS: ReadonlyArray<{ re: RegExp; scene: string }> = [
     scene: "a stylish travel setting (airport terminal / city street while travelling)",
   },
   { re: /屋企|家居|宅|\bhome\b/i, scene: "a warm, tidy home living room" },
-  { re: /街頭|街拍|城市|\bstreet\b/i, scene: "a clean urban street" },
+  { re: /街頭|街拍|城市|中環|旺角|銅鑼灣|\bstreet\b/i, scene: "a clean Hong Kong urban street with editorial-style natural light" },
+  { re: /維港|海港|海濱|尖沙咀|\bwaterfront\b/i, scene: "a Hong Kong Victoria Harbour waterfront promenade in soft daylight" },
+  { re: /商場|購物|血拼|\bshopping\b|\bmall\b/i, scene: "a contemporary Hong Kong shopping mall with clean editorial lighting" },
 ];
+
+/** 文章冇指明場景時嘅安全隨機池：全部都係香港日常可拍、四季都合理嘅地點。 */
+export const GLO_GUIDE_HK_FALLBACK_SCENES = [
+  "a bright modern Hong Kong office workspace",
+  "a cozy independent café in Hong Kong",
+  "a Hong Kong Victoria Harbour waterfront promenade in soft daylight",
+  "a clean Central street with Hong Kong urban architecture",
+  "a quiet Hong Kong city park in pleasant daylight",
+  "a contemporary Hong Kong shopping mall with clean editorial lighting",
+] as const;
 
 /**
  * pose／構圖輪換表：同一篇文章每張圖按 variation（image position）揀唔同嘅，
@@ -289,22 +304,23 @@ export interface GloGuideScenePromptInput {
 
 /**
  * 場景感知配搭圖 prompt（agent-images 路線專用）。明文要求：
- * ─ 場景跟文章主題／正文（office 等關鍵詞映射；冇命中就跟主題籠統 lifestyle 場景）；
- * ─ 呢張圖嘅 pose／構圖按 variation 輪換，同系列每張唔同；
- * ─ framing 硬要求：指定商品必須清楚可見；pants/dress/shoes 必須 full-body
- *   （mid-shot／close-up 會令商品根本睇唔到）；
- * ─ 保留第一張圖（模特兒原圖）真人身分（face/hair/body shape 唔變），**pose／背景可以改**；
- * ─ 商品外觀以第二張圖（原商品圖）硬參考：design/color/pattern/material/logos/details 唔准改，
- *   唔准添加其他商品。
+ * ─ 文章有場景就跟主題／正文關鍵詞；冇指明就由香港日常安全場景池隨機揀一個；
+ * ─ 正文嘅實際「邊件襯邊件」建議會傳入 prompt，唔再只抽場景關鍵詞；
+ * ─ 第一張模特兒圖只作身分參考：原衫、裙、褲、鞋、飾物全部唔保留，成套跟文章建議重配；
+ * ─ pose／構圖按 variation 輪換；指定商品必須清楚可見，pants/dress/shoes 必須 full-body；
+ * ─ 商品外觀以第二張圖硬參考：design/color/pattern/material/logos/details 唔准改。
  * 注意：prompt 只係指令，**唔保證** provider 次次一致——最終閘仍係人工逐圖審批。
  */
 export function buildGloGuideScenePrompt(input: GloGuideScenePromptInput): string {
   const theme = input.articleTheme.trim().slice(0, 120);
+  const body = input.articleBody
+    .replace(/\[\/?(?:b|gold|pink|tag)\]/g, "")
+    .trim()
+    .slice(0, 1200);
+  const styling = body || theme || "simple Hong Kong everyday styling";
   const haystack = `${input.articleTheme}\n${input.articleBody}`;
   const matched = SCENE_KEYWORDS.find((k) => k.re.test(haystack));
-  const scene =
-    matched?.scene ??
-    `a lifestyle setting that clearly matches the article theme "${theme || "daily styling"}"`;
+  const scene = matched?.scene ?? GLO_GUIDE_HK_FALLBACK_SCENES[randomInt(GLO_GUIDE_HK_FALLBACK_SCENES.length)]!;
   const pose = poseForVariation(input.category, input.variation);
   const fullBodyRequired = FULL_BODY_CATEGORIES.has(input.category);
   const placement =
@@ -314,17 +330,20 @@ export function buildGloGuideScenePrompt(input: GloGuideScenePromptInput): strin
   // Agent flat body 冇 model_image／product_image 命名欄位：按 images[] 位置稱呼
   // （第一張＝模特兒原圖、第二張＝商品原圖，順序見 submitJob）。
   return [
-    `You are given two images: the first image is the real person (model) reference, and the second image is the product reference.`,
-    `Edit the first image: keep the exact same real person — identity, face, hair and body shape must stay recognizable and unchanged.`,
-    `This time you may change the pose, framing, camera angle and background to fit the article scene.`,
+    `You are given two images: the first image is the real person (model) identity reference, and the second image is the featured product reference.`,
+    `Keep the exact same real person — identity, face, hair and body shape must stay recognizable and unchanged.`,
+    `The first image is NOT an outfit reference. Never copy, preserve or reuse any clothing, dress, skirt, top, trousers, footwear or accessories worn by the model in the first image.`,
+    `Article styling guidance for the COMPLETE outfit: "${styling}". Follow the actual pairing and styling recommendations in this guidance, not the model's original clothes.`,
+    `Replace the model's entire original outfit with a complete outfit based on the article guidance. If a complementary basic is not specified, use a simple unbranded item that suits the guidance and Hong Kong scene; never fall back to the original outfit.`,
+    `You may change the pose, framing, camera angle and background to fit the article scene.`,
     `Scene: place the person in ${scene}, matching the article theme "${theme}".`,
     `Pose/composition for THIS image: ${pose}. It must be visibly different from the other images in this series.`,
     fullBodyRequired
       ? `Framing hard requirement: use full-body framing so the featured ${input.category} product is fully and clearly visible; do not crop it out of the frame.`
       : `Framing hard requirement: the featured product must be clearly visible in the frame.`,
-    `Dress the person in the first image with the product "${product}" from the second image ${placement}.`,
-    `Preserve the product's design, color, pattern, material appearance, logos and details exactly as shown in the second image — do not redesign or restyle it.`,
-    `Do not add any other products or extra branded items.`,
+    `Dress the person with the featured product "${product}" from the second image ${placement}.`,
+    `Preserve the featured product's design, color, pattern, material appearance, logos and details exactly as shown in the second image — do not redesign, replace or restyle it.`,
+    `Do not introduce extra branded items or substitute the featured product with another product.`,
   ].join(" ");
 }
 
@@ -364,6 +383,21 @@ function errorCodeForStatus(status: number): { code: string; retryable: boolean 
 /** provider 回報嘅失敗 code 入面，OutOfCredits 類一律唔 retry */
 function isOutOfCredits(code: string, message: string): boolean {
   return /outofcredits|out_of_credits|insufficient.?credit/i.test(`${code} ${message}`);
+}
+
+/** 用未截斷嘅 provider code/message 判斷額度；淨化截斷只供顯示，唔好影響 retry 決策。 */
+function providerResponseIsOutOfCredits(body: unknown): boolean {
+  const error = record(body).error;
+  if (typeof error === "string") return isOutOfCredits("", error);
+  const detail = record(error);
+  return isOutOfCredits(
+    typeof detail.name === "string"
+      ? detail.name
+      : typeof detail.code === "string"
+        ? detail.code
+        : "",
+    typeof detail.message === "string" ? detail.message : "",
+  );
 }
 
 /**
@@ -441,7 +475,7 @@ async function fashnRequest(
     // FASHN_INPUT／其他 HTTP 錯附上已淨化嘅 provider error name/message，方便排查。
     const detail = providerErrorDetail(body);
     // Agent 文件將 OutOfCredits 都列做 HTTP 429；呢類冇得 retry，唔好當一般 rate limit 重試。
-    if (code === "FASHN_RATE_LIMIT" && isOutOfCredits("", detail)) {
+    if (code === "FASHN_RATE_LIMIT" && providerResponseIsOutOfCredits(body)) {
       code = "FASHN_CREDITS";
       retryable = false;
     }
@@ -471,6 +505,7 @@ async function withFashnRetry<T>(
   fn: () => Promise<T>,
   sleep: SleepLike,
   maxRetries: number,
+  shouldRetry: (error: GloGuideProviderError) => boolean = () => true,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -484,7 +519,9 @@ async function withFashnRetry<T>(
               error instanceof Error ? error.message : "Fashn 服務調用失敗",
               false,
             );
-      if (!providerError.retryable || attempt >= maxRetries) throw providerError;
+      if (!providerError.retryable || !shouldRetry(providerError) || attempt >= maxRetries) {
+        throw providerError;
+      }
       await sleep(500 * (attempt + 1));
     }
   }
@@ -636,25 +673,11 @@ function assertAgentImageSize(imageInput: string, code: string, label: string): 
 async function submitJob(
   config: FashnConfig,
   fetchImpl: FetchLike,
-  input: GloGuideImageGenInput,
   modelImageUrl: string,
   productImageInput: string,
   agentRoute: boolean,
+  prompt: string,
 ): Promise<string> {
-  // 路由：有 scene context（文章 theme/body）→ 行 agent-images 場景路線（可改背景／pose）；
-  // 冇 context 就保持舊路線——飾品 experimental 行 agent-images，其餘 tryon-max。
-  const scene = hasGloGuideSceneContext(input);
-  const prompt = (
-    scene
-      ? buildGloGuideScenePrompt({
-          category: input.category,
-          articleTheme: input.articleTheme ?? "",
-          articleBody: input.articleBody ?? "",
-          productName: input.productName ?? "",
-          variation: input.variation ?? 0,
-        })
-      : tryOnPrompt(input.category, agentRoute)
-  ).slice(0, FASHN_AGENT_PROMPT_MAX_CHARS);
   let pathName: string;
   let payload: Record<string, unknown>;
   if (agentRoute) {
@@ -709,7 +732,8 @@ async function persistCompleted(
 
 /**
  * 提交＋poll＋下載轉存一次過（接合契約 export）。
- * 4xx／OutOfCredits 唔 retry；network／5xx 每個 HTTP 調用最多補試 2 次（有 backoff）。
+ * 4xx／OutOfCredits 唔 retry；poll 嘅 network／5xx 最多補試 2 次（有 backoff）。
+ * submit 嘅 429／5xx 會 retry，但 network 斷線唔會重開 job，避免首個請求其實成功時重複扣費。
  * poll 超出 maxPolls 仍未完成 → throw FASHN_TIMEOUT（上層可以用 resumeGloGuideImage 補收）。
  */
 export async function generateGloGuideImage(
@@ -727,11 +751,26 @@ export async function generateGloGuideImage(
   const modelImageUrl = await resolveGloGuideModelImageInput(input.modelImage, options.env ?? process.env);
   const productImageInput = await resolveGloGuideProductImage(input.productImage);
   const agentRoute = useAgentRoute(input);
+  // 有文章 context 行場景路線；prompt 喺 retry 外只砌一次，同一付費提交唔會重抽場景。
+  const scene = hasGloGuideSceneContext(input);
+  const prompt = (
+    scene
+      ? buildGloGuideScenePrompt({
+          category: input.category,
+          articleTheme: input.articleTheme ?? "",
+          articleBody: input.articleBody ?? "",
+          productName: input.productName ?? "",
+          variation: input.variation ?? 0,
+        })
+      : tryOnPrompt(input.category, agentRoute)
+  ).slice(0, FASHN_AGENT_PROMPT_MAX_CHARS);
 
   const providerJobId = await withFashnRetry(
-    () => submitJob(config, fetchImpl, input, modelImageUrl, productImageInput, agentRoute),
+    () => submitJob(config, fetchImpl, modelImageUrl, productImageInput, agentRoute, prompt),
     sleep,
     maxRetries,
+    // 斷線時 provider 可能已接受首個 job；冇 id 就唔可以安全重開，寧願真失敗俾員工處理。
+    (error) => error.code !== "FASHN_NETWORK",
   );
   // 一攞到 id 就即刻俾上層持久化；如果 poll 中途重啟，recovery 先有得憑 id 補收。
   await input.onProviderJobId?.(providerJobId);

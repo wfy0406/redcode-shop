@@ -14,9 +14,10 @@
  * 配色全部 scope 落 .gg-page，後台預覽嘅 .ggp-preview 自成一套唔受影響。
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router';
+import { Link2, Share2 } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { formatPrice } from '@/data/products';
 import GuideProductCard from '@/components/glo-guide/GuideProductCard';
@@ -30,6 +31,7 @@ import {
   guideDateTimeAttr,
   guideEffectivePrice,
   guideHasDiscount,
+  guidePath,
   guideProductPath,
   productForImage,
   sortGuideImages,
@@ -155,6 +157,166 @@ function PairingStage({
   );
 }
 
+/** 成功訊息自動消退時間（SPEC：2–3 秒）；失敗訊息唔自動收，等客人睇到 */
+const SHARE_FEEDBACK_DISMISS_MS = 2500;
+
+type ShareFeedback = { kind: 'success' | 'error'; message: string } | null;
+
+/**
+ * Lead 分享列：「分享」＋「複製網址」兩個真按鈕。
+ *
+ * - 分享用正式網址 window.location.origin + guidePath(slug)；navigator.share
+ *   可用時傳 title/text/url。用戶自己取消（AbortError）靜默；其他失敗明確
+ *   回報並建議改用「複製網址」——唔准假成功。瀏覽器冇 navigator.share
+ *   就直接行同一個真複製流程，唔會出死按鈕。
+ * - 複製優先 navigator.clipboard.writeText；失敗用隱藏 textarea +
+ *   execCommand 真 fallback；再失敗顯示完整網址 readOnly input（可全選，
+ *   手機撳住即複製），無 dead control。
+ * - 回饋：成功 role=status（2.5 秒自動消退，unmount cleanup timer），
+ *   失敗 role=alert 常駐。
+ * - 所有瀏覽器 API 只喺事件 handler 觸碰，SSR（renderToString）零 window。
+ */
+function GuideShareActions({
+  slug,
+  title,
+  excerpt,
+}: {
+  slug: string;
+  title: string;
+  excerpt: string;
+}) {
+  const [feedback, setFeedback] = useState<ShareFeedback>(null);
+  const [manualUrl, setManualUrl] = useState<string | null>(null);
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // unmount 清走未響嘅消退 timer，避免 setState on unmounted component
+  useEffect(
+    () => () => {
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    },
+    [],
+  );
+
+  const showFeedback = (next: NonNullable<ShareFeedback>, autoDismiss: boolean) => {
+    if (dismissTimer.current) {
+      clearTimeout(dismissTimer.current);
+      dismissTimer.current = null;
+    }
+    setFeedback(next);
+    if (autoDismiss) {
+      dismissTimer.current = setTimeout(() => {
+        dismissTimer.current = null;
+        setFeedback(null);
+      }, SHARE_FEEDBACK_DISMISS_MS);
+    }
+  };
+
+  const guideUrl = () => `${window.location.origin}${guidePath(slug)}`;
+
+  /** 舊瀏覽器／非 secure context 嘅真 fallback；如實回傳成功與否 */
+  const execCommandCopy = (url: string): boolean => {
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    ta.setAttribute('readonly', '');
+    // 唔移出畫面（iOS Safari 會拒絕 select 畫面外元素），只釘角落＋透明
+    ta.style.position = 'fixed';
+    ta.style.left = '0';
+    ta.style.top = '0';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, url.length); // iOS Safari 需要
+    try {
+      return document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
+      ta.remove();
+    }
+  };
+
+  const onCopy = async () => {
+    const url = guideUrl();
+    try {
+      await navigator.clipboard.writeText(url);
+      setManualUrl(null);
+      showFeedback({ kind: 'success', message: '已複製文章網址，可以貼俾朋友。' }, true);
+      return;
+    } catch {
+      // clipboard API 唔可用／被擋：落真 fallback
+    }
+    if (execCommandCopy(url)) {
+      setManualUrl(null);
+      showFeedback({ kind: 'success', message: '已複製文章網址，可以貼俾朋友。' }, true);
+      return;
+    }
+    // 兩條路都唔通：攞出完整網址俾人手複製（手機撳住全選即可）
+    setManualUrl(url);
+    showFeedback(
+      { kind: 'error', message: '複製唔成功，請撳住下面網址手動複製。' },
+      false,
+    );
+  };
+
+  const onShare = async () => {
+    const url = guideUrl();
+    if (typeof navigator.share !== 'function') {
+      // 桌面／舊瀏覽器冇系統分享 sheet：撳「分享」即轉真複製，唔出死按鈕。
+      await onCopy();
+      return;
+    }
+    try {
+      await navigator.share({ title, text: excerpt, url });
+      setManualUrl(null);
+      showFeedback({ kind: 'success', message: '已分享呢篇指南。' }, true);
+    } catch (err) {
+      // 用戶自己取消分享 sheet：靜默，唔當失敗
+      if ((err as { name?: string } | null)?.name === 'AbortError') return;
+      showFeedback(
+        { kind: 'error', message: '分享失敗，可以改用「複製網址」send 俾朋友。' },
+        false,
+      );
+    }
+  };
+
+  return (
+    <div className="gg-share">
+      <div className="gg-share-actions">
+        <button type="button" className="gg-share-btn" onClick={() => void onShare()}>
+          <Share2 size={18} aria-hidden="true" />
+          分享
+        </button>
+        <button type="button" className="gg-share-btn" onClick={() => void onCopy()}>
+          <Link2 size={18} aria-hidden="true" />
+          複製網址
+        </button>
+      </div>
+      {feedback && (
+        <p
+          className={`gg-share-feedback gg-share-feedback--${feedback.kind}`}
+          role={feedback.kind === 'error' ? 'alert' : 'status'}
+        >
+          {feedback.message}
+        </p>
+      )}
+      {manualUrl && (
+        <label className="gg-share-manual">
+          <span>文章網址（撳住全選複製）：</span>
+          <input
+            type="text"
+            className="gg-share-manual-input"
+            readOnly
+            value={manualUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            onClick={(e) => e.currentTarget.select()}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
 export default function GloGuideDetail() {
   const { slug = '' } = useParams();
   const query = trpc.gloGuide.bySlug.useQuery({ slug }, { staleTime: 300_000 });
@@ -227,6 +389,11 @@ export default function GloGuideDetail() {
             {images.length > 0 && <a href="#guide-gallery">睇配搭圖</a>}
             {detail.products.length > 0 && <a href="#guide-products">睇文中單品</a>}
           </nav>
+          <GuideShareActions
+            slug={detail.slug}
+            title={detail.title}
+            excerpt={detail.excerpt}
+          />
         </div>
         <aside className="gg-lead-meta" aria-label="出版資料">
           <p className="gg-lead-meta-kicker">Glo Glo 精選指南</p>

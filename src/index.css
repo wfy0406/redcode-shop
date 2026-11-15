@@ -1001,6 +1001,77 @@
   color: var(--gg-cream);
 }
 
+/* ---------- lead 分享列（分享／複製網址） ---------- */
+
+.gg-share {
+  margin-top: 1.5rem;
+}
+
+.gg-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* CTA：深色實心＋金邊（SPEC），44px 觸控；手機窄屏自動換行 */
+.gg-share-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.55rem 1.25rem;
+  border: 1px solid var(--gg-gold);
+  background: var(--gg-ink);
+  color: var(--gg-cream);
+  font-family: var(--gg-font-ui);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.gg-share-btn:hover {
+  background: var(--gg-gold);
+  color: var(--gg-ink);
+}
+
+.gg-share-feedback {
+  margin: 0.75rem 0 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 奶油底上嘅語義色（同 gg-product-feedback 一套，對比 ≥4.5:1） */
+.gg-share-feedback--success {
+  color: #1d6b43;
+}
+
+.gg-share-feedback--error {
+  color: #a21543;
+}
+
+/* 複製兩條路都失敗時：完整網址 selectable input，手機撳住可全選複製 */
+.gg-share-manual {
+  display: block;
+  margin-top: 0.75rem;
+  font-size: 13px;
+  color: var(--gg-ink-72);
+}
+
+.gg-share-manual-input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--gg-gold-line);
+  background: #fff;
+  color: var(--gg-ink);
+  font-family: var(--gg-font-ui);
+  font-size: 14px;
+}
+
 /* 重點標籤（lead meta card 入面，深底上金線框） */
 .gg-highlight-list {
   display: flex;
@@ -1045,22 +1116,15 @@
   margin: 0;
 }
 
-/* 全寬主配搭圖：固定 aspect（唔靠圖片未存在先排版），直向原圖 cover crop
-   錨定上半身；aspect 斷點固定，CLS 為 0 */
+/* 全寬主配搭圖：按原圖比例完整顯示（width:100%＋height:auto），
+   唔設固定 aspect-ratio／object-fit:cover——直圖喺手機都睇得晒全圖，
+   唔會淨係裁到中間。taupe 底只係圖片未載入時嘅佔位色。 */
 .gg-stage-img {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  object-position: 50% 22%;
+  object-fit: contain;
   background: var(--gg-taupe);
-}
-
-@media (min-width: 768px) {
-  .gg-stage-img {
-    aspect-ratio: 16 / 8;
-  }
 }
 
 .gg-figure-cap {

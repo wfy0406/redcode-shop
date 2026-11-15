@@ -225,6 +225,16 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("發文時間（香港）：2026-11-16 00:00");
     expect(html).toContain('"@type":"Article"');
     expect(html).toContain('<meta property="og:type" content="article" />');
+    expect(html).toContain('<meta property="og:title" content="落雨返工唔使灰｜Glo Glo 精選配搭指南｜RedCode Fashion Design" />');
+    expect(html).toContain('<meta property="og:description" content="用短身外套同直筒褲襯出利落比例，落雨返工都可以輕鬆有精神。" />');
+    expect(html).toContain('<meta property="og:image" content="https://redcode.red/og/glo-guide/mong-kok-rainy-day.png" />');
+    expect(html).toContain('<meta property="og:image:width" content="1200" />');
+    expect(html).toContain('<meta property="og:image:height" content="630" />');
+    expect(html).toContain('<meta property="og:image:alt" content="落雨返工唔使灰｜Glo Glo 精選指南分享預覽圖" />');
+    expect(html).toContain('<meta name="twitter:title" content="落雨返工唔使灰｜Glo Glo 精選配搭指南｜RedCode Fashion Design" />');
+    expect(html).toContain('<meta name="twitter:image" content="https://redcode.red/og/glo-guide/mong-kok-rainy-day.png" />');
+    expect(html).toContain('<meta name="twitter:image:alt" content="落雨返工唔使灰｜Glo Glo 精選指南分享預覽圖" />');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
     expect(html).toContain(`<meta property="article:published_time" content="${mockGuideDetail.publishedAt}" />`);
     expect(html).toContain(`<meta property="article:modified_time" content="${mockGuideDetail.updatedAt}" />`);
     expect(html).toContain('"headline":"落雨返工唔使灰"');

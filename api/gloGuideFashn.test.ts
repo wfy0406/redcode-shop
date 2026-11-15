@@ -7,6 +7,7 @@ import type { GloGuideImageGenInput } from "./gloGuideProviders";
 import {
   buildGloGuideScenePrompt,
   generateGloGuideImage,
+  GLO_GUIDE_HK_FALLBACK_SCENES,
   hasGloGuideSceneContext,
   resolveGloGuideModelImage,
   resolveGloGuideModelImageInput,
@@ -187,7 +188,7 @@ describe("gloGuideFashn（tryon-max＋poll＋轉存）", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("network 錯：最多補試 2 次（共 3 次）有 backoff，之後誠實 throw", async () => {
+  it("submit network 斷線唔自動重開新 job：只打一次並誠實 throw，避免重複扣費", async () => {
     const sleepCalls: number[] = [];
     const fetchImpl = vi.fn(async () => {
       throw new Error("ECONNRESET");
@@ -201,8 +202,8 @@ describe("gloGuideFashn（tryon-max＋poll＋轉存）", () => {
         },
       }),
     ).rejects.toMatchObject({ code: "FASHN_NETWORK", retryable: true });
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(sleepCalls).toEqual([500, 1000]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(sleepCalls).toEqual([]);
   });
 
   it("5xx 第 2 次成功 → 繼續流程（retry 真係救得返）", async () => {
@@ -441,14 +442,63 @@ describe("scene context（文章 theme/body → agent-images 場景路線）", (
     expect(prompt).toContain("second image");
     expect(prompt).not.toContain("model_image");
     expect(prompt).not.toContain("product_image");
-    // 保留真人身分＋商品外觀硬參考；唔添加其他商品
+    // 保留真人身分＋商品外觀硬參考；正文配搭建議入 prompt，原模特兒服裝唔保留
     expect(prompt).toContain("identity, face, hair and body shape");
     expect(prompt).toContain("design, color, pattern, material appearance, logos and details");
-    expect(prompt).toContain("Do not add any other products");
+    expect(prompt).toContain("Article styling guidance for the COMPLETE outfit");
+    expect(prompt).toContain("今日介紹返工 OL 造型");
+    expect(prompt).toContain("The first image is NOT an outfit reference");
+    expect(prompt).toContain("Never copy, preserve or reuse any clothing");
+    expect(prompt).toContain("Do not introduce extra branded items");
+    expect(prompt).not.toContain("Keep all other clothing");
     // 商品可見 framing 硬要求
     expect(prompt).toContain("featured product must be clearly visible");
     // 唔係舊「保留原 pose/background」prompt
     expect(prompt).not.toContain("keeping the same person, face, hair, body shape, pose");
+  });
+
+  it("場景 submit 遇 5xx retry：prompt 只砌一次，同一香港隨機場景唔會重抽", async () => {
+    let submitCalls = 0;
+    const prompts: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/agent/images/run")) {
+        submitCalls += 1;
+        prompts.push(JSON.parse(String(init?.body)).prompt as string);
+        return submitCalls === 1 ? jsonResponse({}, 500) : jsonResponse({ id: "pred-scene-retry" });
+      }
+      if (u.includes("/v1/agent/status/pred-scene-retry")) {
+        return jsonResponse({
+          status: "completed",
+          predictions: [{ status: "completed", results: ["https://cdn.fashn.ai/retry.png"] }],
+        });
+      }
+      return pngResponse();
+    });
+    await generateGloGuideImage(
+      sceneInput({ articleTheme: "每日簡潔配搭", articleBody: "用基本款完成造型。" }),
+      { ...OPTS(), fetchImpl },
+    );
+    expect(submitCalls).toBe(2);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toBe(prompts[0]);
+    expect(GLO_GUIDE_HK_FALLBACK_SCENES.some((scene) => prompts[0]!.includes(scene))).toBe(true);
+  });
+
+  it("文章『邊件襯邊件』直接指導整套穿搭；標記符號唔入 prompt", () => {
+    const p = buildGloGuideScenePrompt({
+      category: "top",
+      articleTheme: "返工顯高配搭",
+      articleBody: "[b]黃色外套[/b]襯[tag]米色高腰闊腳褲[/tag]，再用簡潔白鞋收乾淨成個造型。",
+      productName: "黃色外套",
+      variation: 0,
+    });
+    expect(p).toContain("黃色外套襯米色高腰闊腳褲");
+    expect(p).toContain("簡潔白鞋");
+    expect(p).toContain("Replace the model's entire original outfit");
+    expect(p).not.toContain("[b]");
+    expect(p).not.toContain("[tag]");
+    expect(p).not.toContain("Keep all other clothing, accessories and scene elements unchanged");
   });
 
   it("每張 variation 唔同 pose／構圖指令", async () => {
@@ -497,7 +547,7 @@ describe("scene context（文章 theme/body → agent-images 場景路線）", (
       variation: 0,
     });
     expect(long).not.toContain("主".repeat(121));
-    // 空白 theme 都有籠統場景（唔會出空字串場景）
+    // 文章冇指明場景：由香港日常安全池隨機揀，唔再只出籠統 daily styling
     const blank = buildGloGuideScenePrompt({
       category: "top",
       articleTheme: "  ",
@@ -505,7 +555,28 @@ describe("scene context（文章 theme/body → agent-images 場景路線）", (
       productName: "x",
       variation: 0,
     });
-    expect(blank).toContain("daily styling");
+    expect(GLO_GUIDE_HK_FALLBACK_SCENES.some((scene) => blank.includes(scene))).toBe(true);
+    expect(blank).toContain("Hong Kong");
+    expect(blank).not.toContain("a lifestyle setting that clearly matches");
+  });
+
+  it("OL 場景關鍵詞只中獨立字，唔會將 Gold-tone／Cold 飾品文誤配辦公室", () => {
+    const accessory = buildGloGuideScenePrompt({
+      category: "accessory",
+      articleTheme: "Gold-tone bracelet styling",
+      articleBody: "Keep the complementary basics simple.",
+      productName: "手鏈",
+      variation: 0,
+    });
+    expect(accessory).not.toContain("desk, laptop, office chairs");
+    const office = buildGloGuideScenePrompt({
+      category: "top",
+      articleTheme: "OL 返工造型",
+      articleBody: "",
+      productName: "外套",
+      variation: 0,
+    });
+    expect(office).toContain("desk, laptop, office chairs");
   });
 
   it("category-aware framing：pants/dress/shoes 全部 variation 都係 full-body，唔會出 close-up/mid-shot", () => {
@@ -684,6 +755,19 @@ describe("agent-images 路線（flat body／agent status／10MB cap／錯誤淨�
   it("Agent submit HTTP 429 OutOfCredits → FASHN_CREDITS，唔當 rate limit 重試", async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse({ error: { name: "OutOfCredits", message: "not enough credits" } }, 429),
+    );
+    await expect(
+      generateGloGuideImage(agentInput(), { ...OPTS(), fetchImpl }),
+    ).rejects.toMatchObject({ code: "FASHN_CREDITS", retryable: false });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("429 OutOfCredits 字樣喺 240 字截斷點之後都唔會誤當可重試 rate limit", async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        { error: { name: "RateLimit", message: `${"busy ".repeat(80)}insufficient credits` } },
+        429,
+      ),
     );
     await expect(
       generateGloGuideImage(agentInput(), { ...OPTS(), fetchImpl }),

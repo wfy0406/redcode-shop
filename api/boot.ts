@@ -19,6 +19,7 @@ import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { wmsPhotoFeed } from "./wmsPhotoFeed"; // 2026-10-23（老闆指令）：貨圖庫官網區資料 feed（唯讀）
 import { wmsGloGuide } from "./gloGuideWms";
 import { gloGuidePublicMedia } from "./gloGuidePublicMedia";
+import { gloGuideSocialImage } from "./gloGuideSocialImage";
 import { listPublishedGuideSitemapRows } from "./gloGuidePublic";
 import {
   gloGuideSitemapEntries,
@@ -714,6 +715,10 @@ app.get("/merchant-feed.xml", async (c) => {
     return c.json({ error: "Feed temporarily unavailable" }, 500);
   }
 });
+
+// 每篇文章專屬 1200×630 社交分享卡；非 published／未批准素材一律唔出。
+// 掛喺靜態 fallback 前，crawler 攞到真 PNG，唔會收到 index.html。
+app.get("/og/glo-guide/:slug", gloGuideSocialImage);
 
 // Glo Glo 配搭指南 RSS 2.0 feed（/glo-guide/feed.xml）：資料只經 published 公開查詢
 // （loadPublishedGuideFeed：列表＋逐篇 bySlug 詳情，中途變非 published 即略過，唔會 leak）。
