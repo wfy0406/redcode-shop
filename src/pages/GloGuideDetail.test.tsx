@@ -51,7 +51,7 @@ const DETAIL = {
     {
       id: 11,
       path: '/uploads/glo-guide/a.png',
-      alt: '駝色開胸針織褸 AI 配搭效果',
+      alt: '駝色開胸針織褸 配搭圖',
       width: 800,
       height: 1200,
       position: 0,
@@ -60,7 +60,7 @@ const DETAIL = {
     {
       id: 12,
       path: '/uploads/glo-guide/b.png',
-      alt: '直筒牛仔褲 AI 配搭效果',
+      alt: '直筒牛仔褲 配搭圖',
       width: 800,
       height: 1200,
       position: 1,
@@ -164,11 +164,11 @@ describe('GloGuideDetail 文章／商品／圖片對應', () => {
     expect(html).toContain('2026年11月15日 00:30');
   });
 
-  it('相集 caption 對應返正確商品同真連結，並有 AI 披露', () => {
+  it('相集 caption 對應返正確商品同真連結，並有配搭圖參考說明', () => {
     setQuery({ data: DETAIL });
     const html = renderDetail();
     expect(html).toContain('配搭單品：');
-    expect(html).toContain('AI 配搭效果圖，商品外觀以商品頁原圖為準。');
+    expect(html).toContain('配搭圖只供配搭參考；商品外觀以商品頁原圖為準。');
     expect(html).toContain('href="/products/101"');
     expect(html).toContain('href="/products/102"');
     // 首張相 eager＋fetchPriority high（LCP），之後 lazy
@@ -183,6 +183,21 @@ describe('GloGuideDetail 文章／商品／圖片對應', () => {
     const html = renderDetail();
     expect(html).toContain('/email/gloria-sign.png');
     expect(html).toContain('Glo Glo 簽名');
+  });
+
+  it('安全顯示粗體、顏色、重點標籤；唔會將標記當正文', () => {
+    setQuery({
+      data: {
+        ...DETAIL,
+        body: '第一段[b][gold]講 layering[/gold][/b]。\n\n第二段[tag]返工重點[/tag]。',
+      },
+    });
+    const html = renderDetail();
+    expect(html).toContain('<strong>');
+    expect(html).toContain('gg-text-gold');
+    expect(html).toContain('<mark class="gg-key-tag">返工重點</mark>');
+    expect(html).toContain('本篇重點標籤');
+    expect(html).not.toContain('[tag]');
   });
 });
 

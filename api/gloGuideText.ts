@@ -2,7 +2,8 @@
  * Glo Glo 精選配搭指南——OpenAI-compatible 文案生成 server-only provider。
  *
  * SPEC v1 生成流程第 3–4 步：
- * ─ env：GLO_GUIDE_AI_BASE_URL／GLO_GUIDE_AI_API_KEY／GLO_GUIDE_AI_MODEL，fallback OPENAI_*；
+ * ─ env：GLO_GUIDE_AI_BASE_URL／GLO_GUIDE_AI_API_KEY／GLO_GUIDE_AI_MODEL 優先，
+ *   直接 fallback 現有 DEEPSEEK_API_KEY／DEEPSEEK_BASE／DEEPSEEK_MODEL，再 fallback OPENAI_*；
  * ─ prompt 要求：香港口語廣東話、Glo Glo 第一人稱、150–300 字（空白唔計 code points）、
  *   實用配搭邏輯、生活場景、少少幽默、可間中 emoji、避開近 8 主題及內容開頭、參考明日 7 日天氣；
  * ─ 只可用輸入商品嘅真 name／category／已批准 aiTags／price；禁止估材質、品牌、產地、功能；
@@ -18,6 +19,7 @@ import {
   type GloGuideTextInput,
   type GloGuideTextOutput,
 } from "./gloGuideProviders";
+import { parseGloGuideRichText } from "@contracts/gloGuideRichText";
 import {
   sanitizeGloGuideBody,
   sanitizeGloGuideLine,
@@ -42,19 +44,30 @@ export interface GloGuideAiConfig {
 
 type EnvLike = Record<string, string | undefined>;
 
-/** env 解析：GLO_GUIDE_AI_* 優先，OPENAI_* fallback；冇 API key 即刻 throw 真錯。 */
+/** env 解析：GLO_GUIDE_AI_* 優先，直接重用現有 DEEPSEEK_*，再以 OPENAI_* fallback。 */
 export function resolveGloGuideAiConfig(env: EnvLike = process.env): GloGuideAiConfig {
   const baseUrl = (
     env.GLO_GUIDE_AI_BASE_URL ||
+    env.DEEPSEEK_BASE ||
     env.OPENAI_BASE_URL ||
     GLO_GUIDE_TEXT_DEFAULT_BASE_URL
   ).replace(/\/+$/, "");
-  const apiKey = (env.GLO_GUIDE_AI_API_KEY || env.OPENAI_API_KEY || "").trim();
-  const model = (env.GLO_GUIDE_AI_MODEL || env.OPENAI_MODEL || "gpt-4o-mini").trim();
+  const apiKey = (
+    env.GLO_GUIDE_AI_API_KEY ||
+    env.DEEPSEEK_API_KEY ||
+    env.OPENAI_API_KEY ||
+    ""
+  ).trim();
+  const model = (
+    env.GLO_GUIDE_AI_MODEL ||
+    env.DEEPSEEK_MODEL ||
+    env.OPENAI_MODEL ||
+    "gpt-4o-mini"
+  ).trim();
   if (!apiKey) {
     throw new GloGuideProviderError(
       "AI_CONFIG_MISSING",
-      "AI 文案服務未配置（要 GLO_GUIDE_AI_API_KEY 或 OPENAI_API_KEY）",
+      "AI 文案服務未配置（要 GLO_GUIDE_AI_API_KEY、DEEPSEEK_API_KEY 或 OPENAI_API_KEY）",
     );
   }
   if (!/^https:\/\//i.test(baseUrl)) {
@@ -100,6 +113,8 @@ function buildSystemPrompt(): string {
     "- 要有實用配搭邏輯：講清楚邊件襯邊件、點解咁襯、適合咩身形或場合。",
     "- 要落地生活場景：返工、放假行街、約會、天氣轉變等香港日常。",
     "- 可以帶少少幽默，間中用一兩個 emoji，但唔好濫用。",
+    "- body 用 2–4 組 [tag]…[/tag] 包住簡短、具體嘅配搭重點（例如 [tag]雨天通勤[/tag]），供公開重點標籤使用；唔好成段包住。",
+    "- 需要強調時只可用 [b]…[/b]、[gold]…[/gold]、[pink]…[/pink]；標記要正確巢狀、唔可以跨段落，唔准輸出 HTML 或 Markdown。標記唔計入 150–300 字。",
     "- 會提供香港明日起 7 日天氣（或註明天氣資料暫缺），配搭建議要配合；若註明暫缺，絕對唔好斷言具體天氣。",
     "- 只可以使用輸入商品嘅真實資料：名稱、類別、已批准重點標籤、價錢。",
     "- 絕對禁止憑空斷言材質（如純棉、真絲、羊毛）、品牌、產地、功能（如防水、防曬、保暖）等輸入冇講嘅嘢。",
@@ -225,6 +240,8 @@ function validateOutput(raw: Record<string, unknown>, input: GloGuideTextInput):
   if (titleErr) errors.push(titleErr);
   const bodyErr = validateGloGuideBody(output.body);
   if (bodyErr) errors.push(bodyErr);
+  const highlights = parseGloGuideRichText(output.body).highlights;
+  if (highlights.length < 1) errors.push("內文最少要有一個 [tag]…[/tag] 重點標籤");
   const themeErr = validateGloGuideTheme(output.theme);
   if (themeErr) errors.push(themeErr);
   const unsafe = detectUnsafeFacts(output, input);

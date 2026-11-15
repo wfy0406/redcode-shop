@@ -23,9 +23,8 @@ function esc(s: string): string {
 
 /**
  * 商品頁分享預覽（Facebook / WhatsApp / Telegram 全靠 OG meta）：
- * App 用 HashRouter（#/products/123），但 hash 後面嘅嘢 crawler 永遠收唔到，
- * 所以分享連結用正式路徑 /products/123，由 server 喺 index.html 注入呢件商品嘅
- * og:title / og:description / og:image。 crawler 唔行 JS，一定要 server 出。
+ * 商品正式路徑 /products/123 由 server 喺 index.html 注入呢件商品嘅
+ * og:title / og:description / og:image；唔依賴 crawler 執行前端 JS。
  *
  * 回傳值三種情況（2026-10-27 Search Console 軟 404 根治）：
  * ─ 商品存在 → 注入後嘅 HTML（title/description/canonical/OG/JSON-LD/真 HTML 商品摘要）
@@ -42,6 +41,10 @@ export interface RouteMeta {
   canonical?: string | null;
   noindex?: boolean;
   image?: string;
+  /** 公開內容類型；文章頁要喺首口 HTML 已經係 article，唔等 React 先補。 */
+  ogType?: "website" | "article";
+  articlePublishedTime?: string;
+  articleModifiedTime?: string;
   structuredData?: Record<string, unknown>;
 }
 
@@ -138,6 +141,27 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
         out,
         /<meta\s+property="og:image:alt"\s+content="[^"]*"\s*\/>/,
         `<meta property="og:image:alt" content="${esc(meta.title ?? "RedCode")}" />`,
+      );
+    }
+    if (meta.ogType) {
+      out = upsertMeta(
+        out,
+        /<meta\s+property="og:type"\s+content="[^"]*"\s*\/>/,
+        `<meta property="og:type" content="${meta.ogType}" />`,
+      );
+    }
+    if (meta.articlePublishedTime) {
+      out = upsertMeta(
+        out,
+        /<meta\s+property="article:published_time"\s+content="[^"]*"\s*\/>/,
+        `<meta property="article:published_time" content="${esc(meta.articlePublishedTime)}" />`,
+      );
+    }
+    if (meta.articleModifiedTime) {
+      out = upsertMeta(
+        out,
+        /<meta\s+property="article:modified_time"\s+content="[^"]*"\s*\/>/,
+        `<meta property="article:modified_time" content="${esc(meta.articleModifiedTime)}" />`,
       );
     }
     if (meta.structuredData) {

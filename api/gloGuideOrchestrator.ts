@@ -34,7 +34,23 @@ import {
   type GloGuideProviders,
 } from "./gloGuideProviders";
 import { assertThemeAvailable, getRecentThemes, gloGuideModelImage } from "./gloGuideService";
-import { canClaimJobStatus, shouldApplyGenerationToArticle } from "./gloGuideValidation";
+import { canClaimJobStatus, isGloGuideModelImagePath, shouldApplyGenerationToArticle } from "./gloGuideValidation";
+
+/**
+ * 文章 modelImage 快照 → provider 輸入：
+ * ─ 後台模特兒原圖（/uploads/glo-guide-models/<uuid>.<ext>）係**私密**——原樣傳 path，
+ *   由 Fashn resolver 讀 disk 轉 data URI；如果轉公開 URL，Fashn fetch 會 404（目錄唔公開）；
+ * ─ 其他站內路徑（內建 /gloglo-3.jpg 等）照舊轉絕對 URL；https 原樣；冇快照用 ENV 預設。
+ */
+function modelImageForProvider(
+  modelImage: string | null,
+  base: string,
+  fallbackAbsolute: string,
+): string {
+  if (modelImage && isGloGuideModelImagePath(modelImage)) return modelImage;
+  if (modelImage?.startsWith("/")) return `${base}${modelImage}`;
+  return modelImage ?? fallbackAbsolute;
+}
 
 /**
  * H2：條件式寫文章——只有 draft/pending_review/rejected 先俾背景生成套用；
@@ -267,9 +283,7 @@ async function runImageJob(
       imageId: image.id,
       productId: product.id,
       category: product.category,
-      modelImage: article.modelImage?.startsWith("/")
-        ? `${base}${article.modelImage}`
-        : (article.modelImage ?? model.absoluteUrl),
+      modelImage: modelImageForProvider(article.modelImage, base, model.absoluteUrl),
       productImage,
       experimental: EXPERIMENTAL_CATEGORIES.has(product.category),
       onProviderJobId: async (providerJobId) => {
@@ -553,9 +567,7 @@ export async function recoverGloGuideJobs(
             imageId: image.id,
             productId: product.id,
             category: product.category,
-            modelImage: article.modelImage?.startsWith("/")
-              ? `${base}${article.modelImage}`
-              : (article.modelImage ?? model.absoluteUrl),
+            modelImage: modelImageForProvider(article.modelImage, base, model.absoluteUrl),
             productImage: product.image.startsWith("/") ? `${base}${product.image}` : product.image,
             experimental: EXPERIMENTAL_CATEGORIES.has(product.category),
           });

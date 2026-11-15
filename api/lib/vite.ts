@@ -200,7 +200,7 @@ export function serveStaticFiles(app: App) {
           if (!detail) {
             content = injectRouteMeta(content, {
               title: "搵唔到呢篇指南｜RedCode Fashion Design",
-              description: "呢篇指南未發布、已移除或網址有誤，去 Glo Glo 精選配搭指南總覽睇最新文章。",
+              description: "呢篇指南可能未發布或已下架，去 Glo Glo 精選配搭指南睇最新文章。",
               canonical: null,
               noindex: true,
             });

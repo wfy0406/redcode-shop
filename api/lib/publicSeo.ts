@@ -32,6 +32,31 @@ export interface PublicSeoPage {
  * 呢啲係頁面本身嘅真實摘要，唔係關鍵字堆疊或 crawler 專用文案；
  * 開咗 JavaScript 後照舊顯示原 React 頁，唔改已批准設計。
  */
+/**
+ * /web-design 02 價錢段真實可見嘅四條 Q&A（WebDesignPage.tsx「點解平咁多／雲端係咩／
+ * Domain 點計／月費點收」三格解說）。首口無 JS 內容同 FAQPage JSON-LD 共用呢一份事實；
+ * publicSeo.test.ts 會核對頁面源碼逐字包含（忽略排版空白），改頁面文案要同步呢度，
+ * 否則結構化資料同可見內容會漂移。只描述頁面真實講法，唔加排名承諾或虛構案例。
+ */
+export const WEB_DESIGN_FAQ: readonly PublicSeoSection[] = [
+  {
+    heading: "點解平咁多？",
+    text: "AI 協作分工，人手時間大跌——詳情睇第 03 段。平唔代表求其：每項交付都有清單核對。",
+  },
+  {
+    heading: "雲端係咩？",
+    text: "網站成品需要地方存放，好似畀間屋佢住。月費已包雲端服務商收費，以及系統有問題時由我哋維修，唔使自己搞伺服器。",
+  },
+  {
+    heading: "Domain 點計？",
+    text: "網域名稱一般約 HK$100–300／年，按供應商實報實銷，我哋唔會加收，亦唔會強制加入購物車。",
+  },
+  {
+    heading: "月費點收？",
+    text: "今次付款 = 一次性費用＋首月月費；其後月費每月另行安排，唔會自動續扣，唔想用可以隨時停。",
+  },
+];
+
 export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
   "/": {
     title: "RedCode Fashion Design｜香港女裝直播網店",
@@ -141,6 +166,9 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
         heading: "落單後有正式訂單圖同專屬查詢",
         text: "揀好方案同功能後，可填寫要求、風格及備註，建立正式訂單；之後用完整姓名同電話查詢網站設計訂單。呢類服務訂單同一般商品訂單分開保存及查詢。",
       },
+      // 頁面 02 價錢段真實可見嘅四條 Q&A（WEB_DESIGN_FAQ）——首口 HTML 同 FAQPage
+      // JSON-LD 同源，crawler 唔使執行 JS 都讀到同結構化資料一致嘅答案。
+      ...WEB_DESIGN_FAQ,
     ],
     links: [
       { href: "/web-design#pricing", label: "睇方案同逐項價錢" },
@@ -180,6 +208,22 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
               item: "https://redcode.red/web-design",
             },
           ],
+        },
+        {
+          // FAQPage 同頁面 02 價錢段可見 Q&A 同源（WEB_DESIGN_FAQ）；
+          // 唔代表 Google 一定展示 FAQ rich result。
+          "@type": "FAQPage",
+          "@id": "https://redcode.red/web-design#faq",
+          url: "https://redcode.red/web-design",
+          inLanguage: "zh-Hant-HK",
+          mainEntity: WEB_DESIGN_FAQ.map((section) => ({
+            "@type": "Question",
+            name: section.heading,
+            acceptedAnswer: {
+              "@type": "Answer",
+              text: section.text,
+            },
+          })),
         },
       ],
     },

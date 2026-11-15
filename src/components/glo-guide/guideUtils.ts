@@ -124,12 +124,12 @@ export function guideHighlightTags(aiTags: readonly string[], max = 3): string[]
   return out;
 }
 
-/** 列表 meta description：有真 excerpt 用 excerpt，否則用主題組句（唔虛構內容、唔扮真人撰文） */
+/** 列表 meta description：有真 excerpt 用 excerpt，否則以 Glo Glo 署名同真主題組句。 */
 export function guideDescription(item: Pick<GuideListItem, 'excerpt' | 'theme' | 'title'>): string {
   const excerpt = item.excerpt.trim();
   if (excerpt !== '') return excerpt;
   const theme = item.theme.trim();
   return theme !== ''
-    ? `Glo Glo 精選配搭指南「${item.title}」——${theme}主題直播單品配搭，附 AI 配搭效果圖。`
-    : `Glo Glo 精選配搭指南「${item.title}」——直播單品配搭，附 AI 配搭效果圖。`;
+    ? `Glo Glo 撰寫「${item.title}」——${theme}主題直播單品配搭，附重點標籤同配搭圖。`
+    : `Glo Glo 撰寫「${item.title}」——直播單品配搭，附重點標籤同配搭圖。`;
 }

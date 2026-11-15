@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import type { GuideDetail, GuideImage, GuideProduct } from "@contracts/gloGuide";
 import {
-  AI_IMAGE_DISCLOSURE,
+  GUIDE_IMAGE_DISCLOSURE,
   GLO_GUIDE_FEED_PATH,
   cdata,
   escapeXml,
@@ -258,7 +258,7 @@ describe("renderGloGuideRss", () => {
     expect(xml).toContain("冷衫&lt;特別版&gt; &amp; &quot;暖&quot;");
     expect(xml).toContain("HK$228（原價 HK$268）");
     // 必填披露；唔准真人實穿字眼
-    expect(xml).toContain(AI_IMAGE_DISCLOSURE);
+    expect(xml).toContain(GUIDE_IMAGE_DISCLOSURE);
     expect(xml).not.toContain("實穿");
     expect(xml).not.toContain("真人");
   });

@@ -13,16 +13,17 @@
  * ─ 圖片只用 DTO 已提供嘅站內公開圖，唔會自己查未批資產。
  */
 import type { GuideDetail, GuideImage, GuideListItem, GuideProduct } from "@contracts/gloGuide";
+import { renderGloGuideBodyHtml } from "@contracts/gloGuideRichText";
 import { getPublishedGuideBySlug, listPublishedGuides } from "./gloGuidePublic";
-import { GLO_GUIDE_INDEX_PATH, gloGuidePath } from "./gloGuideSeo";
+import { GLO_GUIDE_INDEX_PATH, gloGuidePath, gloGuideSeoKeywords } from "./gloGuideSeo";
 
 /** 全站唯一 canonical origin */
 export const REDCODE_ORIGIN = "https://redcode.red";
 /** RSS feed 固定路徑 */
 export const GLO_GUIDE_FEED_PATH = "/glo-guide/feed.xml";
 
-/** AI 效果圖披露（必填；唔准用真人實穿字眼） */
-export const AI_IMAGE_DISCLOSURE = "配搭圖係 AI 配搭效果圖；商品外觀以商品原圖為準。";
+/** 公開圖片說明：只稱配搭圖，商品外觀仍以商品原圖為準。 */
+export const GUIDE_IMAGE_DISCLOSURE = "配搭圖只供配搭參考；商品外觀以商品原圖為準。";
 
 /** XML escape：& 一定要最先 */
 export function escapeXml(value: string): string {
@@ -194,14 +195,9 @@ function productPriceLabel(p: GuideProduct): string {
     : `HK$${p.price}`;
 }
 
-/** content:encoded 入面嘅 HTML：完整 body＋全部公開圖＋商品卡＋AI 披露；user text 全 escape */
+/** content:encoded 入面嘅 HTML：完整 body＋全部公開圖＋商品卡＋配搭圖參考說明；user text 全 escape */
 function renderItemContent(detail: GuideDetail): string {
-  const paragraphs = detail.body
-    .split(/\n+/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => `<p>${escapeXml(p)}</p>`)
-    .join("");
+  const paragraphs = renderGloGuideBodyHtml(detail.body);
   // 只用 DTO 已提供嘅公開圖；path 過唔到站內白名單就略過（唔反射外部 URL）
   const figures = detail.images
     .map((img: GuideImage) => {
@@ -224,7 +220,7 @@ function renderItemContent(detail: GuideDetail): string {
     .filter(Boolean)
     .join("");
   return (
-    `<p><strong>${escapeXml(AI_IMAGE_DISCLOSURE)}</strong></p>` +
+    `<p><strong>${escapeXml(GUIDE_IMAGE_DISCLOSURE)}</strong></p>` +
     paragraphs +
     (figures ? `<section><h2>配搭相集</h2>${figures}</section>` : "") +
     (productItems
@@ -258,6 +254,9 @@ export function renderGloGuideRss(
         `<guid isPermaLink="true">${escapeXml(link)}</guid>` +
         (pubDate ? `<pubDate>${pubDate}</pubDate>` : "") +
         `<dc:creator>Glo Glo</dc:creator>` +
+        gloGuideSeoKeywords(detail)
+          .map((term) => `<category>${escapeXml(term)}</category>`)
+          .join("") +
         `<description>${escapeXml(detail.excerpt)}</description>` +
         `<content:encoded>${cdata(renderItemContent(detail))}</content:encoded>` +
         `</item>`
@@ -272,7 +271,7 @@ export function renderGloGuideRss(
     `<title>Glo Glo 精選配搭指南｜RedCode Fashion Design</title>` +
     `<link>${escapeXml(channelLink)}</link>` +
     `<atom:link href="${escapeXml(feedUrl)}" rel="self" type="application/rss+xml" />` +
-    `<description>Glo Glo 每週精選直播新品配搭靈感；配搭圖係 AI 效果圖，商品外觀以商品原圖為準。</description>` +
+    `<description>Glo Glo 撰寫每週直播新品配搭靈感，附重點標籤同配搭圖；商品外觀以商品原圖為準。</description>` +
     `<language>zh-Hant-HK</language>` +
     `<lastBuildDate>${now.toUTCString()}</lastBuildDate>` +
     (items.length ? `\n  ${items.join("\n  ")}\n` : "") +

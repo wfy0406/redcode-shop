@@ -16,6 +16,12 @@ export default defineConfig({
   test: {
     environment: "node",
     // src/lib 加咗 GloCutout/alphaVideo 專屬純邏輯測試（node 環境行到，唔使 DOM）
-    include: ["api/**/*.test.ts", "api/**/*.spec.ts", "src/**/*.test.ts", "src/**/*.test.tsx"],
+    include: [
+      "api/**/*.test.ts",
+      "api/**/*.spec.ts",
+      "contracts/**/*.test.ts",
+      "src/**/*.test.ts",
+      "src/**/*.test.tsx",
+    ],
   },
 });

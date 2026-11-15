@@ -62,12 +62,13 @@ async function loadPublicAssets(db: Db, articleId: number, title: string) {
     .from(gloGuideImages)
     .where(and(eq(gloGuideImages.articleId, articleId), isNull(gloGuideImages.deletedAt)))
     .orderBy(gloGuideImages.position, gloGuideImages.id);
-  const images = imageRows.map((row) => ({
-    row: row as DtoImageRow,
-    alt:
-      (row.productId !== null ? productById.get(row.productId)?.name : undefined) ??
-      `${title}｜Glo Glo 配搭`,
-  }));
+  const images = imageRows.map((row) => {
+    const productName = row.productId !== null ? productById.get(row.productId)?.name : undefined;
+    return {
+      row: row as DtoImageRow,
+      alt: productName ? `${productName} 配搭圖` : `${title}｜Glo Glo 配搭圖`,
+    };
+  });
   return {
     productRows: links
       .map((l) => productById.get(l.productId))

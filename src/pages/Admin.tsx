@@ -1,7 +1,7 @@
 import { Component, useCallback, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Link } from 'react-router';
-import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Package, PanelsTopLeft, Radio, ScanLine, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users, Wallet } from 'lucide-react';
+import { BarChart3, ClipboardCheck, ClipboardList, Crown, Gift, Images, LayoutList, ListChecks, LogIn, Mail, MapPin, Newspaper, Package, PanelsTopLeft, Radio, ScanLine, ScrollText, ShieldCheck, Smartphone, Store, TicketPercent, Users, Wallet } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { trpc } from '@/providers/trpc';
 import WishingStar, { LoadingBlock } from '@/components/admin/WishingStar';
@@ -30,6 +30,7 @@ import WalletPanel from '@/components/admin/WalletPanel';
 import TryOnPanel from '@/components/admin/TryOnPanel';
 import TryOnRecordsPanel from '@/components/admin/TryOnRecordsPanel';
 import WebDesignAdminPanel from '@/components/admin/WebDesignAdminPanel';
+import GloGuidePanel from '@/components/admin/GloGuidePanel';
 import { isToday } from '@/components/admin/format';
 import type { AdminOrder } from '@/components/admin/types';
 
@@ -47,6 +48,8 @@ type ViewKey =
   | 'approvals'
   | 'orders'
   | 'webdesign'
+  // Glo Glo 精選文章（生成／編輯／逐圖審批／提交；批准上架係主管/管理員）
+  | 'guide'
   | 'purchase'
   | 'products'
   | 'tryon'
@@ -221,6 +224,8 @@ function AdminConsole() {
     { key: 'approvals', label: '審批中心', icon: <ListChecks size={17} aria-hidden="true" /> },
     { key: 'orders', label: '全部訂單', icon: <LayoutList size={17} aria-hidden="true" /> },
     { key: 'webdesign', label: '網站設計', icon: <PanelsTopLeft size={17} aria-hidden="true" /> },
+    // Glo Glo 精選文章：三級員工都入得；批准／拒絕／落架／逐圖審批喺面板內按 role 分掣（後端 supervisorProcedure 雙重把關）
+    { key: 'guide', label: '精選文章', icon: <Newspaper size={17} aria-hidden="true" /> },
     { key: 'purchase', label: '訂貨統計', icon: <ClipboardList size={17} aria-hidden="true" /> },
     { key: 'products', label: '商品管理', icon: <Package size={17} aria-hidden="true" /> },
     // AI 試穿紀錄俾主管／管理員查閱；開放閘口、成本及統計配置仍然只限最高管理員
@@ -301,6 +306,7 @@ function AdminConsole() {
         canReview={isSupervisorOrAdmin}
       />
     ),
+    guide: <GloGuidePanel toast={pushToast} canReview={isSupervisorOrAdmin} />,
     purchase: <PurchaseStats />,
     // F8：商品 view ＝ ProductManager（新增/編輯/📺直播場次）＋ 下面 ListingBatchesCard（WMS 上架紀錄，唯讀）
     products: (

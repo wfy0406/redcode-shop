@@ -8,6 +8,7 @@ import {
   renderPublicContent,
   SITEMAP_STATIC_PATHS,
   stripPublicSeoContent,
+  WEB_DESIGN_FAQ,
 } from "./publicSeo";
 import { injectRouteMeta } from "./og";
 
@@ -127,13 +128,19 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(html).toContain('data-redcode-route-schema="/web-design"');
     expect(html.match(/"@type":"Service"/g)).toHaveLength(1);
     expect(html.match(/"@type":"BreadcrumbList"/g)).toHaveLength(1);
+    expect(html.match(/"@type":"FAQPage"/g)).toHaveLength(1);
     expect(html).toContain('"@id":"https://redcode.red/web-design#breadcrumb"');
+    expect(html).toContain('"@id":"https://redcode.red/web-design#faq"');
     expect(html).toContain('"name":"網站設計服務","item":"https://redcode.red/web-design"');
     expect(html).toContain('"provider":{"@id":"https://redcode.red/#org"}');
     expect(html).not.toContain('#organization');
     expect(html).toContain(`<meta name="twitter:title" content="${page.title}" />`);
     expect(html).toContain(`<meta name="twitter:description" content="${page.description}" />`);
     expect(html).toContain(`<meta property="og:image:alt" content="${page.title}" />`);
+    // B2B 分區 canonical／og:url 留喺主網域 /web-design，唔搬 subdomain、唔指首頁
+    expect(html).toContain('<link rel="canonical" href="https://redcode.red/web-design" />');
+    expect(html).toContain('<meta property="og:url" content="https://redcode.red/web-design" />');
+    expect(html).not.toContain('noindex');
     expect(html).not.toContain('保證搜尋排名');
     const webDesignSource = readFileSync(new URL("../../src/pages/WebDesignPage.tsx", import.meta.url), "utf8");
     const visibleH1 = webDesignSource
@@ -148,6 +155,54 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(content).toContain("前台＋後台");
     expect(content).toContain("唔會保證搜尋排名");
     expect(content).toContain("服務訂單同一般商品訂單分開");
+    // 服務內鏈錨點要真係喺頁面存在（#pricing／#contact），唔好出死錨
+    expect(webDesignSource).toContain('id="pricing"');
+    expect(webDesignSource).toContain('id="contact"');
+    expect(page.links.map((link) => link.href)).toEqual([
+      "/web-design#pricing",
+      "/web-design#contact",
+      "/",
+    ]);
+  });
+
+  it("網站設計 FAQPage JSON-LD 同頁面可見 Q&A 同源，首口 HTML 亦出相同答案", () => {
+    const page = PUBLIC_PAGES["/web-design"];
+    const graph = (page.structuredData as { "@graph": Record<string, unknown>[] })["@graph"];
+    const faqNode = graph.find((node) => node["@type"] === "FAQPage") as {
+      "@id": string;
+      url: string;
+      inLanguage: string;
+      mainEntity: { "@type": string; name: string; acceptedAnswer: { "@type": string; text: string } }[];
+    };
+    expect(faqNode).toBeDefined();
+    expect(faqNode["@id"]).toBe("https://redcode.red/web-design#faq");
+    expect(faqNode.url).toBe("https://redcode.red/web-design");
+    expect(faqNode.inLanguage).toBe("zh-Hant-HK");
+    // 四條 Q&A 同 WEB_DESIGN_FAQ 逐字一致（唔係另一套答案）
+    expect(faqNode.mainEntity).toHaveLength(WEB_DESIGN_FAQ.length);
+    expect(faqNode.mainEntity.map((q) => q.name)).toEqual(WEB_DESIGN_FAQ.map((s) => s.heading));
+    expect(faqNode.mainEntity.map((q) => q.acceptedAnswer.text)).toEqual(WEB_DESIGN_FAQ.map((s) => s.text));
+    // 同一份 Q&A 亦要進入首口無 JS 內容（sections 尾段），crawler 唔使 JS 都讀到
+    const sections = page.sections ?? [];
+    expect(sections.slice(-WEB_DESIGN_FAQ.length)).toEqual([...WEB_DESIGN_FAQ]);
+    const firstHit = renderPublicContent("/web-design");
+    for (const qa of WEB_DESIGN_FAQ) {
+      expect(firstHit).toContain(`<h2>${qa.heading}</h2>`);
+      expect(firstHit).toContain(qa.text);
+    }
+    // 每條問題同答案都必須真係喺 WebDesignPage.tsx 可見（JSX 排版空白唔計）——
+    // 改頁面文案冇同步呢度即紅，防止 JSON-LD 同可見事實漂移。
+    const pageSource = readFileSync(new URL("../../src/pages/WebDesignPage.tsx", import.meta.url), "utf8");
+    const normalizedSource = pageSource.replace(/\s+/g, "");
+    for (const qa of WEB_DESIGN_FAQ) {
+      expect(normalizedSource).toContain(qa.heading.replace(/\s+/g, ""));
+      expect(normalizedSource).toContain(qa.text.replace(/\s+/g, ""));
+    }
+    // 唔准出現排名承諾、虛構客戶、評價或案例背書
+    const faqJson = JSON.stringify(faqNode);
+    expect(faqJson).not.toMatch(/保證|排名第一|第一名|好評|評分|客戶見證/);
+    expect(faqJson).not.toContain("review");
+    expect(faqJson).not.toContain("aggregateRating");
   });
 
   it("公開事實 regression：/live 同 /products 唔再無條件承諾直播優惠，以商品頁為準", () => {

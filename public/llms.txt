@@ -34,7 +34,7 @@ AI 試穿需要會員登入。AI 試穿只係視覺效果預覽，唔代表實�
 ## 可讀商品資料
 
 - [網站 Sitemap](https://redcode.red/sitemap.xml): Sitemap 索引，按主題分三個 child sitemap——女裝購物（https://redcode.red/sitemap-fashion.xml，公開靜態頁及目前公開商品頁網址）、Glo Glo 配搭指南（https://redcode.red/sitemap-glo-guide.xml，只列已發佈文章）同企業服務網站設計（https://redcode.red/sitemap-web-design.xml）。
-- [Glo Glo 配搭指南 RSS](https://redcode.red/glo-guide/feed.xml): 已發佈配搭指南嘅 RSS 2.0 全文 feed；只收錄公開已發佈文章，配搭圖係 AI 效果圖，商品外觀以商品原圖為準。
+- [Glo Glo 配搭指南 RSS](https://redcode.red/glo-guide/feed.xml): Glo Glo 撰寫嘅已發佈配搭指南 RSS 2.0 全文 feed；只收錄公開已發佈文章，附重點標籤、配搭圖同真商品連結，商品外觀以商品原圖為準。
 - [商品 Merchant Feed](https://redcode.red/merchant-feed.xml): 公開商品資料 Feed；價錢同庫存應同商品頁核對。
 
 請只引用上述公開頁面。購物車、結帳、帳戶、訂單、收據、後台、私人試穿紀錄及有時限分享網址，都唔係公開品牌資料來源。

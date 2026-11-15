@@ -48,8 +48,8 @@ function validOutput(overrides: Partial<{ title: string; body: string; theme: st
   return {
     title: "夏日返工咁著最醒",
     body:
-      "我哋 Glo Glo 今期幫你襯好返工 look：荷葉邊雪紡感上衣配高腰闊腳褲，上身輕盈下身修長，" +
-      "視覺即刻高一截。聽日廿六到三十度，大致多雲，咁著啱啱好，唔怕焗又唔怕凍。" +
+      "我哋 Glo Glo 今期幫你襯好[tag]輕盈返工[/tag] look：荷葉邊雪紡感上衣配高腰闊腳褲，上身輕盈下身修長，" +
+      "視覺即刻高一截，[tag]修長比例[/tag]即刻出晒嚟。聽日廿六到三十度，大致多雲，咁著啱啱好，唔怕焗又唔怕凍。" +
       "返工見客得體，放工約朋友食飯又夠 casual，一套搞掂兩個場景，抵！" +
       "落雨加件薄外套都唔失禮，周末著住去市集行下又一樣咁靚，實用度爆燈。" +
       "記得襯對簡約平底鞋，成個造型更加分 😊 快啲入手啦！",
@@ -110,6 +110,7 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(system).toContain("第一人稱");
     expect(system).toContain("150–300");
     expect(system).toContain("emoji");
+    expect(system).toContain("[tag]…[/tag]");
     expect(system).toContain("絕對禁止憑空斷言材質");
     expect(system).toContain("JSON");
     // user prompt：真實商品 facts（名／類別／標籤／價錢）
@@ -144,6 +145,17 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     const lastMessage = lastPayload.messages[lastPayload.messages.length - 1].content;
     expect(lastMessage).toContain("上次輸出唔合格");
     expect(lastMessage).toContain("內文要 150–300 字");
+  });
+
+  it("自動稿冇重點標籤 → 唔會當成功，會要求改正", async () => {
+    const withoutTags = validOutput({
+      body: validOutput().body.replace(/\[\/?tag\]/g, ""),
+    });
+    const fetchImpl = vi.fn(async () => chatResponse(withoutTags));
+    await expect(
+      generateGloGuideText(makeInput(), { fetchImpl, env: ENV, sleep: noSleep, maxAttempts: 1 }),
+    ).rejects.toMatchObject({ code: "AI_VALIDATION" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("壞 JSON → 重試後仍壞 → throw AI_BAD_JSON，唔會照收", async () => {
@@ -194,7 +206,48 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(result.title).not.toMatch(/[\u0000-\u001F]/);
   });
 
-  it("env fallback：冇 GLO_GUIDE_AI_* 就用 OPENAI_*", () => {
+  it("env fallback：直接重用現有 DEEPSEEK_API_KEY／DEEPSEEK_BASE／DEEPSEEK_MODEL", async () => {
+    const env = {
+      DEEPSEEK_BASE: "https://api.deepseek.com/v1/",
+      DEEPSEEK_API_KEY: "deepseek-key",
+      DEEPSEEK_MODEL: "deepseek-chat",
+    };
+    expect(resolveGloGuideAiConfig(env)).toEqual({
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "deepseek-key",
+      model: "deepseek-chat",
+    });
+    const fetchImpl = vi.fn(async (_url: string | URL, _init?: RequestInit) => chatResponse(validOutput()));
+    await generateGloGuideText(makeInput(), { fetchImpl, env, sleep: noSleep });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.deepseek.com/v1/chat/completions",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer deepseek-key" }),
+      }),
+    );
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)).model).toBe("deepseek-chat");
+  });
+
+  it("env 優先次序：指南專用設定 > DEEPSEEK_* > OPENAI_*", () => {
+    const config = resolveGloGuideAiConfig({
+      GLO_GUIDE_AI_BASE_URL: "https://guide.example.com/v1",
+      GLO_GUIDE_AI_API_KEY: "guide-key",
+      GLO_GUIDE_AI_MODEL: "guide-model",
+      DEEPSEEK_BASE: "https://api.deepseek.com/v1",
+      DEEPSEEK_API_KEY: "deepseek-key",
+      DEEPSEEK_MODEL: "deepseek-chat",
+      OPENAI_BASE_URL: "https://api.openai.com/v1/",
+      OPENAI_API_KEY: "openai-key",
+      OPENAI_MODEL: "gpt-x",
+    });
+    expect(config).toEqual({
+      baseUrl: "https://guide.example.com/v1",
+      apiKey: "guide-key",
+      model: "guide-model",
+    });
+  });
+
+  it("env fallback：冇指南專用及 DEEPSEEK_* 就用 OPENAI_*", () => {
     const config = resolveGloGuideAiConfig({
       OPENAI_BASE_URL: "https://api.openai.com/v1/",
       OPENAI_API_KEY: "openai-key",

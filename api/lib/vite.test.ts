@@ -126,7 +126,7 @@ function guideImage(id: number): GuideImage {
   return {
     id,
     path: `/uploads/glo-guide/guide-${id}.png`,
-    alt: `Glo Glo 配搭效果圖 ${id}`,
+    alt: `Glo Glo 配搭圖 ${id}`,
     width: 1024,
     height: 1536,
     position: id - 1,
@@ -206,7 +206,7 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain('src="https://redcode.red/uploads/glo-guide/guide-1.png"');
     expect(html).toContain('fetchpriority="high"');
     expect(html).toContain("2026-11-16 00:00");
-    expect(html).toContain("AI 效果圖，商品外觀以商品原圖為準");
+    expect(html).toContain("Glo Glo 撰寫每週直播新品配搭靈感，附重點標籤同配搭圖");
   });
 
   it("指南詳情首口有完整文章、Article JSON-LD、商品卡，gallery 唔重複 cover", async () => {
@@ -221,16 +221,48 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("鞋袋入面放定後備襪，返到辦公室就唔使硬頂，呢招真係返工仔恩物。");
     expect(html).toContain("發文時間（香港）：2026-11-16 00:00");
     expect(html).toContain('"@type":"Article"');
+    expect(html).toContain('<meta property="og:type" content="article" />');
+    expect(html).toContain(`<meta property="article:published_time" content="${mockGuideDetail.publishedAt}" />`);
+    expect(html).toContain(`<meta property="article:modified_time" content="${mockGuideDetail.updatedAt}" />`);
     expect(html).toContain('"headline":"落雨返工唔使灰"');
     expect(html).toContain('"@type":"BreadcrumbList"');
     expect(html).toContain("短身剪裁、通勤");
     expect(html).toContain("<s>HK$399</s> HK$299");
-    expect(html).toContain("相集係 AI 配搭效果圖；商品外觀以商品原圖為準");
+    expect(html).toContain("配搭圖只供配搭參考；商品外觀以商品原圖為準");
     const block = html.match(/<main id="redcode-glo-guide-seo"[\s\S]*?<\/main>/)?.[0] ?? "";
     expect(block.match(/guide-1\.png/g)).toHaveLength(1);
     expect(block.match(/guide-2\.png/g)).toHaveLength(1);
     expect(block).toContain('fetchpriority="high"');
     expect(block).toContain('loading="lazy"');
+  });
+
+  it("重點標籤同真商品標籤進入首口 HTML、Article keywords/about/articleBody", async () => {
+    mockGuideDetail = {
+      ...makeGuide(),
+      body: "香港落雨最煩係出入冷氣同濕笠笠。[b][gold]短身外套襯高腰直筒褲[/gold][/b]，比例即刻利落。\n[tag]雨天通勤重點[/tag]：鞋袋入面放定後備襪，返到辦公室就唔使硬頂，呢招真係返工仔恩物。",
+    };
+    const res = await makeApp().request("/glo-guide/mong-kok-rainy-day", { headers: PROXY_HEADERS });
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(html).toContain('<mark class="gg-key-tag">雨天通勤重點</mark>');
+    expect(html).toContain('<strong>短身外套襯高腰直筒褲</strong>');
+    expect(html).toContain('"articleBody":"香港落雨最煩');
+    expect(html).toContain('"keywords":"香港雨天通勤, 雨天通勤重點, 短身風衣外套, 短身剪裁, 通勤"');
+    expect(html).toContain('"@type":"Product","name":"短身風衣外套"');
+    expect(html).not.toContain("[tag]");
+  });
+
+  it("首口圖片 path 防禦：非指南持久路徑唔會當配搭圖輸出", async () => {
+    mockGuideDetail = {
+      ...makeGuide(),
+      images: [guideImage(1), { ...guideImage(2), path: "https://evil.example/tracker.png" }],
+    };
+    const res = await makeApp().request("/glo-guide/mong-kok-rainy-day", { headers: PROXY_HEADERS });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const block = html.match(/<main id="redcode-glo-guide-seo"[\s\S]*?<\/main>/)?.[0] ?? "";
+    expect(block).toContain("guide-1.png");
+    expect(block).not.toContain("evil.example");
   });
 
   it("未發布／唔存在指南回真 404＋noindex，唔會出舊文或 self canonical", async () => {
@@ -900,6 +932,49 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
       /<script type="application\/ld\+json" data-redcode-route-schema="[^"]*">([^<]*)<\/script>/,
     );
     expect(JSON.parse(ldMatch![1]).mainEntity.numberOfItems).toBe(48); // ItemList 同顯示出嚟嘅一致
+  });
+
+  it("(22) /web-design 首口：200＋同網域 self canonical＋Service/FAQ/Breadcrumb JSON-LD＋真內容，無 noindex", async () => {
+    // B2B 分區保留主網域 directory：路由唔移動、唔 noindex、canonical 唔指首頁。
+    // 呢條係純字串路由（唔掂 DB），trailing slash 版本要出同一結果。
+    for (const path of ["/web-design", "/web-design/"]) {
+      const res = await makeApp().request(path, { headers: PROXY_HEADERS });
+      expect(res.status, path).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("<title>香港網站設計｜前台、後台及 SEO 套票｜RedCode</title>");
+      expect(canonicalHref(html)).toBe("https://redcode.red/web-design");
+      expect(html).toContain('<meta property="og:url" content="https://redcode.red/web-design" />');
+      expect(html).toContain('<meta property="og:image" content="https://redcode.red/web-design/web-design-og.webp" />');
+      // robots 保持 index, follow（首口模板預設），唔准被改成 noindex
+      expect(html).toContain('<meta name="robots" content="index, follow" />');
+      expect(html).not.toContain("noindex");
+      // 首口無 JS 真內容非空：服務摘要＋方案／價錢／落單說明＋四條可見 Q&A＋服務內鏈
+      expect(html).toContain('id="redcode-public-seo"');
+      expect(html).toContain("<h1>你嘅生意，值得被看見。</h1>");
+      expect(html).toContain("只要前台");
+      expect(html).toContain("前台＋後台");
+      expect(html).toContain("唔會保證搜尋排名");
+      expect(html).toContain("點解平咁多？");
+      expect(html).toContain("Domain 點計？");
+      expect(html).toContain('<a href="/web-design#pricing">睇方案同逐項價錢</a>');
+      expect(html).toContain('<a href="/web-design#contact">查詢或建立訂單</a>');
+      // JSON-LD 一個 route schema：Service＋BreadcrumbList＋FAQPage 同頁面可見事實一致
+      const ldMatch = html.match(
+        /<script type="application\/ld\+json" data-redcode-route-schema="\/web-design">([^<]*)<\/script>/,
+      );
+      expect(ldMatch, path).not.toBeNull();
+      const graph = JSON.parse(ldMatch![1])["@graph"] as { "@type": string; mainEntity?: { name: string }[] }[];
+      expect(graph.map((node) => node["@type"])).toEqual(["Service", "BreadcrumbList", "FAQPage"]);
+      const faqNode = graph[2];
+      expect(faqNode.mainEntity?.map((q) => q.name)).toEqual([
+        "點解平咁多？",
+        "雲端係咩？",
+        "Domain 點計？",
+        "月費點收？",
+      ]);
+      // 唔會混入女裝購物嘅商品導航；私人單據 URL 唔會出現喺公開首口
+      expect(html).not.toContain("web-design-bill");
+    }
   });
 
   it("(21) 過往場次首口 HTML：中性「場次商品記錄」，唔承諾優惠、唔編時間", async () => {

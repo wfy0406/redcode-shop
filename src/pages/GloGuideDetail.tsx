@@ -3,7 +3,7 @@
  *
  * 資料：凍結合同 trpc.gloGuide.bySlug.useQuery({ slug })；非 published 由 server 回
  * NOT_FOUND，呢度顯示 404 態＋noindex（見 seo hook）。
- * 排版：左邊 sticky 2:3 AI 配搭效果圖（每張標註對應商品），右邊正文欄（CJK 襯線大標、
+ * 排版：左邊 sticky 2:3 配搭圖（每張標註對應商品），右邊正文欄（CJK 襯線大標、
  * 香港發文時間、hairline 分段、正文 ≥16px/1.7、Glo Glo 簽名署名），
  * 下面「文中單品」editorial 商品行（加車／去商品頁揀尺寸）。
  */
@@ -12,13 +12,14 @@ import { Link, useParams } from 'react-router';
 import { trpc } from '@/providers/trpc';
 import GuideProductCard from '@/components/glo-guide/GuideProductCard';
 import GloSignature from '@/components/glo-guide/GloSignature';
+import GloGuideRichText from '@/components/GloGuideRichText';
+import { parseGloGuideRichText } from '@contracts/gloGuideRichText';
 import { useGloGuideDetailSeo } from '@/components/glo-guide/seo';
 import {
   formatGuideDateHK,
   guideDateTimeAttr,
   productForImage,
   sortGuideImages,
-  splitGuideBody,
 } from '@/components/glo-guide/guideUtils';
 
 export default function GloGuideDetail() {
@@ -68,7 +69,7 @@ export default function GloGuideDetail() {
   }
 
   const images = sortGuideImages(detail.images);
-  const paragraphs = splitGuideBody(detail.body);
+  const highlights = parseGloGuideRichText(detail.body).highlights;
 
   return (
     <main className="gg-page">
@@ -82,10 +83,10 @@ export default function GloGuideDetail() {
       </nav>
 
       <div className="gg-detail">
-        {/* 左：2:3 AI 配搭效果圖（desktop sticky；手機自然單欄排最前） */}
-        <section className="gg-gallery" aria-label="AI 配搭效果圖">
+        {/* 左：2:3 配搭圖（desktop sticky；手機由 CSS 排喺正文之後） */}
+        <section className="gg-gallery" id="guide-gallery" aria-label="配搭圖">
           <p className="gg-disclosure">
-            AI 配搭效果圖，商品外觀以商品頁原圖為準。
+            配搭圖只供配搭參考；商品外觀以商品頁原圖為準。
           </p>
           {images.map((img, i) => {
             const product = productForImage(img, detail.products);
@@ -93,7 +94,7 @@ export default function GloGuideDetail() {
               <figure key={img.id} className="gg-figure">
                 <img
                   src={img.path}
-                  alt={img.alt || (product ? `${product.name} AI 配搭效果圖` : detail.title)}
+                  alt={img.alt || (product ? `${product.name} 配搭圖` : detail.title)}
                   width={img.width}
                   height={img.height}
                   loading={i === 0 ? 'eager' : 'lazy'}
@@ -121,18 +122,26 @@ export default function GloGuideDetail() {
               {formatGuideDateHK(detail.publishedAt)}
             </time>
           </p>
+          <nav className="gg-article-nav" aria-label="呢篇指南內容">
+            <a href="#guide-body">睇正文</a>
+            <a href="#guide-gallery">睇配搭圖</a>
+            {detail.products.length > 0 && <a href="#guide-products">睇文中單品</a>}
+          </nav>
+          {highlights.length > 0 && (
+            <ul className="gg-highlight-list" aria-label="本篇重點標籤">
+              {highlights.map((highlight) => (
+                <li key={highlight}>{highlight}</li>
+              ))}
+            </ul>
+          )}
           <hr className="gg-hairline" />
-          <div className="gg-body">
-            {paragraphs.map((text, i) => (
-              <p key={i}>{text}</p>
-            ))}
-          </div>
+          <GloGuideRichText body={detail.body} />
           <GloSignature />
         </article>
       </div>
 
       {detail.products.length > 0 && (
-        <section className="gg-products" aria-labelledby="gg-products-heading">
+        <section className="gg-products" id="guide-products" aria-labelledby="gg-products-heading">
           <hr className="gg-hairline" />
           <h2 id="gg-products-heading" className="gg-products-title">
             文中單品

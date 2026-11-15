@@ -12,6 +12,8 @@
  * AI 生成驗證（gloGuideAi.ts）全部共用呢度嘅規則；測試直接抽純函數驗。
  */
 
+import { gloGuideRichTextPlain, parseGloGuideRichText } from "@contracts/gloGuideRichText";
+
 // ──────────────────────────── 文字清理／字數 ────────────────────────────
 
 /** 控制字元：C0（\u0000–\u001F）＋DEL＋C1（\u007F–\u009F）。body 保留 \n／\t，其餘全剝。 */
@@ -28,10 +30,10 @@ export function sanitizeGloGuideLine(value: string): string {
   return value.normalize("NFC").replace(CONTROL_CHARS_STRICT, "").trim();
 }
 
-/** body 字數：Unicode code points，**空白唔計**（\s 全部剔除先數）。 */
+/** body 字數：先移除受控格式標記，再以 Unicode code points 計；空白唔計。 */
 export function countBodyCodePoints(body: string): number {
   let n = 0;
-  for (const ch of body) {
+  for (const ch of gloGuideRichTextPlain(body)) {
     if (!/\s/u.test(ch)) n++;
   }
   return n;
@@ -62,8 +64,10 @@ export function validateGloGuideTheme(theme: string): string | null {
   return null;
 }
 
-/** body 校驗（已清理）：150–300 code points，空白唔計。合格返 null。 */
+/** body 校驗（已清理）：格式標記先過結構閘，再計 150–300 個純文字 code points。 */
 export function validateGloGuideBody(body: string): string | null {
+  const markupError = parseGloGuideRichText(body).error;
+  if (markupError) return `內文格式錯誤：${markupError}`;
   const len = countBodyCodePoints(body);
   if (len < GLO_GUIDE_BODY_MIN || len > GLO_GUIDE_BODY_MAX) {
     return `內文要 ${GLO_GUIDE_BODY_MIN}–${GLO_GUIDE_BODY_MAX} 字（空白唔計，而家 ${len} 字）`;
@@ -247,6 +251,33 @@ export function evaluateGloGuideGate(
 /** 指南圖片唯一合法持久前綴（短期 Fashn CDN URL 永遠唔入庫／唔入 DTO） */
 export const GLO_GUIDE_PATH_PREFIX = "/uploads/glo-guide/";
 
+// ──────────────────────────── 模特兒原圖（後台管理）────────────────────────────
+
+/**
+ * 模特兒原圖唯一合法持久前綴：/uploads/glo-guide-models/<uuid>.<ext>。
+ * ⚠️ 呢個目錄絕對唔公開——boot.ts 只閘 /uploads/glo-guide/:file（published 先放行），
+ * 通用 /uploads/:file 又只准單層檔名，所以 glo-guide-models/* 公開永遠 404；
+ * 員工預覽行 JWT tRPC base64（service readModelImageForPreview）。
+ */
+export const GLO_GUIDE_MODEL_IMAGE_PREFIX = "/uploads/glo-guide-models/";
+
+/** 後台模特兒原圖上限（備用相數量；Fashn 每次淨係用預設嗰一張） */
+export const GLO_GUIDE_MODEL_IMAGE_MAX = 8;
+
+/**
+ * 係咪合法嘅模特兒原圖持久路徑：<前綴><uuid>.<png|jpg|jpeg|webp>。
+ * 檔名一定要係 server 產生嘅 uuid（36 字符 hex＋連字號）——唔准任意檔名／子目錄／traversal，
+ * 由根本擋住「隨便指個站內路徑當模特兒相」嘅打鑊。
+ */
+export function isGloGuideModelImagePath(path: string | null | undefined): boolean {
+  if (typeof path !== "string") return false;
+  if (!path.startsWith(GLO_GUIDE_MODEL_IMAGE_PREFIX)) return false;
+  const rest = path.slice(GLO_GUIDE_MODEL_IMAGE_PREFIX.length);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:png|jpe?g|webp)$/i.test(
+    rest,
+  );
+}
+
 /**
  * generateArticle 嘅 job 參數（純函數，方便測試接線）：
  * 手動 → source manual＋kind full＋key full:<publicId>；
@@ -350,6 +381,53 @@ export function evaluatePublicMediaAccess(input: {
   return true;
 }
 
+// ──────────────────────────── 模特兒原圖預設規則（純函數）────────────────────────────
+
+/** 後台列表用嘅最小模特兒相事實（service 由 DB 行 map 出嚟；淨係未刪行） */
+export interface ModelImageFacts {
+  id: number;
+  path: string;
+  isDefault: boolean;
+  createdAt: Date;
+}
+
+/**
+ * 新文章 modelImage snapshot 規則（純函數）：
+ * ─ DB 有未刪相 → 用 isDefault 嗰張嘅 path（DB 唯一預設由 partial unique index 保證；
+ *   萬一資料異常多過一張 default，取最早建立嗰張，結果穩定）；
+ * ─ DB 有相但冇 default（異態，正常流程唔會出現）→ 取最早建立嗰張，source 仍係 "db"；
+ * ─ DB 一張都冇 → 沿用 envRef（ENV 第一項／內建 /gloglo-3.jpg，由 caller 計），向後相容。
+ * 入參 rows 必須係未刪行；回傳 ref 保證係 DB 行 path 或 envRef，唔會係空字串
+ * （envRef 空＝caller bug，照樣原樣返俾上層閘口揚聲）。
+ */
+export function resolveModelImageDefault(
+  rows: readonly ModelImageFacts[],
+  envRef: string,
+): { ref: string; source: "db" | "env"; imageId: number | null } {
+  if (rows.length === 0) return { ref: envRef, source: "env", imageId: null };
+  const sorted = [...rows].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id - b.id);
+  const def = sorted.find((r) => r.isDefault) ?? sorted[0]!;
+  return { ref: def.path, source: "db", imageId: def.id };
+}
+
+/**
+ * 刪除預設相之後嘅繼任規則（純函數）：
+ * ─ 刪嘅唔係預設 → 唔使郁（null）；
+ * ─ 刪嘅係預設＋仲有其他未刪相 → 最早建立嗰張自動升做預設（員工可以隨時再改）；
+ * ─ 刪嘅係預設＋冇其他相 → null（之後新文章回落 ENV／內建預設，UI 會清晰標示）。
+ */
+export function modelImageDefaultAfterDelete(
+  rows: readonly ModelImageFacts[],
+  deletedId: number,
+): number | null {
+  const target = rows.find((r) => r.id === deletedId);
+  if (!target || !target.isDefault) return null;
+  const rest = rows
+    .filter((r) => r.id !== deletedId)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id - b.id);
+  return rest[0]?.id ?? null;
+}
+
 // ──────────────────────────── slug／excerpt ────────────────────────────
 
 /**
@@ -361,9 +439,9 @@ export function buildGloGuideSlug(dateYmd: string, rand: string): string {
   return `glo-guide-${dateYmd}-${cleanRand || "x"}`;
 }
 
-/** 列表 excerpt：body 頭 maxLen 個 code points（空白照計），截斷補 … */
+/** 列表 excerpt：只取純文字，唔會將 [b]／[tag] 等格式標記洩到搜尋摘要。 */
 export function gloGuideExcerpt(body: string, maxLen = 120): string {
-  const chars = [...body.replace(/\s+/g, " ").trim()];
+  const chars = [...gloGuideRichTextPlain(body).replace(/\s+/g, " ").trim()];
   if (chars.length <= maxLen) return chars.join("");
   return `${chars.slice(0, maxLen).join("")}…`;
 }
@@ -404,11 +482,12 @@ export function parseGloGuideActor(value: unknown): GloGuideActor | null {
   return { id, name, role: role as GloGuideActorRole };
 }
 
-/** approve／reject／archive 只 supervisor/admin；其他 action 三級員工皆可 */
+/** 文章 approve／reject／archive 及逐圖 review 只 supervisor/admin；其他 action 三級員工皆可 */
 export const GLO_GUIDE_SUPERVISOR_ACTIONS = [
   "article.approve",
   "article.reject",
   "article.archive",
+  "image.review",
 ] as const;
 
 export function actionNeedsSupervisor(action: string): boolean {

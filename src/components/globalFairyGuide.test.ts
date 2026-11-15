@@ -126,6 +126,31 @@ describe('真控制 selector 同 route-aware 目錄', () => {
     expect(guide.candidates[0].selectors).toContain('main [data-fairy-target="home-cta"]');
   });
 
+  it('指南總覽指最新文章、文章選擇器同真商品／直播連結', () => {
+    const guide = getFairyRouteGuide('/glo-guide');
+    expect(guide.quiet).toBe(false);
+    expect(guide.candidates.map((item) => item.id)).toEqual([
+      'guide-latest',
+      'guide-selector',
+      'guide-live-products',
+    ]);
+    expect(guide.candidates[0].selectors[0]).toContain('.ggx-read[href^="/glo-guide/"]');
+    expect(guide.candidates[2].selectors.join(' ')).toContain('[href="/live"]');
+  });
+
+  it('指南詳情只指真內容連結，可以去正文、配搭圖同文中商品', () => {
+    const guide = getFairyRouteGuide('/glo-guide/autumn-knit');
+    expect(guide.candidates.map((item) => item.id)).toEqual([
+      'guide-body',
+      'guide-gallery',
+      'guide-products',
+    ]);
+    const selectors = guide.candidates.flatMap((item) => item.selectors).join(' ');
+    expect(selectors).toContain('[href="#guide-body"]');
+    expect(selectors).toContain('[href="#guide-gallery"]');
+    expect(selectors).toContain('[href^="/products/"]');
+  });
+
   it('商品列表只指搜尋及分類；普通商品卡唔再被導覽圈圈住', () => {
     const selectors = getFairyRouteGuide('/products').candidates.flatMap((item) => item.selectors);
     expect(selectors).toContain('main input[aria-label="搜尋商品"]');

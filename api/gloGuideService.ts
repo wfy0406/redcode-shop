@@ -10,7 +10,7 @@
  * ─ 生成 job 用 idempotencyKey unique 擋重複；kick 由 gloGuideOrchestrator 背景執行。
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import pathModule from "node:path";
 import { and, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
@@ -19,23 +19,30 @@ import {
   gloGuideArticles,
   gloGuideImages,
   gloGuideJobs,
+  gloGuideModelImages,
   products,
 } from "@db/schema";
 import { logAudit } from "./audit";
 import { publicAiTags } from "./productAiContent";
+import { saveGloGuideModelImage } from "./gloGuideMedia";
 import {
   buildGloGuideSlug,
   evaluateGloGuideGate,
   GLO_GUIDE_CATEGORIES,
   GLO_GUIDE_IMAGE_MAX,
+  GLO_GUIDE_MODEL_IMAGE_MAX,
   gloGuidePublishedMutationError,
   hkWeekRangeYmd,
   isGloGuideAction,
   isGloGuideImagePath,
+  isGloGuideModelImagePath,
+  GLO_GUIDE_MODEL_IMAGE_PREFIX,
   GLO_GUIDE_PATH_PREFIX,
   archiveArticleError,
   isUniqueViolation,
+  modelImageDefaultAfterDelete,
   resolveGenerateJobParams,
+  resolveModelImageDefault,
   normalizeThemeKey,
   sanitizeGloGuideBody,
   sanitizeGloGuideLine,
@@ -74,6 +81,30 @@ export function gloGuideModelImage(): { ref: string; absoluteUrl: string } {
   const ref = first && (/^https:\/\//i.test(first) || first.startsWith("/")) ? first : "/gloglo-3.jpg";
   const base = (process.env.PUBLIC_BASE_URL || "https://redcode.red").replace(/\/+$/, "");
   return { ref, absoluteUrl: ref.startsWith("/") ? `${base}${ref}` : ref };
+}
+
+/**
+ * 新文章 modelImage snapshot 來源（向後相容）：
+ * ─ gloGuideModelImages 有未刪相 → DB 預設相嘅站內私密路徑（/uploads/glo-guide-models/...）；
+ * ─ DB 未有任何記錄 → 沿用現有 ENV 第一項／內建 /gloglo-3.jpg（gloGuideModelImage()）。
+ * 快照一旦寫入文章就唔會再變——之後刪相／換預設都唔會回寫舊文章。
+ */
+export async function resolveArticleModelImageRef(): Promise<{
+  ref: string;
+  source: "db" | "env";
+  imageId: number | null;
+}> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      id: gloGuideModelImages.id,
+      path: gloGuideModelImages.path,
+      isDefault: gloGuideModelImages.isDefault,
+      createdAt: gloGuideModelImages.createdAt,
+    })
+    .from(gloGuideModelImages)
+    .where(isNull(gloGuideModelImages.deletedAt));
+  return resolveModelImageDefault(rows, gloGuideModelImage().ref);
 }
 
 // ──────────────────────────── 本週可選商品 ────────────────────────────
@@ -486,6 +517,9 @@ export async function generateArticle(
   }
 
   const publicId = randomUUID();
+  // 模特兒原圖快照：DB 有預設用預設，未上傳過就沿用 ENV 第一項／內建 /gloglo-3.jpg。
+  // snapshot 喺建文當刻寫死——之後後台刪相／換預設都唔會郁呢篇。
+  const modelSnap = await resolveArticleModelImageRef();
   // source／jobKind／idempotencyKey 一定要跟 options（排程 slot unique key 靠呢度落 DB，
   // 唔係 scheduler 每 5 分鐘會搵唔到 slotKey 而重複開文）
   const jobParams = resolveGenerateJobParams(publicId, options);
@@ -514,7 +548,7 @@ export async function generateArticle(
             status: "draft",
             source: jobParams.source,
             generationStatus: "queued",
-            modelImage: gloGuideModelImage().ref,
+            modelImage: modelSnap.ref,
             createdById: actor.id,
             createdByName: actor.name,
           })
@@ -561,7 +595,7 @@ export async function generateArticle(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.articleGenerate",
     targetType: "gloGuideArticle",
     targetId: article.id,
@@ -666,7 +700,7 @@ export async function regenerateArticle(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.articleRegenerate",
     targetType: "gloGuideArticle",
     targetId: input.id,
@@ -752,7 +786,7 @@ export async function updateArticle(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.articleUpdate",
     targetType: "gloGuideArticle",
     targetId: input.id,
@@ -794,7 +828,7 @@ export async function submitArticle(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.articleSubmit",
     targetType: "gloGuideArticle",
     targetId: id,
@@ -847,7 +881,7 @@ export async function approveArticle(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.articleApprove",
     targetType: "gloGuideArticle",
     targetId: id,
@@ -888,7 +922,7 @@ export async function rejectArticle(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.articleReject",
     targetType: "gloGuideArticle",
     targetId: input.id,
@@ -926,7 +960,7 @@ export async function archiveArticle(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.articleArchive",
     targetType: "gloGuideArticle",
     targetId: id,
@@ -992,7 +1026,7 @@ export async function reviewImage(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.imageReview",
     targetType: "gloGuideImage",
     targetId: input.imageId,
@@ -1028,7 +1062,7 @@ export async function deleteImage(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.imageDelete",
     targetType: "gloGuideImage",
     targetId: input.imageId,
@@ -1105,7 +1139,7 @@ export async function uploadImage(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.imageUpload",
     targetType: "gloGuideArticle",
     targetId: input.id,
@@ -1257,7 +1291,7 @@ export async function generateImages(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.imageGenerate",
     targetType: "gloGuideArticle",
     targetId: input.id,
@@ -1305,11 +1339,289 @@ export async function readImageForPreview(
   void logAudit({
     actorId: actor.id,
     actorRole: actor.role,
-    actorNameFallback: `${actor.name}（WMS）`,
+    actorNameFallback: actor.name,
     action: "gloGuide.imageRead",
     targetType: "gloGuideImage",
     targetId: input.imageId,
     detail: `WMS 預覽指南 ${input.id} 圖片 ${input.imageId}`,
+  });
+  return { filename, mime, dataBase64: data.toString("base64") };
+}
+
+// ──────────────────────────── 模特兒原圖管理（官網 /admin 後台）────────────────────────────
+//
+// 規矩：
+// ─ 原圖係真實授權相，**絕不公開**：path 只准 /uploads/glo-guide-models/<uuid>.<ext>
+//   （冇公開路由放行呢個目錄），員工預覽淨係行 JWT tRPC base64（modelImageRead）；
+// ─ Fashn 每次淨係用一張＝isDefault 嗰張；其他係備用。新文章 generateArticle 喺建文當刻
+//   將預設相 path 寫死落 article.modelImage（快照）——呢度刪相／換預設絕對唔會回寫舊文章；
+// ─ delete 係軟刪（deletedAt）留審計；預設相被刪會自動升最早建立嘅備用相做預設；
+//   冇晒未刪相 → 新文章回落 ENV 第一項／內建 /gloglo-3.jpg（list 會清晰標示 fallback）；
+// ─ 審計 actor 用 actor.name（唔加 WMS 後綴——呢條係官網後台線）。
+
+export interface ModelImageDto {
+  id: number;
+  publicId: string;
+  path: string;
+  originalFilename: string | null;
+  width: number;
+  height: number;
+  isDefault: boolean;
+  createdByName: string | null;
+  createdAt: string;
+}
+
+function toModelImageDto(row: typeof gloGuideModelImages.$inferSelect): ModelImageDto {
+  return {
+    id: row.id,
+    publicId: row.publicId,
+    path: row.path,
+    originalFilename: row.originalFilename,
+    width: row.width,
+    height: row.height,
+    isDefault: row.isDefault,
+    createdByName: row.createdByName,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** 後台模特兒原圖列表＋而家生效嘅預設（DB 預設；冇 DB 相就清晰標示 ENV／內建 fallback） */
+export async function listModelImages(): Promise<{
+  items: ModelImageDto[];
+  maxCount: number;
+  /** DB 冇相嗰陣新文章會用嘅 fallback（ENV 第一項或內建 /gloglo-3.jpg） */
+  fallback: { ref: string };
+  /** 而家新建文章實際會用嘅 ref 同來源 */
+  effective: { ref: string; source: "db" | "env" };
+}> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(gloGuideModelImages)
+    .where(isNull(gloGuideModelImages.deletedAt))
+    .orderBy(gloGuideModelImages.createdAt, gloGuideModelImages.id);
+  const env = gloGuideModelImage();
+  const effective = resolveModelImageDefault(rows, env.ref);
+  return {
+    items: rows.map(toModelImageDto),
+    maxCount: GLO_GUIDE_MODEL_IMAGE_MAX,
+    fallback: { ref: env.ref },
+    effective: { ref: effective.ref, source: effective.source },
+  };
+}
+
+/**
+ * modelImage.upload {filename, mime, dataBase64}：
+ * base64 → 10MB 上限 → sharp 驗真圖（JPEG/PNG/WebP，SVG 拒收）＋同格式 re-encode →
+ * 落 /uploads/glo-guide-models/<uuid>.<ext> → 建 DB 行。
+ * 第一張自動做預設；上限 GLO_GUIDE_MODEL_IMAGE_MAX（8）張未刪相。
+ */
+export async function uploadModelImage(
+  actor: GloGuideActor,
+  input: { filename: string; mime: string; dataBase64: string },
+  saveImage: typeof saveGloGuideModelImage = saveGloGuideModelImage,
+): Promise<ReturnType<typeof listModelImages>> {
+  const db = getDb();
+  if (typeof input.dataBase64 !== "string" || input.dataBase64.length === 0) {
+    throw badRequest("缺圖片資料（dataBase64）");
+  }
+  // base64 長度估算原檔大小（未 decode 先擋大件）
+  if (Math.floor(input.dataBase64.length * 0.75) > GLO_GUIDE_UPLOAD_MAX_BYTES) {
+    throw badRequest("圖片超過 10MB 上限");
+  }
+  const data = Buffer.from(input.dataBase64, "base64");
+  if (data.length === 0 || data.length > GLO_GUIDE_UPLOAD_MAX_BYTES) {
+    throw badRequest("圖片資料無效或超過 10MB");
+  }
+  const filename = String(input.filename ?? "").slice(0, 200);
+  let stored: { path: string; width: number; height: number };
+  try {
+    stored = await saveImage({
+      filename,
+      mime: String(input.mime ?? "").slice(0, 64),
+      data,
+    });
+  } catch (e) {
+    throw badRequest(e instanceof Error ? e.message : "圖片驗證失敗");
+  }
+  if (!isGloGuideModelImagePath(stored.path)) {
+    throw new GloGuideError(500, "INTERNAL", "模特兒原圖存放路徑無效");
+  }
+  // 第一張自動做預設；併發撞 partial unique（另一張同時做咗預設）→ 成個 tx 重試做備用
+  // （Postgres 一錯成個 tx abort，所以重試一定要喺 transaction 外圍，唔可以喺 tx 入面補救）。
+  const insertRow = async (allowDefault: boolean) =>
+    db.transaction(async (tx) => {
+      const live = await tx
+        .select({ id: gloGuideModelImages.id })
+        .from(gloGuideModelImages)
+        .where(isNull(gloGuideModelImages.deletedAt));
+      if (live.length >= GLO_GUIDE_MODEL_IMAGE_MAX) {
+        throw conflict(`最多 ${GLO_GUIDE_MODEL_IMAGE_MAX} 張模特兒原圖，請先刪除舊相`);
+      }
+      const [inserted] = await tx
+        .insert(gloGuideModelImages)
+        .values({
+          publicId: randomUUID(),
+          path: stored.path,
+          originalFilename: filename || null,
+          width: stored.width,
+          height: stored.height,
+          isDefault: allowDefault && live.length === 0,
+          createdById: actor.id,
+          createdByName: actor.name,
+        })
+        .returning();
+      return inserted;
+    });
+  let row: typeof gloGuideModelImages.$inferSelect | undefined;
+  try {
+    try {
+      row = await insertRow(true);
+    } catch (e) {
+      if (!isUniqueViolation(e, "gloguidemodelimages_default_live")) throw e;
+      row = await insertRow(false);
+    }
+  } catch (e) {
+    // DB 寫入失敗 → 清理啱啱落盤嘅檔案（best-effort；清理失敗淨係 log）。
+    // 錯誤照樣抛出——絕對唔會留低冇 DB 行嘅「成功」假象。
+    const fname = stored.path.slice(GLO_GUIDE_MODEL_IMAGE_PREFIX.length);
+    await rm(pathModule.join(process.env.UPLOADS_DIR || "uploads", "glo-guide-models", fname), {
+      force: true,
+    }).catch((rmErr) => console.error("[glo-guide] 清理上傳失敗嘅模特兒原圖檔案失敗:", rmErr));
+    throw e;
+  }
+  if (!row) throw new GloGuideError(500, "INTERNAL", "上傳模特兒原圖失敗，請再試");
+  void logAudit({
+    actorId: actor.id,
+    actorRole: actor.role,
+    actorNameFallback: actor.name,
+    action: "gloGuide.modelImageUpload",
+    targetType: "gloGuideModelImage",
+    targetId: row.id,
+    detail: `上傳模特兒原圖 ${row.path}（${row.width}×${row.height}${row.isDefault ? "，自動設為預設" : ""}）`,
+  });
+  return listModelImages();
+}
+
+/**
+ * modelImage.setDefault {id}：同一 transaction 先清晒未刪行嘅預設，再標目標做預設
+ * （DB partial unique index 硬保證最多一張）。**唔會郁任何舊文章嘅 modelImage 快照。**
+ */
+export async function setDefaultModelImage(
+  actor: GloGuideActor,
+  input: { id: number },
+): Promise<ReturnType<typeof listModelImages>> {
+  const db = getDb();
+  await db.transaction(async (tx) => {
+    // 行數上限 8 張，select 全部未刪行再喺 JS 搵目標（同 delete 一致，避免半寫狀態）
+    const live = await tx
+      .select({ id: gloGuideModelImages.id })
+      .from(gloGuideModelImages)
+      .where(isNull(gloGuideModelImages.deletedAt));
+    if (!live.some((r) => r.id === input.id)) throw notFound("搵唔到呢張模特兒原圖");
+    await tx
+      .update(gloGuideModelImages)
+      .set({ isDefault: false, updatedAt: new Date() })
+      .where(and(isNull(gloGuideModelImages.deletedAt), eq(gloGuideModelImages.isDefault, true)));
+    await tx
+      .update(gloGuideModelImages)
+      .set({ isDefault: true, updatedAt: new Date() })
+      .where(eq(gloGuideModelImages.id, input.id));
+  });
+  void logAudit({
+    actorId: actor.id,
+    actorRole: actor.role,
+    actorNameFallback: actor.name,
+    action: "gloGuide.modelImageSetDefault",
+    targetType: "gloGuideModelImage",
+    targetId: input.id,
+    detail: `設定模特兒原圖 ${input.id} 為預設（之後新建文章先用；舊文章保留當初快照）`,
+  });
+  return listModelImages();
+}
+
+/**
+ * modelImage.delete {id}：軟刪（deletedAt）留審計；**唔會郁任何舊文章嘅 modelImage 快照**。
+ * 刪嘅係預設 → 最早建立嘅備用相自動升做預設；冇晒未刪相 → 新文章回落 ENV／內建
+ * /gloglo-3.jpg（list.effective 會標示 source=env，UI 清晰顯示 fallback）。
+ */
+export async function deleteModelImage(
+  actor: GloGuideActor,
+  input: { id: number },
+): Promise<ReturnType<typeof listModelImages>> {
+  const db = getDb();
+  let promotedId: number | null = null;
+  await db.transaction(async (tx) => {
+    const live = await tx
+      .select({
+        id: gloGuideModelImages.id,
+        path: gloGuideModelImages.path,
+        isDefault: gloGuideModelImages.isDefault,
+        createdAt: gloGuideModelImages.createdAt,
+      })
+      .from(gloGuideModelImages)
+      .where(isNull(gloGuideModelImages.deletedAt));
+    const target = live.find((r) => r.id === input.id);
+    if (!target) throw notFound("搵唔到呢張模特兒原圖");
+    promotedId = modelImageDefaultAfterDelete(live, input.id);
+    // 次序攸關：partial unique index 唔准兩張 live default——一定要喺**同一 tx**
+    // 先 soft-delete 舊預設（順手清 isDefault），先至可以 promote 備用相。
+    await tx
+      .update(gloGuideModelImages)
+      .set({ isDefault: false, deletedAt: new Date(), updatedAt: new Date() })
+      .where(eq(gloGuideModelImages.id, input.id));
+    if (promotedId !== null) {
+      await tx
+        .update(gloGuideModelImages)
+        .set({ isDefault: true, updatedAt: new Date() })
+        .where(eq(gloGuideModelImages.id, promotedId));
+    }
+  });
+  void logAudit({
+    actorId: actor.id,
+    actorRole: actor.role,
+    actorNameFallback: actor.name,
+    action: "gloGuide.modelImageDelete",
+    targetType: "gloGuideModelImage",
+    targetId: input.id,
+    detail: `刪除模特兒原圖 ${input.id}${promotedId !== null ? `，預設自動轉俾 ${promotedId}` : ""}（舊文章保留當初快照）`,
+  });
+  return listModelImages();
+}
+
+/**
+ * modelImage.read {id}：員工預覽用——server 由 UPLOADS_DIR 讀本地檔回 base64。
+ * 呢個目錄冇公開路由；未刪行先讀到（軟刪後預覽都擋，防「刪咗仲睇得」錯覺）。
+ */
+export async function readModelImageForPreview(
+  actor: GloGuideActor,
+  input: { id: number },
+): Promise<{ filename: string; mime: string; dataBase64: string }> {
+  const db = getDb();
+  const row = await db.query.gloGuideModelImages.findFirst({
+    where: and(eq(gloGuideModelImages.id, input.id), isNull(gloGuideModelImages.deletedAt)),
+  });
+  if (!row) throw notFound("搵唔到呢張模特兒原圖");
+  if (!isGloGuideModelImagePath(row.path)) throw notFound("原圖路徑無效");
+  const filename = row.path.slice(GLO_GUIDE_MODEL_IMAGE_PREFIX.length);
+  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  const mime = GLO_GUIDE_MIME_BY_EXT[ext];
+  if (!mime) throw notFound("原圖格式無效");
+  const dir = process.env.UPLOADS_DIR || "uploads";
+  let data: Buffer;
+  try {
+    data = await readFile(pathModule.join(dir, "glo-guide-models", filename));
+  } catch {
+    throw notFound("原圖檔案唔存在（可能已搬遷）");
+  }
+  void logAudit({
+    actorId: actor.id,
+    actorRole: actor.role,
+    actorNameFallback: actor.name,
+    action: "gloGuide.modelImageRead",
+    targetType: "gloGuideModelImage",
+    targetId: input.id,
+    detail: `後台預覽模特兒原圖 ${input.id}`,
   });
   return { filename, mime, dataBase64: data.toString("base64") };
 }

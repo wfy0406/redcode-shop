@@ -24,6 +24,7 @@ import {
   type GloGuideImageGenResult,
 } from "./gloGuideProviders";
 import { downloadGloGuideProviderImage } from "./gloGuideMedia";
+import { GLO_GUIDE_MODEL_IMAGE_PREFIX, isGloGuideModelImagePath } from "./gloGuideValidation";
 
 export const FASHN_BASE_URL = "https://api.fashn.ai/v1";
 export const GLO_GUIDE_FASHN_TIMEOUT_MS = 25_000;
@@ -82,6 +83,39 @@ export function resolveGloGuideModelImage(
     "FASHN_MODEL_IMAGE",
     "模特兒參考圖只支援 https 或站內已授權路徑",
   );
+}
+
+const MAX_MODEL_IMAGE_BYTES = 30 * 1024 * 1024;
+
+/**
+ * 模特兒參考圖 → Fashn 可讀輸入（generateGloGuideImage 用呢個；sync 版保留俾直接 URL 場景）：
+ * ─ /uploads/glo-guide-models/<uuid>.<ext>（後台上傳嘅真實授權原圖，**唔公開**）：
+ *   server 由 UPLOADS_DIR 讀 disk → data URI 俾 Fashn，唔會轉公開 URL（轉咗都 404）；
+ *   路徑必須過 isGloGuideModelImagePath（uuid 檔名，唔准 traversal／其他站內目錄）；
+ * ─ 其他輸入照舊行 resolveGloGuideModelImage（https 直用；/gloglo-3.jpg／ENV 白名單轉絕對 URL）。
+ * 讀唔到檔／超 30MB → 真錯誤 throw，絕唔 mock。
+ */
+export async function resolveGloGuideModelImageInput(
+  modelImage: string,
+  env: Record<string, string | undefined> = process.env,
+): Promise<string> {
+  const value = typeof modelImage === "string" ? modelImage.trim() : "";
+  if (isGloGuideModelImagePath(value)) {
+    const filename = value.slice(GLO_GUIDE_MODEL_IMAGE_PREFIX.length);
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(
+        path.join(env.UPLOADS_DIR || process.env.UPLOADS_DIR || "uploads", "glo-guide-models", filename),
+      );
+    } catch {
+      throw new GloGuideProviderError("FASHN_MODEL_IMAGE", "模特兒原圖檔案已不存在");
+    }
+    if (!bytes.length || bytes.length > MAX_MODEL_IMAGE_BYTES) {
+      throw new GloGuideProviderError("FASHN_MODEL_IMAGE", "模特兒原圖太大或內容無效");
+    }
+    return `data:${detectImageMime(bytes)};base64,${bytes.toString("base64")}`;
+  }
+  return resolveGloGuideModelImage(value, env);
 }
 
 const DATA_URI_RE = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=\r\n]+)$/;
@@ -447,7 +481,7 @@ export async function generateGloGuideImage(
   const maxPolls = Math.max(1, options.maxPolls ?? GLO_GUIDE_FASHN_MAX_POLLS);
   const pollInterval = Math.max(50, options.pollIntervalMs ?? GLO_GUIDE_FASHN_POLL_INTERVAL_MS);
 
-  const modelImageUrl = resolveGloGuideModelImage(input.modelImage, options.env ?? process.env);
+  const modelImageUrl = await resolveGloGuideModelImageInput(input.modelImage, options.env ?? process.env);
   const productImageInput = await resolveGloGuideProductImage(input.productImage);
 
   const providerJobId = await withFashnRetry(

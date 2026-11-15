@@ -1030,6 +1030,17 @@
   }
 }
 
+/* 手機版先睇標題、重點同正文，再入相集；唔使掃過 3–5 張長圖先搵到文章。 */
+@media (max-width: 899px) {
+  .gg-article {
+    order: 0;
+  }
+
+  .gg-gallery {
+    order: 1;
+  }
+}
+
 .gg-gallery {
   display: grid;
   grid-template-columns: 1fr;
@@ -1056,7 +1067,7 @@
   margin: 0;
 }
 
-/* AI 披露：效果圖旁白，細字但對比足（text-2 唔係 text-3） */
+/* 配搭圖披露：細字但對比足（text-2 唔係 text-3） */
 .gg-disclosure {
   grid-column: 1 / -1;
   margin: 0;
@@ -1113,6 +1124,89 @@
   color: var(--gold);
   padding-right: 0.12em;
   float: left;
+}
+
+.gg-body strong {
+  color: var(--starlight);
+  font-weight: 800;
+}
+
+.gg-text-gold {
+  color: var(--gold-soft);
+}
+
+.gg-text-pink {
+  color: var(--pink-tint);
+}
+
+.gg-key-tag {
+  display: inline;
+  padding: 0.08em 0.28em;
+  border: 1px solid rgba(245, 197, 24, 0.38);
+  border-radius: 0.3rem;
+  background: rgba(245, 197, 24, 0.11);
+  color: var(--gold-soft);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.gg-highlight-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding: 0;
+  margin: 1.25rem 0 0;
+  list-style: none;
+}
+
+.gg-highlight-list li {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgba(245, 197, 24, 0.42);
+  border-radius: 999px;
+  background: rgba(245, 197, 24, 0.08);
+  color: var(--gold-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.gg-highlight-list li::before {
+  content: '重點 · ';
+  color: var(--text-3);
+}
+
+.gg-article-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1.25rem;
+}
+
+.gg-article-nav a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid rgba(245, 197, 24, 0.42);
+  border-radius: 999px;
+  background: var(--space-2);
+  color: var(--gold-soft);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: border-color var(--dur-micro), color var(--dur-micro), background-color var(--dur-micro);
+}
+
+.gg-article-nav a:hover {
+  border-color: var(--gold);
+  background: var(--space-3);
+  color: var(--starlight);
+}
+
+#guide-body,
+#guide-gallery,
+#guide-products {
+  scroll-margin-top: 6rem;
 }
 
 /* Gloria 簽名：原圖深啡字透明底，filter 提亮做金（binary 冇郁） */

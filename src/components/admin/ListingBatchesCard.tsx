@@ -89,6 +89,35 @@ function ItemStatusChip({ status }: { status: string }) {
   );
 }
 
+function BatchItemImage({ src, name }: { src: string | null; name: string | null }) {
+  const [failed, setFailed] = useState(false);
+  // 成功上架件會有官網本地 /uploads 圖；failed/rejected 件保留嘅外連只係歷史來源，
+  // 唔再俾瀏覽器直連 RCFD（CORS／mixed content／host 失敗都會變灰圖）。
+  const localSrc = src && src.startsWith('/') && !src.startsWith('//') ? src : null;
+  if (!localSrc || failed) {
+    return (
+      <div
+        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border text-[16px]"
+        style={{ borderColor: 'var(--glass-border)', background: 'var(--space-0)' }}
+        role="img"
+        aria-label={`${name ?? '商品'} 暫時未有可用縮圖`}
+      >
+        👗
+      </div>
+    );
+  }
+  return (
+    <img
+      src={localSrc}
+      alt={`${name ?? '商品'} 縮圖`}
+      className="h-12 w-12 shrink-0 rounded-lg border object-cover"
+      style={{ borderColor: 'var(--glass-border)', background: 'var(--space-0)' }}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export default function ListingBatchesCard() {
   const listQuery = trpc.products.listingBatches.useQuery(undefined, { staleTime: 30_000 });
   const [openBatch, setOpenBatch] = useState<BatchRow | null>(null);
@@ -206,23 +235,7 @@ export default function ListingBatchesCard() {
                   className="flex items-center gap-3 rounded-xl border px-3.5 py-2.5"
                   style={{ borderColor: 'var(--glass-border)', background: 'var(--space-2)' }}
                 >
-                  {it.imageUrl ? (
-                    <img
-                      src={it.imageUrl}
-                      alt=""
-                      className="h-12 w-12 shrink-0 rounded-lg border object-cover"
-                      style={{ borderColor: 'var(--glass-border)', background: 'var(--space-0)' }}
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div
-                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border text-[16px]"
-                      style={{ borderColor: 'var(--glass-border)', background: 'var(--space-0)' }}
-                      aria-hidden="true"
-                    >
-                      👗
-                    </div>
-                  )}
+                  <BatchItemImage key={`${it.id}:${it.imageUrl ?? ''}`} src={it.imageUrl} name={it.name} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-bold text-txt-1">{it.name ?? '（未命名）'}</p>
                     <p className="mt-0.5 font-mono text-[11px] text-txt-3">

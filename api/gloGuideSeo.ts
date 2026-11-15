@@ -8,11 +8,14 @@
  * data-redcode-prerender 區塊（同其他首口注入一致，唔會重複 visible DOM）。
  */
 import type { GuideDetail, GuideImage, GuideListItem } from "@contracts/gloGuide";
+import {
+  gloGuideRichTextPlain,
+  parseGloGuideRichText,
+  renderGloGuideBodyHtml,
+} from "@contracts/gloGuideRichText";
 import type { RouteMeta } from "./lib/og";
 import { productCategoryLabel } from "@contracts/types";
-import { getDb } from "./queries/connection";
-import { gloGuideArticles } from "@db/schema";
-import { desc, eq } from "drizzle-orm";
+import { isGloGuideImagePath } from "./gloGuideValidation";
 
 const ORIGIN = "https://redcode.red";
 export const GLO_GUIDE_INDEX_PATH = "/glo-guide";
@@ -48,38 +51,54 @@ export function hkDateTimeLabel(iso: string): string {
   return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
 }
 
-/** sitemap 用：/glo-guide ＋ 全部 published 指南 URL（只呢個函數掂 DB） */
-export async function gloGuideSitemapPaths(): Promise<string[]> {
-  const db = getDb();
-  const rows = await db
-    .select({ slug: gloGuideArticles.slug })
-    .from(gloGuideArticles)
-    .where(eq(gloGuideArticles.status, "published"))
-    .orderBy(desc(gloGuideArticles.publishedAt))
-    .limit(200);
-  return [GLO_GUIDE_INDEX_PATH, ...rows.map((r) => gloGuidePath(r.slug))];
-}
-
 /** /glo-guide 總覽 meta */
 export function gloGuideListRouteMeta(): RouteMeta {
   return {
     title: "Glo Glo 精選配搭指南｜RedCode Fashion Design",
     description:
-      "Glo Glo 按香港天氣同生活場景揀選直播單品，每篇附主題配搭文同 AI 配搭效果圖；商品外觀以商品頁原圖為準。",
+      "Glo Glo 按香港天氣同生活場景撰寫配搭指南，每篇附主題配搭文、重點標籤同配搭圖；商品外觀以商品頁原圖為準。",
     path: GLO_GUIDE_INDEX_PATH,
+    ogType: "website",
   };
+}
+
+/** SEO／GEO 字詞全部來自可見正文重點、主題、真商品名及已批准商品標籤。 */
+export function gloGuideSeoKeywords(detail: GuideDetail): string[] {
+  return [
+    ...new Set(
+      [
+        detail.theme,
+        ...parseGloGuideRichText(detail.body).highlights,
+        ...detail.products.flatMap((product) => [product.name, ...product.aiTags]),
+      ]
+        .map((term) => term.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 /** /glo-guide/:slug meta＋Article JSON-LD（同可見文章一致嘅真內容） */
 export function gloGuideDetailRouteMeta(detail: GuideDetail): RouteMeta {
   const pageUrl = `${ORIGIN}${gloGuidePath(detail.slug)}`;
   const image = detail.coverImage ? absUrl(detail.coverImage.path) : undefined;
+  const keywords = gloGuideSeoKeywords(detail);
   const graph: Record<string, unknown>[] = [
     {
       "@type": "Article",
       "@id": `${pageUrl}#article`,
       headline: detail.title,
       description: detail.excerpt,
+      articleBody: gloGuideRichTextPlain(detail.body),
+      ...(keywords.length ? { keywords: keywords.join(", ") } : {}),
+      about: detail.products.map((product) => ({
+        "@type": "Product",
+        name: product.name,
+        url: `${ORIGIN}/products/${product.id}`,
+        image: absUrl(product.image),
+        category: productCategoryLabel(product.category),
+        ...(product.aiTags.length ? { keywords: product.aiTags.join(", ") } : {}),
+      })),
+      isAccessibleForFree: true,
       ...(image ? { image: [image] } : {}),
       datePublished: detail.publishedAt,
       dateModified: detail.updatedAt,
@@ -103,6 +122,9 @@ export function gloGuideDetailRouteMeta(detail: GuideDetail): RouteMeta {
     description: detail.excerpt,
     path: gloGuidePath(detail.slug),
     image,
+    ogType: "article",
+    articlePublishedTime: detail.publishedAt,
+    articleModifiedTime: detail.updatedAt,
     structuredData: { "@context": "https://schema.org", "@graph": graph },
   };
 }
@@ -127,14 +149,16 @@ export function renderGloGuideIndex(items: readonly GuideListItem[]): string {
   return (
     `<main id="redcode-glo-guide-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8">` +
     `<h1>Glo Glo 精選配搭指南</h1>` +
-    `<p>Glo Glo 每週精選直播新品配搭靈感；配搭圖係 AI 效果圖，商品外觀以商品原圖為準。</p>` +
-    (items.length > 0 ? `<ul>${rows}</ul>` : `<p>暫時未有已發布指南，唔該遲啲再嚟睇。</p>`) +
+    `<p>Glo Glo 撰寫每週直播新品配搭靈感，附重點標籤同配搭圖；商品外觀以商品原圖為準。</p>` +
+    (items.length > 0 ? `<ul>${rows}</ul>` : `<p>Glo Glo 最新撰寫嘅指南刊登後會喺呢度見到，不妨先去睇最新直播商品。</p>`) +
     `<nav aria-label="相關頁面"><ul><li><a href="/products">全部貨品</a></li><li><a href="/">首頁</a></li></ul></nav>` +
     `</main>`
   );
 }
 
 function renderImage(img: GuideImage, eager = false): string {
+  // 防禦性收口：就算上游 DTO 日後改壞，都唔會將任意外鏈當已批准指南圖輸出。
+  if (!isGloGuideImagePath(img.path)) return "";
   const dims =
     img.width > 0 && img.height > 0 ? ` width="${img.width}" height="${img.height}"` : "";
   // 首圖（cover）係 LCP 候選：唔准 lazy；其餘 lazy
@@ -142,15 +166,10 @@ function renderImage(img: GuideImage, eager = false): string {
   return `<figure><img src="${esc(absUrl(img.path))}" alt="${esc(img.alt)}"${dims}${loading} decoding="async" /></figure>`;
 }
 
-/** 詳情首口：完整文章＋Glo Glo 署名＋香港發文時間＋3–5 相集＋真商品卡（名／價／標籤／場次）。
- *  相集註明係 AI 配搭效果圖（唔扮實拍）；cover eager 載入，gallery 唔重複 cover。 */
+/** 詳情首口：完整文章＋Glo Glo 署名＋香港發文時間＋3–5 配搭圖＋真商品卡。
+ *  商品外觀以商品原圖為準；cover eager 載入，gallery 唔重複 cover。 */
 export function renderGloGuideDetail(detail: GuideDetail): string {
-  const paragraphs = detail.body
-    .split(/\n{2,}|\n/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => `<p>${esc(p)}</p>`)
-    .join("");
+  const paragraphs = renderGloGuideBodyHtml(detail.body);
   const coverId = detail.coverImage?.id ?? null;
   const galleryImages = detail.images.filter((img) => img.id !== coverId);
   const gallery = galleryImages.map((img) => renderImage(img)).join("");
@@ -179,11 +198,11 @@ export function renderGloGuideDetail(detail: GuideDetail): string {
     `<article>` +
     `<h1>${esc(detail.title)}</h1>` +
     `<p>主題：${esc(detail.theme)}</p>` +
-    `<p>Glo Glo｜發文時間（香港）：${esc(hkDateTimeLabel(detail.publishedAt))}</p>` +
+    `<p>Glo Glo 撰寫｜發文時間（香港）：${esc(hkDateTimeLabel(detail.publishedAt))}</p>` +
     (detail.coverImage ? renderImage(detail.coverImage, true) : "") +
     paragraphs +
     (gallery
-      ? `<section><h2>配搭相集</h2><p>相集係 AI 配搭效果圖；商品外觀以商品原圖為準。</p>${gallery}</section>`
+      ? `<section><h2>配搭相集</h2><p>配搭圖只供配搭參考；商品外觀以商品原圖為準。</p>${gallery}</section>`
       : "") +
     (productCards
       ? `<section><h2>呢篇用嘅商品</h2><p>品名、價錢同庫存以商品頁為準。</p><ul>${productCards}</ul></section>`

@@ -202,6 +202,66 @@ export function getFairyRouteGuide(
     };
   }
 
+  if (pathname === '/glo-guide') {
+    return {
+      quiet: false,
+      fallback: {
+        title: 'Glo Glo 精選配搭指南',
+        body: '頭版可以揀文章重溫；撳「閱讀全文」就會入正文、配搭圖同文中單品。',
+      },
+      candidates: [
+        {
+          id: 'guide-latest',
+          selectors: ['main .ggx-stage-synopsis a.ggx-read[href^="/glo-guide/"]', 'main .ggx-stage-title a[href^="/glo-guide/"]'],
+          title: '由最新一篇開始睇',
+          body: '呢個真連結會帶你入指南詳情，睇 Glo Glo 點樣將今季單品襯入香港日常。',
+        },
+        {
+          id: 'guide-selector',
+          selectors: ['main .ggx-index-btn[aria-pressed]'],
+          title: '揀另一篇頭版指南',
+          body: '撳文章序號或封面索引，頭版會即時切換；唔會離開呢頁或自動跳去別處。',
+        },
+        {
+          id: 'guide-live-products',
+          selectors: ['main .ggx-cta[href="/products"]', 'main .ggx-cta[href="/live"]'],
+          title: '想先睇貨品或直播？',
+          body: '呢度可以直接去全部貨品或直播重溫，揀好心水款再返嚟睇配搭都得。',
+        },
+      ],
+    };
+  }
+
+  if (/^\/glo-guide\/[^/]+/.test(pathname)) {
+    return {
+      quiet: false,
+      fallback: {
+        title: '正文、配搭圖同單品互相對應',
+        body: '用呢篇指南嘅內容連結直接去到想睇嘅部分；商品原圖、尺碼同價錢以商品頁為準。',
+      },
+      candidates: [
+        {
+          id: 'guide-body',
+          selectors: ['main .gg-article-nav a[href="#guide-body"]'],
+          title: '先睇 Glo Glo 正文',
+          body: '呢度直接去到正文；粗體、顏色同重點標籤會標出今篇最重要嘅配搭方向。',
+        },
+        {
+          id: 'guide-gallery',
+          selectors: ['main .gg-article-nav a[href="#guide-gallery"]'],
+          title: '對照配搭圖',
+          body: '呢度去配搭圖。圖只供配搭參考，商品外觀仍以商品頁原圖為準。',
+        },
+        {
+          id: 'guide-products',
+          selectors: ['main .gg-article-nav a[href="#guide-products"]', 'main .gg-product-name a[href^="/products/"]'],
+          title: '搵到文中邊件單品',
+          body: '呢度去文中單品；再撳真商品名，就可以睇原圖、尺碼、價錢同庫存。',
+        },
+      ],
+    };
+  }
+
   if (pathname === '/products') {
     return {
       quiet: false,

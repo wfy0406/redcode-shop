@@ -79,7 +79,7 @@ function PageLoading() {
  * Routing contract：Nested-route pattern（react-dev.md Pattern B）
  * Layout render <Outlet/>，所以呢度用巢狀 <Route>，唔好溝 children pattern。
  * 2026-08-05：加 /privacy（私隱政策）＋ /terms（服務條款），頁尾 Footer 有連結。
- * SeoManager 要喺 HashRouter 之下（main.tsx 包咗），每次轉頁更新 title/description。
+ * SeoManager 要喺 BrowserRouter 之下（main.tsx 包咗），每次轉頁更新 title/description。
  */
 export default function App() {
   useEffect(() => {

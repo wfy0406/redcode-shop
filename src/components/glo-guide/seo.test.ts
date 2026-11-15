@@ -50,9 +50,40 @@ describe('buildGuideArticleJsonLd', () => {
     const data = buildGuideArticleJsonLd(
       detail({
         coverImage: IMG,
+        body: '轉季[tag]返工 layering[/tag]可以咁襯。',
         products: [
-          { id: 1, name: '甲' } as never,
-          { id: 2, name: '乙' } as never,
+          {
+            id: 1,
+            name: '甲',
+            image: '/p1.jpg',
+            photos: [],
+            price: 199,
+            discountPrice: null,
+            category: 'top',
+            stock: 3,
+            sizeEnabled: false,
+            sizes: [],
+            aiTags: ['針織'],
+            isActive: true,
+            liveDate: null,
+            liveSession: null,
+          },
+          {
+            id: 2,
+            name: '乙',
+            image: '/p2.jpg',
+            photos: [],
+            price: 299,
+            discountPrice: 249,
+            category: 'pants',
+            stock: 2,
+            sizeEnabled: true,
+            sizes: ['S', 'M'],
+            aiTags: [],
+            isActive: true,
+            liveDate: null,
+            liveSession: null,
+          },
         ],
       }),
     ) as { '@context': string; '@graph': Array<Record<string, unknown>> };
@@ -69,6 +100,20 @@ describe('buildGuideArticleJsonLd', () => {
     expect(article.image).toEqual([`${GLO_GUIDE_ORIGIN}/uploads/glo-guide/a.png`]);
     expect(article.author).toEqual({ '@type': 'Person', name: 'Glo Glo' });
     expect(article.publisher).toEqual({ '@id': `${GLO_GUIDE_ORIGIN}/#org` });
+    expect(article.articleBody).toBe('轉季返工 layering可以咁襯。');
+    expect(article.keywords).toContain('返工 layering');
+    expect(article.keywords).toContain('針織');
+    expect(article.about).toEqual([
+      expect.objectContaining({
+        '@type': 'Product',
+        name: '甲',
+        url: `${GLO_GUIDE_ORIGIN}/products/1`,
+        image: `${GLO_GUIDE_ORIGIN}/p1.jpg`,
+        keywords: '針織',
+      }),
+      expect.objectContaining({ '@type': 'Product', name: '乙' }),
+    ]);
+    expect(article.isAccessibleForFree).toBe(true);
   });
 
   it('image 口徑同 server：只放 coverImage；冇 cover 就唔出 image 欄', () => {
@@ -123,7 +168,7 @@ describe('URL／標題常數', () => {
     expect(GLO_GUIDE_LIST_SEO.title).toBe('Glo Glo 精選配搭指南｜RedCode Fashion Design');
     // 主線最終定稿（同 server 首口列表 description 逐字一致）
     expect(GLO_GUIDE_LIST_SEO.description).toBe(
-      'Glo Glo 按香港天氣同生活場景揀選直播單品，每篇附主題配搭文同 AI 配搭效果圖；商品外觀以商品頁原圖為準。',
+      'Glo Glo 按香港天氣同生活場景撰寫配搭指南，每篇附主題配搭文、重點標籤同配搭圖；商品外觀以商品頁原圖為準。',
     );
     expect(GLO_GUIDE_NOT_FOUND_SEO.title).toContain('搵唔到');
   });

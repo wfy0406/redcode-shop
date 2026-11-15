@@ -68,8 +68,10 @@ describe("PAGE_SEO 文案", () => {
     expect(resolveCanonicalPath("/glo-guide/rainy-day-layering/")).toBe("/glo-guide/rainy-day-layering");
     expect(isNoIndexPath("/glo-guide/not_a_slug")).toBe(true);
     expect(resolveCanonicalPath("/glo-guide/not_a_slug")).toBeNull();
-    expect(PAGE_SEO["/glo-guide"].description).toContain("AI 配搭效果圖");
-    expect(PAGE_SEO["/glo-guide"].description).not.toContain("真人");
+    expect(PAGE_SEO["/glo-guide"].description).toContain("Glo Glo 按香港天氣同生活場景撰寫");
+    expect(PAGE_SEO["/glo-guide"].description).toContain("重點標籤同配搭圖");
+    expect(PAGE_SEO["/glo-guide"].description).not.toContain("AI");
+    expect(PAGE_SEO["/glo-guide/:slug"].description).not.toContain("AI");
   });
 
   it("index.html 預設 description 同 PAGE_SEO['/'] 一致", () => {
@@ -173,6 +175,9 @@ describe("resolveSeo 路由對應", () => {
     );
     expect(resolveCanonicalPath("/products/251")).toBe("/products/251");
     expect(resolveCanonicalPath("/lucky-results/12")).toBe("/lucky-results/12");
+    // B2B 分區留主網域 directory：/web-design self canonical，唔搬 subdomain、唔指首頁
+    expect(resolveCanonicalPath("/web-design")).toBe("/web-design");
+    expect(resolveCanonicalPath("/web-design/")).toBe("/web-design");
     expect(resolveCanonicalPath("/account")).toBeNull();
     expect(resolveCanonicalPath("/no-such-page")).toBeNull();
   });

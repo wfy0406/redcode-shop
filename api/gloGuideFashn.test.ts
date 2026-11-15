@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,9 +7,13 @@ import type { GloGuideImageGenInput } from "./gloGuideProviders";
 import {
   generateGloGuideImage,
   resolveGloGuideModelImage,
+  resolveGloGuideModelImageInput,
   resumeGloGuideImage,
 } from "./gloGuideFashn";
-import { isGloGuideImagePath } from "./gloGuideValidation";
+import {
+  GLO_GUIDE_MODEL_IMAGE_PREFIX,
+  isGloGuideImagePath,
+} from "./gloGuideValidation";
 
 let uploadsDir: string;
 
@@ -260,5 +264,85 @@ describe("gloGuideFashn（tryon-max＋poll＋轉存）", () => {
     await expect(
       generateGloGuideImage(makeInput(), { sleep: noSleep, apiKey: "", uploadsDir }),
     ).rejects.toMatchObject({ code: "FASHN_CONFIG" });
+  });
+});
+
+describe("resolveGloGuideModelImageInput（後台模特兒原圖：私密 path → disk data URI）", () => {
+  const UUID = "3f6b2a1c-9d4e-4f5a-8b6c-7d8e9f0a1b2c";
+
+  async function seedModelPng(): Promise<string> {
+    const dir = path.join(uploadsDir, "glo-guide-models");
+    await mkdir(dir, { recursive: true });
+    const png = await sharp({
+      create: { width: 20, height: 30, channels: 3, background: { r: 50, g: 100, b: 150 } },
+    })
+      .png()
+      .toBuffer();
+    await writeFile(path.join(dir, `${UUID}.png`), png);
+    return png.toString("base64");
+  }
+
+  it("glo-guide-models path → 讀 disk 轉 data URI（唔會轉公開 URL）", async () => {
+    const expectedB64 = await seedModelPng();
+    const out = await resolveGloGuideModelImageInput(
+      `${GLO_GUIDE_MODEL_IMAGE_PREFIX}${UUID}.png`,
+      { UPLOADS_DIR: uploadsDir },
+    );
+    expect(out).toBe(`data:image/png;base64,${expectedB64}`);
+    expect(out).not.toContain("http");
+  });
+
+  it("檔案唔存在 → 真錯誤 FASHN_MODEL_IMAGE（絕唔 mock）", async () => {
+    await expect(
+      resolveGloGuideModelImageInput(`${GLO_GUIDE_MODEL_IMAGE_PREFIX}${UUID}.png`, {
+        UPLOADS_DIR: uploadsDir,
+      }),
+    ).rejects.toMatchObject({ code: "FASHN_MODEL_IMAGE" });
+  });
+
+  it("traversal／非 uuid 檔名／其他站內路徑 → 拒絕", async () => {
+    await seedModelPng();
+    await expect(
+      resolveGloGuideModelImageInput(`/uploads/glo-guide-models/../glo-guide/x.png`, {
+        UPLOADS_DIR: uploadsDir,
+      }),
+    ).rejects.toThrowError();
+    await expect(
+      resolveGloGuideModelImageInput(`/uploads/glo-guide-models/model.png`, {
+        UPLOADS_DIR: uploadsDir,
+      }),
+    ).rejects.toThrowError();
+    await expect(
+      resolveGloGuideModelImageInput("/uploads/random.png", { UPLOADS_DIR: uploadsDir }),
+    ).rejects.toThrowError(/已授權/);
+  });
+
+  it("其他輸入照舊行 sync 白名單（/gloglo-3.jpg → 絕對 URL；https 直用）", async () => {
+    await expect(
+      resolveGloGuideModelImageInput("/gloglo-3.jpg", { PUBLIC_BASE_URL: "https://redcode.red" }),
+    ).resolves.toBe("https://redcode.red/gloglo-3.jpg");
+    await expect(
+      resolveGloGuideModelImageInput("https://cdn.example.com/m.png", {}),
+    ).resolves.toBe("https://cdn.example.com/m.png");
+  });
+
+  it("完整生成流程：DB 私密原圖會以 data URI 做 model_image 交俾 Fashn", async () => {
+    const expectedB64 = await seedModelPng();
+    const fetchImpl = vi.fn(async (url: string | URL, _init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/run")) return jsonResponse({ id: "pred-model" });
+      if (u.includes("/v1/status/pred-model")) {
+        return jsonResponse({ status: "completed", output: ["https://cdn.fashn.ai/o.png"] });
+      }
+      return pngResponse();
+    });
+    const result = await generateGloGuideImage(
+      makeInput({ modelImage: `${GLO_GUIDE_MODEL_IMAGE_PREFIX}${UUID}.png` }),
+      { ...OPTS(), fetchImpl, env: { UPLOADS_DIR: uploadsDir } },
+    );
+    expect(result.providerJobId).toBe("pred-model");
+    const submitInit = fetchImpl.mock.calls[0]![1];
+    const payload = JSON.parse(String(submitInit?.body));
+    expect(payload.inputs.model_image).toBe(`data:image/png;base64,${expectedB64}`);
   });
 });

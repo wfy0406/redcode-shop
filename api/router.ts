@@ -20,6 +20,7 @@ import { tryonRouter } from "./tryonRouter";
 import { webDesignRouter } from "./webDesignRouter";
 import { webDesignPublicBillRouter } from "./webDesignPublicBill";
 import { gloGuidePublicRouter } from "./gloGuidePublic";
+import { gloGuideAdminRouter } from "./gloGuideAdminRouter";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -53,6 +54,9 @@ export const appRouter = createRouter({
   webDesignPublicBill: webDesignPublicBillRouter,
   // Glo Glo 精選配搭指南（SPEC v1）：公開只回 published；WMS 操作行 /api/wms/glo-guide
   gloGuide: gloGuidePublicRouter,
+  // Glo Glo 精選文章後台（官網 /admin）：staff 生成／編輯／圖片／提交；
+  // approve／reject／archive 係 supervisorProcedure。同公開 gloGuide 完全分開。
+  gloGuideAdmin: gloGuideAdminRouter,
 });
 
 export type AppRouter = typeof appRouter;

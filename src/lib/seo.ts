@@ -4,8 +4,8 @@ import { formatLiveDateLabel, liveSharePath, normalizeLiveShare } from './liveSh
 
 /**
  * SEO（v2.2.20）：逐頁 title / description 管理。
- * HashRouter 下全部頁共用同一份 index.html，所以呢度按 pathname 動態改
- * document.title 同 meta[name=description]（客人睇分頁標籤、搜尋結果都會啱）。
+ * BrowserRouter 下按 pathname 動態改 document.title 同 meta[name=description]；
+ * 公開內容頁嘅首口 HTML 由 server 注入，呢度負責 client-side 轉頁同步。
  * 鐵律：可見文案（h1、按鈕字）一字唔郁，呢度淨係改 meta 層。
  * `/products/:id` 喺 ProductDetail 載入商品後會再覆寫做商品名，呢度嘅係未載入前嘅過渡版。
  */
@@ -135,11 +135,11 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
   },
   '/glo-guide': {
     title: 'Glo Glo 精選配搭指南｜RedCode Fashion Design',
-    description: 'Glo Glo 按香港天氣同生活場景揀選直播單品，每篇附主題配搭文同 AI 配搭效果圖；商品外觀以商品頁原圖為準。',
+    description: 'Glo Glo 按香港天氣同生活場景撰寫配搭指南，每篇附主題配搭文、重點標籤同配搭圖；商品外觀以商品頁原圖為準。',
   },
   '/glo-guide/:slug': {
     title: '配搭文章｜Glo Glo 精選配搭指南｜RedCode Fashion Design',
-    description: '睇 Glo Glo 點按香港天氣同生活場景配搭直播單品。文章附 AI 配搭效果圖；商品外觀以商品頁原圖為準。',
+    description: '睇 Glo Glo 按香港天氣同生活場景撰寫嘅直播單品配搭指南。文章附重點標籤同配搭圖；商品外觀以商品頁原圖為準。',
   },
   // 動態段路由：SeoManager 用 pattern 對返呢兩條
   '/products/:id': {

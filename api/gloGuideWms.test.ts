@@ -57,14 +57,13 @@ const supervisor: GloGuideActor = { id: 7, name: "主管", role: "supervisor" };
 const admin: GloGuideActor = { id: 1, name: "老闆", role: "admin" };
 
 describe("dispatch 權限矩陣", () => {
-  it("staff 可以 generate/update/submit/image.*，但 approve/reject/archive → 403", async () => {
+  it("staff 可以 generate/update/submit/image.read，但文章審批及逐圖 review → 403", async () => {
     const { deps, calls } = mockDeps();
     await dispatchGloGuideAction(staff, "article.generate", { productIds: [1, 2] }, deps);
     await dispatchGloGuideAction(staff, "article.submit", { id: 3 }, deps);
-    await dispatchGloGuideAction(staff, "image.review", { id: 3, imageId: 9, decision: "approved" }, deps);
     await dispatchGloGuideAction(staff, "image.read", { id: 3, imageId: 9 }, deps);
-    expect(calls.map((c) => c.fn)).toEqual(["generateArticle", "submitArticle", "reviewImage", "readImageForPreview"]);
-    for (const action of ["article.approve", "article.reject", "article.archive"] as const) {
+    expect(calls.map((c) => c.fn)).toEqual(["generateArticle", "submitArticle", "readImageForPreview"]);
+    for (const action of ["article.approve", "article.reject", "article.archive", "image.review"] as const) {
       await expect(
         dispatchGloGuideAction(staff, action, { id: 3, reason: "x" }, deps),
       ).rejects.toMatchObject({ httpStatus: 403, code: "FORBIDDEN" });
@@ -77,7 +76,8 @@ describe("dispatch 權限矩陣", () => {
     await dispatchGloGuideAction({ id: 0, name: "內建管理員", role: "admin" }, "article.archive", { id: 3 }, deps);
     await dispatchGloGuideAction({ id: 0, name: "內建管理員", role: "admin" }, "article.approve", { id: 4 }, deps);
     await dispatchGloGuideAction({ id: 0, name: "內建管理員", role: "admin" }, "article.reject", { id: 4, reason: "x" }, deps);
-    expect(calls.map((c) => c.fn)).toEqual(["approveArticle", "rejectArticle", "archiveArticle", "approveArticle", "rejectArticle"]);
+    await dispatchGloGuideAction(supervisor, "image.review", { id: 3, imageId: 9, decision: "approved" }, deps);
+    expect(calls.map((c) => c.fn)).toEqual(["approveArticle", "rejectArticle", "archiveArticle", "approveArticle", "rejectArticle", "reviewImage"]);
   });
   it("payload 校驗：缺 id／壞 productIds／壞 decision → 400", async () => {
     const { deps } = mockDeps();
@@ -86,7 +86,7 @@ describe("dispatch 權限矩陣", () => {
       dispatchGloGuideAction(staff, "article.generate", { productIds: ["a"] }, deps),
     ).rejects.toMatchObject({ httpStatus: 400 });
     await expect(
-      dispatchGloGuideAction(staff, "image.review", { id: 1, imageId: 2, decision: "maybe" }, deps),
+      dispatchGloGuideAction(supervisor, "image.review", { id: 1, imageId: 2, decision: "maybe" }, deps),
     ).rejects.toMatchObject({ httpStatus: 400 });
   });
   it("service 錯誤原樣透傳（真 JSON error，唔准包成成功）", async () => {

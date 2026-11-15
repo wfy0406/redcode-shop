@@ -20,7 +20,12 @@ import {
   GloGuideProviderError,
   type GloGuideStoredImage,
 } from "./gloGuideProviders";
-import { GLO_GUIDE_PATH_PREFIX, isGloGuideImagePath } from "./gloGuideValidation";
+import {
+  GLO_GUIDE_MODEL_IMAGE_PREFIX,
+  GLO_GUIDE_PATH_PREFIX,
+  isGloGuideImagePath,
+  isGloGuideModelImagePath,
+} from "./gloGuideValidation";
 
 export const GLO_GUIDE_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const GLO_GUIDE_MAX_DOWNLOAD_BYTES = 30 * 1024 * 1024;
@@ -285,4 +290,107 @@ export async function saveGloGuideUpload(
   }
   const { png, width, height } = await verifyAndReencode(data, "UPLOAD_FORMAT");
   return persistPng(png, width, height, options.uploadsDir);
+}
+
+// ──────────────────────────── 模特兒原圖上傳（後台管理）────────────────────────────
+
+const MODEL_EXT_BY_FORMAT: Record<string, string> = {
+  jpeg: "jpg",
+  png: "png",
+  webp: "webp",
+};
+
+/**
+ * 模特兒原圖用嘅格式保持 re-encode：sharp 驗真格式（JPEG/PNG/WebP；SVG 等一律拒），
+ * 然後**同格式**重編碼——相親照片保持 JPEG（質量 90）唔會像 PNG 咁膨脹到幾十 MB
+ * （呢啲相之後要做 data URI 俾 Fashn）；剝晒 EXIF／嵌入 payload。
+ * 失敗一律 throw GloGuideProviderError，唔會照收原 bytes。
+ */
+async function verifyAndReencodeModel(
+  bytes: Buffer,
+): Promise<{ data: Buffer; ext: string; width: number; height: number }> {
+  if (!bytes.length) {
+    throw new GloGuideProviderError("UPLOAD_INPUT", "圖片內容為空");
+  }
+  try {
+    const sharp = (await import("sharp")).default;
+    const source = sharp(bytes, { limitInputPixels: 40_000_000 });
+    const metadata = await source.metadata();
+    if (!metadata.format || !ACCEPTED_SHARP_FORMATS.has(metadata.format)) {
+      throw new GloGuideProviderError("UPLOAD_FORMAT", "圖片格式無效；只支援 JPEG／PNG／WebP");
+    }
+    if (!metadata.width || !metadata.height || metadata.width < 2 || metadata.height < 2) {
+      throw new GloGuideProviderError("UPLOAD_FORMAT", "圖片尺寸無效");
+    }
+    // rotate() 食 EXIF orientation 先好重編碼——唔係直倒相片會橫咗
+    const pipeline = source.rotate();
+    const data =
+      metadata.format === "jpeg"
+        ? await pipeline.jpeg({ quality: 90, mozjpeg: true }).toBuffer()
+        : metadata.format === "webp"
+          ? await pipeline.webp({ quality: 90 }).toBuffer()
+          : await pipeline.png({ compressionLevel: 8 }).toBuffer();
+    return { data, ext: MODEL_EXT_BY_FORMAT[metadata.format]!, width: metadata.width, height: metadata.height };
+  } catch (error) {
+    if (error instanceof GloGuideProviderError) throw error;
+    throw new GloGuideProviderError("UPLOAD_FORMAT", "讀唔到呢張圖；請確認係有效 JPEG／PNG／WebP");
+  }
+}
+
+/**
+ * 模特兒原圖上傳（官網 /admin 後台）：JPEG/PNG/WebP ≤10MB。
+ * ─ 聲明嘅 filename／mime 只做記錄同粗篩，**唔作為格式依據**（SVG 會被 sharp 格式閘擋）；
+ * ─ sharp 驗真圖＋同格式 re-encode，落 UPLOADS_DIR/glo-guide-models/<uuid>.<ext>；
+ * ─ 檔名由 server 產生（uuid），唔接外部檔名；公開 path 過 isGloGuideModelImagePath 先回。
+ * 注意：呢個目錄**唔公開**（冇公開路由放行 glo-guide-models/*）；Fashn 嗰邊係經
+ * gloGuideFashn resolveGloGuideModelImageInput 讀 disk 轉 data URI。
+ */
+export async function saveGloGuideModelImage(
+  input: { filename: string; mime: string; data: Buffer },
+  options: GloGuideUploadOptions = {},
+): Promise<GloGuideStoredImage> {
+  if (!input || typeof input !== "object") {
+    throw new GloGuideProviderError("UPLOAD_INPUT", "上傳資料無效");
+  }
+  const filename = typeof input.filename === "string" ? input.filename.trim() : "";
+  const mime = typeof input.mime === "string" ? input.mime.trim().toLowerCase() : "";
+  const data = input.data;
+  if (!filename || filename.length > 200) {
+    throw new GloGuideProviderError("UPLOAD_INPUT", "上傳檔名無效");
+  }
+  if (!Buffer.isBuffer(data) || !data.length) {
+    throw new GloGuideProviderError("UPLOAD_INPUT", "上傳內容為空");
+  }
+  const maxBytes = options.maxBytes ?? GLO_GUIDE_MAX_UPLOAD_BYTES;
+  if (data.length > maxBytes) {
+    throw new GloGuideProviderError("UPLOAD_SIZE", "圖片超過 10MB，請先縮細再試");
+  }
+  if (mime && !["image/jpeg", "image/png", "image/webp"].includes(mime)) {
+    throw new GloGuideProviderError("UPLOAD_FORMAT", "只支援 JPEG／PNG／WebP 上傳");
+  }
+  const verified = await verifyAndReencodeModel(data);
+
+  const dir = path.resolve(uploadsRoot(options.uploadsDir), "glo-guide-models");
+  const storedName = `${randomUUID()}.${verified.ext}`;
+  const absolute = path.resolve(dir, storedName);
+  // 雙重保險：落盤位置唔准溢出 glo-guide-models 目錄
+  if (path.dirname(absolute) !== dir) {
+    throw new GloGuideProviderError("MEDIA_PATH", "圖片存放路徑無效");
+  }
+  await mkdir(dir, { recursive: true });
+  try {
+    await writeFile(absolute, verified.data, { mode: 0o644 });
+  } catch (error) {
+    await rm(absolute, { force: true }).catch(() => {});
+    throw new GloGuideProviderError(
+      "MEDIA_WRITE",
+      error instanceof Error ? `圖片寫入失敗：${error.message}` : "圖片寫入失敗",
+    );
+  }
+  const publicPath = `${GLO_GUIDE_MODEL_IMAGE_PREFIX}${storedName}`;
+  if (!isGloGuideModelImagePath(publicPath)) {
+    await rm(absolute, { force: true }).catch(() => {});
+    throw new GloGuideProviderError("MEDIA_PATH", "圖片路徑唔符合 /uploads/glo-guide-models/ 規格");
+  }
+  return { path: publicPath, width: verified.width, height: verified.height };
 }

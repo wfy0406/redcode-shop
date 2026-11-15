@@ -7,9 +7,10 @@ import {
   assertGloGuideDownloadUrl,
   downloadGloGuideProviderImage,
   isAllowedGloGuideMediaHost,
+  saveGloGuideModelImage,
   saveGloGuideUpload,
 } from "./gloGuideMedia";
-import { isGloGuideImagePath } from "./gloGuideValidation";
+import { isGloGuideImagePath, isGloGuideModelImagePath } from "./gloGuideValidation";
 
 let uploadsDir: string;
 
@@ -173,5 +174,92 @@ describe("gloGuideMedia（下載＋上傳持久化）", () => {
     const dir = path.join(uploadsDir, "glo-guide");
     const entries = await readdir(dir).catch(() => [] as string[]);
     expect(entries).toEqual([]);
+  });
+});
+
+describe("saveGloGuideModelImage（後台模特兒原圖：sharp 驗證＋同格式 re-encode）", () => {
+  it("PNG 上傳 → /uploads/glo-guide-models/<uuid>.png，真落盤兼過路徑閘", async () => {
+    const png = await makePng(64, 96);
+    const result = await saveGloGuideModelImage(
+      { filename: "model.png", mime: "image/png", data: png },
+      { uploadsDir },
+    );
+    expect(isGloGuideModelImagePath(result.path)).toBe(true);
+    expect(result.path.startsWith("/uploads/glo-guide-models/")).toBe(true);
+    expect(result.path.endsWith(".png")).toBe(true);
+    expect(result.width).toBe(64);
+    expect(result.height).toBe(96);
+    const meta = await sharp(
+      path.join(uploadsDir, "glo-guide-models", path.basename(result.path)),
+    ).metadata();
+    expect(meta.format).toBe("png");
+  });
+
+  it("JPEG 上傳 → 保持 JPEG（.jpg），唔會膨脹做 PNG", async () => {
+    const jpeg = await sharp({
+      create: { width: 30, height: 45, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const result = await saveGloGuideModelImage(
+      { filename: "model.jpg", mime: "image/jpeg", data: jpeg },
+      { uploadsDir },
+    );
+    expect(isGloGuideModelImagePath(result.path)).toBe(true);
+    expect(result.path.endsWith(".jpg")).toBe(true);
+    const meta = await sharp(
+      path.join(uploadsDir, "glo-guide-models", path.basename(result.path)),
+    ).metadata();
+    expect(meta.format).toBe("jpeg");
+    expect(meta.width).toBe(30);
+    expect(meta.height).toBe(45);
+  });
+
+  it("聲明 mime 呃人唔緊要——sharp 實測為準（話係 png 實係 jpeg → 存 .jpg）", async () => {
+    const jpeg = await sharp({
+      create: { width: 30, height: 45, channels: 3, background: { r: 9, g: 9, b: 9 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const result = await saveGloGuideModelImage(
+      { filename: "fake.png", mime: "image/png", data: jpeg },
+      { uploadsDir },
+    );
+    expect(result.path.endsWith(".jpg")).toBe(true);
+  });
+
+  it("SVG 一律拒收（sharp 讀到都唔收），目錄冇半成品", async () => {
+    const svg = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>',
+    );
+    await expect(
+      saveGloGuideModelImage({ filename: "a.svg", mime: "image/svg+xml", data: svg }, { uploadsDir }),
+    ).rejects.toMatchObject({ code: "UPLOAD_FORMAT" });
+    const { readdir } = await import("node:fs/promises");
+    const entries = await readdir(path.join(uploadsDir, "glo-guide-models")).catch(() => [] as string[]);
+    expect(entries).toEqual([]);
+  });
+
+  it("GIF／假圖 → UPLOAD_FORMAT", async () => {
+    const gif = Buffer.from("GIF89a" + "x".repeat(100), "latin1");
+    await expect(
+      saveGloGuideModelImage({ filename: "a.gif", mime: "image/gif", data: gif }, { uploadsDir }),
+    ).rejects.toMatchObject({ code: "UPLOAD_FORMAT" });
+    await expect(
+      saveGloGuideModelImage(
+        { filename: "a.png", mime: "image/png", data: Buffer.from("not-real") },
+        { uploadsDir },
+      ),
+    ).rejects.toMatchObject({ code: "UPLOAD_FORMAT" });
+  });
+
+  it("超過 10MB → UPLOAD_SIZE；空內容／壞檔名 → UPLOAD_INPUT", async () => {
+    const big = Buffer.alloc(10 * 1024 * 1024 + 1, 1);
+    await expect(
+      saveGloGuideModelImage({ filename: "big.png", mime: "image/png", data: big }, { uploadsDir }),
+    ).rejects.toMatchObject({ code: "UPLOAD_SIZE" });
+    await expect(
+      saveGloGuideModelImage({ filename: "", mime: "image/png", data: Buffer.from("x") }, { uploadsDir }),
+    ).rejects.toMatchObject({ code: "UPLOAD_INPUT" });
   });
 });

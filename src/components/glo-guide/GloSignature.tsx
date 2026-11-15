@@ -6,7 +6,7 @@
 export default function GloSignature() {
   return (
     <div className="gg-sign-block">
-      <p className="gg-sign-byline">—— Glo Glo</p>
+      <p className="gg-sign-byline">Glo Glo 撰寫</p>
       <img
         src="/email/gloria-sign.png"
         alt="Glo Glo 簽名"

@@ -13,6 +13,7 @@ import {
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // 2026-08-06：enum 加咗 supervisor（主管）；DB 已 ALTER TYPE，schema 要跟返
 export const roleEnum = pgEnum("role", ["member", "staff", "supervisor", "admin"]);
@@ -1060,6 +1061,41 @@ export const gloGuideJobs = pgTable(
   ],
 );
 
+// 模特兒原圖庫（官網 /admin「精選文章」後台管理）：員工上傳嘅真實授權模特兒相。
+// ─ path 只准 /uploads/glo-guide-models/<uuid>.<ext>（server 產生 uuid 檔名；目錄唔公開，
+//   公開 DTO／SSR／RSS／JSON-LD 永遠唔出，員工預覽行 JWT base64）；
+// ─ Fashn 每次淨係用一張：isDefault=true 嗰張；partial unique index 保證未刪行入面
+//   最多一張預設；其他係備用；
+// ─ 文章 modelImage 係生成當刻快照——呢度刪相／換預設絕對唔會回寫舊文章；
+// ─ deletedAt 軟刪留審計；檔案留喺 disk（審計可追蹤，公開閘照樣 404）。
+export const gloGuideModelImages = pgTable(
+  "gloGuideModelImages",
+  {
+    id: serial("id").primaryKey(),
+    publicId: varchar("publicId", { length: 36 }).notNull(),
+    // 持久站內路徑 /uploads/glo-guide-models/<uuid>.<ext>（ext 跟 sharp 實測格式）
+    path: varchar("path", { length: 512 }).notNull(),
+    // 員工上傳嗰陣嘅原檔名（記錄用，絕對唔用嚟砌路徑）
+    originalFilename: varchar("originalFilename", { length: 200 }),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    isDefault: boolean("isDefault").notNull().default(false),
+    createdById: integer("createdById"),
+    createdByName: varchar("createdByName", { length: 128 }),
+    deletedAt: timestamp("deletedAt"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("gloguidemodelimages_publicid").on(t.publicId),
+    // 未刪行入面最多一張預設（partial unique；DB 層硬保證，唔使靠 app 自覺）
+    uniqueIndex("gloguidemodelimages_default_live")
+      .on(t.isDefault)
+      .where(sql`${t.deletedAt} IS NULL AND ${t.isDefault} = true`),
+    index("gloguidemodelimages_live").on(t.deletedAt),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type TryOnJob = typeof tryOnJobs.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
@@ -1092,3 +1128,4 @@ export type GloGuideArticle = typeof gloGuideArticles.$inferSelect;
 export type GloGuideArticleProduct = typeof gloGuideArticleProducts.$inferSelect;
 export type GloGuideImage = typeof gloGuideImages.$inferSelect;
 export type GloGuideJob = typeof gloGuideJobs.$inferSelect;
+export type GloGuideModelImage = typeof gloGuideModelImages.$inferSelect;

@@ -333,6 +333,20 @@ describe("injectRouteMeta — canonical／noindex", () => {
     expect(canonicalTag).not.toContain("&liveSession");
   });
 
+  it("文章首口已帶 og:type 同發布／修改時間，唔使等前端 JS", () => {
+    const out = injectRouteMeta(TEMPLATE, {
+      title: "轉季配搭｜Glo Glo 精選配搭指南",
+      path: "/glo-guide/autumn-knit",
+      ogType: "article",
+      articlePublishedTime: "2026-11-14T16:30:00.000Z",
+      articleModifiedTime: "2026-11-15T02:00:00.000Z",
+    });
+    expect(out).toContain('<meta property="og:type" content="article" />');
+    expect(out).toContain('<meta property="article:published_time" content="2026-11-14T16:30:00.000Z" />');
+    expect(out).toContain('<meta property="article:modified_time" content="2026-11-15T02:00:00.000Z" />');
+    expect(out.match(/property="og:type"/g)).toHaveLength(1);
+  });
+
   it("noindex：robots meta 由 index,follow 改 noindex,nofollow（私人頁用）", () => {
     const out = injectRouteMeta(TEMPLATE, { noindex: true });
     expect(out).toContain('<meta name="robots" content="noindex, nofollow" />');
