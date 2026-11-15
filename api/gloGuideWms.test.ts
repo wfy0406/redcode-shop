@@ -107,14 +107,37 @@ describe("第 3 輪商品選擇 dispatch（SPEC 凍結 contract；同 WMS trpc g
     await dispatchGloGuideAction(staff, "products.list", {}, deps);
     await dispatchGloGuideAction(staff, "products.list", { mode: "week", weekStart: "2026-11-16" }, deps);
     await dispatchGloGuideAction(staff, "products.list", { mode: "search", query: "連身裙" }, deps);
+    // iteration 4：date filter 原樣透傳
+    await dispatchGloGuideAction(staff, "products.list", { mode: "date", liveDate: "20261120" }, deps);
     expect(calls.map((c) => c.fn)).toEqual([
       "listWeeklyProducts",
+      "listGloGuideProducts",
       "listGloGuideProducts",
       "listGloGuideProducts",
     ]);
     // filter object 原樣透傳（唔係包喺 {filter} 入面）
     expect(calls[1]!.args).toEqual([{ mode: "week", weekStart: "2026-11-16" }]);
     expect(calls[2]!.args).toEqual([{ mode: "search", query: "連身裙" }]);
+    expect(calls[3]!.args).toEqual([{ mode: "date", liveDate: "20261120" }]);
+  });
+
+  it("iteration 4：article.generate date selection／image.generate productId 原樣透傳", async () => {
+    const { deps, calls } = mockDeps();
+    await dispatchGloGuideAction(
+      staff,
+      "article.generate",
+      { selection: { mode: "date", liveDate: "20261120", productIds: [1, 2, 3, 4] } },
+      deps,
+    );
+    // 員工為指定商品加生成圖（同一商品可以有多張）
+    await dispatchGloGuideAction(staff, "image.generate", { id: 7, productId: 42 }, deps);
+    expect(calls.map((c) => c.fn)).toEqual(["generateArticle", "generateImages"]);
+    expect(calls[0]!.args[1]).toEqual({
+      selection: { mode: "date", liveDate: "20261120", productIds: [1, 2, 3, 4] },
+      productIds: undefined,
+      themeHint: undefined,
+    });
+    expect(calls[1]!.args[1]).toEqual({ id: 7, imageId: undefined, productId: 42 });
   });
 
   it("contract：products.sources payload={} → listGloGuideProductSources（WMS productSources.useQuery）", async () => {

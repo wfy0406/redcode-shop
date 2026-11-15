@@ -54,7 +54,7 @@ const h = vi.hoisted(() => {
   const service = {
     listWeeklyProducts: fn([] as unknown[]),
     listGloGuideProducts: fn([] as unknown[]),
-    listGloGuideProductSources: fn({ weeks: [], sessions: [] } as unknown),
+    listGloGuideProductSources: fn({ weeks: [], sessions: [], dates: [] } as unknown),
     listArticleSummaries: fn([] as unknown[]),
     getArticleBundle: fn(null as unknown),
     toInternalArticle: vi.fn((b: unknown) => b),
@@ -296,12 +296,45 @@ describe("第 3 輪商品選擇查詢（SPEC 凍結 contract）", () => {
     h.service.listGloGuideProductSources.mockResolvedValueOnce({
       weeks: [{ weekStart: "2026-11-16", weekEnd: "2026-11-22", total: 4, eligible: 2 }],
       sessions: [],
+      dates: [{ liveDate: "20261118", total: 4, eligible: 2 }],
     });
     const sources = await caller().productSources();
     expect(sources.weeks).toHaveLength(1);
+    expect(sources.dates).toHaveLength(1);
 
     await caller().weeklyProducts();
     expect(h.service.listWeeklyProducts).toHaveBeenCalled();
+  });
+
+  it("iteration 4：date filter／date selection 原樣透傳（zod 五模式都收）", async () => {
+    h.service.listGloGuideProducts.mockResolvedValueOnce([{ id: 5, eligible: true }]);
+    const out = await caller().products({ mode: "date", liveDate: "20261120" });
+    expect(out.items).toHaveLength(1);
+    expect(h.service.listGloGuideProducts).toHaveBeenCalledWith({ mode: "date", liveDate: "20261120" });
+
+    await caller().generate({ selection: { mode: "date", liveDate: "20261120", productIds: [1, 2, 3, 4] } });
+    const [, input] = h.service.generateArticle.mock.calls[0]!;
+    expect(input).toEqual({
+      selection: { mode: "date", liveDate: "20261120", productIds: [1, 2, 3, 4] },
+      productIds: undefined,
+      themeHint: undefined,
+    });
+  });
+
+  it("iteration 4：手動指定 >3 件唔再被 zod cap（4 件直達 service）；1 件都過 zod 由 service 擋", async () => {
+    await caller().generate({ productIds: [11, 12, 13, 14] });
+    expect(h.service.generateArticle).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7 }),
+      expect.objectContaining({ productIds: [11, 12, 13, 14] }),
+    );
+    await caller().generate({ selection: { mode: "products", productIds: [1, 2, 3, 4, 5] } });
+    expect(h.service.generateArticle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 7 }),
+      expect.objectContaining({ selection: { mode: "products", productIds: [1, 2, 3, 4, 5] } }),
+    );
+    // week/session 附 4 件都過 zod
+    await caller().generate({ selection: { mode: "week", weekStart: "2026-11-16", productIds: [1, 2, 3, 4] } });
+    expect(h.service.generateArticle).toHaveBeenCalledTimes(3);
   });
 
   it("generate：selection 原樣透傳（service 負責業務驗證）", async () => {

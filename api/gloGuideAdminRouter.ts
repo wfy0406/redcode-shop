@@ -78,10 +78,11 @@ export async function actorFromAuthUser(user: AuthUser): Promise<GloGuideActor> 
 // ── 輸入 schema（zod 只擋形狀／極端長度；業務硬閘留返 service 用中文真錯誤）──
 const idSchema = z.number().int().positive();
 const articleIdInput = z.object({ id: idSchema });
-const productIdsSchema = z.array(z.number().int().positive()).max(3).optional();
+// iteration 4：手動指定商品最少 2 件、**冇上限**（業務閘喺 service；呢度唔准再 cap 3 件）
+const productIdsSchema = z.array(z.number().int().positive()).optional();
 
-// SPEC 第 3 輪凍結 contract：商品查詢 filter／生成 selection（形狀閘；
-// weekStart 要星期一、liveDate 要真實日期、productIds 歸屬／歷史等業務閘喺 service 重查）
+// SPEC 第 3 輪凍結 contract＋iteration 4 date 模式：商品查詢 filter／生成 selection
+// （形狀閘；weekStart 要星期一、liveDate 要真實日期、productIds 歸屬／歷史等業務閘喺 service 重查）
 const productFilterSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("auto") }),
   z.object({ mode: z.literal("week"), weekStart: z.string().max(16) }),
@@ -90,6 +91,7 @@ const productFilterSchema = z.discriminatedUnion("mode", [
     liveDate: z.string().max(16),
     liveSession: z.string().min(1).max(16),
   }),
+  z.object({ mode: z.literal("date"), liveDate: z.string().max(16) }),
   z.object({ mode: z.literal("search"), query: z.string().min(1).max(60) }),
 ]);
 
@@ -107,8 +109,13 @@ const generateSelectionSchema = z.discriminatedUnion("mode", [
     productIds: productIdsSchema,
   }),
   z.object({
+    mode: z.literal("date"),
+    liveDate: z.string().max(16),
+    productIds: productIdsSchema,
+  }),
+  z.object({
     mode: z.literal("products"),
-    productIds: z.array(z.number().int().positive()).max(3),
+    productIds: z.array(z.number().int().positive()),
   }),
 ]);
 
@@ -171,7 +178,7 @@ export const gloGuideAdminRouter = createRouter({
     }
   }),
 
-  /** 手動產生完整文章＋相（SPEC 第 3 輪：selection 四模式；舊 productIds ＝ products 模式；唔揀就 auto 逐週 fallback） */
+  /** 手動產生完整文章＋相（selection：auto／week／session／date／products；舊 productIds ＝ products 模式；唔揀就 auto 逐週 fallback） */
   generate: staffProcedure
     .input(
       z.object({

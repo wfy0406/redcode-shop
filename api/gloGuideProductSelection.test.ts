@@ -6,13 +6,15 @@
  *   全歷史（最舊直播貨嗰週為止）搵唔到 ≥2 件合資格未用 → 409 真錯誤；
  * ─ 已用商品永不重用（gloGuideProductUsage 係唯一真相；就算 article link 刪咗，
  *   usage 歷史仲喺度一樣擋）；同一文章（excludeArticleId）可保留自身商品；
- * ─ week/session 指定貨必須屬該來源（唔准跨來源，指定貨絕對唔隨機）；
+ * ─ week/session/date 指定貨必須屬該來源（唔准跨來源，指定貨絕對唔隨機）；
  *   唔指定就由該來源合資格池**隨機抽 2–3 件**（用戶規則：無選／自動產生就隨機選商品；
  *   可注入 seed RNG → deterministic 斷言），少於 2 件 → 409 唔跨來源 fallback；
- * ─ products 模式直接指定 2–3 件；唔存在／inactive／缺貨／到期下架／無圖／類別 → 400；
+ *   date＝成日 liveDate 範圍（所有場次＋blank-session 商品都屬該來源）；
+ * ─ products 模式直接指定 ≥2 件（iteration 4 冇上限）；唔存在／inactive／缺貨／到期下架／無圖／類別 → 400；
+ * ─ auto 附 productIds → 400（auto 永遠隨機）；
  * ─ 舊 top-level productIds ＝ products 模式；同時傳 selection → 400；
  * ─ claimProductUsage：23505 PK 撞 → 可讀 409；其他錯照抛；
- * ─ productSources 星期／場次概覽 total/eligible 計數。
+ * ─ productSources 星期／場次／日期概覽 total/eligible 計數；ref／selected 帶真實 sku。
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -59,6 +61,7 @@ const WEEK_BEFORE = { start: "20261102", end: "20261108" };
 
 function row(over: Partial<GloGuideProductRow> & { id: number }): GloGuideProductRow {
   return {
+    sku: `SKU-${String(over.id).padStart(4, "0")}`,
     name: `商品${over.id}`,
     image: `/uploads/p${over.id}.jpg`,
     price: 100,
@@ -150,7 +153,7 @@ describe("日期／輸入解析（純函數）", () => {
     expect(() => parseLiveSession("x".repeat(17))).toThrowError(/liveSession/);
   });
 
-  it("parseProductFilter：省略 → auto；四模式形狀閘；search 1–60 字", () => {
+  it("parseProductFilter：省略 → auto；五模式形狀閘；search 1–60 字", () => {
     expect(parseProductFilter(undefined)).toEqual({ mode: "auto" });
     expect(parseProductFilter({ mode: "auto" })).toEqual({ mode: "auto" });
     expect(parseProductFilter({ mode: "week", weekStart: "2026-11-16" })).toEqual({
@@ -160,6 +163,13 @@ describe("日期／輸入解析（純函數）", () => {
     expect(
       parseProductFilter({ mode: "session", liveDate: "20261120", liveSession: "2" }),
     ).toEqual({ mode: "session", liveDate: "20261120", liveSession: "2" });
+    // iteration 4：date 模式（liveDate YYYYMMDD 真實日期）
+    expect(parseProductFilter({ mode: "date", liveDate: "20261120" })).toEqual({
+      mode: "date",
+      liveDate: "20261120",
+    });
+    expect(() => parseProductFilter({ mode: "date", liveDate: "2026-11-20" })).toThrowError(/YYYYMMDD/);
+    expect(() => parseProductFilter({ mode: "date", liveDate: "20260230" })).toThrowError(/YYYYMMDD/);
     expect(parseProductFilter({ mode: "search", query: " 連身裙 " })).toEqual({
       mode: "search",
       query: "連身裙",
@@ -180,26 +190,57 @@ describe("日期／輸入解析（純函數）", () => {
     expect(
       normalizeGenerateSelection({ selection: { mode: "week", weekStart: "2026-11-16" } }),
     ).toEqual({ mode: "week", weekStart: "20261116" });
+    // iteration 4：date 模式（可附 productIds）
+    expect(
+      normalizeGenerateSelection({ selection: { mode: "date", liveDate: "20261120" } }),
+    ).toEqual({ mode: "date", liveDate: "20261120" });
+    expect(
+      normalizeGenerateSelection({ selection: { mode: "date", liveDate: "20261120", productIds: [1, 2] } }),
+    ).toEqual({ mode: "date", liveDate: "20261120", productIds: [1, 2] });
     expect(() =>
       normalizeGenerateSelection({
         selection: { mode: "auto" },
         productIds: [1, 2],
       }),
     ).toThrowError(/唔可以同時提供/);
-    // products 模式一定要 2–3 件（1 件 → 400）
-    expect(() => normalizeGenerateSelection({ productIds: [1] })).toThrowError(/2–3/);
+    // products 模式最少 2 件（1 件 → 400）
+    expect(() => normalizeGenerateSelection({ productIds: [1] })).toThrowError(/最少要揀 2 件/);
     expect(() =>
       normalizeGenerateSelection({ selection: { mode: "products", productIds: [] } }),
-    ).toThrowError(/2–3 件/);
+    ).toThrowError(/直接指定最少 2 件/);
     expect(() => normalizeGenerateSelection({ selection: { mode: "hack" } })).toThrowError(
       /未知生成模式/,
     );
-    // week/session 附帶 productIds 都過 2–3＋唔重複閘
+    // week/session/date 附帶 productIds 都過 ≥2＋唔重複閘
     expect(() =>
       normalizeGenerateSelection({
         selection: { mode: "week", weekStart: "2026-11-16", productIds: [1, 1] },
       }),
     ).toThrowError(/重複/);
+  });
+
+  it("iteration 4：手動指定冇上限（>3 件過閘）；auto 附 productIds → 400（auto 永遠隨機）", () => {
+    // products 模式 5 件直接指定——唔再封頂 3 件
+    expect(normalizeGenerateSelection({ productIds: [1, 2, 3, 4, 5] })).toEqual({
+      mode: "products",
+      productIds: [1, 2, 3, 4, 5],
+    });
+    expect(
+      normalizeGenerateSelection({
+        selection: { mode: "week", weekStart: "2026-11-16", productIds: [1, 2, 3, 4] },
+      }),
+    ).toEqual({ mode: "week", weekStart: "20261116", productIds: [1, 2, 3, 4] });
+    expect(
+      normalizeGenerateSelection({
+        selection: { mode: "session", liveDate: "20261120", liveSession: "2", productIds: [1, 2, 3, 4] },
+      }),
+    ).toEqual({ mode: "session", liveDate: "20261120", liveSession: "2", productIds: [1, 2, 3, 4] });
+    // auto 拒手動 IDs
+    expect(() =>
+      normalizeGenerateSelection({ selection: { mode: "auto", productIds: [1, 2] } }),
+    ).toThrowError(/auto 模式唔准指定商品/);
+    // 空 array 當冇指定（唔會誤擋）
+    expect(normalizeGenerateSelection({ selection: { mode: "auto", productIds: [] } })).toEqual({ mode: "auto" });
   });
 });
 
@@ -469,10 +510,76 @@ describe("week／session 手動來源", () => {
   });
 });
 
+// ──────────────────────────── date 來源（iteration 4）────────────────────────────
+
+describe("date 模式：成日直播貨（所有場次＋blank-session）", () => {
+  it("查詢：真 liveDate 範圍 [liveDate, liveDate]——嗰日所有場次＋冇場次商品都回；其他日唔回", async () => {
+    const store = fakeStore([
+      row({ id: 1, liveDate: "20261120", liveSession: "1" }),
+      row({ id: 2, liveDate: "20261120", liveSession: "2" }),
+      row({ id: 3, liveDate: "20261120", liveSession: null }), // blank session 都要包
+      row({ id: 4, liveDate: "20261121", liveSession: "1" }), // 第二日，唔應該出現
+      row({ id: 5, liveDate: null }), // 普通商品，唔應該出現
+    ]);
+    const refs = await listGloGuideProducts({ mode: "date", liveDate: "20261120" }, { now: NOW, store });
+    // 一定行 liveDate 範圍查詢（唔係場次 DTO），store 收 [20261120, 20261120]
+    expect(store.calls.filter((c) => c.fn === "liveInRange").map((c) => c.args)).toEqual([
+      ["20261120", "20261120"],
+    ]);
+    expect(store.calls.filter((c) => c.fn === "liveInSession")).toHaveLength(0);
+    expect(refs.map((r) => r.id).sort()).toEqual([1, 2, 3]);
+    expect(refs.every((r) => r.eligible)).toBe(true);
+  });
+
+  it("生成：無 productIds → 嗰日（跨場次＋blank session）合資格池隨機抽 2–3 件；少於 2 件 → 409 唔跨來源", async () => {
+    const store = fakeStore([
+      row({ id: 1, liveDate: "20261120", liveSession: "1" }),
+      row({ id: 2, liveDate: "20261120", liveSession: "2" }),
+      row({ id: 3, liveDate: "20261120", liveSession: null }),
+      row({ id: 9, liveDate: "20261121" }), // 其他日有貨都唔准跨來源
+    ]);
+    const resolved = await resolveGenerateProducts(
+      { mode: "date", liveDate: "20261120" },
+      { now: NOW, store, rng: mulberry32(11) },
+    );
+    expect(resolved.products).toHaveLength(3);
+    expect(resolved.products.map((p) => p.id).sort()).toEqual([1, 2, 3]);
+
+    const short = fakeStore([row({ id: 1, liveDate: "20261120", liveSession: "1" }), row({ id: 9, liveDate: "20261121" })]);
+    await expect(
+      resolveGenerateProducts({ mode: "date", liveDate: "20261120" }, { now: NOW, store: short }),
+    ).rejects.toMatchObject({ httpStatus: 409 });
+    expect(short.calls.filter((c) => c.fn === "liveInRange")).toHaveLength(1);
+  });
+
+  it("生成：指定 productIds 必須屬該日（blank-session 商品都屬該日）；>3 件手動指定照過", async () => {
+    const store = fakeStore([
+      row({ id: 1, liveDate: "20261120", liveSession: "1" }),
+      row({ id: 2, liveDate: "20261120", liveSession: "2" }),
+      row({ id: 3, liveDate: "20261120", liveSession: null }),
+      row({ id: 4, liveDate: "20261120", liveSession: "3" }),
+      row({ id: 9, liveDate: "20261121" }),
+    ]);
+    // 4 件手動指定（包括 blank-session 嘅 3 號）——>3 件唔再被 cap
+    const resolved = await resolveGenerateProducts(
+      { mode: "date", liveDate: "20261120", productIds: [4, 3, 2, 1] },
+      { now: NOW, store },
+    );
+    expect(resolved.products.map((p) => p.id)).toEqual([4, 3, 2, 1]);
+    // 唔屬該日 → 400
+    await expect(
+      resolveGenerateProducts(
+        { mode: "date", liveDate: "20261120", productIds: [1, 9] },
+        { now: NOW, store },
+      ),
+    ).rejects.toMatchObject({ httpStatus: 400, message: expect.stringContaining("唔屬於") as unknown as string });
+  });
+});
+
 // ──────────────────────────── products 直接指定 ────────────────────────────
 
 describe("products 直接指定（普通＋直播商品皆可；server 重查全部閘）", () => {
-  it("普通商品（冇 liveDate）都揀得；2–3 件閘；唔存在 → 400", async () => {
+  it("普通商品（冇 liveDate）都揀得；最少 2 件閘；唔存在 → 400", async () => {
     const store = fakeStore([row({ id: 1, liveDate: null }), row({ id: 2, liveDate: null })]);
     const resolved = await resolveGenerateProducts(
       { mode: "products", productIds: [1, 2] },
@@ -482,6 +589,38 @@ describe("products 直接指定（普通＋直播商品皆可；server 重查全
     await expect(
       resolveGenerateProducts({ mode: "products", productIds: [1, 2, 3] }, { now: NOW, store }),
     ).rejects.toMatchObject({ httpStatus: 400, message: expect.stringContaining("唔存在") as unknown as string });
+  });
+
+  it("iteration 4：手動 >3 件（5 件）經真 validation／resolution 全過，順序跟輸入、唔隨機", async () => {
+    const store = fakeStore([
+      row({ id: 1, liveDate: null }),
+      row({ id: 2, liveDate: "20261118" }),
+      row({ id: 3, liveDate: null }),
+      row({ id: 4, liveDate: "20261120", liveSession: "1" }),
+      row({ id: 5, liveDate: null }),
+    ]);
+    const resolved = await resolveGenerateProducts(
+      { mode: "products", productIds: [5, 4, 3, 2, 1] },
+      { now: NOW, store, rng: mulberry32(1) }, // 手動指定唔准郁 rng——rng 喺度都唔會用
+    );
+    expect(resolved.products.map((p) => p.id)).toEqual([5, 4, 3, 2, 1]);
+    // week 來源手動 4 件一樣過（必須屬該週）
+    const wk = fakeStore([
+      row({ id: 1, liveDate: "20261110" }),
+      row({ id: 2, liveDate: "20261111" }),
+      row({ id: 3, liveDate: "20261112" }),
+      row({ id: 4, liveDate: "20261113" }),
+    ]);
+    const wkResolved = await resolveGenerateProducts(
+      { mode: "week", weekStart: "20261109", productIds: [1, 2, 3, 4] },
+      { now: NOW, store: wk },
+    );
+    expect(wkResolved.products.map((p) => p.id)).toEqual([1, 2, 3, 4]);
+    // 手動指定仍然過歷史閘：其中一件用過 → 409
+    const used = fakeStore([row({ id: 1 }), row({ id: 2 }), row({ id: 3 }), row({ id: 4 })], { 3: 101 });
+    await expect(
+      resolveGenerateProducts({ mode: "products", productIds: [1, 2, 3, 4] }, { now: NOW, store: used }),
+    ).rejects.toMatchObject({ httpStatus: 409, message: expect.stringContaining("唔可以重用") as unknown as string });
   });
 
   it("inactive／缺貨／到期下架／無圖／類別唔啱 → 400 真錯誤", async () => {
@@ -597,14 +736,14 @@ describe("claimProductUsage", () => {
 // ──────────────────────────── productSources 概覽 ────────────────────────────
 
 describe("listGloGuideProductSources", () => {
-  it("星期（週一起計）＋場次分組，total/eligible 計數，新→舊排", async () => {
+  it("星期（週一起計）＋場次＋日期分組，total/eligible 計數，新→舊排", async () => {
     const store = fakeStore(
       [
         row({ id: 1, liveDate: "20261117", liveSession: "1" }),
         row({ id: 2, liveDate: "20261117", liveSession: "1", stock: 0 }), // 缺貨唔合資格
         row({ id: 3, liveDate: "20261118", liveSession: "2" }),
         row({ id: 4, liveDate: "20261110", liveSession: "1" }),
-        row({ id: 5, liveDate: "20261110", liveSession: null }), // 直播日但冇場次 → 只計星期
+        row({ id: 5, liveDate: "20261110", liveSession: null }), // 直播日但冇場次 → 計星期＋日期，唔計場次
         row({ id: 6, liveDate: null }), // 普通商品唔入來源
       ],
       { 3: 101 }, // 商品 3 用過 → 唔合資格
@@ -624,9 +763,15 @@ describe("listGloGuideProductSources", () => {
       { liveDate: "20261117", liveSession: "1", total: 2, eligible: 1 },
       { liveDate: "20261110", liveSession: "1", total: 1, eligible: 1 },
     ]);
+    // iteration 4：dates 由真 product rows 按 liveDate 分組（包冇場次商品）
+    expect(out.dates).toEqual([
+      { liveDate: "20261118", total: 1, eligible: 0 },
+      { liveDate: "20261117", total: 2, eligible: 1 },
+      { liveDate: "20261110", total: 2, eligible: 2 },
+    ]);
   });
 
-  it("回歸：超過 8 週前嘅舊場次／星期都列出（唔准有固定週窗）；全庫冇直播貨 → 空", async () => {
+  it("回歸：超過 8 週前嘅舊場次／星期／日期都列出（唔准有固定週窗）；全庫冇直播貨 → 空", async () => {
     const store = fakeStore([
       row({ id: 1, liveDate: "20260701", liveSession: "3" }), // 20 週前
       row({ id: 2, liveDate: THIS_WEEK.start, liveSession: "1" }),
@@ -637,8 +782,9 @@ describe("listGloGuideProductSources", () => {
       "20261116#1",
       "20260701#3",
     ]);
+    expect(out.dates.map((d) => d.liveDate)).toEqual(["20261116", "20260701"]);
     const empty = await listGloGuideProductSources({ now: NOW, store: fakeStore([]) });
-    expect(empty).toEqual({ weeks: [], sessions: [] });
+    expect(empty).toEqual({ weeks: [], sessions: [], dates: [] });
   });
 });
 
@@ -657,6 +803,46 @@ describe("search：普通商品及直播商品都搵到", () => {
     const refs = await listGloGuideProducts({ mode: "search", query: "連身裙" }, { now: NOW, store });
     expect(refs.map((r) => r.id).sort()).toEqual([1, 2]);
     expect(refs.find((r) => r.id === 2)).toMatchObject({ usedBefore: true, eligible: false });
+  });
+});
+
+// ──────────────────────────── 香港週分組（groupLiveRowsByWeek）────────────────────────────
+
+describe("groupLiveRowsByWeek：香港週一起計，週次新→舊排，冇 liveDate 嘅普通商品略過", () => {
+  it("跨週商品按週一歸組；blank-session 商品照計入嗰週", () => {
+    const rows = [
+      row({ id: 1, liveDate: "20261118" }), // 週三 → 週一 20261116
+      row({ id: 2, liveDate: "20261116", liveSession: "1" }), // 週一本身
+      row({ id: 3, liveDate: "20261110", liveSession: null }), // 上週（blank session 都計）
+      row({ id: 4, liveDate: null }), // 普通商品唔入組
+    ];
+    const grouped = groupLiveRowsByWeek(rows);
+    expect(grouped.map((g) => g.weekStart)).toEqual(["20261116", "20261109"]);
+    expect(grouped[0]!.rows.map((r) => r.id)).toEqual([1, 2]);
+    expect(grouped[1]!.rows.map((r) => r.id)).toEqual([3]);
+  });
+});
+
+// ──────────────────────────── SKU 串線（iteration 4）────────────────────────────
+describe("SKU 串線：ref／selected product 都帶真實 products.sku", () => {
+  it("listGloGuideProducts refs 帶 sku；resolveGenerateProducts 揀中商品帶 sku（唔係由圖片文字硬編）", async () => {
+    const store = fakeStore([
+      row({ id: 1, sku: "ABC-001", liveDate: THIS_WEEK.start }),
+      row({ id: 2, sku: "XYZ-999", liveDate: THIS_WEEK.start }),
+      row({ id: 3, sku: "MID-500", liveDate: THIS_WEEK.start }),
+    ]);
+    const refs = await listGloGuideProducts({ mode: "week", weekStart: "2026-11-16" }, { now: NOW, store });
+    expect(refs.find((r) => r.id === 1)?.sku).toBe("ABC-001");
+    expect(refs.find((r) => r.id === 2)?.sku).toBe("XYZ-999");
+
+    const resolved = await resolveGenerateProducts(
+      { mode: "products", productIds: [2, 3] },
+      { now: NOW, store },
+    );
+    expect(resolved.products.map((p) => [p.id, p.sku])).toEqual([
+      [2, "XYZ-999"],
+      [3, "MID-500"],
+    ]);
   });
 });
 

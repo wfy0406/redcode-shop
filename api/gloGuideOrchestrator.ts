@@ -2,8 +2,9 @@
  * Glo Glo 指南——生成 orchestrator（背景執行，所有狀態落 DB）。
  *
  * Job kind：
- * ─ scheduled／full：揀貨已在建文時完成；呢度行 文字生成 → 逐商品建圖 job（每張獨立）→
- *   全部圖完成 → article=pending_review（圖片仍 reviewStatus=pending，等主管逐張批）；
+ * ─ scheduled／full：揀貨已在建文時完成；呢度行 文字生成 → 逐商品建圖 job（每件商品
+ *   啱啱一張，N 件 → N 個 job；每張獨立）→ 全部圖完成 → article=pending_review
+ *   （圖片仍 reviewStatus=pending，等主管逐張批）；
  *   任何一步失敗 → generationStatus=failed＋generationError／job.error，絕不假成功。
  * ─ article：淨重寫文字（regenerate）；完成 → pending_review（舊圖保留，review 已重置 pending）。
  * ─ image：單張圖生成（Fashn tryon-max；飾品／多品 agent experimental）。
@@ -11,8 +12,8 @@
  * Job recovery（重開機後）：queued 超时重 kick；submitted/processing 有 providerJobId
  * 嘅 image job 憑 providerJobId resume poll；image job 冇 providerJobId 超時 → failed；
  * child image job 有結果後用 settleGloGuideArticleInDb 重結算 parent＋article（規則：
- * 仲有 active child → 唔郁；文字失敗／有 failed child／完成圖<3 → failed；否則
- * pending_review）。full/scheduled parent 超時唔會直接判死成篇——由 child 結算帶動。
+ * 仲有 active child → 唔郁；文字失敗／有 failed child／完成圖少過已選商品數 → failed；
+ * 否則 pending_review）。full/scheduled parent 超時唔會直接判死成篇——由 child 結算帶動。
  * 失敗留 error，唔靜默重試。
  */
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
@@ -232,28 +233,53 @@ async function runTextGeneration(
 
 const EXPERIMENTAL_CATEGORIES = new Set(["accessory", "lifestyle", "skincare", "other"]);
 
+export type GloGuideClaimConflictState = "completed" | "failed" | "active";
+
+/** 另一 runner 已認領時，只可按圖嘅即時狀態結算；active 絕對唔准假裝 completed。 */
+export function classifyGloGuideClaimConflict(
+  image: { status: string; deletedAt?: Date | null } | null | undefined,
+): GloGuideClaimConflictState {
+  if (!image || image.deletedAt || image.status === "failed") return "failed";
+  if (image.status === "completed") return "completed";
+  return "active";
+}
+
 async function runImageJob(
   db: Db,
   job: Job,
   providers: GloGuideProviders,
 ): Promise<boolean> {
   if (!job.imageId) throw new Error("image job 缺 imageId");
+  // iteration 4 修復：preflight（image／article／product 讀取）失敗**唔准抛出**——
+  // 抛出會直落 runGloGuideJob 外層 catch，淨係標 job failed；圖永遠卡 queued，
+  // full job 篇文章就永遠卡 processing。呢度將圖（仲 queued/processing 先郁）標 failed
+  // 兼 return false，等 runFullJob 可以照規則結算篇文章 failed。
+  const failPreflight = async (msg: string, imageId: number | null): Promise<false> => {
+    if (imageId !== null) {
+      // conditional：只標仲 queued/processing 嘅圖，唔冚已完成／重生緊嘅新狀態
+      await db
+        .update(gloGuideImages)
+        .set({ status: "failed", error: msg, updatedAt: new Date() })
+        .where(
+          and(eq(gloGuideImages.id, imageId), inArray(gloGuideImages.status, ["queued", "processing"])),
+        );
+    }
+    await setJob(db, job.id, { status: "failed", error: msg, completedAt: new Date() });
+    return false;
+  };
+
   const image = await db.query.gloGuideImages.findFirst({
     where: eq(gloGuideImages.id, job.imageId),
   });
-  if (!image || image.deletedAt) throw new Error(`image ${job.imageId} 唔存在或已刪除`);
+  if (!image || image.deletedAt) return failPreflight(`image ${job.imageId} 唔存在或已刪除`, null);
   const article = await db.query.gloGuideArticles.findFirst({
     where: eq(gloGuideArticles.id, image.articleId),
   });
-  if (!article) throw new Error("article 唔存在");
+  if (!article) return failPreflight("article 唔存在", image.id);
   const product = image.productId
     ? await db.query.products.findFirst({ where: eq(products.id, image.productId) })
     : null;
-  if (!product) throw new Error("圖片對應商品已刪除");
-
-  const model = gloGuideModelImage();
-  const base = (process.env.PUBLIC_BASE_URL || "https://redcode.red").replace(/\/+$/, "");
-  const productImage = product.image.startsWith("/") ? `${base}${product.image}` : product.image;
+  if (!product) return failPreflight("圖片對應商品已刪除", image.id);
 
   // M3：圖都係 conditional 認領（queued → processing）；撞咗第二個 runner 就留 note 收工
   const claimedImage = await db
@@ -268,16 +294,37 @@ async function runImageJob(
     )
     .returning({ id: gloGuideImages.id });
   if (claimedImage.length === 0) {
-    await setJob(db, job.id, {
-      status: "completed",
-      completedAt: new Date(),
-      error: "note: 圖片唔係 queued（已被另一 runner 認領或已完結），唔重複執行",
+    // 唔可以一見認領衝突就當成功：recovery 可能仲生成緊。重讀即時圖狀態，
+    // active 時唔郁 job，由最後一個 child／recovery 按全篇圖狀態結算。
+    const latestImage = await db.query.gloGuideImages.findFirst({
+      where: eq(gloGuideImages.id, image.id),
+      columns: { status: true, deletedAt: true },
     });
-    return true;
+    const conflict = classifyGloGuideClaimConflict(latestImage);
+    if (conflict === "completed") {
+      await setJob(db, job.id, {
+        status: "completed",
+        completedAt: new Date(),
+        error: "note: 圖片已由另一 runner 完成，唔重複執行",
+      });
+      return true;
+    }
+    if (conflict === "failed") {
+      await setJob(db, job.id, {
+        status: "failed",
+        completedAt: new Date(),
+        error: "圖片已刪除或生成失敗，請重生",
+      });
+    }
+    return false;
   }
   await setJob(db, job.id, { status: "processing" });
 
   try {
+    // model/base 計算都擺喺 try 入面：呢段抛都要行「圖標 failed」嗰條路，唔准留圖卡 processing
+    const model = gloGuideModelImage();
+    const base = (process.env.PUBLIC_BASE_URL || "https://redcode.red").replace(/\/+$/, "");
+    const productImage = product.image.startsWith("/") ? `${base}${product.image}` : product.image;
     const result = await providers.generateImage({
       articleId: article.id,
       imageId: image.id,
@@ -349,7 +396,8 @@ async function runFullJob(db: Db, job: Job, providers: GloGuideProviders): Promi
     return;
   }
 
-  // 逐已選商品建圖（每件最少一張；2 件貨就輪住補到 3 張，上限 5）
+  // iteration 4 新用戶規則：初始生成**每件已選商品啱啱一張圖**（N 件 → N 個 image job），
+  // 唔再輪住補到 3–5 張；員工事後可按商品加生成（service generateImages productId）。
   const links = await db
     .select()
     .from(gloGuideArticleProducts)
@@ -361,15 +409,14 @@ async function runFullJob(db: Db, job: Job, providers: GloGuideProviders): Promi
     await setJob(db, job.id, { status: "failed", error: msg, completedAt: new Date() });
     return;
   }
-  const target = Math.min(5, Math.max(3, links.length));
   const article = await db.query.gloGuideArticles.findFirst({
     where: eq(gloGuideArticles.id, job.articleId),
   });
   if (!article) throw new Error("article 唔存在");
 
   const imageJobIds: number[] = [];
-  for (let i = 0; i < target; i++) {
-    const link = links[i % links.length];
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i]!;
     const product = await db.query.products.findFirst({ where: eq(products.id, link.productId) });
     if (!product) continue;
     // 每張圖同佢嘅 job 必須同生同死；否則中途重啟會留低冇 job 可 recovery 嘅 queued 圖。
@@ -404,7 +451,8 @@ async function runFullJob(db: Db, job: Job, providers: GloGuideProviders): Promi
     imageJobIds.push(imgJob.id);
   }
 
-  let allOk = imageJobIds.length >= 3;
+  // 全部商品都起咗圖 job（N 件 → N 張）先算成功路徑；商品中途被刪而開唔到圖 → failed
+  let allOk = imageJobIds.length >= links.length;
   const errors: string[] = [];
   for (const imageJobId of imageJobIds) {
     const imgJob = await db.query.gloGuideJobs.findFirst({ where: eq(gloGuideJobs.id, imageJobId) });
@@ -415,6 +463,17 @@ async function runFullJob(db: Db, job: Job, providers: GloGuideProviders): Promi
       const failedJob = await db.query.gloGuideJobs.findFirst({ where: eq(gloGuideJobs.id, imageJobId) });
       if (failedJob?.error) errors.push(failedJob.error);
     }
+  }
+
+  // 最終以 DB 現行未刪圖結算，唔相信舊 job snapshot。若 recovery 仲有圖 active，
+  // parent 保持 processing 並交畀最後一個 child 結算，絕唔准提早 pending_review。
+  const settlement = await settleInputFromDb(db, article.id);
+  if (settlement === "active") return;
+  if (settlement === "failed") {
+    allOk = false;
+    if (errors.length === 0) errors.push("有失敗圖／完成圖少過已選商品數");
+  } else {
+    allOk = true;
   }
 
   if (allOk) {
@@ -555,6 +614,11 @@ export async function recoverGloGuideJobs(
       }
       // submitted / processing
       if (job.kind === "image" && job.imageId) {
+        // iteration 4 修復：淨係 full/scheduled 嘅 child（payload.parentJob）先准結算文章——
+        // 手動 image.generate 嘅 standalone job（payload 只有 requestedBy）recovery 只郁圖同 job，
+        // 絕對唔准郁文章 status（唔係 draft 會跳過 article.submit 直接被搬去 pending_review）。
+        const isFullChild =
+          typeof (job.payload as Record<string, unknown> | null)?.parentJob === "string";
         if (job.providerJobId) {
           const image = await db.query.gloGuideImages.findFirst({
             where: eq(gloGuideImages.id, job.imageId),
@@ -590,12 +654,14 @@ export async function recoverGloGuideJobs(
             completedAt: new Date(),
             error: applied ? null : "note: 圖片狀態已改變，recovery 結果未套用",
           });
-          // child 成功後一定要重結算 parent/article（唔係 parent 會永遠卡住）
-          await settleGloGuideArticleInDb(db, job.articleId);
+          // full/scheduled child 成功後一定要重結算 parent/article（唔係 parent 會永遠卡住）；
+          // standalone 手動圖 job 唔結算——文章狀態係員工嘅事（submit/approve 先郁得）
+          if (isFullChild) await settleGloGuideArticleInDb(db, job.articleId);
           result.resumed++;
           continue;
         }
-        // image job 冇 providerJobId（未提交到 Fashn 就死）：超過 10 分鐘 → 標 failed 兼結算
+        // image job 冇 providerJobId（未提交到 Fashn 就死）：超過 10 分鐘 → 標 failed；
+        // 結算文章同樣僅限 full/scheduled child（standalone 手動圖失敗唔郁文章）
         //（conditional：只標仲 queued/processing 嘅圖，唔冚已完成）
         if (job.updatedAt.getTime() < now - 10 * 60 * 1000) {
           const msg = "圖片 job 中斷且冇 provider job id，已標記失敗（請重生呢張圖）";
@@ -606,7 +672,7 @@ export async function recoverGloGuideJobs(
             .where(
               and(eq(gloGuideImages.id, job.imageId), inArray(gloGuideImages.status, ["queued", "processing"])),
             );
-          await settleGloGuideArticleInDb(db, job.articleId);
+          if (isFullChild) await settleGloGuideArticleInDb(db, job.articleId);
           result.failed++;
         }
         continue;
@@ -637,7 +703,10 @@ export async function recoverGloGuideJobs(
             and(eq(gloGuideImages.id, job.imageId ?? -1), inArray(gloGuideImages.status, ["queued", "processing"])),
           )
           .catch(() => {});
-        await settleGloGuideArticleInDb(db, job.articleId).catch(() => {});
+        // 同上：standalone 手動圖 job（冇 payload.parentJob）recovery 失敗唔准郁文章狀態
+        const isFullChild =
+          typeof (job.payload as Record<string, unknown> | null)?.parentJob === "string";
+        if (isFullChild) await settleGloGuideArticleInDb(db, job.articleId).catch(() => {});
       }
       result.failed++;
     }
@@ -664,7 +733,11 @@ export async function withGloGuideLock<T>(key: string, fn: () => Promise<T>): Pr
 /**
  * 圖片 job 有結果之後，成篇文章點結算（純函數，recovery 同實跑測試共用）：
  * ─ 仲有 active image job（queued/submitted/processing）→ "active"：乜都唔郁，細 job 主導；
- * ─ 文字失敗／有 failed image job／completed 圖少過 3 → "failed"（落 generationError）；
+ * ─ 文字失敗／有 failed image job／完成圖少過已選商品數（iteration 4：每件商品一張，
+ *   唔再係固定 3 張）→ "failed"（落 generationError）；
+ * ─ **逐件商品覆蓋**：完成圖淨計張數唔夠——員工可以為同一商品加多張圖，
+ *   所以一定要「每件已連結商品都有一張完成圖」（coveredProducts < productCount → failed），
+ *   唔係嘅話 N 張圖堆喺少過 N 件貨度都會誤判 ready；
  * ─ 否則 "ready"：article → pending_review（圖片仍等人手批）、parent job → completed。
  */
 export type GloGuideSettleInput = {
@@ -674,42 +747,70 @@ export type GloGuideSettleInput = {
   failedImageJobs: number;
   /** 未刪 completed 圖數 */
   completedImages: number;
+  /** 已選商品數（gloGuideArticleProducts 行數；初始生成＝每件一張，所以完成圖要 ≥ 呢個數） */
+  productCount: number;
+  /** 有最少一張未刪 completed 圖嘅**已連結商品**數（要 == productCount 先算齊） */
+  coveredProducts: number;
 };
 export type GloGuideSettleResult = "active" | "ready" | "failed";
 
 export function settleGloGuideArticle(input: GloGuideSettleInput): GloGuideSettleResult {
   if (input.activeImageJobs > 0) return "active";
-  if (input.textFailed || input.failedImageJobs > 0 || input.completedImages < 3) return "failed";
+  if (
+    input.textFailed ||
+    input.failedImageJobs > 0 ||
+    input.completedImages < Math.max(2, input.productCount) ||
+    input.coveredProducts < input.productCount
+  ) {
+    return "failed";
+  }
   return "ready";
 }
 
 /**
- * 由現行未刪圖嘅 image.status 計結算（純函數）：歷史 failed job 唔計——
+ * 由現行未刪圖嘅 image.status/productId 計結算（純函數）：歷史 failed job 唔計——
  * 同一張圖重生（version+1）後舊 failed job 唔會再令成篇永遠 failed；
- * 圖軟刪後亦唔再影響結算。
+ * 圖軟刪後亦唔再影響結算。linkedProductIds＝已選商品 id（完成圖要逐件蓋到）。
  */
 export function settleFromImages(
   textFailed: boolean,
-  images: readonly { status: string }[],
+  images: readonly { status: string; productId?: number | null }[],
+  linkedProductIds: readonly number[],
 ): GloGuideSettleResult {
+  const completedWithProduct = new Set(
+    images
+      .filter((i) => i.status === "completed")
+      .map((i) => i.productId)
+      .filter((id): id is number => typeof id === "number"),
+  );
   return settleGloGuideArticle({
     textFailed,
     activeImageJobs: images.filter((i) => i.status === "queued" || i.status === "processing").length,
     failedImageJobs: images.filter((i) => i.status === "failed").length,
     completedImages: images.filter((i) => i.status === "completed").length,
+    productCount: linkedProductIds.length,
+    coveredProducts: linkedProductIds.filter((id) => completedWithProduct.has(id)).length,
   });
 }
 
-/** 由 DB 攞現行未刪圖＋文章狀態，交畀 settleFromImages 結算（唔再數歷史 job） */
+/** 由 DB 攞現行未刪圖＋已選商品 id＋文章狀態，交畀 settleFromImages 結算（唔再數歷史 job） */
 async function settleInputFromDb(db: Db, articleId: number): Promise<GloGuideSettleResult> {
   const article = await db.query.gloGuideArticles.findFirst({
     where: eq(gloGuideArticles.id, articleId),
   });
   const images = await db
-    .select({ status: gloGuideImages.status })
+    .select({ status: gloGuideImages.status, productId: gloGuideImages.productId })
     .from(gloGuideImages)
     .where(and(eq(gloGuideImages.articleId, articleId), isNull(gloGuideImages.deletedAt)));
-  return settleFromImages(article?.generationStatus === "failed", images);
+  const links = await db
+    .select({ productId: gloGuideArticleProducts.productId })
+    .from(gloGuideArticleProducts)
+    .where(eq(gloGuideArticleProducts.articleId, articleId));
+  return settleFromImages(
+    article?.generationStatus === "failed",
+    images,
+    links.map((l) => l.productId),
+  );
 }
 
 /**
@@ -754,7 +855,7 @@ async function settleGloGuideArticleInDb(db: Db, articleId: number): Promise<Glo
         ),
       );
   } else {
-    const msg = "圖片生成未完成（有失敗圖／完成圖少過 3 張），請重生或刪除失敗圖後再試";
+    const msg = "圖片生成未完成（有失敗圖／完成圖少過已選商品數），請重生或刪除失敗圖後再試";
     // H2：published/archived 文章唔郁
     await applyToEditableArticle(db, articleId, { generationStatus: "failed", generationError: msg });
     await db

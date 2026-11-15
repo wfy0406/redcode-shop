@@ -176,6 +176,46 @@ describe("published 圖片 mutation 規則", () => {
   });
 });
 
+describe("iteration 4 service source guard（每貨一圖新規則＋SKU 串線）", () => {
+  const src = readFileSync(path.join(__dirname, "gloGuideService.ts"), "utf8");
+
+  it("generateImages：productId＝為該商品加一張（唔再補齊到固定總數）；無 productId＝逐件缺圖商品補一張", () => {
+    const fn = src.slice(src.indexOf("export async function generateImages"), src.indexOf("export async function readImageForPreview"));
+    // 舊全局 target（補到 max(3, …)／上限 5）唔准再存在
+    expect(fn).not.toContain("Math.min(GLO_GUIDE_IMAGE_MAX, Math.max(3");
+    expect(fn).not.toContain("const target =");
+    // iteration 4：冇全局圖數上限（SPEC 冇；N>24 件手動商品都要能逐件加圖）
+    expect(fn).not.toContain("GLO_GUIDE_IMAGE_MAX");
+    // 有 productId：直接為該已選商品加一張（唔理佢現有幾多張）
+    expect(fn).toContain("links.filter((l) => l.productId === filterPid).slice(0, 1)");
+    // 冇 productId：淨係補冇有效圖嘅商品
+    expect(fn).toContain("(activeByProduct.get(l.productId) ?? 0) === 0");
+    // 保留控制：一次調用最多一個新 job／一張新圖＋idempotency key＋transaction
+    expect(fn).toContain("slice(0, 1)");
+    expect(fn).toContain("idempotencyKey");
+    expect(fn).toContain("db.transaction");
+  });
+
+  it("手動加圖 job 係 standalone（payload 唔帶 parentJob）——recovery 唔准結算文章狀態", () => {
+    const fn = src.slice(src.indexOf("export async function generateImages"), src.indexOf("export async function readImageForPreview"));
+    // parentJob 係 full/scheduled child 嘅標記（orchestrator recovery 靠佢決定 settle 唔 settle 文章）
+    expect(fn).not.toContain("parentJob");
+  });
+
+  it("uploadImage 亦冇全局圖數上限（每次一張、transaction 鎖文章、published 閘保留）", () => {
+    const fn = src.slice(src.indexOf("export async function uploadImage"), src.indexOf("export async function generateImages"));
+    expect(fn).not.toContain("GLO_GUIDE_IMAGE_MAX");
+    expect(fn).toContain("lockArticleForImageMutation");
+    expect(fn).toContain("db.transaction");
+  });
+
+  it("toInternalArticle 現行商品 DTO 帶真實 products.sku（WMS 商品卡用）", () => {
+    const fn = src.slice(src.indexOf("export function toInternalArticle"), src.indexOf("export async function listArticleSummaries"));
+    expect(fn).toContain("sku: cur.sku");
+  });
+});
+
+
 describe("article update／regenerate 同 approve 嘅行鎖", () => {
   const src = readFileSync(path.join(__dirname, "gloGuideService.ts"), "utf8");
 
@@ -225,6 +265,7 @@ describe("article.archive 落架", () => {
 describe("pickAutoProducts（自動揀貨：隨機抽 2–3 件）", () => {
   const mk = (id: number): WeeklyProductDto => ({
     id,
+    sku: `SKU-${id}`,
     name: `商品${id}`,
     image: `/uploads/p${id}.jpg`,
     price: 100,

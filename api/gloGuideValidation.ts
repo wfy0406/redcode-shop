@@ -1,11 +1,12 @@
 /**
  * Glo Glo 精選配搭指南——純邏輯校驗／閘口模組（唔掂 DB、唔掂 network）。
  *
- * SPEC v1 硬閘：
+ * SPEC v1 硬閘（iteration 4 更新）：
  * ─ 文章 NFC＋控制字元清理；title 4–80、body 150–300 Unicode code points（空白唔計）、theme 2–80。
  * ─ themeKey 對最近 8 篇非 archived 文章不可重複。
- * ─ 2–3 件不重複商品；3–5 張未刪 completed 圖；每張連結其中一件已選商品；每件商品最少出現一次。
- * ─ 每張圖必須 reviewStatus=approved 兼 reviewer/time 齊；sourceProductImage 仍等於商品現行圖。
+ * ─ 最少 2 件不重複商品（手動指定冇上限；自動／無指定先隨機抽 2–3 件）。
+ * ─ 圖片唔再設全局 3–5 數量閘：每件已選商品最少一張 completed＋source-drift-safe
+ *   （approve 時仲要逐張人工 approved＋reviewer/time 齊）嘅圖；每張圖逐張過閘。
  * ─ 所有圖片路徑只准 /uploads/glo-guide/；短期 Fashn CDN URL 絕不入公開 DTO。
  *
  * WMS handler（gloGuideWms.ts）、service（gloGuideService.ts）、公開 DTO（gloGuidePublic.ts）、
@@ -116,20 +117,16 @@ export function themeKeyConflicts(themeKey: string, recentKeys: readonly string[
 // ──────────────────────────── 商品／圖片閘 ────────────────────────────
 
 export const GLO_GUIDE_PRODUCT_MIN = 2;
+/** 隨機抽貨上限（auto／week／date／session 無指定 productIds 時抽 2–3 件）；手動指定冇上限 */
 export const GLO_GUIDE_PRODUCT_MAX = 3;
-export const GLO_GUIDE_IMAGE_MIN = 3;
-export const GLO_GUIDE_IMAGE_MAX = 5;
 
 /** 服飾／飾品類（配搭指南只揀呢啲；lifestyle/skincare/other 唔入） */
 export const GLO_GUIDE_CATEGORIES = ["top", "pants", "dress", "shoes", "accessory"] as const;
 
-/** 商品揀選：2–3 件、唔准重複 id。合格返 null。 */
+/** 商品揀選：最少 2 件、唔准重複 id、正整數；手動指定**冇上限**（隨機抽貨上限喺 pickRandomTwoThree）。合格返 null。 */
 export function validateProductSelection(productIds: readonly number[]): string | null {
-  if (
-    productIds.length < GLO_GUIDE_PRODUCT_MIN ||
-    productIds.length > GLO_GUIDE_PRODUCT_MAX
-  ) {
-    return `要揀 ${GLO_GUIDE_PRODUCT_MIN}–${GLO_GUIDE_PRODUCT_MAX} 件商品`;
+  if (productIds.length < GLO_GUIDE_PRODUCT_MIN) {
+    return `最少要揀 ${GLO_GUIDE_PRODUCT_MIN} 件商品`;
   }
   if (new Set(productIds).size !== productIds.length) return "商品唔可以重複";
   for (const id of productIds) {
@@ -193,15 +190,12 @@ export function evaluateGloGuideGate(
   const themeErr = validateGloGuideTheme(input.theme);
   if (themeErr) errors.push(themeErr);
 
-  // 2–3 件不重複商品（DB unique(articleId,productId) 擋咗重複，呢度再保險）
+  // ≥2 件不重複商品（手動指定冇上限；DB unique(articleId,productId) 擋咗重複，呢度再保險）
   if (input.products.length !== input.linkedCount) {
     errors.push("有商品已被刪除，請先更新指南商品");
   }
-  if (
-    input.products.length < GLO_GUIDE_PRODUCT_MIN ||
-    input.products.length > GLO_GUIDE_PRODUCT_MAX
-  ) {
-    errors.push(`要連結 ${GLO_GUIDE_PRODUCT_MIN}–${GLO_GUIDE_PRODUCT_MAX} 件商品`);
+  if (input.products.length < GLO_GUIDE_PRODUCT_MIN) {
+    errors.push(`最少要連結 ${GLO_GUIDE_PRODUCT_MIN} 件商品`);
   }
   if (new Set(input.products.map((p) => p.id)).size !== input.products.length) {
     errors.push("商品唔可以重複");
@@ -213,14 +207,12 @@ export function evaluateGloGuideGate(
     if (p.stock <= 0) errors.push("有商品已缺貨");
   }
 
-  // 3–5 張未刪 completed 圖
+  // 圖片閘（iteration 4 新用戶規則，取代舊 3–5 張全局數量閘）：
+  // ─ 每件已選商品最少一張 completed＋drift-safe（approve 時仲要已人工批准）嘅圖；
+  // ─ 每張圖逐張過閘（連結已選商品／path 白名單／實測尺寸／approve 時逐張 approved）；
+  // ─ 未刪但未完成嘅圖唔准殘留。總張數唔再設全局上下限。
   const live = input.images.filter((img) => !img.deletedAt);
   const completed = live.filter((img) => img.status === "completed" && img.path);
-  if (completed.length < GLO_GUIDE_IMAGE_MIN || completed.length > GLO_GUIDE_IMAGE_MAX) {
-    errors.push(
-      `要 ${GLO_GUIDE_IMAGE_MIN}–${GLO_GUIDE_IMAGE_MAX} 張完成圖（而家 ${completed.length} 張）`,
-    );
-  }
   // 未刪但未完成嘅圖（failed/queued/processing）唔准殘留——唔係會令人以為「等緊就得」
   const unfinished = live.filter((img) => img.status !== "completed" || !img.path);
   if (unfinished.length > 0) {
@@ -236,10 +228,10 @@ export function evaluateGloGuideGate(
       errors.push("有圖片冇連結已選商品");
       continue;
     }
-    covered.add(img.productId);
-    // source snapshot drift：商品現行圖改咗 → 呢張圖要重生
+    // source snapshot drift：商品現行圖改咗 → 呢張圖要重生（唔計入該商品嘅有效覆蓋）
     const currentImage = productImageById.get(img.productId);
-    if (!img.sourceProductImage || img.sourceProductImage !== currentImage) {
+    const driftSafe = !!img.sourceProductImage && img.sourceProductImage === currentImage;
+    if (!driftSafe) {
       errors.push("商品原圖已更改，對應生成圖要重生");
     }
     // 圖片路徑只准站內 glo-guide 持久路徑
@@ -250,18 +242,23 @@ export function evaluateGloGuideGate(
     if (!img.width || !img.height || img.width <= 0 || img.height <= 0) {
       errors.push("有圖片缺有效尺寸，請重生或重新上傳");
     }
+    let approved = true;
     if (options.requireImageApproval) {
       // 逐張人工 approved＋reviewer/time 齊先算數
+      approved = false;
       if (img.reviewStatus !== "approved") {
         errors.push("有圖片未通過人工一致性審批");
       } else if (img.reviewedById === null || !img.reviewedAt) {
         errors.push("有圖片缺審批人／審批時間紀錄");
+      } else {
+        approved = true;
       }
     }
+    if (driftSafe && approved) covered.add(img.productId);
   }
-  // 每件商品最少出現一次
+  // 每件商品最少一張有效圖（完成＋drift-safe；approve 時要已批）
   for (const p of input.products) {
-    if (!covered.has(p.id)) errors.push("每件商品最少要有一張圖");
+    if (!covered.has(p.id)) errors.push("每件商品最少要有一張完成圖");
   }
   return [...new Set(errors)];
 }

@@ -7,19 +7,25 @@
  * ─ { mode: "week"; weekStart }：weekStart 係香港星期一（YYYY-MM-DD），回傳嗰週
  *   （週一至週日）直播商品，不符合條件嘅都照回（eligible=false＋ineligibleReason）。
  * ─ { mode: "session"; liveDate; liveSession }：liveDate YYYYMMDD＋真實場次。
+ * ─ { mode: "date"; liveDate }（iteration 4 新增）：liveDate YYYYMMDD **成日**——
+ *   嗰日所有場次＋冇場次（blank session）嘅直播商品都包（真 liveDate 範圍查詢，
+ *   唔係齋靠場次 DTO）。
  * ─ { mode: "search"; query }：直接商品搜尋（名／SKU，1–60 字），普通商品及
- *   直播商品都搵到；week/session/auto 只針對直播商品。
+ *   直播商品都搵到；week/session/date/auto 只針對直播商品。
  *
  * 生成 selection：
  * ─ auto／省略：由本週向過去逐週搵最近一個有 ≥2 件合資格且從未用過商品嘅星期，
  *   然後喺該週合資格池**隨機抽 2–3 件**（3 件優先、得 2 件就 2 件）——
  *   一路搵到最舊直播貨嗰週（週界由真歷史資料 derive，唔設人為上限）；
- *   全歷史都搵唔到 → 409 真錯誤。
- * ─ week/session 有 productIds：必須屬該來源，否則 400，**指定貨絕對唔隨機**；
+ *   全歷史都搵唔到 → 409 真錯誤。auto 唔准附 productIds（指定貨要用其他模式）。
+ * ─ week/date/session 有 productIds：必須屬該來源，否則 400，**指定貨絕對唔隨機**；
  *   冇 productIds 就由該來源合資格池**隨機抽 2–3 件**，少於 2 件 → 409，
  *   **唔會跨來源 fallback**。
- * ─ products：直接指定 2–3 件（普通或直播商品皆可），絕對唔隨機。
+ * ─ products：直接指定商品（普通或直播商品皆可），絕對唔隨機。
  * ─ 舊 top-level productIds 等於 { mode: "products" }；同時傳兩種 → 400。
+ * ─ 手動指定（products 或 week/date/session 附 productIds）：最少 2 件唔重複，
+ *   **冇上限**（iteration 4 起唔再封頂 3 件）；隨機抽貨先係 2–3 件。
+ * ─ SKU：product row／ref／selected 全部帶真實 products.sku（id 仍係內部 key）。
  *
  * 隨機：生成揀貨用可注入 rng（GloGuideQueryOptions.rng，預設 Math.random），
  * 測試可以 seed 出 deterministic 結果。**商品查詢（listGloGuideProducts）唔隨機**——
@@ -65,12 +71,14 @@ export type GloGuideProductFilter =
   | { mode: "auto" }
   | { mode: "week"; weekStart: string } // wire＝HK Monday YYYY-MM-DD；解析後內部＝compact YYYYMMDD
   | { mode: "session"; liveDate: string; liveSession: string } // YYYYMMDD + real session
+  | { mode: "date"; liveDate: string } // YYYYMMDD 成日：所有場次＋blank-session 商品
   | { mode: "search"; query: string }; // direct product search, 1–60 chars
 
 export type GloGuideGenerateSelection =
   | { mode: "auto" }
   | { mode: "week"; weekStart: string; productIds?: number[] } // wire＝YYYY-MM-DD；normalize 後 compact
   | { mode: "session"; liveDate: string; liveSession: string; productIds?: number[] }
+  | { mode: "date"; liveDate: string; productIds?: number[] } // YYYYMMDD 成日
   | { mode: "products"; productIds: number[] };
 
 export type GloGuideIneligibleReason =
@@ -84,6 +92,8 @@ export type GloGuideIneligibleReason =
 /** SPEC「GloGuideProductRef」：原 WeeklyProductDto 欄＋usedBefore/eligible/ineligibleReason */
 export interface GloGuideProductRef {
   id: number;
+  /** 真實 products.sku（貨號；id 仍係內部 key） */
+  sku: string;
   name: string;
   image: string;
   price: number;
@@ -98,9 +108,11 @@ export interface GloGuideProductRef {
   ineligibleReason: GloGuideIneligibleReason | null;
 }
 
-/** 生成實際揀中嘅商品（同舊 WeeklyProductDto 同形） */
+/** 生成實際揀中嘅商品（同舊 WeeklyProductDto 同形＋sku） */
 export interface GloGuideSelectedProduct {
   id: number;
+  /** 真實 products.sku */
+  sku: string;
   name: string;
   image: string;
   price: number;
@@ -115,6 +127,8 @@ export interface GloGuideSelectedProduct {
 export interface GloGuideProductSources {
   weeks: Array<{ weekStart: string; weekEnd: string; total: number; eligible: number }>;
   sessions: Array<{ liveDate: string; liveSession: string; total: number; eligible: number }>;
+  /** iteration 4：按直播日分組（由真 product rows 計，包冇場次商品），liveDate 新→舊 */
+  dates: Array<{ liveDate: string; total: number; eligible: number }>;
 }
 
 // ──────────────────────────── DB 存取介面（可注入）────────────────────────────
@@ -122,6 +136,8 @@ export interface GloGuideProductSources {
 /** 選擇規則需要嘅最小商品事實（products 行嘅子集） */
 export interface GloGuideProductRow {
   id: number;
+  /** 真實 products.sku（貨號，WMS／後台顯示用；id 仍係內部 key） */
+  sku: string;
   name: string;
   image: string;
   price: number;
@@ -157,6 +173,7 @@ type Db = ReturnType<typeof getDb>;
 function mapProductRow(p: typeof products.$inferSelect): GloGuideProductRow {
   return {
     id: p.id,
+    sku: p.sku,
     name: p.name,
     image: p.image,
     price: p.price,
@@ -383,6 +400,8 @@ export function parseProductFilter(raw: unknown): GloGuideProductFilter {
         liveDate: parseLiveDate(f.liveDate),
         liveSession: parseLiveSession(f.liveSession),
       };
+    case "date":
+      return { mode: "date", liveDate: parseLiveDate(f.liveDate) };
     case "search": {
       const query = typeof f.query === "string" ? f.query.trim() : "";
       const len = [...query].length;
@@ -390,7 +409,7 @@ export function parseProductFilter(raw: unknown): GloGuideProductFilter {
       return { mode: "search", query };
     }
     default:
-      throw badRequest("未知商品來源模式（auto／week／session／search）");
+      throw badRequest("未知商品來源模式（auto／week／session／date／search）");
   }
 }
 
@@ -432,8 +451,12 @@ export function normalizeGenerateSelection(input: {
   const s = input.selection as Record<string, unknown>;
   if (typeof s !== "object" || Array.isArray(s)) throw badRequest("selection 格式無效");
   switch (s.mode) {
-    case "auto":
+    case "auto": {
+      // auto 永遠隨機抽 2–3 件：附 productIds 即 400（指定貨要用 week/date/session/products 模式）
+      const ids = optionalPickedIds(s.productIds);
+      if (ids) throw badRequest("auto 模式唔准指定商品（自動生成會隨機抽 2–3 件）");
       return { mode: "auto" };
+    }
     case "week": {
       const sel: GloGuideGenerateSelection = {
         mode: "week",
@@ -453,13 +476,22 @@ export function normalizeGenerateSelection(input: {
       if (ids) sel.productIds = ids;
       return sel;
     }
+    case "date": {
+      const sel: GloGuideGenerateSelection = {
+        mode: "date",
+        liveDate: parseLiveDate(s.liveDate),
+      };
+      const ids = optionalPickedIds(s.productIds);
+      if (ids) sel.productIds = ids;
+      return sel;
+    }
     case "products": {
       const ids = optionalPickedIds(s.productIds);
-      if (!ids) throw badRequest("products 模式要直接指定 2–3 件商品");
+      if (!ids) throw badRequest("products 模式要直接指定最少 2 件商品");
       return { mode: "products", productIds: ids };
     }
     default:
-      throw badRequest("未知生成模式（auto／week／session／products）");
+      throw badRequest("未知生成模式（auto／week／session／date／products）");
   }
 }
 
@@ -474,6 +506,7 @@ function toRef(
   const reason = ineligibleReason(row, usedBefore, now);
   return {
     id: row.id,
+    sku: row.sku,
     name: row.name,
     image: row.image,
     price: row.price,
@@ -492,6 +525,7 @@ function toRef(
 function toSelected(row: GloGuideProductRow): GloGuideSelectedProduct {
   return {
     id: row.id,
+    sku: row.sku,
     name: row.name,
     image: row.image,
     price: row.price,
@@ -516,8 +550,10 @@ export interface GloGuideQueryOptions {
  * ─ auto：只回傳最近一個有 ≥2 件合資格未用商品嘅週次；冇 → 空 array；
  *   **回嘅係該週完整 rows（唔隨機）**——UI 用佢顯示成個隨機池，preview 唔會每次刷新變；
  *   真正隨機抽 2–3 件只發生喺生成（resolveGenerateProducts）。
- * ─ week/session/search：可回傳不符合條件商品（eligible=false＋原因）作 disabled 解釋；
+ * ─ week/session/date/search：可回傳不符合條件商品（eligible=false＋原因）作 disabled 解釋；
  *   server 生成時仍會重新驗證（resolveGenerateProducts）。
+ * ─ date：真 liveDate 範圍 [liveDate, liveDate] 查詢——嗰日**所有場次**＋冇場次
+ *   （liveSession 空）嘅直播商品都包，唔係齋靠場次 DTO。
  */
 export async function listGloGuideProducts(
   rawFilter: unknown,
@@ -550,14 +586,18 @@ export async function listGloGuideProducts(
       ? await store.liveInRange(filter.weekStart, addDaysYmd(filter.weekStart, 6))
       : filter.mode === "session"
         ? await store.liveInSession(filter.liveDate, filter.liveSession)
-        : await store.search(filter.query, GLO_GUIDE_SEARCH_LIMIT);
+        : filter.mode === "date"
+          ? await store.liveInRange(filter.liveDate, filter.liveDate)
+          : await store.search(filter.query, GLO_GUIDE_SEARCH_LIMIT);
   const usage = await store.usageByProduct(rows.map((r) => r.id));
   return rows.map((r) => toRef(r, usage, now));
 }
 
 /**
  * 來源概覽（SPEC productSources；staff 可查）：由最舊直播貨至本週嘅全部星期＋
- * 場次真實選項（唔設週窗上限，舊場次一樣揀到），每個選項附 total／eligible 數。
+ * 場次＋直播日（iteration 4）真實選項（唔設週窗上限，舊場次一樣揀到），
+ * 每個選項附 total／eligible 數。dates 由真 product rows 按 liveDate 分組——
+ * 冇場次（blank session）嘅商品一樣計入嗰日。
  */
 export async function listGloGuideProductSources(
   options: GloGuideQueryOptions = {},
@@ -565,7 +605,7 @@ export async function listGloGuideProductSources(
   const store = options.store ?? defaultProductStore();
   const now = options.now ?? new Date();
   const earliest = await store.earliestLiveDate();
-  if (!earliest) return { weeks: [], sessions: [] };
+  if (!earliest) return { weeks: [], sessions: [], dates: [] };
   const current = hkWeekRangeYmd(now);
   const rows = await store.liveInRange(weekStartOfYmd(earliest), current.end);
   const usage = await store.usageByProduct(rows.map((r) => r.id));
@@ -575,6 +615,7 @@ export async function listGloGuideProductSources(
     string,
     { liveDate: string; liveSession: string; total: number; eligible: number }
   >();
+  const dateMap = new Map<string, { total: number; eligible: number }>();
   for (const row of rows) {
     if (!row.liveDate) continue;
     const ok = ineligibleReason(row, usage.has(row.id), now) === null;
@@ -583,6 +624,11 @@ export async function listGloGuideProductSources(
     w.total += 1;
     if (ok) w.eligible += 1;
     weekMap.set(ws, w);
+    // 日期分組唔理場次（blank session 都計）
+    const d = dateMap.get(row.liveDate) ?? { total: 0, eligible: 0 };
+    d.total += 1;
+    if (ok) d.eligible += 1;
+    dateMap.set(row.liveDate, d);
     const session = row.liveSession?.trim();
     if (session) {
       const key = `${row.liveDate} ${session}`;
@@ -606,20 +652,23 @@ export async function listGloGuideProductSources(
       (a.liveDate < b.liveDate ? 1 : a.liveDate > b.liveDate ? -1 : 0) ||
       (a.liveSession < b.liveSession ? 1 : -1),
   );
-  return { weeks, sessions };
+  const dates = [...dateMap.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .map(([liveDate, v]) => ({ liveDate, total: v.total, eligible: v.eligible }));
+  return { weeks, sessions, dates };
 }
 
 // ──────────────────────────── 生成揀貨（server 重查＋歷史閘）────────────────────────────
 
 export interface ResolvedGloGuideProducts {
-  /** 實際揀中嘅 2–3 件（順序：手動按輸入次序；自動按隨機抽出次序） */
+  /** 實際揀中嘅商品（隨機抽 2–3 件；手動指定 ≥2 件，順序跟輸入） */
   products: GloGuideSelectedProduct[];
   /** 已喺 usage 表且 firstArticleId == excludeArticleId（同一文章保留自身商品；update 唔使再 claim） */
   selfClaimedIds: number[];
 }
 
 /**
- * 逐件重查合資格＋歷史（week/session 指定貨同 products 模式共用）：
+ * 逐件重查合資格＋歷史（week/date/session 指定貨同 products 模式共用）：
  * ─ 其他文章用過 → 409（永久去重，並發最終閘係 DB PK）；
  * ─ inactive／缺貨／到期下架／無圖／類別唔啱 → 400 真錯誤；
  * ─ 同一文章（excludeArticleId）自身用過嘅 → 放行兼記入 selfClaimedIds。
@@ -650,9 +699,10 @@ function assertEligibleRows(
  * category、場次歸屬及歷史：
  * ─ auto：由香港本週向過去逐週 fallback 到最近一個有 ≥2 件合資格未用貨嘅星期，
  *   然後喺該週合資格池**隨機抽 2–3 件**（rng 可注入，預設 Math.random）；
- * ─ week/session 有 productIds：必須屬該來源，**指定貨絕對唔隨機**；
+ * ─ week/date/session 有 productIds：必須屬該來源，**指定貨絕對唔隨機**（≥2 件，冇上限）；
  *   冇就由該來源合資格池**隨機抽 2–3 件**，少於 2 件 → 409，唔跨來源 fallback；
- * ─ products：直接指定 2–3 件（普通或直播商品皆可），絕對唔隨機；
+ *   date 來源＝嗰日 liveDate 範圍（所有場次＋blank-session 商品都屬該來源）；
+ * ─ products：直接指定 ≥2 件（冇上限；普通或直播商品皆可），絕對唔隨機；
  * ─ excludeArticleId：update 用——同一文章可以保留自身商品。
  */
 export async function resolveGenerateProducts(
@@ -687,16 +737,21 @@ export async function resolveGenerateProducts(
       );
     }
     case "week":
-    case "session": {
+    case "session":
+    case "date": {
       const rows =
         selection.mode === "week"
           ? await store.liveInRange(selection.weekStart, addDaysYmd(selection.weekStart, 6))
-          : await store.liveInSession(selection.liveDate, selection.liveSession);
+          : selection.mode === "session"
+            ? await store.liveInSession(selection.liveDate, selection.liveSession)
+            : await store.liveInRange(selection.liveDate, selection.liveDate);
       const usage = await store.usageByProduct(rows.map((r) => r.id));
       const label =
         selection.mode === "week"
           ? `指定星期（${compactToDashYmd(selection.weekStart)} 嗰週）`
-          : `指定場次（${selection.liveDate} 第 ${selection.liveSession} 場）`;
+          : selection.mode === "session"
+            ? `指定場次（${selection.liveDate} 第 ${selection.liveSession} 場）`
+            : `指定日期（${selection.liveDate}）`;
       if (selection.productIds && selection.productIds.length > 0) {
         const byId = new Map(rows.map((r) => [r.id, r]));
         const chosen = selection.productIds.map((id) => {

@@ -64,6 +64,7 @@ const h = vi.hoisted(() => {
           sourceImageSnapshot: '/uploads/old.png',
           imageDrifted: true,
           current: {
+            sku: 'B244',
             name: '蕾絲花邊衫',
             image: 'https://img.example.com/p1.jpg',
             photos: [],
@@ -93,6 +94,7 @@ const h = vi.hoisted(() => {
     setDefaultMut: { mutateAsync: vi.fn(ok), isPending: false },
     deleteMut: { mutateAsync: vi.fn(ok), isPending: false },
     uploadMut: { mutateAsync: vi.fn(ok), isPending: false },
+    imgGenMut: { mutateAsync: vi.fn(ok), isPending: false },
     invalidateModels: vi.fn(ok),
   };
   return state;
@@ -112,13 +114,13 @@ vi.mock('@/providers/trpc', () => {
         approve: { useMutation: mut },
         reject: { useMutation: mut },
         archive: { useMutation: mut },
-        imageGenerate: { useMutation: mut },
+        imageGenerate: { useMutation: () => h.imgGenMut },
         imageUpload: { useMutation: mut },
         imageDelete: { useMutation: mut },
         imageReview: { useMutation: mut },
         imageRead: { useQuery: () => query(null) },
-        // 選貨 contract（iteration-3）：CreateArticleCard 用呢三個；呢個測試唔開新增卡
-        productSources: { useQuery: () => query({ weeks: [], sessions: [] }) },
+        // 選貨 contract（iteration-4）：CreateArticleCard 用呢三個；呢個測試唔開新增卡
+        productSources: { useQuery: () => query({ weeks: [], dates: [], sessions: [] }) },
         products: { useQuery: () => query({ items: [] }) },
         modelImages: { useQuery: () => query(h.models) },
         modelImageUpload: { useMutation: () => h.uploadMut },
@@ -170,6 +172,7 @@ beforeEach(() => {
   h.setDefaultMut.mutateAsync.mockClear();
   h.deleteMut.mutateAsync.mockClear();
   h.uploadMut.mutateAsync.mockClear();
+  h.imgGenMut.mutateAsync.mockClear();
   h.invalidateModels.mockClear();
   h.models.effective = {
     ref: '/uploads/glo-guide-models/3f6b2a1c-9d4e-4f5a-8b6c-7d8e9f0a1b2c.jpg',
@@ -204,6 +207,7 @@ describe('已揀商品審批卡', () => {
     expect(img?.getAttribute('src')).toBe('https://img.example.com/p1.jpg');
     const text = first.textContent ?? '';
     expect(text).toContain('蕾絲花邊衫');
+    expect(text).toContain('貨號 B244');
     expect(text).toContain('上衣'); // 類別
         expect(text).toContain('HK$239'); // 折扣價
     expect(text).toContain('HK$268'); // 原價（刪除線）
@@ -219,6 +223,19 @@ describe('已揀商品審批卡', () => {
     expect(second.querySelector('img')?.getAttribute('src')).toBe('/uploads/gone.png');
     expect(second.textContent).toContain('已刪裙');
     expect(second.textContent).toContain('商品已刪除');
+  });
+});
+
+describe('逐商品增加生成', () => {
+  it('預設揀第一件商品；撳增加生成會送 productId，同一件可以重複再出圖', async () => {
+    await renderPanel();
+    await click('展開');
+    expect(container!.textContent).toContain('初次生成會每件商品出一張');
+    expect(container!.textContent).not.toContain('上架要 3–5 張');
+    await click('增加生成');
+    expect(h.imgGenMut.mutateAsync).toHaveBeenCalledWith({ id: 42, productId: 101 });
+    await click('增加生成');
+    expect(h.imgGenMut.mutateAsync).toHaveBeenCalledTimes(2);
   });
 });
 

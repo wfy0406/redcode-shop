@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, eq, gt, ilike, inArray, isNotNull, isNull, or, desc } from "drizzle-orm";
+import { and, asc, eq, gt, ilike, inArray, isNotNull, isNull, or, desc, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { cartItems, listingBatchItems, listingBatches, orderItems, productAiTagsTombstones, productImageArchive, products } from "@db/schema";
 import { PRODUCT_CATEGORY_VALUES, productCategoryLabel } from "@contracts/types";
@@ -206,6 +206,29 @@ function describeProductChanges(
   return parts.length > 0 ? parts.join("；") : "內容冇變";
 }
 
+export const adminProductPageInputSchema = z.object({
+  q: z.string().trim().max(100).optional(),
+  category: categorySchema.optional(),
+  createdDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  sort: z.enum(["created", "name", "listed", "category"]).default("created"),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.union([z.literal(50), z.literal(100), z.literal(150), z.literal(200)]).default(50),
+});
+
+export type AdminProductPageInput = z.infer<typeof adminProductPageInputSchema>;
+
+/** 用家輸入嘅 % / _ / \\ 只係字面，唔准變成 LIKE 通配符。 */
+export function escapeAdminProductSearch(q: string): string {
+  return q.replace(/[%_\\]/g, (c) => `\\${c}`);
+}
+
+export function adminProductPageMetadata(totalRows: number, requestedPage: number, pageSize: number) {
+  const total = Math.max(0, Math.floor(totalRows));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(totalPages, Math.max(1, Math.floor(requestedPage)));
+  return { total, totalPages, page, offset: (page - 1) * pageSize };
+}
+
 export const productsRouter = createRouter({
   list: publicQuery
     .input(
@@ -363,7 +386,7 @@ export const productsRouter = createRouter({
     return batches.map((b) => ({ ...b, items: byBatch.get(b.id) ?? [] }));
   }),
 
-  // staff 專用：全部商品（包括下架），俾管理後台用
+  // staff 專用：全部商品（包括下架），俾抽獎／改單選貨器等舊 consumer 用
   adminList: staffProcedure.query(async () => {
     const db = getDb();
     return db
@@ -371,6 +394,91 @@ export const productsRouter = createRouter({
       .from(products)
       .orderBy(desc(products.listedDate));
   }),
+
+  /**
+   * 商品管理專用真分頁：名稱／貨號搜尋、分類、上載日同排列全部喺 DB 做。
+   * 舊 adminList 保持原樣，唔會整爆 LuckyDrawPanel／OrderEditPanel。
+   */
+  adminPage: staffProcedure
+    .input(adminProductPageInputSchema)
+    .query(async ({ input }) => {
+      const db = getDb();
+      const baseConditions: SQL[] = [];
+      const q = input.q?.trim();
+      if (q) {
+        const term = `%${escapeAdminProductSearch(q)}%`;
+        baseConditions.push(
+          sql`(${products.name} ilike ${term} escape '\\' or ${products.sku} ilike ${term} escape '\\')`,
+        );
+      }
+      if (input.category) baseConditions.push(eq(products.category, input.category));
+
+      // timestamp 欄以 UTC 保存；日子統一用香港日曆，同員工後台顯示一致。
+      const hkCreated = sql`(${products.createdAt} at time zone 'UTC' at time zone 'Asia/Hong_Kong')`;
+      const hkDay = sql<string>`to_char(${hkCreated}, 'YYYY-MM-DD')`;
+      const conditions = [...baseConditions];
+      if (input.createdDay) conditions.push(sql`${hkDay} = ${input.createdDay}`);
+
+      const [countRows, dayRows] = await Promise.all([
+        db
+          .select({ total: sql<number>`count(*)::int` })
+          .from(products)
+          .where(and(...conditions)),
+        // 每日 chips 跟搜尋／分類走，但唔受 createdDay 自己篩走其他日子
+        db
+          .select({ key: hkDay, count: sql<number>`count(*)::int` })
+          .from(products)
+          .where(and(...baseConditions))
+          .groupBy(hkDay)
+          .orderBy(sql`${hkDay} desc`),
+      ]);
+      const meta = adminProductPageMetadata(
+        countRows[0]?.total ?? 0,
+        input.page,
+        input.pageSize,
+      );
+      const items = meta.total === 0
+        ? []
+        : await (() => {
+            switch (input.sort) {
+              case "name":
+                return db.select().from(products).where(and(...conditions))
+                  .orderBy(asc(products.name), desc(products.id))
+                  .limit(input.pageSize).offset(meta.offset);
+              case "listed":
+                return db.select().from(products).where(and(...conditions))
+                  .orderBy(desc(products.listedDate), desc(products.id))
+                  .limit(input.pageSize).offset(meta.offset);
+              case "category": {
+                const values = sql.join(PRODUCT_CATEGORY_VALUES.map((v) => sql`${v}`), sql`, `);
+                return db.select().from(products).where(and(...conditions))
+                  .orderBy(
+                    sql`coalesce(array_position(array[${values}]::text[], ${products.category}), 99)`,
+                    desc(products.createdAt),
+                    desc(products.id),
+                  )
+                  .limit(input.pageSize).offset(meta.offset);
+              }
+              default:
+                return db.select().from(products).where(and(...conditions))
+                  .orderBy(desc(products.createdAt), desc(products.id))
+                  .limit(input.pageSize).offset(meta.offset);
+            }
+          })();
+
+      return {
+        items,
+        total: meta.total,
+        page: meta.page,
+        pageSize: input.pageSize,
+        totalPages: meta.totalPages,
+        dailyCounts: dayRows.map((row) => ({
+          key: row.key,
+          label: `${Number(row.key.slice(5, 7))}月${Number(row.key.slice(8, 10))}日`,
+          count: row.count,
+        })),
+      };
+    }),
 
   byId: publicQuery
     .input(z.object({ id: z.number().int().positive() }))

@@ -107,14 +107,14 @@ describe('上傳檔檢查', () => {
   });
 });
 
-describe('選貨 contract（iteration-3 SPEC：auto／week／session／products）', () => {
+describe('選貨 contract（iteration-4 SPEC：auto／week／date／session／products）', () => {
   describe('buildGenerateSelection', () => {
     it('auto：永遠淨係 {mode:"auto"}，唔帶商品', () => {
       expect(buildGenerateSelection('auto', { productIds: [1, 2] })).toEqual({ mode: 'auto' });
       expect(buildGenerateSelection('auto', { productIds: [] })).toEqual({ mode: 'auto' });
     });
 
-    it('week：0 件＝來源合資格池隨機抽（唔帶 productIds）；2–3 件＝帶 productIds', () => {
+    it('week：0 件＝來源合資格池隨機抽（唔帶 productIds）；人手最少 2 件、唔設上限', () => {
       expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [] })).toEqual({
         mode: 'week',
         weekStart: '2026-11-02',
@@ -131,10 +131,23 @@ describe('選貨 contract（iteration-3 SPEC：auto／week／session／products�
       });
     });
 
-    it('week：冇 weekStart 或揀 1 件 → null（UI 擋生成，唔會暗中改來源）', () => {
+    it('week：冇 weekStart 或揀 1 件 → null；4 件以上照樣完整沿用', () => {
       expect(buildGenerateSelection('week', { weekStart: null, productIds: [] })).toBeNull();
       expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [7] })).toBeNull();
-      expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [1, 2, 3, 4] })).toBeNull();
+      expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [1, 2, 3, 4] })).toEqual({
+        mode: 'week', weekStart: '2026-11-02', productIds: [1, 2, 3, 4],
+      });
+    });
+
+    it('date：獨立指定日期；無 ids 隨機 2–3，有 ids 完整沿用人手商品', () => {
+      expect(buildGenerateSelection('date', { liveDate: '20261108', productIds: [] })).toEqual({
+        mode: 'date', liveDate: '20261108',
+      });
+      expect(buildGenerateSelection('date', { liveDate: '20261108', productIds: [4, 5, 6, 7] })).toEqual({
+        mode: 'date', liveDate: '20261108', productIds: [4, 5, 6, 7],
+      });
+      expect(buildGenerateSelection('date', { liveDate: null, productIds: [] })).toBeNull();
+      expect(buildGenerateSelection('date', { liveDate: '20261108', productIds: [4] })).toBeNull();
     });
 
     it('session：要齊 liveDate＋liveSession；規則同 week', () => {
@@ -151,14 +164,16 @@ describe('選貨 contract（iteration-3 SPEC：auto／week／session／products�
       ).toBeNull();
     });
 
-    it('products：一定要直接指定 2–3 件', () => {
+    it('products：一定要直接指定最少 2 件，唔設上限', () => {
       expect(buildGenerateSelection('products', { productIds: [3, 4] })).toEqual({
         mode: 'products',
         productIds: [3, 4],
       });
       expect(buildGenerateSelection('products', { productIds: [] })).toBeNull();
       expect(buildGenerateSelection('products', { productIds: [3] })).toBeNull();
-      expect(buildGenerateSelection('products', { productIds: [1, 2, 3, 4] })).toBeNull();
+      expect(buildGenerateSelection('products', { productIds: [1, 2, 3, 4] })).toEqual({
+        mode: 'products', productIds: [1, 2, 3, 4],
+      });
     });
 
     it('productIds 係複製（caller 改原 array 唔影響 payload）', () => {

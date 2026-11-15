@@ -3,8 +3,9 @@
  *
  * SPEC v1 生成流程第 5–6 步：
  * ─ 衣物主幹（冇文章場景 context）：POST https://api.fashn.ai/v1/run（model_name tryon-max）＋ poll /v1/status/<id>；
- * ─ 飾品／多品（input.experimental=true）：POST /v1/agent/images/run，屬 experimental 路線；
- * ─ 有文章場景 context（articleTheme/articleBody 任一非空）：一律行 agent/images/run 場景路線——
+ * ─ 飾品／多品（input.experimental=true）：POST /v1/agent/images/run（flat body：prompt＋images[]），
+ *   poll GET /v1/agent/status/<id>（predictions[].results[]），屬 experimental 路線；
+ * ─ 有文章場景 context（articleTheme/articleBody 任一非空）：一律行同一條 agent/images/run 場景路線——
  *   場景跟文章主題／正文（office 等關鍵詞映射）、每張按 variation 換 pose／構圖、
  *   商品外觀以原商品圖硬參考（見 buildGloGuideScenePrompt）；prompt 唔保證一致性，
  *   最終閘仍係人工逐圖審批（唔會因為 prompt 就當自動合格）；
@@ -36,6 +37,10 @@ export const GLO_GUIDE_FASHN_MAX_RETRIES = 2;
 export const GLO_GUIDE_FASHN_POLL_INTERVAL_MS = 2_000;
 export const GLO_GUIDE_FASHN_MAX_POLLS = 60;
 const MAX_PRODUCT_IMAGE_BYTES = 30 * 1024 * 1024;
+/** Agent Images 文件上限：每張 base64／data-URI 輸入圖 ≤10MB（超限會俾 400 BadRequest 打回頭） */
+const FASHN_AGENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+/** Agent prompt 文件上限 10,000 chars（超限會 400 BadRequest） */
+const FASHN_AGENT_PROMPT_MAX_CHARS = 10_000;
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 type SleepLike = (ms: number) => Promise<void>;
@@ -199,11 +204,17 @@ const PLACEMENT: Record<string, string> = {
   accessory: "as a natural accessory on the original person, matching the visible styling",
 };
 
-function tryOnPrompt(category: string): string {
+/**
+ * tryon-max 用 positional=false（沿用 model_image/product_image 欄位稱呼）；
+ * agent-images flat body 冇命名欄位，改用位置稱呼（第一張＝模特兒、第二張＝商品）。
+ */
+function tryOnPrompt(category: string, positional = false): string {
   const placement =
     PLACEMENT[category] ??
     "as a natural accessory on the original person, matching the visible styling";
-  return `Edit model_image itself while keeping the same person, face, hair, body shape, pose, framing, camera angle, lighting and original background. Place product_image ${placement}, preserving its design, color, pattern, material appearance, logos and details. Keep all other clothing, accessories and scene elements unchanged.`;
+  const modelRef = positional ? "the first image itself" : "model_image itself";
+  const productRef = positional ? "the product in the second image" : "product_image";
+  return `Edit ${modelRef} while keeping the same person, face, hair, body shape, pose, framing, camera angle, lighting and original background. Place ${productRef} ${placement}, preserving its design, color, pattern, material appearance, logos and details. Keep all other clothing, accessories and scene elements unchanged.`;
 }
 
 // ──────────────────────────── 場景感知 prompt（有文章 context 時用 agent-images 路線）────────────────────────────
@@ -282,8 +293,8 @@ export interface GloGuideScenePromptInput {
  * ─ 呢張圖嘅 pose／構圖按 variation 輪換，同系列每張唔同；
  * ─ framing 硬要求：指定商品必須清楚可見；pants/dress/shoes 必須 full-body
  *   （mid-shot／close-up 會令商品根本睇唔到）；
- * ─ 保留 model_image 真人身分（face/hair/body shape 唔變），**pose／背景可以改**；
- * ─ 商品外觀以原商品圖硬參考：design/color/pattern/material/logos/details 唔准改，
+ * ─ 保留第一張圖（模特兒原圖）真人身分（face/hair/body shape 唔變），**pose／背景可以改**；
+ * ─ 商品外觀以第二張圖（原商品圖）硬參考：design/color/pattern/material/logos/details 唔准改，
  *   唔准添加其他商品。
  * 注意：prompt 只係指令，**唔保證** provider 次次一致——最終閘仍係人工逐圖審批。
  */
@@ -300,16 +311,19 @@ export function buildGloGuideScenePrompt(input: GloGuideScenePromptInput): strin
     PLACEMENT[input.category] ??
     "as a natural accessory on the original person, matching the visible styling";
   const product = input.productName.trim().slice(0, 120);
+  // Agent flat body 冇 model_image／product_image 命名欄位：按 images[] 位置稱呼
+  // （第一張＝模特兒原圖、第二張＝商品原圖，順序見 submitJob）。
   return [
-    `Edit model_image: keep the exact same real person — identity, face, hair and body shape must stay recognizable and unchanged.`,
+    `You are given two images: the first image is the real person (model) reference, and the second image is the product reference.`,
+    `Edit the first image: keep the exact same real person — identity, face, hair and body shape must stay recognizable and unchanged.`,
     `This time you may change the pose, framing, camera angle and background to fit the article scene.`,
     `Scene: place the person in ${scene}, matching the article theme "${theme}".`,
     `Pose/composition for THIS image: ${pose}. It must be visibly different from the other images in this series.`,
     fullBodyRequired
       ? `Framing hard requirement: use full-body framing so the featured ${input.category} product is fully and clearly visible; do not crop it out of the frame.`
       : `Framing hard requirement: the featured product must be clearly visible in the frame.`,
-    `Dress the person with the product "${product}" from the reference product image ${placement}.`,
-    `Preserve the product's design, color, pattern, material appearance, logos and details exactly as shown in the product image — do not redesign or restyle it.`,
+    `Dress the person in the first image with the product "${product}" from the second image ${placement}.`,
+    `Preserve the product's design, color, pattern, material appearance, logos and details exactly as shown in the second image — do not redesign or restyle it.`,
     `Do not add any other products or extra branded items.`,
   ].join(" ");
 }
@@ -352,6 +366,38 @@ function isOutOfCredits(code: string, message: string): boolean {
   return /outofcredits|out_of_credits|insufficient.?credit/i.test(`${code} ${message}`);
 }
 
+/**
+ * 淨化 provider 錯誤文字：唔准帶出請求 body／base64 圖／auth token／secret。
+ * 只保留短嘅人讀描述，截斷＋壓空白。
+ */
+function sanitizeProviderDetail(value: unknown, maxLen = 240): string {
+  if (typeof value !== "string") return "";
+  let text = value.replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  // 順序要紧：先遮 auth，再遮 data URI（base64 字元集唔包含空白，唔會吞埋後面嘅字）
+  text = text.replace(/bearer\s+\S+/gi, "bearer [redacted]");
+  text = text.replace(/api[_-]?key["'\s:=]+\S+/gi, "api_key [redacted]");
+  text = text.replace(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]*/gi, "[image]");
+  // 長 base64／token 樣字串（譬如 echo 返請求入面嘅圖）一律遮蓋
+  text = text.replace(/[A-Za-z0-9+/=_-]{120,}/g, "[redacted]");
+  return text.slice(0, maxLen).trim();
+}
+
+/** 由 error response body 抽 provider 嘅 name/code＋message（agent 用 name、tryon 用 code），已淨化 */
+function providerErrorDetail(body: unknown): string {
+  const error = record(body).error;
+  if (typeof error === "string") return sanitizeProviderDetail(error);
+  const errObj = record(error);
+  const name =
+    typeof errObj.name === "string" && errObj.name.trim()
+      ? errObj.name.trim().slice(0, 64)
+      : typeof errObj.code === "string" && errObj.code.trim()
+        ? errObj.code.trim().slice(0, 64)
+        : "";
+  const message = sanitizeProviderDetail(errObj.message, 200);
+  return [name, message].filter(Boolean).join(": ");
+}
+
 async function fashnRequest(
   config: FashnConfig,
   fetchImpl: FetchLike,
@@ -390,7 +436,16 @@ async function fashnRequest(
     body = null;
   }
   if (!response.ok) {
-    const { code, retryable } = errorCodeForStatus(response.status);
+    let { code, retryable } = errorCodeForStatus(response.status);
+    // auth／credits／rate-limit 用固定訊息（唔帶出 provider 內部細節）；
+    // FASHN_INPUT／其他 HTTP 錯附上已淨化嘅 provider error name/message，方便排查。
+    const detail = providerErrorDetail(body);
+    // Agent 文件將 OutOfCredits 都列做 HTTP 429；呢類冇得 retry，唔好當一般 rate limit 重試。
+    if (code === "FASHN_RATE_LIMIT" && isOutOfCredits("", detail)) {
+      code = "FASHN_CREDITS";
+      retryable = false;
+    }
+    const suffix = detail ? `：${detail}` : "";
     const message =
       code === "FASHN_AUTH"
         ? "Fashn 服務授權失敗，請管理員檢查伺服器設定"
@@ -398,7 +453,9 @@ async function fashnRequest(
           ? "Fashn 服務額度不足"
           : code === "FASHN_RATE_LIMIT"
             ? "Fashn 服務繁忙，請稍後再試"
-            : `Fashn 服務未能完成請求（HTTP ${response.status}）`;
+            : code === "FASHN_INPUT"
+              ? `Fashn 服務拒絕咗請求（HTTP ${response.status}）${suffix}`
+              : `Fashn 服務未能完成請求（HTTP ${response.status}）${suffix}`;
     throw new GloGuideProviderError(code, message, retryable);
   }
   return record(body);
@@ -448,11 +505,35 @@ type FashnStatus =
   | { state: "completed"; imageUrl: string }
   | { state: "failed"; code: string; message: string };
 
-function parseStatus(body: Record<string, unknown>): FashnStatus {
+/** 揾 predictions[] 入面第一個 completed 步驟嘅第一條 https 結果（Agent 路線嘅完成輸出位置） */
+function agentCompletedImageUrl(body: Record<string, unknown>): string | null {
+  const predictions = Array.isArray(body.predictions) ? body.predictions : [];
+  for (const prediction of predictions) {
+    const entry = record(prediction);
+    if (entry.status !== "completed") continue;
+    const results = Array.isArray(entry.results) ? entry.results : [];
+    for (const result of results) {
+      if (typeof result === "string" && /^https:\/\//i.test(result)) return result;
+    }
+  }
+  return null;
+}
+
+/**
+ * 狀態解析：
+ * ─ 普通 tryon-max：completed → output[0]（https URL）；
+ * ─ agent-images：completed → predictions[].results[] 第一條 https URL；
+ * ─ 兩條路線嘅 failed error 形狀唔同（tryon 用 code、agent 用 name），統一抽 name/code＋message。
+ */
+function parseStatus(body: Record<string, unknown>, agentRoute: boolean): FashnStatus {
   const status = typeof body.status === "string" ? body.status : "";
   if (["starting", "in_queue", "processing"].includes(status)) return { state: "processing" };
   if (status === "completed") {
-    const output = Array.isArray(body.output) ? body.output[0] : null;
+    const output = agentRoute
+      ? agentCompletedImageUrl(body)
+      : Array.isArray(body.output)
+        ? body.output[0]
+        : null;
     if (typeof output !== "string" || !/^https:\/\//i.test(output)) {
       throw new GloGuideProviderError(
         "FASHN_BAD_OUTPUT",
@@ -463,14 +544,15 @@ function parseStatus(body: Record<string, unknown>): FashnStatus {
     return { state: "completed", imageUrl: output };
   }
   const error = record(body.error);
-  const code =
-    typeof error.code === "string" && error.code.trim()
-      ? error.code.slice(0, 64)
-      : "PROVIDER_FAILED";
+  const rawCode =
+    typeof error.name === "string" && error.name.trim()
+      ? error.name
+      : typeof error.code === "string" && error.code.trim()
+        ? error.code
+        : "";
+  const code = rawCode ? rawCode.slice(0, 64) : "PROVIDER_FAILED";
   const message =
-    typeof error.message === "string" && error.message.trim()
-      ? error.message.slice(0, 300)
-      : "Fashn 服務未能完成生成";
+    sanitizeProviderDetail(error.message, 300) || "Fashn 服務未能完成生成";
   return { state: "failed", code, message };
 }
 
@@ -489,14 +571,19 @@ async function fetchStatusOnce(
   config: FashnConfig,
   fetchImpl: FetchLike,
   providerJobId: string,
+  agentRoute: boolean,
 ): Promise<FashnStatus> {
   if (!/^[\w-]{1,160}$/.test(providerJobId)) {
     throw new GloGuideProviderError("FASHN_BAD_ID", "Fashn 工作編號格式無效");
   }
-  const body = await fashnRequest(config, fetchImpl, `/status/${encodeURIComponent(providerJobId)}`, {
+  // Agent 路線狀態喺 /agent/status/<id>（predictions[].results[]）；tryon-max 照舊 /status/<id>（output[]）
+  const statusPath = agentRoute
+    ? `/agent/status/${encodeURIComponent(providerJobId)}`
+    : `/status/${encodeURIComponent(providerJobId)}`;
+  const body = await fashnRequest(config, fetchImpl, statusPath, {
     method: "GET",
   });
-  return parseStatus(body);
+  return parseStatus(body, agentRoute);
 }
 
 export interface GloGuideFashnOptions {
@@ -524,50 +611,81 @@ function validateInput(input: GloGuideImageGenInput): void {
   }
 }
 
+/** 同一路由決策：submit 同 poll／resume 必須一致（experimental 或有 scene context → Agent 路線） */
+function useAgentRoute(input: GloGuideImageGenInput): boolean {
+  return Boolean(input.experimental) || hasGloGuideSceneContext(input);
+}
+
+/**
+ * Agent 路線每張 base64／data-URI 輸入圖文件上限 10MB（URL 輸入唔受呢條限制，
+ * 因為係 Fashn 自己拉取）。超限喺呢度誠實 throw，避免已知會 400 BadRequest 嘅請求照寄。
+ */
+function assertAgentImageSize(imageInput: string, code: string, label: string): void {
+  const dataUri = DATA_URI_RE.exec(imageInput);
+  if (!dataUri) return;
+  const base64Length = dataUri[2]!.replace(/[\r\n]/g, "").length;
+  const approxBytes = Math.floor((base64Length * 3) / 4);
+  if (approxBytes > FASHN_AGENT_IMAGE_MAX_BYTES) {
+    throw new GloGuideProviderError(
+      code,
+      `${label}超過 Fashn Agent 路線每張圖 10MB 上限，請改用較細嘅圖或 https URL`,
+    );
+  }
+}
+
 async function submitJob(
   config: FashnConfig,
   fetchImpl: FetchLike,
   input: GloGuideImageGenInput,
   modelImageUrl: string,
   productImageInput: string,
+  agentRoute: boolean,
 ): Promise<string> {
   // 路由：有 scene context（文章 theme/body）→ 行 agent-images 場景路線（可改背景／pose）；
-  // 冇 context 就保持舊路線——飾品 experimental 行 agent-images（舊 prompt），其餘 tryon-max。
+  // 冇 context 就保持舊路線——飾品 experimental 行 agent-images，其餘 tryon-max。
   const scene = hasGloGuideSceneContext(input);
-  const agentRoute = input.experimental || scene;
-  const prompt = scene
-    ? buildGloGuideScenePrompt({
-        category: input.category,
-        articleTheme: input.articleTheme ?? "",
-        articleBody: input.articleBody ?? "",
-        productName: input.productName ?? "",
-        variation: input.variation ?? 0,
-      })
-    : tryOnPrompt(input.category);
-  const pathName = agentRoute ? "/agent/images/run" : "/run";
-  const payload = agentRoute
-    ? {
-        // agent-images 路線：飾品／多品／場景感知配搭；結果同樣要過下載白名單＋人工逐圖審批
-        model_name: "agent-images",
-        inputs: {
-          model_image: modelImageUrl,
-          images: [productImageInput],
-          prompt,
-          output_format: "png",
-        },
-      }
-    : {
-        model_name: "tryon-max",
-        inputs: {
-          model_image: modelImageUrl,
-          product_image: productImageInput,
-          prompt,
-          generation_mode: "quality",
-          resolution: "1k",
-          num_images: 1,
-          output_format: "png",
-        },
-      };
+  const prompt = (
+    scene
+      ? buildGloGuideScenePrompt({
+          category: input.category,
+          articleTheme: input.articleTheme ?? "",
+          articleBody: input.articleBody ?? "",
+          productName: input.productName ?? "",
+          variation: input.variation ?? 0,
+        })
+      : tryOnPrompt(input.category, agentRoute)
+  ).slice(0, FASHN_AGENT_PROMPT_MAX_CHARS);
+  let pathName: string;
+  let payload: Record<string, unknown>;
+  if (agentRoute) {
+    // Agent Images flat contract（文件：POST /v1/agent/images/run）：
+    // 頂層 prompt＋images[]（model 先、product 後，prompt 按位置稱呼）；
+    // 冇 model_name／inputs／model_image／output_format。
+    assertAgentImageSize(modelImageUrl, "FASHN_MODEL_IMAGE", "模特兒原圖");
+    assertAgentImageSize(productImageInput, "FASHN_PRODUCT_IMAGE", "商品圖");
+    pathName = "/agent/images/run";
+    payload = {
+      prompt,
+      images: [modelImageUrl, productImageInput],
+      aspect_ratio: "3:4",
+      resolution: "1k",
+      generation_mode: "quality",
+    };
+  } else {
+    pathName = "/run";
+    payload = {
+      model_name: "tryon-max",
+      inputs: {
+        model_image: modelImageUrl,
+        product_image: productImageInput,
+        prompt,
+        generation_mode: "quality",
+        resolution: "1k",
+        num_images: 1,
+        output_format: "png",
+      },
+    };
+  }
   const body = await fashnRequest(config, fetchImpl, pathName, {
     method: "POST",
     body: JSON.stringify(payload),
@@ -608,9 +726,10 @@ export async function generateGloGuideImage(
 
   const modelImageUrl = await resolveGloGuideModelImageInput(input.modelImage, options.env ?? process.env);
   const productImageInput = await resolveGloGuideProductImage(input.productImage);
+  const agentRoute = useAgentRoute(input);
 
   const providerJobId = await withFashnRetry(
-    () => submitJob(config, fetchImpl, input, modelImageUrl, productImageInput),
+    () => submitJob(config, fetchImpl, input, modelImageUrl, productImageInput, agentRoute),
     sleep,
     maxRetries,
   );
@@ -620,7 +739,7 @@ export async function generateGloGuideImage(
   for (let poll = 0; poll < maxPolls; poll++) {
     await sleep(pollInterval);
     const status = await withFashnRetry(
-      () => fetchStatusOnce(config, fetchImpl, providerJobId),
+      () => fetchStatusOnce(config, fetchImpl, providerJobId, agentRoute),
       sleep,
       maxRetries,
     );
@@ -651,9 +770,12 @@ export async function resumeGloGuideImage(
   const config = resolveConfig(options);
   const fetchImpl = options.fetchImpl ?? fetch;
   const sleep = options.sleep ?? defaultSleep;
+  // resume 用同一份 input 嘅同一路由決策（experimental／scene）揀 poll endpoint，
+  // 否則 agent job 會打錯去 /status/<id> 永遠 404。
+  const agentRoute = useAgentRoute(input);
 
   const status = await withFashnRetry(
-    () => fetchStatusOnce(config, fetchImpl, providerJobId),
+    () => fetchStatusOnce(config, fetchImpl, providerJobId, agentRoute),
     sleep,
     GLO_GUIDE_FASHN_MAX_RETRIES,
   );

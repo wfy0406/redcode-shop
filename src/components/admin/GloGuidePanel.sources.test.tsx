@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 /**
- * GloGuidePanel 選貨區真互動測試（iteration-3 SPEC；happy-dom＋真 React render；trpc 全 mock）：
- * ─ 四種選貨 tab（自動／指定星期／指定場次／指定商品）齊，預設自動；
- * ─ productSources 真星期／日期場次選項；products query 按 mode 送啱 filter；
- * ─ 商品 usedBefore／ineligible 真 disabled＋原因；2–3 件選擇閘；
+ * GloGuidePanel 選貨區真互動測試（iteration-4 SPEC；happy-dom＋真 React render；trpc 全 mock）：
+ * ─ 五種選貨 tab（自動／指定星期／指定日期／指定場次／指定商品）齊，預設自動；
+ * ─ productSources 真星期／日期／場次選項；products query 按 mode 送啱 filter；
+ * ─ 商品 usedBefore／ineligible 真 disabled＋原因；人手最少 2 件、唔設上限；
  * ─ generate 淨係送 {selection, themeHint}（SPEC：同時送 top-level productIds 會 400）；
  * ─ loading／empty／error＋重試；busy 防重複。
  */
@@ -17,22 +17,22 @@ const h = vi.hoisted(() => {
   const ok = async () => ({});
   const defaultItems = [
     {
-      id: 11, name: '蕾絲花邊衫', image: '/a.jpg', price: 268, discountPrice: 239,
+      id: 11, sku: 'B244', name: '蕾絲花邊衫', image: '/a.jpg', price: 268, discountPrice: 239,
       aiTags: ['蕾絲', '法式'], liveDate: '20261108', liveSession: '2', category: 'top', stock: 5,
       usedBefore: false, eligible: true, ineligibleReason: null,
     },
     {
-      id: 12, name: '牛仔褸', image: '/b.jpg', price: 399, discountPrice: null,
+      id: 12, sku: 'B238', name: '牛仔褸', image: '/b.jpg', price: 399, discountPrice: null,
       aiTags: [], liveDate: '20261108', liveSession: '2', category: 'outer', stock: 3,
       usedBefore: false, eligible: true, ineligibleReason: null,
     },
     {
-      id: 13, name: '舊裙', image: '/c.jpg', price: 199, discountPrice: null,
+      id: 13, sku: 'B237', name: '舊裙', image: '/c.jpg', price: 199, discountPrice: null,
       aiTags: [], liveDate: '20261107', liveSession: '1', category: 'dress', stock: 2,
       usedBefore: true, eligible: false, ineligibleReason: 'used',
     },
     {
-      id: 14, name: '缺貨長褲', image: '/d.jpg', price: 259, discountPrice: null,
+      id: 14, sku: 'B230', name: '缺貨長褲', image: '/d.jpg', price: 259, discountPrice: null,
       aiTags: [], liveDate: '20261108', liveSession: '2', category: 'bottom', stock: 0,
       usedBefore: false, eligible: false, ineligibleReason: 'out_of_stock',
     },
@@ -43,6 +43,10 @@ const h = vi.hoisted(() => {
       weeks: [
         { weekStart: '2026-11-02', weekEnd: '2026-11-08', total: 4, eligible: 3 },
         { weekStart: '2026-10-26', weekEnd: '2026-11-01', total: 3, eligible: 0 },
+      ],
+      dates: [
+        { liveDate: '20261108', total: 5, eligible: 3 },
+        { liveDate: '20261107', total: 2, eligible: 1 },
       ],
       sessions: [
         { liveDate: '20261108', liveSession: '2', total: 3, eligible: 2 },
@@ -206,10 +210,10 @@ afterEach(async () => {
   document.body.innerHTML = '';
 });
 
-describe('四種選貨方式', () => {
-  it('四個 tab 齊＋預設自動揀貨；products query 收 {mode:"auto"}', async () => {
+describe('五種選貨方式', () => {
+  it('五個 tab 齊＋預設自動揀貨；products query 收 {mode:"auto"}', async () => {
     await openCreate();
-    for (const label of ['自動揀貨', '指定星期', '指定場次', '指定商品']) {
+    for (const label of ['自動揀貨', '指定星期', '指定日期', '指定場次', '指定商品']) {
       expect(btnWith(label)).toBeTruthy();
     }
     const auto = btnWith('自動揀貨');
@@ -230,6 +234,8 @@ describe('四種選貨方式', () => {
     const text = grid!.textContent ?? '';
     expect(text).toContain('蕾絲花邊衫');
     expect(text).toContain('牛仔褸');
+    expect(text).toContain('貨號 B244');
+    expect(text).toContain('貨號 B238');
     expect(text).not.toContain('舊裙');
     expect(text).not.toContain('缺貨長褲');
     expect(container!.textContent).toContain('只讀，唔使揀');
@@ -289,6 +295,24 @@ describe('指定星期', () => {
     expect('productIds' in arg).toBe(false);
   });
 
+  it('人手揀 4 件唔再被截停，generate 完整送出全部 ids', async () => {
+    h.productItems = [0, 1, 2, 3].map((i) => ({
+      ...h.defaultItems[0]!, id: 20 + i, sku: `T${20 + i}`, name: `測試商品 ${i}`,
+    }));
+    await openCreate();
+    await click('指定星期');
+    for (const i of [0, 1, 2, 3]) {
+      const card = productBtn(`測試商品 ${i}`);
+      expect(card.disabled).toBe(false);
+      await click(`測試商品 ${i}`);
+    }
+    expect(btnWith('產生文章＋相').textContent).toContain('已揀 4 件');
+    await click('產生文章＋相');
+    expect(h.generateMutate.mock.calls[0]![0].selection).toEqual({
+      mode: 'week', weekStart: '2026-11-02', productIds: [20, 21, 22, 23],
+    });
+  });
+
   it('唔揀商品 → 來源隨機抽：送 {mode:"week", weekStart} 冇 productIds', async () => {
     await openCreate();
     await click('指定星期');
@@ -317,6 +341,22 @@ describe('指定星期', () => {
   });
 });
 
+describe('指定日期', () => {
+  it('顯示真日期選項；query 同 generate 都用獨立 date mode', async () => {
+    await openCreate();
+    await click('指定日期');
+    const sel = container!.querySelector<HTMLSelectElement>('#ggp-date');
+    expect(sel).toBeTruthy();
+    const labels = [...sel!.querySelectorAll('option')].map((o) => o.textContent);
+    expect(labels[0]).toContain('20261108');
+    expect(labels[0]).toContain('全部場次');
+    expect(labels[0]).toContain('可揀 3/5 件');
+    expect(h.productsUseQuery).toHaveBeenCalledWith({ mode: 'date', liveDate: '20261108' });
+    await click('產生文章＋相');
+    expect(h.generateMutate.mock.calls[0]![0].selection).toEqual({ mode: 'date', liveDate: '20261108' });
+  });
+});
+
 describe('指定場次', () => {
   it('顯示真日期＋場次選項；生成送 {mode:"session", liveDate, liveSession}', async () => {
     await openCreate();
@@ -341,7 +381,7 @@ describe('指定商品（真搜尋）', () => {
     await openCreate();
     await click('指定商品');
     expect(container!.textContent).toContain('輸入關鍵字撳「搜尋」');
-    // 未搜尋 → 生成掣 disabled（products 必要 2–3 件）
+    // 未搜尋 → 生成掣 disabled（products 必要最少 2 件）
     expect(btnWith('產生文章＋相').disabled).toBe(true);
 
     const input = container!.querySelector<HTMLInputElement>('#ggp-product-search')!;
@@ -404,7 +444,7 @@ describe('狀態處理', () => {
       root!.render(<GloGuidePanel toast={toastMock} canReview={true} />);
     });
     expect(btnWith('產生文章＋相').disabled).toBe(true);
-    for (const t of ['自動揀貨', '指定星期', '指定場次', '指定商品']) {
+    for (const t of ['自動揀貨', '指定星期', '指定日期', '指定場次', '指定商品']) {
       expect(btnWith(t).disabled).toBe(true);
     }
     expect(container!.querySelector<HTMLSelectElement>('#ggp-week')!.disabled).toBe(true);

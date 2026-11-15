@@ -115,12 +115,22 @@ describe("gloGuideFashn（tryon-max＋poll＋轉存）", () => {
     expect(persisted).toEqual(["pred-immediate"]);
   });
 
-  it("experimental（飾品／多品）行 /v1/agent/images/run", async () => {
-    const fetchImpl = vi.fn(async (url: string | URL) => {
+  it("experimental（飾品／多品）行 /v1/agent/images/run：flat body＋images [model, product]＋poll /v1/agent/status", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL, _init?: RequestInit) => {
       const u = String(url);
       if (u.endsWith("/v1/agent/images/run")) return jsonResponse({ id: "pred-2" });
-      if (u.includes("/v1/status/pred-2")) {
-        return jsonResponse({ status: "completed", output: ["https://cdn.fashn.ai/o.png"] });
+      if (u.includes("/v1/agent/status/pred-2")) {
+        return jsonResponse({
+          status: "completed",
+          predictions: [
+            {
+              id: "p-0",
+              tool: "generate-image",
+              status: "completed",
+              results: ["https://cdn.fashn.ai/o.png"],
+            },
+          ],
+        });
       }
       return pngResponse();
     });
@@ -130,6 +140,33 @@ describe("gloGuideFashn（tryon-max＋poll＋轉存）", () => {
     );
     expect(result.providerJobId).toBe("pred-2");
     expect(String(fetchImpl.mock.calls[0]![0])).toBe("https://api.fashn.ai/v1/agent/images/run");
+
+    // flat submit allowlist：只有文件記載嘅頂層欄位；冇 model_name／inputs／model_image／output_format
+    const payload = JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body));
+    expect(Object.keys(payload).sort()).toEqual([
+      "aspect_ratio",
+      "generation_mode",
+      "images",
+      "prompt",
+      "resolution",
+    ]);
+    expect(payload.model_name).toBeUndefined();
+    expect(payload.inputs).toBeUndefined();
+    // images 順序：model 先、product 後
+    expect(payload.images).toEqual([
+      "https://redcode.red/gloglo-3.jpg",
+      "https://redcode.red/uploads/product-3.png",
+    ]);
+    // positional prompt：按位置稱呼，唔再用 model_image／product_image 命名欄位
+    expect(payload.prompt).toContain("first image");
+    expect(payload.prompt).toContain("second image");
+    expect(payload.prompt).not.toContain("model_image");
+    expect(payload.prompt).not.toContain("product_image");
+
+    // agent 路線 poll 用 /v1/agent/status/<id>（唔係 /v1/status/<id>）
+    expect(String(fetchImpl.mock.calls[1]![0])).toBe(
+      "https://api.fashn.ai/v1/agent/status/pred-2",
+    );
   });
 
   it("4xx（422）唔 retry：fetch 只打一次，throw FASHN_INPUT retryable=false", async () => {
@@ -362,8 +399,18 @@ describe("scene context（文章 theme/body → agent-images 場景路線）", (
     return async (url: string | URL, _init?: RequestInit) => {
       const u = String(url);
       if (u.endsWith("/v1/agent/images/run")) return jsonResponse({ id });
-      if (u.includes(`/v1/status/${id}`)) {
-        return jsonResponse({ status: "completed", output: ["https://cdn.fashn.ai/scene.png"] });
+      if (u.includes(`/v1/agent/status/${id}`)) {
+        return jsonResponse({
+          status: "completed",
+          predictions: [
+            {
+              id: `${id}-p0`,
+              tool: "generate-image",
+              status: "completed",
+              results: ["https://cdn.fashn.ai/scene.png"],
+            },
+          ],
+        });
       }
       return pngResponse();
     };
@@ -378,11 +425,22 @@ describe("scene context（文章 theme/body → agent-images 場景路線）", (
     expect(result.providerJobId).toBe("pred-scene-1");
     expect(String(fetchImpl.mock.calls[0]![0])).toBe("https://api.fashn.ai/v1/agent/images/run");
     const payload = JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body));
-    expect(payload.model_name).toBe("agent-images");
-    const prompt = payload.inputs.prompt as string;
+    // flat body：冇 model_name／inputs；images [model, product]
+    expect(payload.model_name).toBeUndefined();
+    expect(payload.inputs).toBeUndefined();
+    expect(payload.images).toEqual([
+      "https://redcode.red/gloglo-3.jpg",
+      "https://redcode.red/uploads/product-3.png",
+    ]);
+    const prompt = payload.prompt as string;
     // 場景跟文章（辦公室關鍵詞映射）
     expect(prompt).toContain("office");
     expect(prompt).toContain("辦公室返工穿搭");
+    // positional 稱呼：第一張＝人、第二張＝商品；唔再提 model_image／product_image
+    expect(prompt).toContain("first image");
+    expect(prompt).toContain("second image");
+    expect(prompt).not.toContain("model_image");
+    expect(prompt).not.toContain("product_image");
     // 保留真人身分＋商品外觀硬參考；唔添加其他商品
     expect(prompt).toContain("identity, face, hair and body shape");
     expect(prompt).toContain("design, color, pattern, material appearance, logos and details");
@@ -398,7 +456,7 @@ describe("scene context（文章 theme/body → agent-images 場景路線）", (
     for (const variation of [0, 1, 2]) {
       const fetchImpl = vi.fn(sceneFetch(`pred-v${variation}`));
       await generateGloGuideImage(sceneInput({ variation }), { ...OPTS(), fetchImpl });
-      prompts.push(JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body)).inputs.prompt as string);
+      prompts.push(JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body)).prompt as string);
     }
     const poseLine = (p: string) => p.match(/Pose\/composition for THIS image: ([^.]+)\./)?.[1];
     expect(new Set(prompts.map(poseLine)).size).toBe(3); // 三張三個 pose
@@ -486,5 +544,198 @@ describe("scene context（文章 theme/body → agent-images 場景路線）", (
     expect(hasGloGuideSceneContext({ articleBody: "正文" })).toBe(true);
     expect(hasGloGuideSceneContext({})).toBe(false);
     expect(hasGloGuideSceneContext({ articleTheme: "  ", articleBody: "" })).toBe(false);
+  });
+});
+
+describe("agent-images 路線（flat body／agent status／10MB cap／錯誤淨化）", () => {
+  const agentInput = (over: Partial<GloGuideImageGenInput> = {}): GloGuideImageGenInput =>
+    makeInput({ category: "accessory", experimental: true, ...over });
+
+  function agentCompletedFetch(id: string, results: unknown[]) {
+    return async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/v1/agent/images/run")) return jsonResponse({ id });
+      if (u.includes(`/v1/agent/status/${id}`)) {
+        return jsonResponse({
+          status: "completed",
+          predictions: results,
+        });
+      }
+      return pngResponse();
+    };
+  }
+
+  it("predictions 解析：略過 failed 步驟，取第一個 completed 步驟嘅第一條 https result", async () => {
+    const fetchImpl = vi.fn(
+      agentCompletedFetch("pred-multi", [
+        { id: "p-fail", tool: "generate-image", status: "failed", results: [] },
+        {
+          id: "p-ok",
+          tool: "generate-image",
+          status: "completed",
+          results: ["http://insecure.example.com/skip.png", "https://cdn.fashn.ai/good.png"],
+        },
+      ]),
+    );
+    const result = await generateGloGuideImage(agentInput(), { ...OPTS(), fetchImpl });
+    expect(result.providerJobId).toBe("pred-multi");
+    expect(isGloGuideImagePath(result.path)).toBe(true);
+    // 落嚟嘅應該係第二個 prediction 嘅第一條 https result
+    const downloadUrl = String(fetchImpl.mock.calls.at(-1)![0]);
+    expect(downloadUrl).toBe("https://cdn.fashn.ai/good.png");
+  });
+
+  it("agent completed 但冇可用 https result → FASHN_BAD_OUTPUT，唔會當成功", async () => {
+    const fetchImpl = vi.fn(
+      agentCompletedFetch("pred-empty", [
+        { id: "p-fail", tool: "generate-image", status: "failed", results: [] },
+      ]),
+    );
+    await expect(
+      generateGloGuideImage(agentInput(), { ...OPTS(), fetchImpl }),
+    ).rejects.toMatchObject({ code: "FASHN_BAD_OUTPUT" });
+  });
+
+  it("agent failed run：error.name/message 會帶出（已截短淨化）", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/v1/agent/images/run")) return jsonResponse({ id: "pred-fail" });
+      return jsonResponse({
+        status: "failed",
+        error: {
+          name: "NoImageGenerated",
+          message: "The agent did not generate an image for this request.",
+        },
+        predictions: [],
+      });
+    });
+    await expect(
+      generateGloGuideImage(agentInput(), { ...OPTS(), fetchImpl }),
+    ).rejects.toMatchObject({
+      code: "FASHN_FAILED",
+      retryable: false,
+      message: expect.stringContaining("NoImageGenerated"),
+    });
+  });
+
+  it("resume：experimental input 行 /v1/agent/status/<id>（同 submit 路由一致）", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes("/v1/agent/status/agent-resume-1")) {
+        return jsonResponse({
+          status: "completed",
+          predictions: [
+            { id: "p0", tool: "generate-image", status: "completed", results: ["https://cdn.fashn.ai/resume.png"] },
+          ],
+        });
+      }
+      return pngResponse();
+    });
+    const done = await resumeGloGuideImage("agent-resume-1", agentInput(), {
+      ...OPTS(),
+      fetchImpl,
+    });
+    expect(done?.providerJobId).toBe("agent-resume-1");
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe(
+      "https://api.fashn.ai/v1/agent/status/agent-resume-1",
+    );
+  });
+
+  it("resume：scene context input 同樣行 /v1/agent/status/<id>", async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL) => jsonResponse({ status: "processing" }));
+    await expect(
+      resumeGloGuideImage(
+        "agent-resume-2",
+        makeInput({ articleTheme: "辦公室返工穿搭" }),
+        { ...OPTS(), fetchImpl },
+      ),
+    ).resolves.toBeNull();
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe(
+      "https://api.fashn.ai/v1/agent/status/agent-resume-2",
+    );
+  });
+
+  it("非 2xx：FASHN_INPUT 帶已淨化嘅 provider error name/message（遮 base64／bearer，截短）", async () => {
+    const base64Blob = `data:image/png;base64,${"A".repeat(500)}`;
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        {
+          error: {
+            name: "BadRequest",
+            message: `images[0] unreadable ${base64Blob} Authorization: Bearer super-secret-token ${"x".repeat(500)}`,
+          },
+        },
+        400,
+      ),
+    );
+    const error = await generateGloGuideImage(agentInput(), { ...OPTS(), fetchImpl }).catch(
+      (e) => e,
+    );
+    expect(error).toMatchObject({ code: "FASHN_INPUT", retryable: false });
+    expect(error.message).toContain("BadRequest");
+    expect(error.message).toContain("images[0] unreadable");
+    // 唔准帶出 base64 圖、bearer token 或超長字串
+    expect(error.message).not.toContain(base64Blob);
+    expect(error.message).not.toContain("super-secret-token");
+    expect(error.message).not.toContain("x".repeat(240));
+    expect(error.message.length).toBeLessThan(400);
+  });
+
+  it("Agent submit HTTP 429 OutOfCredits → FASHN_CREDITS，唔當 rate limit 重試", async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ error: { name: "OutOfCredits", message: "not enough credits" } }, 429),
+    );
+    await expect(
+      generateGloGuideImage(agentInput(), { ...OPTS(), fetchImpl }),
+    ).rejects.toMatchObject({ code: "FASHN_CREDITS", retryable: false });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("agent 路線：>10MB data-URI 商品圖即時 throw FASHN_PRODUCT_IMAGE，唔會寄出已知 400 嘅請求", async () => {
+    // 10MB 上限只按 base64 長度估算；用呢個 size 足以越限
+    const bigDataUri = `data:image/png;base64,${"A".repeat(14 * 1024 * 1024)}`;
+    const fetchImpl = vi.fn(async () => jsonResponse({ id: "never" }));
+    await expect(
+      generateGloGuideImage(agentInput({ productImage: bigDataUri }), { ...OPTS(), fetchImpl }),
+    ).rejects.toMatchObject({ code: "FASHN_PRODUCT_IMAGE", message: expect.stringContaining("10MB") });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("agent 路線：>10MB data-URI 模特兒圖即時 throw FASHN_MODEL_IMAGE，唔會寄出", async () => {
+    // 後台私密模特兒原圖（disk → data URI）先有可能越 10MB；種一張 11MB PNG magic 檔
+    const UUID = "3f6b2a1c-9d4e-4f5a-8b6c-7d8e9f0a1b2c";
+    const dir = path.join(uploadsDir, "glo-guide-models");
+    await mkdir(dir, { recursive: true });
+    const pngMagic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const bigBytes = Buffer.concat([pngMagic, Buffer.alloc(11 * 1024 * 1024, 1)]);
+    await writeFile(path.join(dir, `${UUID}.png`), bigBytes);
+
+    const fetchImpl = vi.fn(async () => jsonResponse({ id: "never" }));
+    await expect(
+      generateGloGuideImage(
+        agentInput({ modelImage: `${GLO_GUIDE_MODEL_IMAGE_PREFIX}${UUID}.png` }),
+        { ...OPTS(), fetchImpl, env: { UPLOADS_DIR: uploadsDir } },
+      ),
+    ).rejects.toMatchObject({ code: "FASHN_MODEL_IMAGE", message: expect.stringContaining("10MB") });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("普通 tryon-max 路線唔受 agent 10MB cap 影響（照舊 30MB 上限，會照寄）", async () => {
+    // 同一張 >10MB（但 <30MB）圖：ordinary 路線唔會喺 submit 前截停
+    const bigDataUri = `data:image/png;base64,${Buffer.alloc(11 * 1024 * 1024, 7).toString("base64")}`;
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/v1/run")) return jsonResponse({ id: "pred-big" });
+      if (u.includes("/v1/status/pred-big")) {
+        return jsonResponse({ status: "completed", output: ["https://cdn.fashn.ai/big.png"] });
+      }
+      return pngResponse();
+    });
+    const result = await generateGloGuideImage(
+      makeInput({ productImage: bigDataUri }),
+      { ...OPTS(), fetchImpl },
+    );
+    expect(result.providerJobId).toBe("pred-big");
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe("https://api.fashn.ai/v1/run");
   });
 });

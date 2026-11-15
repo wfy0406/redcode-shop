@@ -28,7 +28,6 @@ import { saveGloGuideModelImage } from "./gloGuideMedia";
 import {
   buildGloGuideSlug,
   evaluateGloGuideGate,
-  GLO_GUIDE_IMAGE_MAX,
   GLO_GUIDE_MODEL_IMAGE_MAX,
   GloGuideError,
   gloGuidePublishedMutationError,
@@ -116,6 +115,8 @@ export async function resolveArticleModelImageRef(): Promise<{
 
 export interface WeeklyProductDto {
   id: number;
+  /** 真實 products.sku（貨號；id 仍係內部 key） */
+  sku: string;
   name: string;
   image: string;
   price: number;
@@ -285,6 +286,8 @@ export function toInternalArticle(bundle: ArticleBundle) {
         current: cur
           ? {
               name: cur.name,
+              // 真實 products.sku（WMS 原商品卡顯示貨號；內部 key 仍係 productId）
+              sku: cur.sku,
               image: cur.image,
               // WMS 原商品卡要原圖＋全部相＋已批標籤＋尺寸選項（驗收 v2 對照用）
               photos: cur.photos && cur.photos.length > 0 ? [...cur.photos] : [cur.image],
@@ -481,14 +484,14 @@ function gateInputFrom(bundle: {
 // ──────────────────────────── article.generate ────────────────────────────
 
 /**
- * article.generate {selection?, productIds?, themeHint?}（SPEC 第 3 輪凍結 contract）：
- * ─ selection 四模式（auto／week／session／products）；舊 top-level productIds 等於
+ * article.generate {selection?, productIds?, themeHint?}（SPEC 第 3 輪凍結 contract＋iteration 4 date 模式）：
+ * ─ selection 五模式（auto／week／session／date／products）；舊 top-level productIds 等於
  *   { mode: "products" }；同時傳兩種 → 400；
- * ─ auto／省略：由香港本週向過去逐週 fallback，揀最新 2–3 件合資格且**從未用過**商品，
- *   一路搵到最舊直播貨嗰週（唔設週數上限）；全歷史搵唔到 → 409 真錯誤
+ * ─ auto／省略：由香港本週向過去逐週 fallback，喺最近夠貨嘅星期合資格池**隨機抽 2–3 件**
+ *   從未用過商品，一路搵到最舊直播貨嗰週（唔設週數上限）；全歷史搵唔到 → 409 真錯誤
  *   （排程經 generateArticle({}) 行同一條路，唔使改）；
- * ─ week/session 有 productIds 必須屬該來源；冇就由該來源揀最新 2–3 件，
- *   少於 2 件 → 409，唔跨來源 fallback；
+ * ─ week/date/session 有 productIds 必須屬該來源（≥2 件，冇上限）；冇就由該來源
+ *   隨機抽 2–3 件，少於 2 件 → 409，唔跨來源 fallback；
  * ─ server 重查商品存在／庫存／active／delist／圖／類別／場次歸屬／usage 歷史；
  *   其他文章用過 → 409；並發搶用由 gloGuideProductUsage PK 喺 tx 內硬擋 → 可讀 409。
  * 揀貨 → 建 draft 文章（生成中）→ 建 full job（idempotent）→ 背景跑完整文章＋圖片生成。
@@ -851,8 +854,9 @@ export async function submitArticle(
 /**
  * article.approve {id}（只 supervisor/admin——role 閘喺 WMS handler 層）：
  * 只接受 pending_review；喺**單一 transaction** FOR UPDATE 重讀，重驗 SPEC 全部硬閘
- * （title/body/theme、2–3 貨、3–5 圖、每貨有圖、逐張 approved＋reviewer/time、
- * source snapshot drift、圖片路徑白名單），全過先設 published＋publishedAt。
+ * （title/body/theme、≥2 貨（手動冇上限）、每件貨最少一張完成＋drift-safe＋已批圖、
+ * 每張圖逐張 approved＋reviewer/time、source snapshot drift、圖片路徑白名單——
+ * iteration 4 起**冇全局 3–5 張圖數閘**），全過先設 published＋publishedAt。
  */
 export async function approveArticle(
   actor: GloGuideActor,
@@ -1130,7 +1134,8 @@ export async function uploadImage(
       .select({ id: gloGuideImages.id, position: gloGuideImages.position })
       .from(gloGuideImages)
       .where(and(eq(gloGuideImages.articleId, input.id), isNull(gloGuideImages.deletedAt)));
-    if (liveRows.length >= GLO_GUIDE_IMAGE_MAX) throw conflict(`最多 ${GLO_GUIDE_IMAGE_MAX} 張圖`);
+    // iteration 4：冇全局圖數上限（SPEC 冇呢條；手動商品數冇上限，每件貨都要能加圖）——
+    // 濫用控制係：一次調用一張、transaction FOR UPDATE、published 閘、員工授權。
     const nextPosition = liveRows.reduce((m, i) => Math.max(m, i.position), -1) + 1;
     await tx.insert(gloGuideImages).values({
       publicId: randomUUID(),
@@ -1163,11 +1168,16 @@ export async function uploadImage(
  * image.generate {id, imageId?, productId?}：
  * ─ 有 imageId：重生該張（version+1，conditional update 只准 completed/failed→queued，
  *   review→pending＋清 reviewer/time，建 image job）；
- * ─ 否則按已選商品補齊：每件商品最少一張，總數補到 min(3, 商品數)…上限 5。
+ * ─ 有 productId：為該已選商品**加一張**生成圖（iteration 4：同一商品可以有多張圖，
+ *   唔再係補齊到固定總數）；
+ * ─ 兩樣都冇：補齊——逐件仲未有有效圖（未刪兼非 failed）嘅已選商品各補一張。
  * H1/M5：整個檢查＋圖/job 更新喺**同一個 transaction** 做，FOR UPDATE 鎖文章、
  * 鎖內重讀 links/images（唔用舊快照），published 即 409；**唔再寫文章 status**
  * （圖生成唔應該郁審批狀態；之前用 stale bundle.status 寫會冚 published/rejected）。
- * 每張獨立 job（idempotencyKey 擋重複點擊）。
+ * 每張獨立 job（idempotencyKey 擋重複點擊——一次調用最多一個新 job／一張新圖）。
+ * iteration 4：**冇全局圖數上限**（SPEC 冇呢條；手動商品數冇上限，N>24 件貨都要能
+ * 逐件加圖）；濫用控制係一次一張＋transaction＋published 閘＋員工授權。
+ * 發布閘係「每件商品最少一張完成＋drift-safe＋已批圖」（evaluateGloGuideGate）。
  */
 export async function generateImages(
   actor: GloGuideActor,
@@ -1228,20 +1238,16 @@ export async function generateImages(
       return;
     }
 
-    // 補齊：先逐件冇圖商品補一張，再補到最少 3 張（round-robin 已選商品）
+    // ─ productId：為該商品加一張（同一商品可多張圖）；冇 productId：逐件冇有效圖商品補一張 ─
+    // 冇全局圖數上限（iteration 4）：濫用控制係一次調用一個新 job＋transaction＋published 閘。
     const live = images.filter((i) => !i.deletedAt);
-    if (live.length >= GLO_GUIDE_IMAGE_MAX) throw conflict(`最多 ${GLO_GUIDE_IMAGE_MAX} 張圖`);
     const activeByProduct = new Map<number, number>();
     for (const i of live) {
       if (i.productId !== null && i.status !== "failed") {
         activeByProduct.set(i.productId, (activeByProduct.get(i.productId) ?? 0) + 1);
       }
     }
-    const target = Math.min(GLO_GUIDE_IMAGE_MAX, Math.max(3, links.length, live.length));
     let nextPosition = images.reduce((m, i) => Math.max(m, i.position), -1) + 1;
-    const order = [...links].sort(
-      (a, b) => (activeByProduct.get(a.productId) ?? 0) - (activeByProduct.get(b.productId) ?? 0),
-    );
     const filterPid = input.productId;
     if (filterPid !== undefined && !links.some((l) => l.productId === filterPid)) {
       throw badRequest("呢件商品唔喺指南入面");
@@ -1251,45 +1257,45 @@ export async function generateImages(
       .from(products)
       .where(inArray(products.id, links.map((l) => l.productId)));
     const prodById = new Map(productRows.map((p) => [p.id, p]));
-    let created = live.length;
-    let guard = 0;
-    while (created < target && guard++ < 10) {
-      for (const link of order) {
-        if (created >= target) break;
-        if (filterPid !== undefined && link.productId !== filterPid && (activeByProduct.get(filterPid) ?? 0) > 0) {
-          continue;
-        }
-        const product = prodById.get(link.productId);
-        if (!product) continue;
-        const [img] = await tx
-          .insert(gloGuideImages)
-          .values({
-            publicId: randomUUID(),
-            articleId: input.id,
-            productId: link.productId,
-            path: null,
-            sourceProductImage: product.image,
-            status: "queued",
-            reviewStatus: "pending",
-            position: nextPosition++,
-          })
-          .returning();
-        const { job, created: jobCreated } = await createGloGuideJob(
-          {
-            articleId: input.id,
-            imageId: img.id,
-            kind: "image",
-            idempotencyKey: `img:${img.publicId}:v1`,
-            payload: { requestedBy: actor.name },
-          },
-          tx,
-        );
-        if (jobCreated) kicked.push(job.id);
-        activeByProduct.set(link.productId, (activeByProduct.get(link.productId) ?? 0) + 1);
-        created++;
-      }
+    const targets =
+      filterPid !== undefined
+        ? links.filter((l) => l.productId === filterPid).slice(0, 1)
+        : links.filter((l) => (activeByProduct.get(l.productId) ?? 0) === 0);
+    for (const link of targets) {
+      const product = prodById.get(link.productId);
+      if (!product) continue;
+      const [img] = await tx
+        .insert(gloGuideImages)
+        .values({
+          publicId: randomUUID(),
+          articleId: input.id,
+          productId: link.productId,
+          path: null,
+          sourceProductImage: product.image,
+          status: "queued",
+          reviewStatus: "pending",
+          position: nextPosition++,
+        })
+        .returning();
+      const { job, created: jobCreated } = await createGloGuideJob(
+        {
+          articleId: input.id,
+          imageId: img.id,
+          kind: "image",
+          idempotencyKey: `img:${img.publicId}:v1`,
+          payload: { requestedBy: actor.name },
+        },
+        tx,
+      );
+      if (jobCreated) kicked.push(job.id);
     }
-    if (kicked.length === 0) throw conflict("冇需要生成嘅圖（已達數量上限或全部生成緊）");
+    if (kicked.length === 0) {
+      throw conflict(
+        filterPid !== undefined
+          ? "加圖失敗：商品已刪除，請先更新指南商品"
+          : "冇需要生成嘅圖（每件商品都已有圖）",
+      );
+    }
     });
   } catch (e) {
     // idempotency 撞 key（double-click／重試）→ tx 已 rollback，當 idempotent no-op 處理
@@ -1304,7 +1310,7 @@ export async function generateImages(
     action: "gloGuide.imageGenerate",
     targetType: "gloGuideArticle",
     targetId: input.id,
-    detail: `觸發圖片生成 ${kicked.length} 個 job${input.imageId ? `（重生圖 ${input.imageId}）` : ""}`,
+    detail: `觸發圖片生成 ${kicked.length} 個 job${input.imageId ? `（重生圖 ${input.imageId}）` : ""}${input.productId ? `（商品 ${input.productId} 加圖）` : ""}`,
   });
   return toInternalArticle(await getArticleBundle(input.id));
 }

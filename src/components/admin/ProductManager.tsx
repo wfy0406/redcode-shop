@@ -1,17 +1,17 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Ban, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { getToken } from '@/lib/auth';
-import { PRODUCT_CATEGORIES, productCategoryLabel } from '@contracts/types';
+import { PRODUCT_CATEGORIES, productCategoryLabel, type ProductCategory } from '@contracts/types';
 import { parseAiTagsJson } from '@/components/shop/shop-utils';
 import { fmtDate, fmtHKD } from './format';
 import WishingStar, { LoadingBlock } from './WishingStar';
 import type { ToastKind } from './useToasts';
 
 /**
- * 商品管理 —— products.adminList（包括下架貨，dim 顯示）/ create / update / remove
+ * 商品管理 —— products.adminPage（server 搜尋／分類／分頁，包括下架貨）/ create / update / remove
  * 編輯模式：撳行內「編輯」→ populate 表單 → submit 分流 products.update；
  * 編輯中表單標題轉「編輯商品」+ 出「取消編輯」掣。
  * 定時自動下架：開關 + datetime-local；到時前台自動消失（server 查詢時判斷，唔使 cron）。
@@ -36,7 +36,7 @@ const initialForm = {
   description: '',
 };
 
-/** products.adminList 未 merge 前嘅本地型別（同 products 表 $inferSelect 一致） */
+/** adminPage.items 同舊 adminList 一致嘅完整商品列（同 products 表 $inferSelect 一致） */
 type ProductRow = {
   id: number;
   sku: string;
@@ -174,6 +174,40 @@ const SORT_OPTIONS = [
 ] as const;
 type SortKey = (typeof SORT_OPTIONS)[number]['key'];
 
+export const PRODUCT_PAGE_SIZES = [50, 100, 150, 200] as const;
+export type ProductPageSize = (typeof PRODUCT_PAGE_SIZES)[number];
+
+export type AdminProductListOptions = {
+  q: string;
+  category: '' | ProductCategory;
+  createdDay: string | null;
+  sort: SortKey;
+  page: number;
+  pageSize: ProductPageSize;
+};
+
+/** 統一列表 query key：空篩選唔送上 server；任何條件改變都會由 caller 重設第 1 頁。 */
+export function buildAdminProductListInput(options: AdminProductListOptions) {
+  const q = options.q.trim();
+  return {
+    ...(q ? { q } : {}),
+    ...(options.category ? { category: options.category } : {}),
+    ...(options.createdDay ? { createdDay: options.createdDay } : {}),
+    sort: options.sort,
+    page: options.page,
+    pageSize: options.pageSize,
+  };
+}
+
+/** 手機都唔會一次過排出幾百個頁碼；最多顯示當頁附近五個。 */
+export function productPageNumbers(current: number, totalPages: number): number[] {
+  const total = Math.max(1, Math.floor(totalPages));
+  const page = Math.min(total, Math.max(1, Math.floor(current)));
+  const start = Math.max(1, Math.min(page - 2, total - 4));
+  const end = Math.min(total, start + 4);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
 export default function ProductManager({
   toast,
 }: {
@@ -183,7 +217,6 @@ export default function ProductManager({
   const { user } = useAuth();
   // 重點標籤停用控制只畀 supervisor/admin 睇（UX）；真正權限喺 server（員工會 FORBIDDEN）
   const canManageAiTags = user?.role === 'supervisor' || user?.role === 'admin';
-  const listQuery = trpc.products.adminList.useQuery(undefined);
   const [form, setForm] = useState(initialForm);
   // 尺寸選項總開關（boolean，唔入 initialForm 嘅 string 結構）：閂咗商品頁唔顯示尺寸、落單唔使揀
   const [sizeEnabled, setSizeEnabled] = useState(true);
@@ -210,6 +243,37 @@ export default function ProductManager({
   // 重點標籤：逐件停用嘅 inline 兩步確認＋批量多選（淨係可揀有啟用標籤嘅商品）
   const [confirmDisableAiId, setConfirmDisableAiId] = useState<number | null>(null);
   const [selectedAiIds, setSelectedAiIds] = useState<number[]>([]);
+  // 名稱／貨號搜尋：輸入停 250ms 先查，避免每個字都打一次 API
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<'' | ProductCategory>('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<ProductPageSize>(50);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  const listInput = useMemo(
+    () =>
+      buildAdminProductListInput({
+        q: search,
+        category: categoryFilter,
+        createdDay: dayFilter,
+        sort: sortKey,
+        page,
+        pageSize,
+      }),
+    [search, categoryFilter, dayFilter, sortKey, page, pageSize],
+  );
+  const listQuery = trpc.products.adminPage.useQuery(listInput, {
+    placeholderData: (previous) => previous,
+    refetchOnWindowFocus: false,
+  });
 
   /** 商品圖片上傳（一次過可揀多張）：逐張 POST /api/upload（staff JWT），路徑加入相簿 */
   const uploadImages = async (files: File[]) => {
@@ -259,6 +323,7 @@ export default function ProductManager({
 
   /** 後台同前台 cache 一齊更新（adminList 包下架貨，list 係前台用） */
   const invalidateProducts = () => {
+    void utils.products.adminPage.invalidate();
     void utils.products.adminList.invalidate();
     void utils.products.list.invalidate();
   };
@@ -312,18 +377,25 @@ export default function ProductManager({
     onError: (err) => toast(err.message || '更新商品失敗', 'error'),
   });
 
-  // isActive toggle：樂觀更新 adminList cache，下架貨 dim 顯示、可以隨時重新上架
+  // isActive toggle：只樂觀更新而家呢頁；失敗原頁 rollback，成功後重新對齊 server 總數
   const toggleMutation = trpc.products.update.useMutation({
     onMutate: async (vars) => {
-      await utils.products.adminList.cancel();
-      const prev = utils.products.adminList.getData(undefined) as ProductRow[] | undefined;
-      utils.products.adminList.setData(undefined, (old: ProductRow[] | undefined) =>
-        old?.map((p) => (p.id === vars.id ? { ...p, isActive: vars.isActive ?? p.isActive } : p)),
+      await utils.products.adminPage.cancel();
+      const prev = utils.products.adminPage.getData(listInput);
+      utils.products.adminPage.setData(listInput, (old) =>
+        old
+          ? {
+              ...old,
+              items: old.items.map((p) =>
+                p.id === vars.id ? { ...p, isActive: vars.isActive ?? p.isActive } : p,
+              ),
+            }
+          : old,
       );
       return { prev };
     },
     onError: (err, _vars, ctx) => {
-      utils.products.adminList.setData(undefined, ctx?.prev);
+      utils.products.adminPage.setData(listInput, ctx?.prev);
       toast(err.message || '更新失敗', 'error');
     },
     onSuccess: (updated) => {
@@ -375,6 +447,7 @@ export default function ProductManager({
 
   /** 重點標籤停用成功後：後台列表＋前台公開查詢一齊更新（公開端停用後 server 會回 []） */
   const invalidateAiTagViews = () => {
+    void utils.products.adminPage.invalidate();
     void utils.products.adminList.invalidate();
     void utils.products.list.invalidate();
     void utils.products.latest.invalidate();
@@ -560,55 +633,23 @@ export default function ProductManager({
     });
   };
 
-  const products = (listQuery.data ?? []) as ProductRow[];
+  // items 只係 server 當頁；總數、每日統計同頁碼全部用 server metadata，唔再全量載入
+  const products = (listQuery.data?.items ?? []) as ProductRow[];
+  const dailyCounts = listQuery.data?.dailyCounts ?? [];
+  const total = listQuery.data?.total ?? 0;
+  const actualPage = listQuery.data?.page ?? page;
+  const totalPages = listQuery.data?.totalPages ?? 1;
+  const hasListFilters = Boolean(searchInput.trim() || categoryFilter || dayFilter);
   const submitting = createMutation.isPending || editMutation.isPending;
-
-  // 每日新增款式統計：按「上載日期」（createdAt 產生當日）分組數款數，最新一日排最前
-  const dailyCounts = useMemo(() => {
-    const map = new Map<string, { label: string; count: number }>();
-    for (const p of products) {
-      const d = new Date(p.createdAt);
-      const key = dayKeyOf(d);
-      const label = `${d.getMonth() + 1}月${d.getDate()}日`;
-      const cur = map.get(key);
-      if (cur) cur.count += 1;
-      else map.set(key, { label, count: 1 });
-    }
-    return [...map.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
-  }, [products]);
-
   const todayKey = dayKeyOf(new Date());
-  // 篩選（每日新增 chip）＋排列（上載日期／名稱／上架日期／分類）
-  const visibleProducts = useMemo(() => {
-    const filtered = dayFilter
-      ? products.filter((p) => dayKeyOf(p.createdAt) === dayFilter)
-      : [...products];
-    const time = (d: Date | string) => new Date(d).getTime();
-    switch (sortKey) {
-      case 'name':
-        // 中文品名用 localeCompare（zh-Hant）排；同名就新上載先
-        filtered.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant-HK') || b.id - a.id);
-        break;
-      case 'listed':
-        filtered.sort((a, b) => time(b.listedDate) - time(a.listedDate) || b.id - a.id);
-        break;
-      case 'category': {
-        // 跟 PRODUCT_CATEGORIES 表嘅次序排；同類入面新上載先
-        const order = new Map<string, number>(PRODUCT_CATEGORIES.map((c, i) => [c.value, i]));
-        filtered.sort(
-          (a, b) =>
-            (order.get(a.category) ?? 99) - (order.get(b.category) ?? 99) ||
-            time(b.createdAt) - time(a.createdAt) ||
-            b.id - a.id,
-        );
-        break;
-      }
-      default:
-        // created：最新上載排最前
-        filtered.sort((a, b) => time(b.createdAt) - time(a.createdAt) || b.id - a.id);
-    }
-    return filtered;
-  }, [products, dayFilter, sortKey]);
+
+  const clearListFilters = () => {
+    setSearchInput('');
+    setSearch('');
+    setCategoryFilter('');
+    setDayFilter(null);
+    setPage(1);
+  };
 
   return (
     <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
@@ -1015,14 +1056,84 @@ export default function ProductManager({
 
       {/* 右：現有商品列表（7） */}
       <div className="xl:col-span-7">
-        <h3 className="text-[16px] font-bold text-txt-1">
+        <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[16px] font-bold text-txt-1">
           現有商品
-          <span className="ml-2 font-mono text-[13px] font-normal text-txt-3">
-            {products.length} 款
-            {dayFilter != null ? `（篩緊 ${visibleProducts.length} 款）` : ''}
+          <span className="font-mono text-[13px] font-normal text-txt-3">
+            共 {total} 款{products.length !== total ? `・呢頁 ${products.length} 款` : ''}
           </span>
+          {listQuery.isFetching && !listQuery.isLoading ? (
+            <span className="font-mono text-[12px] font-normal text-gold-soft">更新中…</span>
+          ) : null}
         </h3>
-        {/* 排列方式：上載日期（最新先）／名稱／上架日期（最新先）／分類（跟類別表次序） */}
+        {/* 真正 server 搜尋／篩選／分頁：幾千款貨都唔使一次過載入晒 */}
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div>
+            <label htmlFor="pm-search" className="mb-1.5 block text-[12px] text-txt-3">
+              搜尋商品名或貨號
+            </label>
+            <input
+              id="pm-search"
+              type="search"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="例如：連身裙 或 B244"
+              autoComplete="off"
+              className="h-11 w-full rounded-xl border border-space-line bg-space-2 px-3.5 text-[14px] text-txt-1 placeholder:text-txt-disabled focus:border-pink"
+            />
+          </div>
+          <div>
+            <label htmlFor="pm-category-filter" className="mb-1.5 block text-[12px] text-txt-3">
+              分類
+            </label>
+            <select
+              id="pm-category-filter"
+              value={categoryFilter}
+              onChange={(e) => {
+                setCategoryFilter(e.target.value as '' | ProductCategory);
+                setPage(1);
+              }}
+              className="h-11 w-full rounded-xl border border-space-line bg-space-2 px-3 text-[14px] text-txt-1 focus:border-pink"
+            >
+              <option value="">全部分類</option>
+              {PRODUCT_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="pm-page-size" className="mb-1.5 block text-[12px] text-txt-3">
+              每頁商品
+            </label>
+            <select
+              id="pm-page-size"
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value) as ProductPageSize);
+                setPage(1);
+              }}
+              className="h-11 w-full rounded-xl border border-space-line bg-space-2 px-3 text-[14px] text-txt-1 focus:border-pink"
+            >
+              {PRODUCT_PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  每頁 {size} 件
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        {hasListFilters ? (
+          <button
+            type="button"
+            onClick={clearListFilters}
+            className="btn btn-secondary mt-3 !min-h-10 !px-4 !py-2 text-[12px]"
+          >
+            <X size={13} aria-hidden="true" />
+            清空搜尋同篩選
+          </button>
+        ) : null}
+        {/* 排列方式：全部喺 server 完成，跨頁次序一致 */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-[12px] text-txt-3">排列：</span>
           {SORT_OPTIONS.map((opt) => {
@@ -1031,7 +1142,10 @@ export default function ProductManager({
               <button
                 key={opt.key}
                 type="button"
-                onClick={() => setSortKey(opt.key)}
+                onClick={() => {
+                  setSortKey(opt.key);
+                  setPage(1);
+                }}
                 aria-pressed={active}
                 className="shrink-0 rounded-full border px-3 py-1.5 font-mono text-[12px] transition-colors"
                 style={{
@@ -1050,7 +1164,10 @@ export default function ProductManager({
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1.5">
             <button
               type="button"
-              onClick={() => setDayFilter(null)}
+              onClick={() => {
+                setDayFilter(null);
+                setPage(1);
+              }}
               aria-pressed={dayFilter === null}
               className="shrink-0 rounded-full border px-3 py-1.5 font-mono text-[12px] transition-colors"
               style={{
@@ -1061,13 +1178,16 @@ export default function ProductManager({
             >
               全部
             </button>
-            {dailyCounts.map(([key, info]) => {
-              const active = dayFilter === key;
+            {dailyCounts.map((day) => {
+              const active = dayFilter === day.key;
               return (
                 <button
-                  key={key}
+                  key={day.key}
                   type="button"
-                  onClick={() => setDayFilter((cur) => (cur === key ? null : key))}
+                  onClick={() => {
+                    setDayFilter((cur) => (cur === day.key ? null : day.key));
+                    setPage(1);
+                  }}
                   aria-pressed={active}
                   className="shrink-0 rounded-full border px-3 py-1.5 font-mono text-[12px] transition-colors"
                   style={{
@@ -1076,7 +1196,7 @@ export default function ProductManager({
                     color: active ? 'var(--pink)' : 'var(--text-2)',
                   }}
                 >
-                  {info.label} ＋{info.count}款{key === todayKey ? '（今日）' : ''}
+                  {day.label} ＋{day.count}款{day.key === todayKey ? '（今日）' : ''}
                 </button>
               );
             })}
@@ -1084,8 +1204,32 @@ export default function ProductManager({
         )}
         {listQuery.isLoading ? (
           <LoadingBlock text="許願星搬緊貨…" />
+        ) : listQuery.isError ? (
+          <div className="mt-4 rounded-xl border border-pink bg-space-2 px-4 py-5 text-center" role="alert">
+            <p className="text-[14px] text-pink-soft">商品列表載入失敗：{listQuery.error.message}</p>
+            <button
+              type="button"
+              onClick={() => void listQuery.refetch()}
+              className="btn btn-secondary mt-3 !min-h-11 !px-5 !py-2 text-[13px]"
+            >
+              重新載入
+            </button>
+          </div>
         ) : products.length === 0 ? (
-          <p className="py-14 text-center text-[14px] text-txt-3">未有商品，左手邊新增第一款啦。</p>
+          <div className="py-14 text-center">
+            <p className="text-[14px] text-txt-3">
+              {hasListFilters ? '冇商品符合而家嘅搜尋同篩選。' : '未有商品，左手邊新增第一款啦。'}
+            </p>
+            {hasListFilters ? (
+              <button
+                type="button"
+                onClick={clearListFilters}
+                className="btn btn-secondary mt-3 !min-h-11 !px-5 !py-2 text-[13px]"
+              >
+                清空條件，睇返全部商品
+              </button>
+            ) : null}
+          </div>
         ) : (
           <>
           {/* 原位批量行動列（supervisor/admin）：揀咗有啟用標籤嘅商品先出現，唔係 modal */}
@@ -1123,7 +1267,7 @@ export default function ProductManager({
             </div>
           )}
           <ul className="mt-4 flex flex-col gap-2">
-            {visibleProducts.map((p) => {
+            {products.map((p) => {
               // 存貨 10 件以下都當緊張（直播前提醒補貨）
               const lowStock = p.stock < 10;
               // 定時下架已到時（前台已經見唔到；後台行照顯示但 dim）
@@ -1407,6 +1551,70 @@ export default function ProductManager({
               );
             })}
           </ul>
+          {total > 0 ? (
+            <nav
+              className="mt-5 flex flex-wrap items-center justify-center gap-2 border-t border-space-line pt-4"
+              aria-label="商品列表頁碼"
+            >
+              <button
+                type="button"
+                aria-label="第一頁"
+                disabled={actualPage <= 1 || listQuery.isFetching}
+                onClick={() => setPage(1)}
+                className="btn btn-secondary !min-h-10 !px-3 !py-2 text-[12px] disabled:opacity-40"
+              >
+                第一頁
+              </button>
+              <button
+                type="button"
+                aria-label="上一頁"
+                disabled={actualPage <= 1 || listQuery.isFetching}
+                onClick={() => setPage(Math.max(1, actualPage - 1))}
+                className="btn btn-secondary !min-h-10 !px-3 !py-2 text-[12px] disabled:opacity-40"
+              >
+                上一頁
+              </button>
+              {productPageNumbers(actualPage, totalPages).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  aria-label={`第 ${n} 頁`}
+                  aria-current={n === actualPage ? 'page' : undefined}
+                  disabled={listQuery.isFetching}
+                  onClick={() => setPage(n)}
+                  className="h-10 min-w-10 rounded-xl border px-2 font-mono text-[12px] transition-colors disabled:opacity-60"
+                  style={{
+                    borderColor: n === actualPage ? 'var(--pink)' : 'var(--glass-border)',
+                    background: n === actualPage ? 'var(--glass-bg-strong)' : 'var(--glass-bg)',
+                    color: n === actualPage ? 'var(--pink)' : 'var(--text-2)',
+                  }}
+                >
+                  {n}
+                </button>
+              ))}
+              <button
+                type="button"
+                aria-label="下一頁"
+                disabled={actualPage >= totalPages || listQuery.isFetching}
+                onClick={() => setPage(Math.min(totalPages, actualPage + 1))}
+                className="btn btn-secondary !min-h-10 !px-3 !py-2 text-[12px] disabled:opacity-40"
+              >
+                下一頁
+              </button>
+              <button
+                type="button"
+                aria-label="最後一頁"
+                disabled={actualPage >= totalPages || listQuery.isFetching}
+                onClick={() => setPage(totalPages)}
+                className="btn btn-secondary !min-h-10 !px-3 !py-2 text-[12px] disabled:opacity-40"
+              >
+                最後一頁
+              </button>
+              <span className="w-full text-center font-mono text-[12px] text-txt-3 sm:ml-2 sm:w-auto">
+                第 {actualPage}／{totalPages} 頁
+              </span>
+            </nav>
+          ) : null}
           </>
         )}
       </div>

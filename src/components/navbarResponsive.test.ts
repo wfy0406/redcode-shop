@@ -47,6 +47,12 @@ describe('Navbar「更多」共用資料契約（2026-10.26.2）', () => {
     expect(luckyIdx).toBeLessThan(spreadIdx);
   });
 
+  it('公開官網選單用準確名稱 Glo Glo精選指南', () => {
+    const block = constArrayBlock('MORE_LINKS');
+    expect(block).toContain("{ to: '/glo-guide', label: 'Glo Glo精選指南' }");
+    expect(block).not.toContain("label: 'Glo Glo 指南'");
+  });
+
   it('INFO_LINKS 原項目同順序不變（順豐 → VIP → 關於 → 常見問題）', () => {
     const block = constArrayBlock('INFO_LINKS');
     const order = ['/sf-stations', '/vip', '/about', '/faq'];
