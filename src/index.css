@@ -731,17 +731,44 @@
 }
 
 /* =====================================================================
-   Glo Glo 精選配搭指南（/glo-guide）—— editorial 雜誌風專屬區
-   深色＋金、CJK 襯線大標、hairline、自然 grain、2:3 相集。
-   全部 class 用 gg- 前綴，唔會同全站其他樣式相撞。
+   Glo Glo 精選配搭指南（/glo-guide）—— 潮牌雜誌風詳情頁專屬區（gg- 前綴）
+
+   色板（SPEC）：near-black #151515／warm cream #fef1e8／muted taupe #988575
+   ／amber gold #d69900；CTA 深色實心＋金邊。金唔做奶油底細字（對比唔夠），
+   文字金用 --gg-gold-text（金×ink 混色 ≈5.5:1）。
+   字體（SPEC）：Marcellus（拉丁 display）＋ Noto Serif TC／PingFang HK
+   （中文標題，唔 italic）；UI 用 Noto Sans TC／PingFang HK。
+   所有文字配色 scope 落 .gg-page：後台預覽 .ggp-preview 自成一套（深色），
+   唔受呢度影響。動效只包喺 prefers-reduced-motion: no-preference。
    ===================================================================== */
 
 .gg-page {
+  --gg-ink: #151515;
+  --gg-cream: #fef1e8;
+  --gg-taupe: #988575;
+  --gg-gold: #d69900;
+  --gg-ink-72: rgba(21, 21, 21, 0.72);
+  --gg-ink-56: rgba(21, 21, 21, 0.56);
+  --gg-line: rgba(21, 21, 21, 0.16);
+  --gg-gold-line: rgba(214, 153, 0, 0.55);
+  --gg-gold-text: #795a0a;
+  --gg-cream-78: rgba(254, 241, 232, 0.78);
+  --gg-font-display: 'Marcellus', 'Noto Serif TC', 'PingFang HK', serif;
+  --gg-font-serif: 'Noto Serif TC', 'PingFang HK', serif;
+  --gg-font-ui: 'Noto Sans TC', 'PingFang HK', -apple-system, sans-serif;
+
   position: relative;
   isolation: isolate;
+  overflow-x: clip;
+  /* 奶油底 full-bleed：內容置中、底色滿版（唔郁全站 body） */
+  background: var(--gg-cream);
+  box-shadow: 0 0 0 100vmax var(--gg-cream);
+  clip-path: inset(0 -100vmax);
   max-width: 1280px;
   margin: 0 auto;
   padding: 2.5rem 1.25rem 5rem;
+  color: var(--gg-ink);
+  font-family: var(--gg-font-ui);
 }
 
 @media (min-width: 768px) {
@@ -750,22 +777,26 @@
   }
 }
 
-/* 自然 grain：固定頻率 fractalNoise，靜態（唔係動畫），極低透明度 */
-.gg-grain {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.045;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+/* 詳情資料未返時都預留一屏，Footer 唔會先擠入首屏再被正文推走。 */
+.gg-page--status {
+  min-height: 100dvh;
+}
+
+/* 清晰 focus ring：ink 實線＋金外環 */
+.gg-page a:focus-visible,
+.gg-page button:focus-visible {
+  outline: 2px solid var(--gg-ink);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px rgba(214, 153, 0, 0.45);
 }
 
 .gg-eyebrow {
-  font-family: var(--font-mono);
+  font-family: var(--gg-font-ui);
   font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: var(--gold);
+  color: var(--gg-ink-56);
   margin: 0 0 0.75rem;
 }
 
@@ -775,15 +806,15 @@
   margin: 1.75rem 0;
   background: linear-gradient(
     to right,
-    rgba(245, 197, 24, 0.55),
-    rgba(245, 197, 24, 0.12) 60%,
+    var(--gg-gold-line),
+    rgba(214, 153, 0, 0.16) 60%,
     transparent
   );
 }
 
 .gg-date {
   font-size: 13px;
-  color: var(--text-3);
+  color: var(--gg-ink-72);
   margin: 0.75rem 0 0;
 }
 
@@ -792,161 +823,20 @@
   align-items: center;
   min-height: 44px;
   margin-top: 0.75rem;
-  color: var(--gold-soft);
+  color: var(--gg-gold-text);
   font-size: 15px;
   letter-spacing: 0.08em;
   text-decoration: underline;
   text-underline-offset: 6px;
-  text-decoration-color: rgba(245, 197, 24, 0.4);
+  text-decoration-color: var(--gg-gold-line);
 }
 
 .gg-read-link:hover {
-  color: var(--gold);
-  text-decoration-color: var(--gold);
+  color: var(--gg-ink);
+  text-decoration-color: var(--gg-ink);
 }
 
-/* ---------- 總覽頁 ---------- */
-
-.gg-header {
-  max-width: 44rem;
-  margin-bottom: 3rem;
-}
-
-.gg-page-title {
-  font-family: var(--font-serif-tc);
-  font-size: clamp(2rem, 6vw, 3.5rem);
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--starlight);
-  margin: 0;
-}
-
-.gg-page-intro {
-  font-size: 16px;
-  line-height: 1.75;
-  color: var(--text-2);
-  margin: 1rem 0 0;
-}
-
-/* 頭版：非對稱 split-screen（文 7 格／相 5 格），相框金色 hairline 錯位 */
-.gg-featured {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 2rem;
-  align-items: center;
-  margin-bottom: 4rem;
-}
-
-@media (min-width: 768px) {
-  .gg-featured {
-    grid-template-columns: 7fr 5fr;
-    gap: 3.5rem;
-  }
-}
-
-.gg-featured-title {
-  font-family: var(--font-serif-tc);
-  font-size: clamp(1.75rem, 4vw, 2.75rem);
-  font-weight: 700;
-  line-height: 1.28;
-  margin: 0;
-}
-
-.gg-featured-title a {
-  color: var(--text-1);
-  text-decoration: none;
-}
-
-.gg-featured-title a:hover {
-  color: var(--gold-soft);
-}
-
-.gg-featured-excerpt {
-  font-size: 16px;
-  line-height: 1.75;
-  color: var(--text-2);
-  margin: 1.25rem 0 0;
-}
-
-.gg-featured-frame {
-  position: relative;
-  display: block;
-}
-
-.gg-featured-frame::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  transform: translate(14px, 14px);
-  border: 1px solid rgba(245, 197, 24, 0.45);
-  pointer-events: none;
-}
-
-.gg-featured-img {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 2 / 3;
-  object-fit: cover;
-}
-
-/* 其餘文章：CSS multi-column masonry，直落閱讀、唔係一式一樣卡片牆 */
-.gg-masonry {
-  columns: 1;
-  column-gap: 2.5rem;
-}
-
-@media (min-width: 768px) {
-  .gg-masonry {
-    columns: 2;
-  }
-}
-
-.gg-masonry-item {
-  break-inside: avoid;
-  margin-bottom: 3rem;
-  padding-bottom: 2rem;
-  border-bottom: 1px solid var(--space-line);
-}
-
-.gg-masonry-frame {
-  display: block;
-  margin-bottom: 1.25rem;
-}
-
-.gg-masonry-img {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 2 / 3;
-  object-fit: cover;
-}
-
-.gg-masonry-title {
-  font-family: var(--font-serif-tc);
-  font-size: 1.5rem;
-  font-weight: 600;
-  line-height: 1.35;
-  margin: 0;
-}
-
-.gg-masonry-title a {
-  color: var(--text-1);
-  text-decoration: none;
-}
-
-.gg-masonry-title a:hover {
-  color: var(--gold-soft);
-}
-
-.gg-masonry-excerpt {
-  font-size: 16px;
-  line-height: 1.75;
-  color: var(--text-2);
-  margin: 0.75rem 0 0;
-}
-
-/* ---------- 狀態（載入／錯誤／空） ---------- */
+/* ---------- 狀態（載入／錯誤／404） ---------- */
 
 .gg-state {
   padding: 4rem 0;
@@ -956,38 +846,41 @@
 .gg-state p {
   font-size: 16px;
   line-height: 1.75;
-  color: var(--text-2);
+  color: var(--gg-ink-72);
   margin: 0 0 0.5rem;
 }
 
 .gg-state-title {
-  font-family: var(--font-serif-tc);
+  font-family: var(--gg-font-serif);
   font-size: 1.5rem;
-  color: var(--text-1) !important;
+  font-weight: 700;
+  color: var(--gg-ink) !important;
 }
 
+/* CTA：深色實心＋金邊（SPEC） */
 .gg-retry {
   min-height: 44px;
   padding: 0 1.5rem;
   margin-top: 1rem;
-  border: 1px solid rgba(245, 197, 24, 0.55);
-  background: transparent;
-  color: var(--gold-soft);
+  border: 1px solid var(--gg-gold);
+  background: var(--gg-ink);
+  color: var(--gg-cream);
+  font-family: var(--gg-font-ui);
   font-size: 15px;
   letter-spacing: 0.08em;
   cursor: pointer;
 }
 
 .gg-retry:hover {
-  background: rgba(245, 197, 24, 0.12);
-  color: var(--gold);
+  background: var(--gg-gold);
+  color: var(--gg-ink);
 }
 
-/* ---------- 詳情頁 ---------- */
+/* ---------- 詳情頁：麵包屑 ---------- */
 
 .gg-breadcrumb {
   font-size: 13px;
-  color: var(--text-3);
+  color: var(--gg-ink-56);
   margin-bottom: 2.5rem;
   display: flex;
   flex-wrap: wrap;
@@ -996,7 +889,7 @@
 }
 
 .gg-breadcrumb a {
-  color: var(--text-3);
+  color: var(--gg-ink-56);
   text-decoration: underline;
   text-underline-offset: 4px;
   text-decoration-color: transparent;
@@ -1006,179 +899,85 @@
 }
 
 .gg-breadcrumb a:hover {
-  color: var(--gold-soft);
-  text-decoration-color: rgba(245, 197, 24, 0.4);
+  color: var(--gg-gold-text);
+  text-decoration-color: var(--gg-gold-line);
 }
 
-/* 非對稱 split：相集 5 格（sticky）／正文 7 格 */
-.gg-detail {
+/* ---------- 非對稱 editorial lead（大標 7 格／期刊 metadata 5 格） ---------- */
+
+.gg-lead {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 2.5rem;
-  align-items: start;
+  gap: 2rem;
+  align-items: end;
+  margin-bottom: 2.5rem;
 }
 
-@media (min-width: 900px) {
-  .gg-detail {
-    grid-template-columns: 5fr 7fr;
-    gap: 4rem;
+@media (min-width: 1024px) {
+  .gg-lead {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 0 3rem;
   }
 
-  .gg-gallery {
-    position: sticky;
-    top: 96px;
-  }
-}
-
-/* 手機版先睇標題、重點同正文，再入相集；唔使掃過 3–5 張長圖先搵到文章。 */
-@media (max-width: 899px) {
-  .gg-article {
-    order: 0;
+  .gg-lead-main {
+    grid-column: 1 / 8;
   }
 
-  .gg-gallery {
-    order: 1;
+  .gg-lead-meta {
+    grid-column: 8 / 13;
   }
 }
 
-.gg-gallery {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.75rem;
-}
-
-@media (min-width: 560px) {
-  .gg-gallery {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .gg-gallery .gg-figure:first-child {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (min-width: 900px) {
-  .gg-gallery {
-    grid-template-columns: 1fr;
-  }
-}
-
-.gg-figure {
-  margin: 0;
-}
-
-/* 配搭圖披露：細字但對比足（text-2 唔係 text-3） */
-.gg-disclosure {
-  grid-column: 1 / -1;
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-2);
-  border-left: 2px solid rgba(245, 197, 24, 0.55);
-  padding-left: 0.75rem;
-}
-
-.gg-figure-img {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 2 / 3;
-  object-fit: cover;
-}
-
-.gg-figure-cap {
-  font-size: 13px;
-  color: var(--text-3);
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--space-line);
-  margin-top: 0.5rem;
-}
-
-.gg-figure-cap a {
-  color: var(--gold-soft);
-  text-decoration: underline;
-  text-underline-offset: 4px;
+.gg-lead-main {
+  min-width: 0;
 }
 
 .gg-article-title {
-  font-family: var(--font-serif-tc);
+  font-family: var(--gg-font-serif);
   font-size: clamp(2rem, 4.5vw, 3.25rem);
   font-weight: 700;
   line-height: 1.25;
-  color: var(--starlight);
+  color: var(--gg-ink);
   margin: 0;
 }
 
-/* 正文 ≥16px／1.7（呢度 17px／1.85）；首字放大係純排版，唔係動效 */
-.gg-body p {
-  font-size: 17px;
-  line-height: 1.85;
-  color: var(--text-1);
-  margin: 0 0 1.4em;
+/* 期刊 metadata card：深底實色＋金頂線（同總覽 masthead card 一套語言） */
+.gg-lead-meta {
+  min-width: 0;
+  background: var(--gg-ink);
+  border-top: 3px solid var(--gg-gold);
+  color: var(--gg-cream);
+  padding: 1.4rem 1.4rem 1.5rem;
 }
 
-.gg-body > p:first-child::first-letter {
-  font-family: var(--font-serif-tc);
-  font-size: 2.6em;
-  line-height: 1;
-  color: var(--gold);
-  padding-right: 0.12em;
-  float: left;
+.gg-lead-meta-kicker {
+  font-family: var(--gg-font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--gg-gold);
+  margin: 0 0 0.9rem;
 }
 
-.gg-body strong {
-  color: var(--starlight);
-  font-weight: 800;
+.gg-lead-meta .gg-date {
+  color: var(--gg-cream);
+  margin: 0;
+  font-size: 14px;
 }
 
-.gg-text-gold {
-  color: var(--gold-soft);
-}
-
-.gg-text-pink {
-  color: var(--pink-tint);
-}
-
-.gg-key-tag {
-  display: inline;
-  padding: 0.08em 0.28em;
-  border: 1px solid rgba(245, 197, 24, 0.38);
-  border-radius: 0.3rem;
-  background: rgba(245, 197, 24, 0.11);
-  color: var(--gold-soft);
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-}
-
-.gg-highlight-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem;
-  padding: 0;
-  margin: 1.25rem 0 0;
-  list-style: none;
-}
-
-.gg-highlight-list li {
-  padding: 0.35rem 0.7rem;
-  border: 1px solid rgba(245, 197, 24, 0.42);
-  border-radius: 999px;
-  background: rgba(245, 197, 24, 0.08);
-  color: var(--gold-soft);
+.gg-lead-meta-line {
   font-size: 13px;
-  line-height: 1.45;
+  letter-spacing: 0.1em;
+  color: var(--gg-cream-78);
+  margin: 0.55rem 0 0;
 }
 
-.gg-highlight-list li::before {
-  content: '重點 · ';
-  color: var(--text-3);
-}
-
+/* 內容捷徑 pill（深色描邊，hover 轉實心） */
 .gg-article-nav {
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
-  margin-top: 1.25rem;
+  margin-top: 1.5rem;
 }
 
 .gg-article-nav a {
@@ -1186,21 +985,276 @@
   align-items: center;
   justify-content: center;
   min-height: 44px;
-  padding: 0.55rem 0.85rem;
-  border: 1px solid rgba(245, 197, 24, 0.42);
-  border-radius: 999px;
-  background: var(--space-2);
-  color: var(--gold-soft);
+  padding: 0.55rem 0.95rem;
+  border: 1px solid var(--gg-ink);
+  background: transparent;
+  color: var(--gg-ink);
   font-size: 13px;
   font-weight: 700;
+  letter-spacing: 0.06em;
   text-decoration: none;
-  transition: border-color var(--dur-micro), color var(--dur-micro), background-color var(--dur-micro);
 }
 
 .gg-article-nav a:hover {
-  border-color: var(--gold);
-  background: var(--space-3);
-  color: var(--starlight);
+  border-color: var(--gg-gold);
+  background: var(--gg-ink);
+  color: var(--gg-cream);
+}
+
+/* 重點標籤（lead meta card 入面，深底上金線框） */
+.gg-highlight-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding: 0;
+  margin: 1.1rem 0 0;
+  list-style: none;
+}
+
+.gg-highlight-list li {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--gg-gold-line);
+  background: rgba(214, 153, 0, 0.12);
+  color: var(--gg-gold);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.gg-highlight-list li::before {
+  content: '重點 · ';
+  color: var(--gg-cream-78);
+}
+
+/* ---------- 全寬主配搭圖舞台（真 selector，切換同步單品） ---------- */
+
+.gg-stage {
+  margin-bottom: 3.5rem;
+}
+
+/* 配搭圖披露：細字但對比足（ink-72 唔係 ink-56） */
+.gg-disclosure {
+  margin: 0 0 1.1rem;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--gg-ink-72);
+  border-left: 2px solid var(--gg-gold);
+  padding-left: 0.75rem;
+}
+
+.gg-stage-figure {
+  margin: 0;
+}
+
+/* 全寬主配搭圖：固定 aspect（唔靠圖片未存在先排版），直向原圖 cover crop
+   錨定上半身；aspect 斷點固定，CLS 為 0 */
+.gg-stage-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  object-position: 50% 22%;
+  background: var(--gg-taupe);
+}
+
+@media (min-width: 768px) {
+  .gg-stage-img {
+    aspect-ratio: 16 / 8;
+  }
+}
+
+.gg-figure-cap {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--gg-ink-56);
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--gg-line);
+  margin-top: 0.6rem;
+}
+
+.gg-figure-cap a {
+  color: var(--gg-gold-text);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* 同步單品欄：深底 band，揀邊張圖就講邊件單品 */
+.gg-stage-panel {
+  background: var(--gg-ink);
+  border-left: 3px solid var(--gg-gold);
+  color: var(--gg-cream);
+  padding: 1.25rem 1.4rem;
+  margin-top: 1.25rem;
+  min-height: 44px;
+}
+
+.gg-stage-panel-eyebrow {
+  color: var(--gg-gold);
+  margin-bottom: 0.55rem;
+}
+
+.gg-stage-product-name {
+  font-family: var(--gg-font-serif);
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.gg-stage-product-name a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--gg-cream);
+  text-decoration: none;
+}
+
+.gg-stage-product-name a:hover {
+  color: var(--gg-gold);
+}
+
+.gg-stage-product-meta {
+  font-size: 14px;
+  color: var(--gg-cream-78);
+  margin: 0.35rem 0 0;
+}
+
+.gg-stage-product-meta strong {
+  color: var(--gg-gold);
+  font-weight: 600;
+}
+
+.gg-stage-product-meta s {
+  margin-left: 0.6rem;
+  color: var(--gg-cream-78);
+}
+
+.gg-stage-product-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--gg-gold);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  text-decoration: underline;
+  text-underline-offset: 6px;
+  text-decoration-color: var(--gg-gold-line);
+}
+
+.gg-stage-product-link:hover {
+  color: var(--gg-cream);
+}
+
+.gg-stage-product-note {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--gg-cream-78);
+  margin: 0;
+}
+
+/* thumbnail selector：全部真圖（lazy），aria-pressed 標示當前 */
+.gg-stage-index {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 1.25rem 0 0;
+  border-top: 2px solid var(--gg-ink);
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (min-width: 768px) {
+  .gg-stage-index {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1.1rem;
+  }
+}
+
+.gg-stage-index-item {
+  min-width: 0;
+}
+
+.gg-stage-thumb {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  background: none;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.gg-stage-thumb:hover {
+  border-color: var(--gg-gold-line);
+}
+
+.gg-stage-thumb[aria-pressed='true'] {
+  border-color: var(--gg-gold);
+}
+
+.gg-stage-thumb-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  object-position: 50% 22%;
+  background: var(--gg-taupe);
+}
+
+/* ---------- 正文欄 ---------- */
+
+.gg-article {
+  min-width: 0;
+}
+
+/* 正文 ≥16px／1.7（呢度 17px／1.85）；首字放大係純排版，唔係動效。
+   顏色全部 scope 落 .gg-page：後台 .ggp-preview 深底預覽自成一套。 */
+.gg-body p {
+  font-size: 17px;
+  line-height: 1.85;
+  margin: 0 0 1.4em;
+}
+
+.gg-page .gg-body p {
+  color: var(--gg-ink);
+}
+
+.gg-body > p:first-child::first-letter {
+  font-family: var(--gg-font-serif);
+  font-size: 2.6em;
+  line-height: 1;
+  color: var(--gg-gold-text);
+  padding-right: 0.12em;
+  float: left;
+}
+
+.gg-body strong {
+  font-weight: 800;
+}
+
+.gg-page .gg-body strong {
+  color: var(--gg-ink);
+}
+
+/* 顏色標記：奶油底用文字金／muted 玫紅（對比 ≥4.5:1），唔用淺金 */
+.gg-page .gg-text-gold {
+  color: var(--gg-gold-text);
+}
+
+.gg-page .gg-text-pink {
+  color: #a33f5c;
+}
+
+.gg-page .gg-key-tag {
+  display: inline;
+  padding: 0.08em 0.28em;
+  border: 1px solid var(--gg-gold-line);
+  border-radius: 0.3rem;
+  background: rgba(214, 153, 0, 0.12);
+  color: var(--gg-gold-text);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 #guide-body,
@@ -1209,22 +1263,20 @@
   scroll-margin-top: 6rem;
 }
 
-/* Gloria 簽名：原圖深啡字透明底，filter 提亮做金（binary 冇郁） */
+/* Gloria 簽名：原圖深啡字透明底；奶油底上原色已清晰，唔使再提亮 */
 .gg-sign-block {
   margin-top: 2.5rem;
 }
 
 .gg-sign-byline {
   font-size: 14px;
-  color: var(--text-3);
+  color: var(--gg-ink-56);
   margin: 0 0 0.5rem;
 }
 
 .gg-sign-img {
   width: 180px;
   height: auto;
-  filter: invert(0.82) sepia(0.55) saturate(4.5) hue-rotate(-10deg) brightness(1.05);
-  opacity: 0.92;
 }
 
 /* ---------- 文中單品（editorial 商品行） ---------- */
@@ -1234,10 +1286,10 @@
 }
 
 .gg-products-title {
-  font-family: var(--font-serif-tc);
+  font-family: var(--gg-font-serif);
   font-size: clamp(1.5rem, 3vw, 2.25rem);
   font-weight: 700;
-  color: var(--starlight);
+  color: var(--gg-ink);
   margin: 0 0 1.5rem;
 }
 
@@ -1252,7 +1304,7 @@
   grid-template-columns: 2.5rem 96px 1fr;
   gap: 1rem;
   padding: 1.5rem 0;
-  border-top: 1px solid var(--space-line);
+  border-top: 1px solid var(--gg-line);
   align-items: start;
 }
 
@@ -1264,9 +1316,9 @@
 }
 
 .gg-product-index {
-  font-family: var(--font-serif-tc);
+  font-family: var(--gg-font-display);
   font-size: 1.5rem;
-  color: var(--gold);
+  color: var(--gg-taupe);
   line-height: 1.2;
 }
 
@@ -1280,30 +1332,32 @@
   height: auto;
   aspect-ratio: 2 / 3;
   object-fit: cover;
+  background: var(--gg-taupe);
 }
 
 .gg-product-meta {
   font-size: 12px;
   letter-spacing: 0.12em;
-  color: var(--text-3);
+  color: var(--gg-ink-56);
   margin: 0 0 0.25rem;
 }
 
 .gg-product-name {
-  font-family: var(--font-serif-tc);
+  font-family: var(--gg-font-serif);
   font-size: 1.25rem;
   font-weight: 600;
   line-height: 1.4;
+  color: var(--gg-ink);
   margin: 0;
 }
 
 .gg-product-name a {
-  color: var(--text-1);
+  color: inherit;
   text-decoration: none;
 }
 
 .gg-product-name a:hover {
-  color: var(--gold-soft);
+  color: var(--gg-gold-text);
 }
 
 .gg-product-tags {
@@ -1317,26 +1371,26 @@
 
 .gg-product-tags li {
   font-size: 12px;
-  color: var(--gold-soft);
-  border: 1px solid rgba(245, 197, 24, 0.35);
+  color: var(--gg-gold-text);
+  border: 1px solid var(--gg-gold-line);
   padding: 0.15rem 0.6rem;
 }
 
 .gg-product-price {
   margin: 0.75rem 0 0;
   font-size: 16px;
-  color: var(--text-1);
+  color: var(--gg-ink);
 }
 
 .gg-product-price strong {
   font-size: 1.15rem;
-  color: var(--gold-soft);
+  color: var(--gg-gold-text);
   font-weight: 600;
 }
 
 .gg-product-price s {
   margin-left: 0.6rem;
-  color: var(--text-3);
+  color: var(--gg-ink-56);
   font-size: 0.9em;
 }
 
@@ -1348,16 +1402,17 @@
   margin-top: 1rem;
 }
 
-/* CTA：深色實心＋金色描邊（驗收要求，唔係 transparent ghost）；觸控 ≥44px */
+/* CTA：深色實心＋金色描邊（SPEC，唔係 transparent ghost）；觸控 ≥44px */
 .gg-product-cta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 44px;
   padding: 0 1.5rem;
-  border: 1px solid var(--gold);
-  background: var(--space-3);
-  color: var(--gold-soft);
+  border: 1px solid var(--gg-gold);
+  background: var(--gg-ink);
+  color: var(--gg-cream);
+  font-family: var(--gg-font-ui);
   font-size: 15px;
   letter-spacing: 0.08em;
   text-decoration: none;
@@ -1365,8 +1420,8 @@
 }
 
 .gg-product-cta:hover:not(:disabled) {
-  background: var(--space-4);
-  color: var(--gold);
+  background: var(--gg-gold);
+  color: var(--gg-ink);
 }
 
 .gg-product-cta:disabled {
@@ -1379,13 +1434,13 @@
   align-items: center;
   min-height: 44px;
   font-size: 14px;
-  color: var(--text-3);
+  color: var(--gg-ink-56);
   text-decoration: underline;
   text-underline-offset: 4px;
 }
 
 .gg-product-detail-link:hover {
-  color: var(--gold-soft);
+  color: var(--gg-gold-text);
 }
 
 .gg-product-soldout {
@@ -1393,7 +1448,7 @@
   align-items: center;
   min-height: 44px;
   font-size: 14px;
-  color: var(--text-disabled);
+  color: var(--gg-ink-56);
 }
 
 .gg-product-feedback {
@@ -1402,24 +1457,46 @@
   line-height: 1.6;
 }
 
+/* 奶油底上嘅語義色（深階，對比 ≥4.5:1） */
 .gg-product-feedback--ok {
-  color: var(--success);
+  color: #1d6b43;
 }
 
 .gg-product-feedback--err {
-  color: var(--pink-soft);
+  color: #a21543;
 }
 
 .gg-products-note {
   margin-top: 1.25rem;
   font-size: 13px;
-  color: var(--text-3);
+  color: var(--gg-ink-56);
 }
 
-/* reduced motion：指南頁冇動畫，連 hover transition 都唔留 */
-@media (prefers-reduced-motion: reduce) {
+/* ---------- 動效：只限唔介意動態嘅讀者；內容本身永遠可見 ----------
+   切換配搭圖時大圖淡入（opacity）係「內容已切換」嘅反饋，唔係裝飾；
+   reduced motion 即時靜態，連 hover transition 都唔留。 */
+
+@media (prefers-reduced-motion: no-preference) {
+  .gg-stage-img {
+    animation: gg-img-in 0.45s ease-out;
+  }
+
+  @keyframes gg-img-in {
+    from {
+      opacity: 0.35;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
   .gg-page a,
-  .gg-page button {
-    transition: none;
+  .gg-page button,
+  .gg-stage-thumb {
+    transition:
+      color 0.2s ease,
+      background-color 0.2s ease,
+      border-color 0.2s ease,
+      text-decoration-color 0.2s ease;
   }
 }

@@ -32,6 +32,8 @@ export interface GloGuideDispatchDeps {
   service: Pick<
     typeof service,
     | "listWeeklyProducts"
+    | "listGloGuideProducts"
+    | "listGloGuideProductSources"
     | "listArticleSummaries"
     | "getArticleBundle"
     | "toInternalArticle"
@@ -95,7 +97,14 @@ export async function dispatchGloGuideAction(
   const s = deps.service;
   switch (action) {
     case "products.list":
+      // SPEC 第 3 輪（WMS trpc gloGuide.products(filter?) 對齊）：payload 本身係 filter
+      // object（{mode,...}）；空 payload／{} → 兼容舊版本週可選 listWeeklyProducts。
+      if (payload.mode !== undefined && payload.mode !== null) {
+        return { items: await s.listGloGuideProducts(payload) };
+      }
       return { items: await s.listWeeklyProducts() };
+    case "products.sources":
+      return s.listGloGuideProductSources();
     case "article.list": {
       const status = optStr(payload, "status");
       const limitRaw = payload.limit;
@@ -113,6 +122,8 @@ export async function dispatchGloGuideAction(
       return s.toInternalArticle(await s.getArticleBundle(reqId(payload)));
     case "article.generate":
       return s.generateArticle(actor, {
+        // SPEC 第 3 輪：selection 原樣透傳由 service 驗證；同時傳 selection＋舊 productIds → service 400
+        selection: payload.selection,
         productIds: optIds(payload, "productIds"),
         themeHint: optStr(payload, "themeHint"),
       });

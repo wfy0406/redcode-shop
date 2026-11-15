@@ -11,6 +11,7 @@ import {
   BODY_MAX,
   BODY_MIN,
   bodyCountOk,
+  buildGenerateSelection,
   canApproveArticle,
   canArchiveArticle,
   canEditArticle,
@@ -18,6 +19,8 @@ import {
   dataUrlToBase64,
   isGenerating,
   plainBodyCharCount,
+  productBlockReason,
+  searchQueryOk,
   validateUploadFile,
 } from './GloGuidePanel';
 
@@ -101,6 +104,99 @@ describe('上傳檔檢查', () => {
     expect(dataUrlToBase64('data:image/png;base64,QUJD')).toBe('QUJD');
     expect(dataUrlToBase64('QUJD')).toBeNull();
     expect(dataUrlToBase64('data:image/png;base64,')).toBeNull();
+  });
+});
+
+describe('選貨 contract（iteration-3 SPEC：auto／week／session／products）', () => {
+  describe('buildGenerateSelection', () => {
+    it('auto：永遠淨係 {mode:"auto"}，唔帶商品', () => {
+      expect(buildGenerateSelection('auto', { productIds: [1, 2] })).toEqual({ mode: 'auto' });
+      expect(buildGenerateSelection('auto', { productIds: [] })).toEqual({ mode: 'auto' });
+    });
+
+    it('week：0 件＝來源合資格池隨機抽（唔帶 productIds）；2–3 件＝帶 productIds', () => {
+      expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [] })).toEqual({
+        mode: 'week',
+        weekStart: '2026-11-02',
+      });
+      expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [7, 9] })).toEqual({
+        mode: 'week',
+        weekStart: '2026-11-02',
+        productIds: [7, 9],
+      });
+      expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [7, 9, 11] })).toEqual({
+        mode: 'week',
+        weekStart: '2026-11-02',
+        productIds: [7, 9, 11],
+      });
+    });
+
+    it('week：冇 weekStart 或揀 1 件 → null（UI 擋生成，唔會暗中改來源）', () => {
+      expect(buildGenerateSelection('week', { weekStart: null, productIds: [] })).toBeNull();
+      expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [7] })).toBeNull();
+      expect(buildGenerateSelection('week', { weekStart: '2026-11-02', productIds: [1, 2, 3, 4] })).toBeNull();
+    });
+
+    it('session：要齊 liveDate＋liveSession；規則同 week', () => {
+      expect(
+        buildGenerateSelection('session', { liveDate: '20261108', liveSession: '2', productIds: [] }),
+      ).toEqual({ mode: 'session', liveDate: '20261108', liveSession: '2' });
+      expect(
+        buildGenerateSelection('session', { liveDate: '20261108', liveSession: '2', productIds: [4, 5] }),
+      ).toEqual({ mode: 'session', liveDate: '20261108', liveSession: '2', productIds: [4, 5] });
+      expect(buildGenerateSelection('session', { liveDate: '20261108', liveSession: null, productIds: [] })).toBeNull();
+      expect(buildGenerateSelection('session', { liveDate: null, liveSession: '2', productIds: [] })).toBeNull();
+      expect(
+        buildGenerateSelection('session', { liveDate: '20261108', liveSession: '2', productIds: [4] }),
+      ).toBeNull();
+    });
+
+    it('products：一定要直接指定 2–3 件', () => {
+      expect(buildGenerateSelection('products', { productIds: [3, 4] })).toEqual({
+        mode: 'products',
+        productIds: [3, 4],
+      });
+      expect(buildGenerateSelection('products', { productIds: [] })).toBeNull();
+      expect(buildGenerateSelection('products', { productIds: [3] })).toBeNull();
+      expect(buildGenerateSelection('products', { productIds: [1, 2, 3, 4] })).toBeNull();
+    });
+
+    it('productIds 係複製（caller 改原 array 唔影響 payload）', () => {
+      const ids = [1, 2];
+      const sel = buildGenerateSelection('products', { productIds: ids });
+      ids.push(3);
+      expect(sel).toEqual({ mode: 'products', productIds: [1, 2] });
+    });
+  });
+
+  describe('productBlockReason（used／ineligible 狀態）', () => {
+    it('合資格未用過 → null（可揀）', () => {
+      expect(productBlockReason({ eligible: true, usedBefore: false, ineligibleReason: null })).toBeNull();
+    });
+    it('用 server ineligibleReason 解釋（used／inactive／out_of_stock／delisted／no_image／category）', () => {
+      expect(productBlockReason({ eligible: false, usedBefore: true, ineligibleReason: 'used' })).toContain('已用過');
+      expect(productBlockReason({ eligible: false, usedBefore: false, ineligibleReason: 'inactive' })).toContain('已下架');
+      expect(productBlockReason({ eligible: false, usedBefore: false, ineligibleReason: 'out_of_stock' })).toContain('缺貨');
+      expect(productBlockReason({ eligible: false, usedBefore: false, ineligibleReason: 'delisted' })).toContain('下架期');
+      expect(productBlockReason({ eligible: false, usedBefore: false, ineligibleReason: 'no_image' })).toContain('冇商品圖');
+      expect(productBlockReason({ eligible: false, usedBefore: false, ineligibleReason: 'category' })).toContain('類別');
+    });
+    it('冇 reason 但 usedBefore → 當已用過；咩都冇 → 通用原因', () => {
+      expect(productBlockReason({ eligible: true, usedBefore: true, ineligibleReason: null })).toContain('已用過');
+      expect(productBlockReason({ eligible: false, usedBefore: false, ineligibleReason: null })).toContain('唔符合');
+    });
+  });
+
+  describe('searchQueryOk（SPEC：1–60 chars）', () => {
+    it('空白／空字串唔得；前後空白 trim 完先計', () => {
+      expect(searchQueryOk('')).toBe(false);
+      expect(searchQueryOk('   ')).toBe(false);
+      expect(searchQueryOk(' 蕾絲 ')).toBe(true);
+    });
+    it('60 字得、61 字唔得', () => {
+      expect(searchQueryOk('a'.repeat(60))).toBe(true);
+      expect(searchQueryOk('a'.repeat(61))).toBe(false);
+    });
   });
 });
 

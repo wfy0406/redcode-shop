@@ -117,7 +117,9 @@ vi.mock('@/providers/trpc', () => {
         imageDelete: { useMutation: mut },
         imageReview: { useMutation: mut },
         imageRead: { useQuery: () => query(null) },
-        weeklyProducts: { useQuery: () => query({ items: [] }) },
+        // 選貨 contract（iteration-3）：CreateArticleCard 用呢三個；呢個測試唔開新增卡
+        productSources: { useQuery: () => query({ weeks: [], sessions: [] }) },
+        products: { useQuery: () => query({ items: [] }) },
         modelImages: { useQuery: () => query(h.models) },
         modelImageUpload: { useMutation: () => h.uploadMut },
         modelImageSetDefault: { useMutation: () => h.setDefaultMut },

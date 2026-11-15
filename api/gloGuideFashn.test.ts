@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import type { GloGuideImageGenInput } from "./gloGuideProviders";
 import {
+  buildGloGuideScenePrompt,
   generateGloGuideImage,
+  hasGloGuideSceneContext,
   resolveGloGuideModelImage,
   resolveGloGuideModelImageInput,
   resumeGloGuideImage,
@@ -344,5 +346,145 @@ describe("resolveGloGuideModelImageInput（後台模特兒原圖：私密 path �
     const submitInit = fetchImpl.mock.calls[0]![1];
     const payload = JSON.parse(String(submitInit?.body));
     expect(payload.inputs.model_image).toBe(`data:image/png;base64,${expectedB64}`);
+  });
+});
+
+describe("scene context（文章 theme/body → agent-images 場景路線）", () => {
+  const sceneInput = (over: Partial<GloGuideImageGenInput> = {}): GloGuideImageGenInput =>
+    makeInput({
+      articleTheme: "辦公室返工穿搭",
+      articleBody: "今日介紹返工 OL 造型，喺辦公室都著得體面。",
+      productName: "米色針織外套",
+      ...over,
+    });
+
+  function sceneFetch(id: string) {
+    return async (url: string | URL, _init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/agent/images/run")) return jsonResponse({ id });
+      if (u.includes(`/v1/status/${id}`)) {
+        return jsonResponse({ status: "completed", output: ["https://cdn.fashn.ai/scene.png"] });
+      }
+      return pngResponse();
+    };
+  }
+
+  it("有 scene context：就算 category=top 都行 /v1/agent/images/run，prompt 帶場景＋pose＋商品硬參考", async () => {
+    const fetchImpl = vi.fn(sceneFetch("pred-scene-1"));
+    const result = await generateGloGuideImage(sceneInput({ variation: 0 }), {
+      ...OPTS(),
+      fetchImpl,
+    });
+    expect(result.providerJobId).toBe("pred-scene-1");
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe("https://api.fashn.ai/v1/agent/images/run");
+    const payload = JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body));
+    expect(payload.model_name).toBe("agent-images");
+    const prompt = payload.inputs.prompt as string;
+    // 場景跟文章（辦公室關鍵詞映射）
+    expect(prompt).toContain("office");
+    expect(prompt).toContain("辦公室返工穿搭");
+    // 保留真人身分＋商品外觀硬參考；唔添加其他商品
+    expect(prompt).toContain("identity, face, hair and body shape");
+    expect(prompt).toContain("design, color, pattern, material appearance, logos and details");
+    expect(prompt).toContain("Do not add any other products");
+    // 商品可見 framing 硬要求
+    expect(prompt).toContain("featured product must be clearly visible");
+    // 唔係舊「保留原 pose/background」prompt
+    expect(prompt).not.toContain("keeping the same person, face, hair, body shape, pose");
+  });
+
+  it("每張 variation 唔同 pose／構圖指令", async () => {
+    const prompts: string[] = [];
+    for (const variation of [0, 1, 2]) {
+      const fetchImpl = vi.fn(sceneFetch(`pred-v${variation}`));
+      await generateGloGuideImage(sceneInput({ variation }), { ...OPTS(), fetchImpl });
+      prompts.push(JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body)).inputs.prompt as string);
+    }
+    const poseLine = (p: string) => p.match(/Pose\/composition for THIS image: ([^.]+)\./)?.[1];
+    expect(new Set(prompts.map(poseLine)).size).toBe(3); // 三張三個 pose
+  });
+
+  it("冇 scene context（theme/body 全空）：照舊 tryon-max＋舊保留原 pose/背景 prompt（兼容）", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL, _init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/run")) return jsonResponse({ id: "pred-noscene" });
+      if (u.includes("/v1/status/pred-noscene")) {
+        return jsonResponse({ status: "completed", output: ["https://cdn.fashn.ai/n.png"] });
+      }
+      return pngResponse();
+    });
+    await generateGloGuideImage(makeInput(), { ...OPTS(), fetchImpl });
+    expect(String(fetchImpl.mock.calls[0]![0])).toBe("https://api.fashn.ai/v1/run");
+    const payload = JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body));
+    expect(payload.model_name).toBe("tryon-max");
+    expect(payload.inputs.prompt).toContain("keeping the same person");
+  });
+
+  it("buildGloGuideScenePrompt：office 關鍵詞映射＋主題引用＋截短", () => {
+    const p = buildGloGuideScenePrompt({
+      category: "top",
+      articleTheme: "辦公室 OL 返工服",
+      articleBody: "正文",
+      productName: "針織外套",
+      variation: 0,
+    });
+    expect(p).toContain("modern office workspace");
+    expect(p).toContain("針織外套");
+    // 超長 theme 截到 120 code points
+    const long = buildGloGuideScenePrompt({
+      category: "top",
+      articleTheme: "主".repeat(200),
+      articleBody: "",
+      productName: "x",
+      variation: 0,
+    });
+    expect(long).not.toContain("主".repeat(121));
+    // 空白 theme 都有籠統場景（唔會出空字串場景）
+    const blank = buildGloGuideScenePrompt({
+      category: "top",
+      articleTheme: "  ",
+      articleBody: "",
+      productName: "x",
+      variation: 0,
+    });
+    expect(blank).toContain("daily styling");
+  });
+
+  it("category-aware framing：pants/dress/shoes 全部 variation 都係 full-body，唔會出 close-up/mid-shot", () => {
+    for (const category of ["pants", "dress", "shoes"]) {
+      for (let variation = 0; variation < 10; variation++) {
+        const p = buildGloGuideScenePrompt({
+          category,
+          articleTheme: "週末穿搭",
+          articleBody: "",
+          productName: "闊腳褲",
+          variation,
+        });
+        expect(p).toContain("full-body");
+        expect(p).toContain("is fully and clearly visible");
+        expect(p).not.toContain("upper-body close-up");
+        expect(p).not.toContain("seated mid-shot");
+      }
+    }
+    // top/accessory 保留完整 pose pool（可以出 close-up）
+    const topPoses = new Set(
+      Array.from({ length: 10 }, (_, i) =>
+        buildGloGuideScenePrompt({
+          category: "top",
+          articleTheme: "",
+          articleBody: "",
+          productName: "x",
+          variation: i,
+        }).match(/Pose\/composition for THIS image: ([^.]+)\./)?.[1],
+      ),
+    );
+    expect(topPoses.size).toBe(5);
+  });
+
+  it("hasGloGuideSceneContext：theme/body 任一非空即係有 context", () => {
+    expect(hasGloGuideSceneContext({ articleTheme: "主題" })).toBe(true);
+    expect(hasGloGuideSceneContext({ articleBody: "正文" })).toBe(true);
+    expect(hasGloGuideSceneContext({})).toBe(false);
+    expect(hasGloGuideSceneContext({ articleTheme: "  ", articleBody: "" })).toBe(false);
   });
 });

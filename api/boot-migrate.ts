@@ -918,6 +918,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS gloguidemodelimages_publicid ON "gloGuideModel
 -- 未刪行入面最多一張預設（partial unique；DB 層硬保證）
 CREATE UNIQUE INDEX IF NOT EXISTS gloguidemodelimages_default_live ON "gloGuideModelImages" ("isDefault") WHERE "deletedAt" IS NULL AND "isDefault" = true;
 CREATE INDEX IF NOT EXISTS gloguidemodelimages_live ON "gloGuideModelImages" ("deletedAt");
+
+-- ===== Glo Glo 指南商品永久使用歷史（SPEC 第 3 輪）=====
+-- 曾屬任何指南文章嘅商品唔可以再用；productId PK 係並發重用嘅最終閘；
+-- 文章改貨／刪 link／落架都唔會刪呢度嘅歷史。
+CREATE TABLE IF NOT EXISTS "gloGuideProductUsage" (
+  "productId" integer PRIMARY KEY,
+  "firstArticleId" integer NOT NULL REFERENCES "gloGuideArticles"(id),
+  "createdAt" timestamp NOT NULL DEFAULT now()
+);
+-- 一次性回填（idempotent）：現有指南關聯嘅商品全部補返歷史，
+-- firstArticleId 取最舊嗰篇（articleId 最細）；重跑 ON CONFLICT 唔炸。
+INSERT INTO "gloGuideProductUsage" ("productId", "firstArticleId", "createdAt")
+SELECT DISTINCT ON ("productId") "productId", "articleId", "createdAt"
+FROM "gloGuideArticleProducts"
+ORDER BY "productId", "articleId"
+ON CONFLICT ("productId") DO NOTHING;
 `;
 
 // 將 DDL 拆成獨立語句（DO $$ ... $$ 區塊入面嘅分號唔切）：

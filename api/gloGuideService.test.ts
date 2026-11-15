@@ -2,7 +2,8 @@
  * Glo Glo service 規則測試（唔掂 DB）：
  * ─ published 圖片 mutation 規則：published 指南唔准刪圖／改圖審批／加圖／重生圖
  *   （會即時破壞公開文）；draft/pending_review/rejected 先郁得；
- * ─ pickAutoProducts：本週可選 0/1 件 → 唔生成，2 件 → 2，≥3 → 3；
+ * ─ pickAutoProducts：本週可選 0/1 件 → 唔生成，2 件 → 全取，≥3 → 隨機抽 3
+ *   （可注入 seed RNG；唔再固定 newest）；
  * ─ source guard：service 真係喺 reviewImage/deleteImage/uploadImage/generateImages
  *   落 published 閘（防回歸）。
  */
@@ -221,7 +222,7 @@ describe("article.archive 落架", () => {
   });
 });
 
-describe("pickAutoProducts（自動揀貨）", () => {
+describe("pickAutoProducts（自動揀貨：隨機抽 2–3 件）", () => {
   const mk = (id: number): WeeklyProductDto => ({
     id,
     name: `商品${id}`,
@@ -234,11 +235,29 @@ describe("pickAutoProducts（自動揀貨）", () => {
     category: "top",
     stock: 1,
   });
-  it("0／1 件 → 唔生成（最少 2 件）；2 件 → 2；≥3 → 3（最新優先）", () => {
+  // deterministic seed RNG（同 selection 模組測試一樣嘅 mulberry32）
+  const mulberry32 = (seed: number) => {
+    let a = seed >>> 0;
+    return () => {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+  it("0／1 件 → 唔生成（最少 2 件）；2 件 → 全取；≥3 → 隨機抽 3（唔再固定 newest）", () => {
     expect(pickAutoProducts([])).toEqual([]);
     expect(pickAutoProducts([mk(1)])).toEqual([]);
-    expect(pickAutoProducts([mk(1), mk(2)]).map((p) => p.id)).toEqual([1, 2]);
-    expect(pickAutoProducts([mk(1), mk(2), mk(3), mk(4)]).map((p) => p.id)).toEqual([1, 2, 3]);
+    // 2 件池無論 seed 點都全取
+    expect(pickAutoProducts([mk(1), mk(2)], mulberry32(1)).map((p) => p.id).sort()).toEqual([1, 2]);
+    // 4 件池：抽 3 件、唔重複、全部屬原池；同 seed 可重現
+    const pool = [mk(1), mk(2), mk(3), mk(4)];
+    const a = pickAutoProducts(pool, mulberry32(42)).map((p) => p.id);
+    expect(a).toEqual(pickAutoProducts(pool, mulberry32(42)).map((p) => p.id));
+    expect(a).toHaveLength(3);
+    expect(new Set(a).size).toBe(3);
+    for (const id of a) expect([1, 2, 3, 4]).toContain(id);
   });
 });
 

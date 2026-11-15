@@ -989,6 +989,18 @@ export const gloGuideArticleProducts = pgTable(
   ],
 );
 
+// 指南商品永久使用歷史（SPEC 第 3 輪「永久去重」）：曾屬任何指南文章嘅商品唔可以再用。
+// ─ productId 係 primary key：並發兩篇指南搶同一商品，DB 層硬擋（23505 → 可讀 409）；
+// ─ 生成及改貨喺同一 transaction 寫入；文章之後改貨／刪 link／落架都**唔會刪呢度**；
+// ─ firstArticleId＝第一次用到嘅文章（migration 由 gloGuideArticleProducts 回填最舊嗰篇）。
+export const gloGuideProductUsage = pgTable("gloGuideProductUsage", {
+  productId: integer("productId").primaryKey(),
+  firstArticleId: integer("firstArticleId")
+    .notNull()
+    .references(() => gloGuideArticles.id),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+});
+
 // 指南圖片：每張連結其中一件已選商品、逐張人工 approved（有 reviewer/time）先過閘；
 // 所有持久圖片路徑只准 /uploads/glo-guide/（短期 Fashn CDN URL 永不入庫、唔入公開 DTO）
 export const gloGuideImages = pgTable(
@@ -1126,6 +1138,7 @@ export type WebDesignPaymentProof = typeof webDesignPaymentProofs.$inferSelect;
 export type WebDesignInquiry = typeof webDesignInquiries.$inferSelect;
 export type GloGuideArticle = typeof gloGuideArticles.$inferSelect;
 export type GloGuideArticleProduct = typeof gloGuideArticleProducts.$inferSelect;
+export type GloGuideProductUsage = typeof gloGuideProductUsage.$inferSelect;
 export type GloGuideImage = typeof gloGuideImages.$inferSelect;
 export type GloGuideJob = typeof gloGuideJobs.$inferSelect;
 export type GloGuideModelImage = typeof gloGuideModelImages.$inferSelect;

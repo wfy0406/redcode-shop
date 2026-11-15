@@ -12,7 +12,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import pathModule from "node:path";
-import { and, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import {
   gloGuideArticleProducts,
@@ -28,9 +28,9 @@ import { saveGloGuideModelImage } from "./gloGuideMedia";
 import {
   buildGloGuideSlug,
   evaluateGloGuideGate,
-  GLO_GUIDE_CATEGORIES,
   GLO_GUIDE_IMAGE_MAX,
   GLO_GUIDE_MODEL_IMAGE_MAX,
+  GloGuideError,
   gloGuidePublishedMutationError,
   hkWeekRangeYmd,
   isGloGuideAction,
@@ -53,21 +53,26 @@ import {
   validateProductSelection,
   type GloGuideActor,
 } from "./gloGuideValidation";
+import {
+  claimProductUsage,
+  compactToDashYmd,
+  listGloGuideProducts,
+  listGloGuideProductSources,
+  normalizeGenerateSelection,
+  pickRandomTwoThree,
+  resolveGenerateProducts,
+  defaultProductStore,
+  type GloGuideSelectedProduct,
+} from "./gloGuideProductSelection";
 import { hkTodayYmd } from "@contracts/livePublicSummary";
 import type { GloGuideProviders } from "./gloGuideProviders";
 
+// GloGuideError 已搬落 gloGuideValidation（純模組，俾商品選擇線共用）；
+// 呢度 re-export 保持舊 import 路徑（router／WMS handler／測試）唔使改。
+export { GloGuideError };
+
 // ──────────────────────────── 錯誤 ────────────────────────────
 
-export class GloGuideError extends Error {
-  public readonly code: string;
-  public readonly httpStatus: number;
-  constructor(httpStatus: number, code: string, message: string) {
-    super(message);
-    this.name = "GloGuideError";
-    this.code = code;
-    this.httpStatus = httpStatus;
-  }
-}
 const badRequest = (msg: string) => new GloGuideError(400, "BAD_REQUEST", msg);
 const notFound = (msg = "搵唔到呢篇指南") => new GloGuideError(404, "NOT_FOUND", msg);
 const conflict = (msg: string) => new GloGuideError(409, "CONFLICT", msg);
@@ -123,50 +128,35 @@ export interface WeeklyProductDto {
 }
 
 /**
- * 本週可選商品：香港本週（週一至週日）liveDate、isActive、stock>0、有真商品圖、
- * 類別限服飾／飾品。自動及手動生成都只可以揀呢批。
+ * 本週可選商品（兼容 alias，SPEC 第 3 輪保留）：香港本週（週一至週日）直播商品入面
+ * 合資格且從未用過嘅嗰啲——實作經 gloGuideProductSelection（week 模式）統一閘口：
+ * isActive、未到期自動下架、stock>0、有真商品圖、類別限服飾／飾品、唔喺 usage 歷史。
+ * 新選貨介面用 listGloGuideProducts（filter 模式）；呢度淨係回舊 DTO 形狀。
  */
 export async function listWeeklyProducts(now: Date = new Date()): Promise<WeeklyProductDto[]> {
-  const db = getDb();
-  const { start, end } = hkWeekRangeYmd(now);
-  const rows = await db
-    .select()
-    .from(products)
-    .where(
-      and(
-        eq(products.isActive, true),
-        // 同公開商品一致：排除已到期自動下架（delistEnabled=false 或 delistAt null 或 >now 先可見）
-        or(
-          eq(products.delistEnabled, false),
-          isNull(products.delistAt),
-          gt(products.delistAt, now),
-        ),
-        sql`${products.liveDate} >= ${start} AND ${products.liveDate} <= ${end}`,
-        sql`${products.stock} > 0`,
-        inArray(products.category, [...GLO_GUIDE_CATEGORIES]),
-      ),
-    )
-    .orderBy(desc(products.listedDate));
-  return rows
-    .filter((p) => typeof p.image === "string" && p.image.trim().length > 0)
-    .map((p) => ({
-      id: p.id,
-      name: p.name,
-      image: p.image,
-      price: p.price,
-      discountPrice: p.discountPrice,
-      aiTags: publicAiTags(p.aiTags, p.aiTagsEnabled),
-      liveDate: p.liveDate,
-      liveSession: p.liveSession,
-      category: p.category,
-      stock: p.stock,
-    }));
+  const { start } = hkWeekRangeYmd(now);
+  const refs = await listGloGuideProducts(
+    { mode: "week", weekStart: compactToDashYmd(start) },
+    { now },
+  );
+  return refs
+    .filter((r) => r.eligible)
+    .map(({ usedBefore, eligible, ineligibleReason, ...dto }) => dto);
 }
 
-/** 自動揀貨：最新上架優先，3 件優先、得 2 件就 2 件；少過 2 件 → 錯（唔准生成） */
-export function pickAutoProducts(weekly: readonly WeeklyProductDto[]): WeeklyProductDto[] {
-  if (weekly.length < 2) return [];
-  return weekly.slice(0, Math.min(3, weekly.length));
+// 第 3 輪選貨查詢（filter 模式＋來源概覽）——由 service 統一出口，WMS/admin 共用
+export { listGloGuideProducts, listGloGuideProductSources };
+
+/**
+ * 自動揀貨（兼容 helper）：合資格池**隨機**抽 3 件優先、得 2 件就 2 件；少過 2 件 → 錯（唔准生成）。
+ * 用戶規則：「無選或自動產生就隨機選商品」——唔再固定 newest；rng 可注入俾測試 seed。
+ * 真正生成路徑喺 gloGuideProductSelection.resolveGenerateProducts（含逐週 fallback＋usage 閘）。
+ */
+export function pickAutoProducts(
+  weekly: readonly WeeklyProductDto[],
+  rng: () => number = Math.random,
+): WeeklyProductDto[] {
+  return pickRandomTwoThree(weekly, rng);
 }
 
 // ──────────────────────────── 主題去重資料 ────────────────────────────
@@ -491,30 +481,30 @@ function gateInputFrom(bundle: {
 // ──────────────────────────── article.generate ────────────────────────────
 
 /**
- * article.generate {productIds?, themeHint?}：
- * 揀貨（手動揀一定要係本週可選；冇俾就自動揀最新 2–3 件）→ 建 draft 文章（生成中）→
- * 建 full job（idempotent）→ 背景跑完整文章＋圖片生成。
+ * article.generate {selection?, productIds?, themeHint?}（SPEC 第 3 輪凍結 contract）：
+ * ─ selection 四模式（auto／week／session／products）；舊 top-level productIds 等於
+ *   { mode: "products" }；同時傳兩種 → 400；
+ * ─ auto／省略：由香港本週向過去逐週 fallback，揀最新 2–3 件合資格且**從未用過**商品，
+ *   一路搵到最舊直播貨嗰週（唔設週數上限）；全歷史搵唔到 → 409 真錯誤
+ *   （排程經 generateArticle({}) 行同一條路，唔使改）；
+ * ─ week/session 有 productIds 必須屬該來源；冇就由該來源揀最新 2–3 件，
+ *   少於 2 件 → 409，唔跨來源 fallback；
+ * ─ server 重查商品存在／庫存／active／delist／圖／類別／場次歸屬／usage 歷史；
+ *   其他文章用過 → 409；並發搶用由 gloGuideProductUsage PK 喺 tx 內硬擋 → 可讀 409。
+ * 揀貨 → 建 draft 文章（生成中）→ 建 full job（idempotent）→ 背景跑完整文章＋圖片生成。
  */
 export async function generateArticle(
   actor: GloGuideActor,
-  input: { productIds?: number[]; themeHint?: string },
+  input: { selection?: unknown; productIds?: number[]; themeHint?: string },
   options?: { source?: "manual" | "auto"; jobKind?: "full" | "scheduled"; idempotencyKey?: string },
 ): Promise<ReturnType<typeof toInternalArticle>> {
   const db = getDb();
-  const weekly = await listWeeklyProducts();
-  const weeklyById = new Map(weekly.map((p) => [p.id, p]));
-  let chosen: WeeklyProductDto[];
-  if (input.productIds && input.productIds.length > 0) {
-    const selErr = validateProductSelection(input.productIds);
-    if (selErr) throw badRequest(selErr);
-    for (const id of input.productIds) {
-      if (!weeklyById.has(id)) throw badRequest(`商品 ${id} 唔係本週可選貨（要本週直播、上架中、有貨、有圖嘅服飾／飾品）`);
-    }
-    chosen = input.productIds.map((id) => weeklyById.get(id)!);
-  } else {
-    chosen = pickAutoProducts(weekly);
-    if (chosen.length === 0) throw conflict("本週冇足夠可選商品（最少 2 件本週直播、有貨、有圖嘅服飾／飾品）");
-  }
+  // 輸入規範化＋server 重查揀貨（全部硬閘喺 gloGuideProductSelection；抛真錯誤）
+  const selection = normalizeGenerateSelection({
+    selection: input.selection,
+    productIds: input.productIds,
+  });
+  const chosen: GloGuideSelectedProduct[] = (await resolveGenerateProducts(selection)).products;
 
   const publicId = randomUUID();
   // 模特兒原圖快照：DB 有預設用預設，未上傳過就沿用 ENV 第一項／內建 /gloglo-3.jpg。
@@ -562,6 +552,9 @@ export async function generateArticle(
             productNameSnapshot: p.name,
           })),
         );
+        // 永久使用歷史：同一 tx 寫 gloGuideProductUsage（PK 係並發重用最終閘；
+        // 撞 23505 → claimProductUsage 轉可讀 409，成個 tx rollback 唔留半寫狀態）
+        await claimProductUsage(tx, article.id, chosen.map((p) => p.id));
         const createdJob = await createGloGuideJob(
           {
             articleId: article.id,
@@ -713,7 +706,10 @@ export async function regenerateArticle(
 
 /**
  * article.update {id, title, body, theme, productIds?}：
- * 全欄位清理＋硬閘＋主題去重；商品改動要本週可選。
+ * 全欄位清理＋硬閘＋主題去重；productIds 視為直接商品編輯（SPEC 第 3 輪）：
+ * server 喺鎖內重查商品／庫存／active／delist／圖／類別／usage 歷史——
+ * 可保留同一文章原有商品，但唔准用其他文章曾用嘅商品（409）；
+ * 新用嘅商品同一 tx 寫 gloGuideProductUsage（PK 擋並發搶用）；**改貨唔會刪 usage 歷史**。
  * 任何改動：status → draft、全部未刪圖 reviewStatus → pending（同一 transaction）。
  */
 export async function updateArticle(
@@ -729,20 +725,16 @@ export async function updateArticle(
   if (bodyErr) throw badRequest(bodyErr);
   const { theme, themeKey } = await assertThemeAvailable(input.theme ?? "", input.id);
 
-  let newLinks: WeeklyProductDto[] | null = null;
+  let newLinkIds: number[] | null = null;
   if (input.productIds !== undefined) {
     const selErr = validateProductSelection(input.productIds);
     if (selErr) throw badRequest(selErr);
-    const weekly = await listWeeklyProducts();
-    const weeklyById = new Map(weekly.map((p) => [p.id, p]));
-    newLinks = input.productIds.map((id) => {
-      const p = weeklyById.get(id);
-      if (!p) throw badRequest(`商品 ${id} 唔係本週可選貨`);
-      return p;
-    });
+    newLinkIds = input.productIds;
   }
 
-  await db.transaction(async (tx) => {
+  // transaction 直接 return 套用咗嘅商品（閉包外靠傳回值，唔靠外層 let——
+  // TS 對「淨係喺 callback 入面賦值」嘅外層 let 會 keep 住初始 null 窄化，audit 用會變 never）
+  const appliedLinks = await db.transaction(async (tx): Promise<GloGuideSelectedProduct[] | null> => {
     // 鎖內重驗：approve 先 commit 嘅話，呢度會見到 published 而拒絕；反之 approve 會等鎖再見到 draft。
     const locked = await tx.execute(
       sql`SELECT id, status, "generationStatus" FROM "gloGuideArticles" WHERE id = ${input.id} FOR UPDATE`,
@@ -769,10 +761,17 @@ export async function updateArticle(
         updatedAt: new Date(),
       })
       .where(eq(gloGuideArticles.id, input.id));
-    if (newLinks) {
+    if (newLinkIds) {
+      // 鎖內經同一 tx 重查商品＋usage 歷史（excludeArticleId=自身：保留自身商品唔受誤擋；
+      // 其他文章曾用 → 409；唔存在／缺貨／下架／無圖／類別唔啱 → 400）
+      const resolved = await resolveGenerateProducts(
+        { mode: "products", productIds: newLinkIds },
+        { excludeArticleId: input.id, store: defaultProductStore(tx as unknown as Db) },
+      );
+      const applied = resolved.products;
       await tx.delete(gloGuideArticleProducts).where(eq(gloGuideArticleProducts.articleId, input.id));
       await tx.insert(gloGuideArticleProducts).values(
-        newLinks.map((p, i) => ({
+        applied.map((p, i) => ({
           articleId: input.id,
           productId: p.id,
           position: i,
@@ -780,8 +779,18 @@ export async function updateArticle(
           productNameSnapshot: p.name,
         })),
       );
+      // 新用嘅商品寫永久歷史（自身已 claim 嘅唔再寫）；撞 PK＝並發搶用 → 可讀 409
+      const selfClaimed = new Set(resolved.selfClaimedIds);
+      await claimProductUsage(
+        tx,
+        input.id,
+        applied.map((p) => p.id).filter((id) => !selfClaimed.has(id)),
+      );
+      await resetImagesPending(tx, input.id);
+      return applied;
     }
     await resetImagesPending(tx, input.id);
+    return null;
   });
   void logAudit({
     actorId: actor.id,
@@ -790,7 +799,7 @@ export async function updateArticle(
     action: "gloGuide.articleUpdate",
     targetType: "gloGuideArticle",
     targetId: input.id,
-    detail: `編輯指南「${title}」${newLinks ? `，商品改為 ${newLinks.map((p) => p.id).join("/")}` : ""}；已重置 draft＋圖片審批`,
+    detail: `編輯指南「${title}」${appliedLinks ? `，商品改為 ${appliedLinks.map((p) => p.id).join("/")}` : ""}；已重置 draft＋圖片審批`,
   });
   return toInternalArticle(await getArticleBundle(input.id));
 }

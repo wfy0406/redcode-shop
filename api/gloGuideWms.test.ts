@@ -25,6 +25,8 @@ function mockDeps() {
   const deps: GloGuideDispatchDeps = {
     service: {
       listWeeklyProducts: rec("listWeeklyProducts"),
+      listGloGuideProducts: rec("listGloGuideProducts"),
+      listGloGuideProductSources: rec("listGloGuideProductSources"),
       listArticleSummaries: rec("listArticleSummaries"),
       getArticleBundle: rec("getArticleBundle"),
       toInternalArticle: rec("toInternalArticle"),
@@ -95,6 +97,59 @@ describe("dispatch 權限矩陣", () => {
     await expect(dispatchGloGuideAction(staff, "article.get", { id: 99 }, deps)).rejects.toMatchObject({
       httpStatus: 404,
       code: "NOT_FOUND",
+    });
+  });
+});
+
+describe("第 3 輪商品選擇 dispatch（SPEC 凍結 contract；同 WMS trpc gloGuide.* 對齊）", () => {
+  it("contract：products.list payload＝filter object 本身（WMS products.useQuery(filter)）；空 payload → 兼容舊版本週可選", async () => {
+    const { deps, calls } = mockDeps();
+    await dispatchGloGuideAction(staff, "products.list", {}, deps);
+    await dispatchGloGuideAction(staff, "products.list", { mode: "week", weekStart: "2026-11-16" }, deps);
+    await dispatchGloGuideAction(staff, "products.list", { mode: "search", query: "連身裙" }, deps);
+    expect(calls.map((c) => c.fn)).toEqual([
+      "listWeeklyProducts",
+      "listGloGuideProducts",
+      "listGloGuideProducts",
+    ]);
+    // filter object 原樣透傳（唔係包喺 {filter} 入面）
+    expect(calls[1]!.args).toEqual([{ mode: "week", weekStart: "2026-11-16" }]);
+    expect(calls[2]!.args).toEqual([{ mode: "search", query: "連身裙" }]);
+  });
+
+  it("contract：products.sources payload={} → listGloGuideProductSources（WMS productSources.useQuery）", async () => {
+    const { deps, calls } = mockDeps();
+    await dispatchGloGuideAction(staff, "products.sources", {}, deps);
+    expect(calls.map((c) => c.fn)).toEqual(["listGloGuideProductSources"]);
+    expect(calls[0]!.args).toEqual([]);
+  });
+
+  it("contract：pendingApprovals ＝ article.list {status:'pending_review', limit:100}（WMS pendingApprovals.useQuery）", async () => {
+    const { deps, calls } = mockDeps();
+    await dispatchGloGuideAction(staff, "article.list", { status: "pending_review", limit: 100 }, deps);
+    expect(calls.map((c) => c.fn)).toEqual(["listArticleSummaries"]);
+    expect(calls[0]!.args).toEqual([{ status: "pending_review", limit: 100 }]);
+  });
+
+  it("article.generate 透傳 selection＋productIds＋themeHint（service 驗證同時傳兩種 → 400）", async () => {
+    const { deps, calls } = mockDeps();
+    await dispatchGloGuideAction(
+      staff,
+      "article.generate",
+      { selection: { mode: "session", liveDate: "20261120", liveSession: "2" }, themeHint: "雨天" },
+      deps,
+    );
+    await dispatchGloGuideAction(staff, "article.generate", { productIds: [11, 12] }, deps);
+    expect(calls.map((c) => c.fn)).toEqual(["generateArticle", "generateArticle"]);
+    expect(calls[0]!.args[1]).toEqual({
+      selection: { mode: "session", liveDate: "20261120", liveSession: "2" },
+      productIds: undefined,
+      themeHint: "雨天",
+    });
+    expect(calls[1]!.args[1]).toEqual({
+      selection: undefined,
+      productIds: [11, 12],
+      themeHint: undefined,
     });
   });
 });

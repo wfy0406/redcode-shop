@@ -14,6 +14,26 @@
 
 import { gloGuideRichTextPlain, parseGloGuideRichText } from "@contracts/gloGuideRichText";
 
+// ──────────────────────────── 共用錯誤型 ────────────────────────────
+
+/**
+ * Glo Glo 業務錯誤（真錯誤訊息＋HTTP status）：service／商品選擇模組 throw，
+ * WMS handler／admin router 映射做 {ok:false}／tRPC code。絕不假成功。
+ * 原本住喺 gloGuideService.ts；搬落純模組等商品選擇線（gloGuideProductSelection.ts）
+ * 唔使同 service 循環依賴。service 仍然 re-export，舊 import 唔使改。
+ */
+export class GloGuideError extends Error {
+  public readonly code: string;
+  public readonly httpStatus: number;
+  constructor(httpStatus: number, code: string, message: string) {
+    super(message);
+    this.name = "GloGuideError";
+    this.code = code;
+    this.httpStatus = httpStatus;
+  }
+}
+
+
 // ──────────────────────────── 文字清理／字數 ────────────────────────────
 
 /** 控制字元：C0（\u0000–\u001F）＋DEL＋C1（\u007F–\u009F）。body 保留 \n／\t，其餘全剝。 */
@@ -499,6 +519,8 @@ export function actionNeedsSupervisor(action: string): boolean {
 /** 合法 action 清單（白名單；唔喺度嘅 action → 400） */
 export const GLO_GUIDE_ACTIONS = [
   "products.list",
+  // 商品來源概覽（星期／場次選項＋合資格數；三級員工皆可查）
+  "products.sources",
   "article.list",
   "article.get",
   "article.generate",

@@ -193,6 +193,43 @@
   font-size: 14px;
   font-weight: 800;
 }
+/* 已用過／唔合資格商品：真 disabled（唔係齋暗咗），附原因字 */
+.ggp-product:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* auto 只讀預覽卡：同商品卡一致視覺但係 div，唔可以撳、唔入 tab order */
+.ggp-product-static {
+  cursor: default;
+}
+.ggp-product-meta {
+  font-size: 11px;
+  color: var(--text-3, #9a94b8);
+  overflow-wrap: anywhere;
+}
+.ggp-product-block {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--pink-soft, #ff9ec4);
+  overflow-wrap: anywhere;
+}
+/* 商品搜尋列：input 彈性填滿，掣唔縮細過 44px，375px 唔准溢出 */
+.ggp-search-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  min-width: 0;
+}
+.ggp-search-row .ggp-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ggp-search-row .ggp-btn {
+  flex-shrink: 0;
+}
+.ggp-search {
+  margin: 0;
+}
 
 /* ── 表單 ─────────────────────────────── */
 .ggp-label {

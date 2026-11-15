@@ -207,6 +207,9 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain('fetchpriority="high"');
     expect(html).toContain("2026-11-16 00:00");
     expect(html).toContain("Glo Glo 撰寫每週直播新品配搭靈感，附重點標籤同配搭圖");
+    // 首口 SEO 區塊保留；JS 啟用時喺首次繪畫前收起，避免 React mount 移除造成 CLS。
+    expect(html).toContain("nodes[i].style.display='none'");
+    expect(html.indexOf('id="redcode-glo-guide-seo"')).toBeLessThan(html.indexOf("nodes[i].style.display='none'"));
   });
 
   it("指南詳情首口有完整文章、Article JSON-LD、商品卡，gallery 唔重複 cover", async () => {

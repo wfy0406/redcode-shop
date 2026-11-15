@@ -76,6 +76,21 @@ function PageLoading() {
 }
 
 /**
+ * v2026.11.16（公開 QA CLS 修正第二部）：Glo Guide route-level fallback 專用。
+ * PageLoading 係 fixed 定位、outlet 實際高度 0，Footer 初始會出現喺首屏，
+ * 真內容載入後被推晒出 viewport（實測 CLS 0.56–0.82）。呢層 minHeight:100dvh
+ * 令 loading 期間 outlet 已經撐足一屏，Footer 由一開始就喺首屏以下。
+ * PageLoading 本身原樣重用；淨係 glo-guide 兩條 route 用，其他 routes 唔郁。
+ */
+function GuideRouteLoading() {
+  return (
+    <div style={{ minHeight: '100dvh' }}>
+      <PageLoading />
+    </div>
+  );
+}
+
+/**
  * Routing contract：Nested-route pattern（react-dev.md Pattern B）
  * Layout render <Outlet/>，所以呢度用巢狀 <Route>，唔好溝 children pattern。
  * 2026-08-05：加 /privacy（私隱政策）＋ /terms（服務條款），頁尾 Footer 有連結。
@@ -100,8 +115,12 @@ export default function App() {
             <Route index element={<Home />} />
             <Route path="products" element={<Products />} />
             <Route path="products/:id" element={<ProductDetail />} />
-            <Route path="glo-guide" element={<GloGuideList />} />
-            <Route path="glo-guide/:slug" element={<GloGuideDetail />} />
+            {/* v2026.11.16（公開 QA CLS 修正）：Glo Guide 兩條 route 各自用 route-level Suspense
+                包住 lazy element —— chunk 載入時只有 outlet 內容落 GuideRouteLoading，外層 Layout（Navbar/Footer）
+                保持 mounted，唔再成棵卸走再還原；fallback 用 100dvh 撐高 outlet，Footer 唔會先出現喺首屏
+                再被推走（直開 detail 實測 CLS 0.55→0.82 就係呢兩層因）。其他 routes 繼續用外層共用 Suspense，唔郁。 */}
+            <Route path="glo-guide" element={<Suspense fallback={<GuideRouteLoading />}><GloGuideList /></Suspense>} />
+            <Route path="glo-guide/:slug" element={<Suspense fallback={<GuideRouteLoading />}><GloGuideDetail /></Suspense>} />
             <Route path="live" element={<Live />} />
             <Route path="about" element={<About />} />
             <Route path="vip" element={<Vip />} />

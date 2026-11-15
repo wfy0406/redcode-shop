@@ -216,7 +216,11 @@ export function renderGloGuideDetail(detail: GuideDetail): string {
 export function injectGloGuideContent(html: string, block: string): string {
   try {
     if (!block || html.includes('id="redcode-glo-guide-seo"')) return html;
-    return html.replace("</body>", `    ${block}\n  </body>`);
+    // JS 可用時喺首次繪畫前收起無 JS／crawler fallback，避免 React mount 移除區塊造成 CLS；
+    // 停用 JS 時 script 唔會執行，完整公開內容仍然可見、可讀、可索引。
+    const prerenderBoot =
+      '<script>(function(){var nodes=document.querySelectorAll(\'#redcode-glo-guide-seo[data-redcode-prerender]\');for(var i=0;i<nodes.length;i++){nodes[i].style.display=\'none\';}})();</script>';
+    return html.replace("</body>", `    ${block}\n    ${prerenderBoot}\n  </body>`);
   } catch {
     return html;
   }

@@ -53,6 +53,8 @@ const h = vi.hoisted(() => {
     });
   const service = {
     listWeeklyProducts: fn([] as unknown[]),
+    listGloGuideProducts: fn([] as unknown[]),
+    listGloGuideProductSources: fn({ weeks: [], sessions: [] } as unknown),
     listArticleSummaries: fn([] as unknown[]),
     getArticleBundle: fn(null as unknown),
     toInternalArticle: vi.fn((b: unknown) => b),
@@ -212,8 +214,7 @@ describe("權限閘（SPEC：staff 越權 approve 必須後端擋）", () => {
 });
 
 describe("staff 正常操作（全員可用）", () => {
-  it("articles／weeklyProducts／article 查詢", async () => {
-    h.service.listArticleSummaries.mockResolvedValueOnce([{ id: 1 }]);
+  it("articles／weeklyProducts／article 查詢", async () => {    h.service.listArticleSummaries.mockResolvedValueOnce([{ id: 1 }]);
     const list = await caller().articles({ status: "draft" });
     expect(list.items).toHaveLength(1);
     expect(h.service.listArticleSummaries).toHaveBeenCalledWith({ status: "draft" });
@@ -270,6 +271,74 @@ describe("staff 正常操作（全員可用）", () => {
     expect(h.service.readImageForPreview).toHaveBeenCalledWith(
       expect.objectContaining({ id: 7 }),
       { id: 1, imageId: 9 },
+    );
+  });
+});
+
+describe("第 3 輪商品選擇查詢（SPEC 凍結 contract）", () => {
+  it("未登入／member：products、productSources 都擋（service 完全冇被調用）", async () => {
+    reset(null);
+    await expectCode(caller().products(), "UNAUTHORIZED");
+    await expectCode(caller().productSources(), "UNAUTHORIZED");
+    reset({ userId: 9, role: "member" });
+    await expectCode(caller().products({ mode: "auto" }), "FORBIDDEN");
+    await expectCode(caller().productSources(), "FORBIDDEN");
+    expect(h.service.listGloGuideProducts).not.toHaveBeenCalled();
+    expect(h.service.listGloGuideProductSources).not.toHaveBeenCalled();
+  });
+
+  it("staff 可查：products 原樣透傳 filter；productSources 回來源概覽；weeklyProducts 兼容 alias 保留", async () => {
+    h.service.listGloGuideProducts.mockResolvedValueOnce([{ id: 5, eligible: true }]);
+    const out = await caller().products({ mode: "week", weekStart: "2026-11-16" });
+    expect(out.items).toHaveLength(1);
+    expect(h.service.listGloGuideProducts).toHaveBeenCalledWith({ mode: "week", weekStart: "2026-11-16" });
+
+    h.service.listGloGuideProductSources.mockResolvedValueOnce({
+      weeks: [{ weekStart: "2026-11-16", weekEnd: "2026-11-22", total: 4, eligible: 2 }],
+      sessions: [],
+    });
+    const sources = await caller().productSources();
+    expect(sources.weeks).toHaveLength(1);
+
+    await caller().weeklyProducts();
+    expect(h.service.listWeeklyProducts).toHaveBeenCalled();
+  });
+
+  it("generate：selection 原樣透傳（service 負責業務驗證）", async () => {
+    await caller().generate({ selection: { mode: "session", liveDate: "20261120", liveSession: "2" } });
+    const [, input] = h.service.generateArticle.mock.calls[0]!;
+    expect(input).toEqual({
+      selection: { mode: "session", liveDate: "20261120", liveSession: "2" },
+      productIds: undefined,
+      themeHint: undefined,
+    });
+  });
+
+  it("zod 形狀閘：未知 filter mode／空 search query／未知 selection mode → BAD_REQUEST，service 冇被調用", async () => {
+    await expect(
+      caller().products({ mode: "hack" } as never),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      caller().products({ mode: "search", query: "" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      caller().generate({ selection: { mode: "hack" } as never }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(h.service.listGloGuideProducts).not.toHaveBeenCalled();
+    expect(h.service.generateArticle).not.toHaveBeenCalled();
+  });
+
+  it("service GloGuideError 映射：products 查詢 400 → BAD_REQUEST；generate 409（少於 2 件）→ CONFLICT", async () => {
+    h.service.listGloGuideProducts.mockRejectedValueOnce(
+      new GloGuideError(400, "BAD_REQUEST", "weekStart 要係香港星期一（YYYY-MM-DD）"),
+    );
+    await expectCode(caller().products({ mode: "week", weekStart: "2026-11-17" }), "BAD_REQUEST");
+    h.service.generateArticle.mockRejectedValueOnce(
+      new GloGuideError(409, "CONFLICT", "指定場次唔夠 2 件從未用過嘅合資格商品"),
+    );
+    await expectCode(
+      caller().generate({ selection: { mode: "session", liveDate: "20261120", liveSession: "2" } }),
+      "CONFLICT",
     );
   });
 });

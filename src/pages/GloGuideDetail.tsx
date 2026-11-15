@@ -1,15 +1,24 @@
 /**
- * /glo-guide/:slug —— Glo Glo 指南詳情（editorial split-screen）。
+ * /glo-guide/:slug —— Glo Glo 指南詳情（潮牌雜誌風 v3，SPEC 凍結口徑）。
  *
  * 資料：凍結合同 trpc.gloGuide.bySlug.useQuery({ slug })；非 published 由 server 回
  * NOT_FOUND，呢度顯示 404 態＋noindex（見 seo hook）。
- * 排版：左邊 sticky 2:3 配搭圖（每張標註對應商品），右邊正文欄（CJK 襯線大標、
- * 香港發文時間、hairline 分段、正文 ≥16px/1.7、Glo Glo 簽名署名），
- * 下面「文中單品」editorial 商品行（加車／去商品頁揀尺寸）。
+ *
+ * 期刊式結構：麵包屑 → 非對稱 editorial lead（左：主題＋大標＋內容捷徑；
+ * 右：期刊 metadata——香港發文時間、Glo Glo 撰寫、單品數、重點標籤）→
+ * 全寬主配搭圖舞台（真圖片 selector：切換配搭圖即時同步對應單品資訊，
+ * aria-live 讀得出）→ 正文（CJK 襯線大標、≥16px/1.7、Glo Glo 簽名署名）→
+ * 「文中單品」editorial 商品行（加車／去商品頁揀尺寸）。
+ * 色板／字體跟 SPEC（#151515・#fef1e8・#988575・#d69900；Marcellus＋
+ * Noto Serif TC／PingFang HK，中文唔 italic）；樣式喺 src/index.css gg- 區，
+ * 配色全部 scope 落 .gg-page，後台預覽嘅 .ggp-preview 自成一套唔受影響。
  */
 
+import { useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { trpc } from '@/providers/trpc';
+import { formatPrice } from '@/data/products';
 import GuideProductCard from '@/components/glo-guide/GuideProductCard';
 import GloSignature from '@/components/glo-guide/GloSignature';
 import GloGuideRichText from '@/components/GloGuideRichText';
@@ -17,10 +26,134 @@ import { parseGloGuideRichText } from '@contracts/gloGuideRichText';
 import { useGloGuideDetailSeo } from '@/components/glo-guide/seo';
 import {
   formatGuideDateHK,
+  guideCategoryLabel,
   guideDateTimeAttr,
+  guideEffectivePrice,
+  guideHasDiscount,
+  guideProductPath,
   productForImage,
   sortGuideImages,
 } from '@/components/glo-guide/guideUtils';
+import type { GuideImage, GuideProduct } from '@/components/glo-guide/types';
+
+/**
+ * 全寬主配搭圖舞台：大圖＋同步單品欄＋thumbnail selector。
+ * 切換配搭圖（click／hover／focus／Arrow 鍵）即時同步「呢張配搭圖嘅單品」
+ * 資訊——動態有真資訊用途（圖 ↔ 商品關係），唔係裝飾。首張 eager＋
+ * fetchPriority=high（LCP）；thumbnails 全部 lazy；所有圖喺 SSR 已可見。
+ */
+function PairingStage({
+  images,
+  products,
+  title,
+}: {
+  images: GuideImage[];
+  products: GuideProduct[];
+  title: string;
+}) {
+  const [active, setActive] = useState(0);
+  const index = Math.min(active, images.length - 1);
+  const img = images[index];
+  const product = productForImage(img, products);
+
+  const onIndexKeyDown = (e: KeyboardEvent<HTMLOListElement>) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
+    const buttons = Array.from(e.currentTarget.querySelectorAll('button'));
+    const current = buttons.indexOf(e.target as HTMLButtonElement);
+    if (current === -1) return;
+    e.preventDefault();
+    let next = current;
+    if (e.key === 'ArrowRight') next = (current + 1) % buttons.length;
+    if (e.key === 'ArrowLeft') next = (current - 1 + buttons.length) % buttons.length;
+    if (e.key === 'Home') next = 0;
+    if (e.key === 'End') next = buttons.length - 1;
+    buttons[next].focus(); // onFocus 會同步切換大圖同單品欄
+  };
+
+  return (
+    <section className="gg-stage" id="guide-gallery" aria-label="配搭圖">
+      <p className="gg-disclosure">
+        配搭圖只供配搭參考；商品外觀以商品頁原圖為準。
+      </p>
+
+      <figure className="gg-stage-figure">
+        <img
+          key={img.id}
+          src={img.path}
+          alt={img.alt || (product ? `${product.name} 配搭圖` : title)}
+          width={img.width}
+          height={img.height}
+          loading="eager"
+          fetchPriority="high"
+          decoding="async"
+          className="gg-stage-img"
+        />
+        <figcaption className="gg-figure-cap">
+          第 {index + 1} 張，共 {images.length} 張
+          {product ? `｜配搭單品：${product.name}` : ''}
+        </figcaption>
+      </figure>
+
+      {/* 同步單品欄：揀邊張圖，就講邊件單品（螢幕閱讀器經 aria-live 收到） */}
+      <div className="gg-stage-panel" aria-live="polite">
+        {product ? (
+          <>
+            <p className="gg-eyebrow gg-stage-panel-eyebrow">呢張配搭圖嘅單品</p>
+            <p className="gg-stage-product-name">
+              <Link to={guideProductPath(product.id)}>{product.name}</Link>
+            </p>
+            <p className="gg-stage-product-meta">
+              {guideCategoryLabel(product.category)}
+              <span aria-hidden="true">｜</span>
+              <strong>{formatPrice(guideEffectivePrice(product))}</strong>
+              {guideHasDiscount(product) && <s>{formatPrice(product.price)}</s>}
+            </p>
+            <Link to={guideProductPath(product.id)} className="gg-stage-product-link">
+              去商品頁睇原圖<span aria-hidden="true">　→</span>
+            </Link>
+          </>
+        ) : (
+          <p className="gg-stage-product-note">
+            呢張配搭圖示範整體造型方向；想睇單品原圖、尺碼同價錢，可以去下面「文中單品」。
+          </p>
+        )}
+      </div>
+
+      {images.length > 1 && (
+        <ol className="gg-stage-index" aria-label="切換配搭圖" onKeyDown={onIndexKeyDown}>
+          {images.map((it, i) => {
+            const p = productForImage(it, products);
+            return (
+              <li key={it.id} className="gg-stage-index-item">
+                <button
+                  type="button"
+                  className={
+                    i === index ? 'gg-stage-thumb is-active' : 'gg-stage-thumb'
+                  }
+                  aria-pressed={i === index}
+                  aria-label={`顯示第 ${i + 1} 張配搭圖${p ? `：${p.name}` : ''}`}
+                  onClick={() => setActive(i)}
+                  onMouseEnter={() => setActive(i)}
+                  onFocus={() => setActive(i)}
+                >
+                  <img
+                    src={it.path}
+                    alt=""
+                    width={it.width}
+                    height={it.height}
+                    loading="lazy"
+                    decoding="async"
+                    className="gg-stage-thumb-img"
+                  />
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
+}
 
 export default function GloGuideDetail() {
   const { slug = '' } = useParams();
@@ -33,8 +166,7 @@ export default function GloGuideDetail() {
   // 唔好誤落「永遠載入中」分支
   if (query.isError) {
     return (
-      <main className="gg-page">
-        <div className="gg-grain" aria-hidden="true" />
+      <main className="gg-page gg-page--status">
         <div className="gg-state" role={notFound ? undefined : 'alert'}>
           <p className="gg-state-title">
             {notFound ? '搵唔到呢篇指南' : '文章暫時載入唔到'}
@@ -59,8 +191,7 @@ export default function GloGuideDetail() {
 
   if (!detail) {
     return (
-      <main className="gg-page">
-        <div className="gg-grain" aria-hidden="true" />
+      <main className="gg-page gg-page--status">
         <div className="gg-state" role="status" aria-label="文章載入中">
           <p>載入緊 Glo Glo 嘅文章…</p>
         </div>
@@ -73,60 +204,40 @@ export default function GloGuideDetail() {
 
   return (
     <main className="gg-page">
-      <div className="gg-grain" aria-hidden="true" />
+      {/* 站內已載入 Noto Serif TC / Noto Sans TC，淨補 Marcellus（拉丁 display 用） */}
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Marcellus&display=swap"
+      />
       <nav className="gg-breadcrumb" aria-label="麵包屑">
         <Link to="/">首頁</Link>
         <span aria-hidden="true">／</span>
-        <Link to="/glo-guide">Glo Glo 指南</Link>
+        <Link to="/glo-guide">Glo Glo 精選指南</Link>
         <span aria-hidden="true">／</span>
         <span aria-current="page">{detail.title}</span>
       </nav>
 
-      <div className="gg-detail">
-        {/* 左：2:3 配搭圖（desktop sticky；手機由 CSS 排喺正文之後） */}
-        <section className="gg-gallery" id="guide-gallery" aria-label="配搭圖">
-          <p className="gg-disclosure">
-            配搭圖只供配搭參考；商品外觀以商品頁原圖為準。
-          </p>
-          {images.map((img, i) => {
-            const product = productForImage(img, detail.products);
-            return (
-              <figure key={img.id} className="gg-figure">
-                <img
-                  src={img.path}
-                  alt={img.alt || (product ? `${product.name} 配搭圖` : detail.title)}
-                  width={img.width}
-                  height={img.height}
-                  loading={i === 0 ? 'eager' : 'lazy'}
-                  fetchPriority={i === 0 ? 'high' : undefined}
-                  decoding="async"
-                  className="gg-figure-img"
-                />
-                {product && (
-                  <figcaption className="gg-figure-cap">
-                    配搭單品：<Link to={`/products/${product.id}`}>{product.name}</Link>
-                  </figcaption>
-                )}
-              </figure>
-            );
-          })}
-        </section>
-
-        {/* 右：正文欄 */}
-        <article className="gg-article">
+      {/* 非對稱 editorial lead：左大標（7 格）／右期刊 metadata（5 格） */}
+      <header className="gg-lead">
+        <div className="gg-lead-main">
           <p className="gg-eyebrow">{detail.theme}</p>
           <h1 className="gg-article-title">{detail.title}</h1>
+          <nav className="gg-article-nav" aria-label="呢篇指南內容">
+            <a href="#guide-body">睇正文</a>
+            {images.length > 0 && <a href="#guide-gallery">睇配搭圖</a>}
+            {detail.products.length > 0 && <a href="#guide-products">睇文中單品</a>}
+          </nav>
+        </div>
+        <aside className="gg-lead-meta" aria-label="出版資料">
+          <p className="gg-lead-meta-kicker">Glo Glo 精選指南</p>
           <p className="gg-date">
             香港時間{' '}
             <time dateTime={guideDateTimeAttr(detail.publishedAt) || undefined}>
               {formatGuideDateHK(detail.publishedAt)}
             </time>
           </p>
-          <nav className="gg-article-nav" aria-label="呢篇指南內容">
-            <a href="#guide-body">睇正文</a>
-            <a href="#guide-gallery">睇配搭圖</a>
-            {detail.products.length > 0 && <a href="#guide-products">睇文中單品</a>}
-          </nav>
+          <p className="gg-lead-meta-line">Glo Glo 撰寫</p>
+          <p className="gg-lead-meta-line">{`${detail.products.length} 件文中單品`}</p>
           {highlights.length > 0 && (
             <ul className="gg-highlight-list" aria-label="本篇重點標籤">
               {highlights.map((highlight) => (
@@ -134,11 +245,19 @@ export default function GloGuideDetail() {
               ))}
             </ul>
           )}
-          <hr className="gg-hairline" />
-          <GloGuideRichText body={detail.body} />
-          <GloSignature />
-        </article>
-      </div>
+        </aside>
+      </header>
+
+      {/* 全寬主配搭圖（真 selector，切換同步單品資訊） */}
+      {images.length > 0 && (
+        <PairingStage images={images} products={detail.products} title={detail.title} />
+      )}
+
+      {/* 正文欄 */}
+      <article className="gg-article">
+        <GloGuideRichText body={detail.body} />
+        <GloSignature />
+      </article>
 
       {detail.products.length > 0 && (
         <section className="gg-products" id="guide-products" aria-labelledby="gg-products-heading">

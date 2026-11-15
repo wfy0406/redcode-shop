@@ -2,8 +2,12 @@
  * Glo Glo 精選配搭指南——Fashn 虛擬試穿 server-only provider。
  *
  * SPEC v1 生成流程第 5–6 步：
- * ─ 衣物主幹：POST https://api.fashn.ai/v1/run（model_name tryon-max）＋ poll /v1/status/<id>；
+ * ─ 衣物主幹（冇文章場景 context）：POST https://api.fashn.ai/v1/run（model_name tryon-max）＋ poll /v1/status/<id>；
  * ─ 飾品／多品（input.experimental=true）：POST /v1/agent/images/run，屬 experimental 路線；
+ * ─ 有文章場景 context（articleTheme/articleBody 任一非空）：一律行 agent/images/run 場景路線——
+ *   場景跟文章主題／正文（office 等關鍵詞映射）、每張按 variation 換 pose／構圖、
+ *   商品外觀以原商品圖硬參考（見 buildGloGuideScenePrompt）；prompt 唔保證一致性，
+ *   最終閘仍係人工逐圖審批（唔會因為 prompt 就當自動合格）；
  * ─ model_image 只准 https 或站內真實授權 /gloglo-3.jpg（GLO_GUIDE_MODEL_IMAGE_URLS 可覆寫）；
  *   絕對唔用 AI 合成模特兒做參考原圖；
  * ─ 4xx／OutOfCredits 唔 retry；network／5xx 最多 2 次有 backoff；
@@ -200,6 +204,114 @@ function tryOnPrompt(category: string): string {
     PLACEMENT[category] ??
     "as a natural accessory on the original person, matching the visible styling";
   return `Edit model_image itself while keeping the same person, face, hair, body shape, pose, framing, camera angle, lighting and original background. Place product_image ${placement}, preserving its design, color, pattern, material appearance, logos and details. Keep all other clothing, accessories and scene elements unchanged.`;
+}
+
+// ──────────────────────────── 場景感知 prompt（有文章 context 時用 agent-images 路線）────────────────────────────
+
+/** 文章 theme/body 有冇 scene context（有 → agent-images 場景路線，可以改背景／pose） */
+export function hasGloGuideSceneContext(
+  input: Pick<GloGuideImageGenInput, "articleTheme" | "articleBody">,
+): boolean {
+  return Boolean(input.articleTheme?.trim() || input.articleBody?.trim());
+}
+
+/**
+ * 場景關鍵詞映射（主題／正文 → 明文場景）。第一個命中嘅關鍵詞組生效；
+ * 冇命中 → 籠統跟主題嘅 lifestyle 場景（照樣明文要求場景跟文章）。
+ */
+const SCENE_KEYWORDS: ReadonlyArray<{ re: RegExp; scene: string }> = [
+  {
+    re: /辦公室|寫字樓|返工|上班|通勤|商務|OL|\boffice\b/i,
+    scene: "a bright modern office workspace (desk, laptop, office chairs, soft office lighting)",
+  },
+  { re: /海灘|沙灘|海邊|\bbeach\b/i, scene: "a sunny beach with sea view" },
+  { re: /咖啡|咖啡廳|下午茶|\bcaf[eé]\b/i, scene: "a cozy café interior" },
+  {
+    re: /戶外|郊遊|行山|遠足|公園|野餐|\boutdoor\b|\bpicnic\b|\bhiking\b/i,
+    scene: "an outdoor park on a pleasant day",
+  },
+  {
+    re: /約會|晚餐|晚裝|派對|\bdinner\b|\bparty\b|\bdate\b/i,
+    scene: "an elegant evening restaurant setting",
+  },
+  {
+    re: /旅行|旅遊|機場|度假|\btravel\b|\btrip\b|\bvacation\b/i,
+    scene: "a stylish travel setting (airport terminal / city street while travelling)",
+  },
+  { re: /屋企|家居|宅|\bhome\b/i, scene: "a warm, tidy home living room" },
+  { re: /街頭|街拍|城市|\bstreet\b/i, scene: "a clean urban street" },
+];
+
+/**
+ * pose／構圖輪換表：同一篇文章每張圖按 variation（image position）揀唔同嘅，
+ * 明文要求同系列其他圖有明顯分別。
+ * fullBody 標記：pants/dress/shoes 嗰啲商品喺 mid-shot／close-up 會根本睇唔到，
+ * 所以嗰啲類別只准用 full-body pool（見 poseForVariation）。
+ */
+const POSE_VARIATIONS: ReadonlyArray<{ text: string; fullBody: boolean }> = [
+  { text: "standing full-body shot, front three-quarter view, relaxed natural posture", fullBody: true },
+  { text: "seated mid-shot, candid pose on a chair or bench", fullBody: false },
+  { text: "walking in motion, side-profile angle, full-body framing", fullBody: true },
+  { text: "upper-body close-up, slight over-the-shoulder camera angle", fullBody: false },
+  { text: "leaning casually against a surface, wide full-body environmental composition", fullBody: true },
+];
+
+/** 商品一定要全身先睇得清楚嘅類別（褲／裙／鞋）：禁用 mid-shot／close-up pose */
+const FULL_BODY_CATEGORIES = new Set(["pants", "dress", "shoes"]);
+
+/** 按類別＋variation 揀 pose：下半身類別只准 full-body pose，仍然逐張輪換有變化 */
+export function poseForVariation(category: string, variation: number): string {
+  const pool = FULL_BODY_CATEGORIES.has(category)
+    ? POSE_VARIATIONS.filter((p) => p.fullBody)
+    : [...POSE_VARIATIONS];
+  const idx = ((Math.trunc(variation) % pool.length) + pool.length) % pool.length;
+  return pool[idx]!.text;
+}
+
+export interface GloGuideScenePromptInput {
+  category: string;
+  articleTheme: string;
+  articleBody: string;
+  productName: string;
+  variation: number;
+}
+
+/**
+ * 場景感知配搭圖 prompt（agent-images 路線專用）。明文要求：
+ * ─ 場景跟文章主題／正文（office 等關鍵詞映射；冇命中就跟主題籠統 lifestyle 場景）；
+ * ─ 呢張圖嘅 pose／構圖按 variation 輪換，同系列每張唔同；
+ * ─ framing 硬要求：指定商品必須清楚可見；pants/dress/shoes 必須 full-body
+ *   （mid-shot／close-up 會令商品根本睇唔到）；
+ * ─ 保留 model_image 真人身分（face/hair/body shape 唔變），**pose／背景可以改**；
+ * ─ 商品外觀以原商品圖硬參考：design/color/pattern/material/logos/details 唔准改，
+ *   唔准添加其他商品。
+ * 注意：prompt 只係指令，**唔保證** provider 次次一致——最終閘仍係人工逐圖審批。
+ */
+export function buildGloGuideScenePrompt(input: GloGuideScenePromptInput): string {
+  const theme = input.articleTheme.trim().slice(0, 120);
+  const haystack = `${input.articleTheme}\n${input.articleBody}`;
+  const matched = SCENE_KEYWORDS.find((k) => k.re.test(haystack));
+  const scene =
+    matched?.scene ??
+    `a lifestyle setting that clearly matches the article theme "${theme || "daily styling"}"`;
+  const pose = poseForVariation(input.category, input.variation);
+  const fullBodyRequired = FULL_BODY_CATEGORIES.has(input.category);
+  const placement =
+    PLACEMENT[input.category] ??
+    "as a natural accessory on the original person, matching the visible styling";
+  const product = input.productName.trim().slice(0, 120);
+  return [
+    `Edit model_image: keep the exact same real person — identity, face, hair and body shape must stay recognizable and unchanged.`,
+    `This time you may change the pose, framing, camera angle and background to fit the article scene.`,
+    `Scene: place the person in ${scene}, matching the article theme "${theme}".`,
+    `Pose/composition for THIS image: ${pose}. It must be visibly different from the other images in this series.`,
+    fullBodyRequired
+      ? `Framing hard requirement: use full-body framing so the featured ${input.category} product is fully and clearly visible; do not crop it out of the frame.`
+      : `Framing hard requirement: the featured product must be clearly visible in the frame.`,
+    `Dress the person with the product "${product}" from the reference product image ${placement}.`,
+    `Preserve the product's design, color, pattern, material appearance, logos and details exactly as shown in the product image — do not redesign or restyle it.`,
+    `Do not add any other products or extra branded items.`,
+  ].join(" ");
 }
 
 // ──────────────────────────── HTTP＋retry ────────────────────────────
@@ -419,15 +531,28 @@ async function submitJob(
   modelImageUrl: string,
   productImageInput: string,
 ): Promise<string> {
-  const pathName = input.experimental ? "/agent/images/run" : "/run";
-  const payload = input.experimental
+  // 路由：有 scene context（文章 theme/body）→ 行 agent-images 場景路線（可改背景／pose）；
+  // 冇 context 就保持舊路線——飾品 experimental 行 agent-images（舊 prompt），其餘 tryon-max。
+  const scene = hasGloGuideSceneContext(input);
+  const agentRoute = input.experimental || scene;
+  const prompt = scene
+    ? buildGloGuideScenePrompt({
+        category: input.category,
+        articleTheme: input.articleTheme ?? "",
+        articleBody: input.articleBody ?? "",
+        productName: input.productName ?? "",
+        variation: input.variation ?? 0,
+      })
+    : tryOnPrompt(input.category);
+  const pathName = agentRoute ? "/agent/images/run" : "/run";
+  const payload = agentRoute
     ? {
-        // experimental 路線：飾品／多品場景；結果同樣要過下載白名單＋人工審批
+        // agent-images 路線：飾品／多品／場景感知配搭；結果同樣要過下載白名單＋人工逐圖審批
         model_name: "agent-images",
         inputs: {
           model_image: modelImageUrl,
           images: [productImageInput],
-          prompt: tryOnPrompt(input.category),
+          prompt,
           output_format: "png",
         },
       }
@@ -436,7 +561,7 @@ async function submitJob(
         inputs: {
           model_image: modelImageUrl,
           product_image: productImageInput,
-          prompt: tryOnPrompt(input.category),
+          prompt,
           generation_mode: "quality",
           resolution: "1k",
           num_images: 1,

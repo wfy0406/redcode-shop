@@ -80,8 +80,60 @@ const idSchema = z.number().int().positive();
 const articleIdInput = z.object({ id: idSchema });
 const productIdsSchema = z.array(z.number().int().positive()).max(3).optional();
 
+// SPEC 第 3 輪凍結 contract：商品查詢 filter／生成 selection（形狀閘；
+// weekStart 要星期一、liveDate 要真實日期、productIds 歸屬／歷史等業務閘喺 service 重查）
+const productFilterSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("auto") }),
+  z.object({ mode: z.literal("week"), weekStart: z.string().max(16) }),
+  z.object({
+    mode: z.literal("session"),
+    liveDate: z.string().max(16),
+    liveSession: z.string().min(1).max(16),
+  }),
+  z.object({ mode: z.literal("search"), query: z.string().min(1).max(60) }),
+]);
+
+const generateSelectionSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("auto") }),
+  z.object({
+    mode: z.literal("week"),
+    weekStart: z.string().max(16),
+    productIds: productIdsSchema,
+  }),
+  z.object({
+    mode: z.literal("session"),
+    liveDate: z.string().max(16),
+    liveSession: z.string().min(1).max(16),
+    productIds: productIdsSchema,
+  }),
+  z.object({
+    mode: z.literal("products"),
+    productIds: z.array(z.number().int().positive()).max(3),
+  }),
+]);
+
 export const gloGuideAdminRouter = createRouter({
-  /** 本週可選商品（2–3 件手動生成用） */
+  /** 商品查詢（SPEC 第 3 輪）：input 直接係 filter（{mode,...}，同 WMS products.list payload 一樣）；回 { items: GloGuideProductRef[] } */
+  products: staffProcedure
+    .input(productFilterSchema.optional())
+    .query(async ({ input }) => {
+      try {
+        return { items: await service.listGloGuideProducts(input) };
+      } catch (e) {
+        throw mapGloGuideError(e);
+      }
+    }),
+
+  /** 選貨來源概覽（SPEC productSources）：星期／場次選項＋total/eligible 數 */
+  productSources: staffProcedure.query(async () => {
+    try {
+      return await service.listGloGuideProductSources();
+    } catch (e) {
+      throw mapGloGuideError(e);
+    }
+  }),
+
+  /** 本週可選商品（兼容 alias；新介面用 products query） */
   weeklyProducts: staffProcedure.query(async () => {
     try {
       return { items: await service.listWeeklyProducts() };
@@ -119,10 +171,11 @@ export const gloGuideAdminRouter = createRouter({
     }
   }),
 
-  /** 手動產生完整文章＋相（揀 2–3 件本週商品；唔揀就由 service 自動揀） */
+  /** 手動產生完整文章＋相（SPEC 第 3 輪：selection 四模式；舊 productIds ＝ products 模式；唔揀就 auto 逐週 fallback） */
   generate: staffProcedure
     .input(
       z.object({
+        selection: generateSelectionSchema.optional(),
         productIds: productIdsSchema,
         themeHint: z.string().max(120).optional(),
       }),
@@ -131,6 +184,7 @@ export const gloGuideAdminRouter = createRouter({
       try {
         const actor = await actorFromAuthUser(ctx.user);
         return await service.generateArticle(actor, {
+          selection: input.selection,
           productIds: input.productIds,
           themeHint: input.themeHint,
         });

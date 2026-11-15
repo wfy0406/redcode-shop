@@ -80,6 +80,17 @@ export interface GloGuideImageGenInput {
   productImage: string;
   /** true＝行 /v1/agent/images/run experimental 路線 */
   experimental: boolean;
+  /**
+   * 文章主題（可選）。theme/body 任一非空＝scene context：provider 行 agent-images
+   * 場景路線（可以改背景／pose 配合文章）；兩樣都冇 → 舊 tryon-max 原 pose/背景路線。
+   */
+  articleTheme?: string;
+  /** 文章正文（場景線索；provider 層只會截取／掃關鍵詞，唔會全段落 prompt） */
+  articleBody?: string;
+  /** 商品名（prompt 內硬參考，配合商品原圖鎖死外觀） */
+  productName?: string;
+  /** 第幾張圖（0-based）：pose／構圖按佢輪換，同一篇每張唔同 */
+  variation?: number;
   /** Fashn submit 成功後即刻回傳 provider id；上層必須即時落 DB，重啟先可以 resume poll。 */
   onProviderJobId?: (providerJobId: string) => Promise<void>;
 }

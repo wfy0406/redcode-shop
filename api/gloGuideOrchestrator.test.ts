@@ -147,3 +147,21 @@ describe("recovery source guard（parent/child 一致結算）", () => {
     expect(settle).toContain("CASE WHEN ${gloGuideArticles.status} = 'rejected' THEN 'rejected' ELSE 'pending_review' END");
   });
 });
+
+describe("scene context 接線 source guard（生成＋recovery 都帶文章 context）", () => {
+  const src = readFileSync(path.join(__dirname, "gloGuideOrchestrator.ts"), "utf8");
+  it("runImageJob generateImage 傳 articleTheme/articleBody/productName/variation", () => {
+    const image = src.slice(src.indexOf("async function runImageJob"), src.indexOf("async function runFullJob"));
+    expect(image).toContain("articleTheme: article.theme");
+    expect(image).toContain("articleBody: article.body");
+    expect(image).toContain("productName: product.name");
+    expect(image).toContain("variation: image.position");
+  });
+  it("recovery resumeImage 補返同一文章 context（同 runImageJob 一致）", () => {
+    const recovery = src.slice(src.indexOf("export async function recoverGloGuideJobs"));
+    expect(recovery).toContain("articleTheme: article.theme");
+    expect(recovery).toContain("articleBody: article.body");
+    expect(recovery).toContain("productName: product.name");
+    expect(recovery).toContain("variation: image.position");
+  });
+});

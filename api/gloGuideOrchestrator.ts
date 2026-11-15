@@ -286,6 +286,12 @@ async function runImageJob(
       modelImage: modelImageForProvider(article.modelImage, base, model.absoluteUrl),
       productImage,
       experimental: EXPERIMENTAL_CATEGORIES.has(product.category),
+      // 場景 context：full job 先寫好文字先生成圖，呢度 article.theme/body 係真內容；
+      // variation 用圖嘅 position——同一篇每張 pose／構圖唔同。生成仍每次一張。
+      articleTheme: article.theme,
+      articleBody: article.body,
+      productName: product.name,
+      variation: image.position,
       onProviderJobId: async (providerJobId) => {
         // submit 一成功即刻落 DB；poll 中途重啟，recovery 先可以憑 id 補收同一個 prediction。
         await setJob(db, job.id, { status: "processing", providerJobId });
@@ -570,6 +576,11 @@ export async function recoverGloGuideJobs(
             modelImage: modelImageForProvider(article.modelImage, base, model.absoluteUrl),
             productImage: product.image.startsWith("/") ? `${base}${product.image}` : product.image,
             experimental: EXPERIMENTAL_CATEGORIES.has(product.category),
+            // recovery input 補返同一文章 context（同 runImageJob 一致）
+            articleTheme: article.theme,
+            articleBody: article.body,
+            productName: product.name,
+            variation: image.position,
           });
           if (resumed === null) continue; // provider 仲行緊，下個 tick 再睇
           // M3：recovery resume 都係 conditional 寫入——冚唔到已 completed/approved 圖
@@ -748,7 +759,7 @@ async function settleGloGuideArticleInDb(db: Db, articleId: number): Promise<Glo
     await applyToEditableArticle(db, articleId, { generationStatus: "failed", generationError: msg });
     await db
       .update(gloGuideJobs)
-      .set({ status: "failed", error: msg, completedAt: new Date(), updatedAt: new Date() })
+           .set({ status: "failed", error: msg, completedAt: new Date(), updatedAt: new Date() })
       .where(
         and(
           eq(gloGuideJobs.articleId, articleId),

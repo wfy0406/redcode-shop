@@ -42,9 +42,81 @@ export type GuideProduct = GuideArticle['products'][number];
 /** 模特兒原圖列表回應（後台限定；原圖絕不公開） */
 export type ModelImageList = RouterOutputs['gloGuideAdmin']['modelImages'];
 export type ModelImageItem = ModelImageList['items'][number];
-type WeeklyProduct = RouterOutputs['gloGuideAdmin']['weeklyProducts']['items'][number];
 /** DB status 欄係 string；呢度收做字面 union 俾 filter／狀態閘用（後端 zod enum 同款白名單） */
 export type GuideStatus = 'draft' | 'pending_review' | 'published' | 'rejected' | 'archived';
+
+// ── 選貨 contract（iteration-3 SPEC 凍結）────────────────────────────────
+// 後端 agent 同步喺 gloGuideAdmin router 落 productSources／products／generate{selection}。
+// 呢度按凍結 SPEC 定本地型別＋單點 cast 接線；router 落地後 procedure 名同 payload
+// 完全一致，cast 自然對齊真型別，唔使再改 UI。
+
+/** 選貨方式：自動逐週 fallback／指定星期／指定日期＋場次／直接指定商品 */
+export type SourceMode = 'auto' | 'week' | 'session' | 'products';
+
+export type GloGuideProductFilter =
+  | { mode: 'auto' }
+  | { mode: 'week'; weekStart: string } // HK Monday，YYYY-MM-DD
+  | { mode: 'session'; liveDate: string; liveSession: string } // YYYYMMDD＋真場次
+  | { mode: 'search'; query: string }; // 直接商品搜尋，1–60 字
+
+export type GloGuideGenerateSelection =
+  | { mode: 'auto' }
+  | { mode: 'week'; weekStart: string; productIds?: number[] }
+  | { mode: 'session'; liveDate: string; liveSession: string; productIds?: number[] }
+  | { mode: 'products'; productIds: number[] };
+
+/** productSources 回傳嘅真實選項（staff 可查；server 重查 DB） */
+export interface GloGuideProductSources {
+  weeks: Array<{ weekStart: string; weekEnd: string; total: number; eligible: number }>;
+  sessions: Array<{ liveDate: string; liveSession: string; total: number; eligible: number }>;
+}
+
+export type IneligibleReason = 'used' | 'inactive' | 'out_of_stock' | 'delisted' | 'no_image' | 'category';
+
+/** GloGuideProductRef：原欄（同舊 weeklyProducts item 一致）＋永久去重／資格欄 */
+export interface SourceProduct {
+  id: number;
+  name: string;
+  image: string;
+  price: number;
+  discountPrice: number | null;
+  aiTags: string[];
+  liveDate: string | null;
+  liveSession: string | null;
+  category: string;
+  stock: number;
+  /** 曾屬任何指南文章 → 永久唔可以再用 */
+  usedBefore: boolean;
+  eligible: boolean;
+  ineligibleReason: IneligibleReason | null;
+}
+
+/** 同 trpc useQuery 回傳結構相容嘅最小介面（cast 用；router 落地後即係真型別） */
+interface SourceQueryResult<T> {
+  data: T | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  error: { message: string } | null;
+  refetch: () => Promise<unknown>;
+}
+
+interface GloGuideSourceContract {
+  productSources: {
+    useQuery: (input: undefined, opts?: { refetchOnWindowFocus?: boolean }) => SourceQueryResult<GloGuideProductSources>;
+  };
+  products: {
+    useQuery: (
+      input: GloGuideProductFilter,
+      opts?: { enabled?: boolean; refetchOnWindowFocus?: boolean },
+    ) => SourceQueryResult<{ items: SourceProduct[] }>;
+  };
+  generate: {
+    useMutation: () => {
+      mutateAsync: (input: { selection: GloGuideGenerateSelection; themeHint?: string }) => Promise<{ id: number }>;
+      isPending: boolean;
+    };
+  };
+}
 
 type Toast = (text: string, kind?: ToastKind) => void;
 
@@ -144,129 +216,432 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : '操作失敗，請再試';
 }
 
-// ──────────────────────────── 新增文章（揀本週 2–3 件商品）────────────────────────────
+// ──────────────────────────── 新增文章（四種真選貨：auto／week／session／products）────────────────────────────
+
+/* eslint-disable react-refresh/only-export-components -- 選貨純邏輯 export 俾單元測試抽 */
+
+export const INELIGIBLE_LABEL: Record<IneligibleReason, string> = {
+  used: '已用過（每件商品只可以出現喺一篇指南）',
+  inactive: '已下架',
+  out_of_stock: '缺貨',
+  delisted: '已過下架期',
+  no_image: '冇商品圖',
+  category: '類別唔支援（限服飾／飾品）',
+};
+
+/** 商品唔可揀嘅原因字串；可揀回 null。優先用 server 嘅 ineligibleReason，fallback usedBefore。 */
+export function productBlockReason(
+  p: Pick<SourceProduct, 'eligible' | 'usedBefore' | 'ineligibleReason'>,
+): string | null {
+  if (p.eligible && !p.usedBefore) return null;
+  if (p.ineligibleReason) return INELIGIBLE_LABEL[p.ineligibleReason];
+  return p.usedBefore ? INELIGIBLE_LABEL.used : '唔符合今次選貨條件';
+}
+
+/** 商品搜尋字硬閘（SPEC：1–60 chars） */
+export function searchQueryOk(q: string): boolean {
+  const t = q.trim();
+  return t.length >= 1 && t.length <= 60;
+}
+
+/**
+ * 砌 generate selection（SPEC 凍結）：
+ * ─ auto 唔帶商品，server 由本週向過去逐週搵最少 2 件合資格未用商品，再喺嗰週合資格池隨機抽 2–3 件；
+ * ─ week／session 可以唔揀（server 由該來源合資格池隨機抽 2–3 件）或者手動揀啱好 2–3 件；
+ * ─ products 一定要直接指定 2–3 件；
+ * ─ 條件唔齊回 null（UI 擋生成掣），絕對唔會暗中改用其他來源。
+ */
+export function buildGenerateSelection(
+  mode: SourceMode,
+  opts: {
+    weekStart?: string | null;
+    liveDate?: string | null;
+    liveSession?: string | null;
+    productIds: number[];
+  },
+): GloGuideGenerateSelection | null {
+  const ids = opts.productIds;
+  if (mode === 'auto') return { mode: 'auto' };
+  if (mode === 'products') {
+    return ids.length >= 2 && ids.length <= 3 ? { mode: 'products', productIds: [...ids] } : null;
+  }
+  // week／session：0 件＝來源合資格池隨機抽；有揀就一定要 2–3 件
+  if (ids.length === 1 || ids.length > 3) return null;
+  if (mode === 'week') {
+    if (!opts.weekStart) return null;
+    return ids.length > 0
+      ? { mode: 'week', weekStart: opts.weekStart, productIds: [...ids] }
+      : { mode: 'week', weekStart: opts.weekStart };
+  }
+  if (!opts.liveDate || !opts.liveSession) return null;
+  return ids.length > 0
+    ? { mode: 'session', liveDate: opts.liveDate, liveSession: opts.liveSession, productIds: [...ids] }
+    : { mode: 'session', liveDate: opts.liveDate, liveSession: opts.liveSession };
+}
+
+/* eslint-enable react-refresh/only-export-components */
+
+const SOURCE_TABS: { mode: SourceMode; label: string; hint: string }[] = [
+  { mode: 'auto', label: '自動揀貨', hint: '由本週向過去逐週搵最少 2 件從未用過嘅合資格商品' },
+  { mode: 'week', label: '指定星期', hint: '揀其中一週（香港時間週一起計）嘅直播商品' },
+  { mode: 'session', label: '指定場次', hint: '揀其中一日嘅其中一場直播商品' },
+  { mode: 'products', label: '指定商品', hint: '搜尋全部商品（普通＋直播），直接揀 2–3 件' },
+];
+
+const EMPTY_COPY: Record<SourceMode, string> = {
+  auto: '而家冇任何星期有最少 2 件從未用過嘅合資格商品——可以改用指定商品搜尋。',
+  week: '呢個星期暫時冇直播商品。',
+  session: '呢個場次暫時冇商品。',
+  products: '搵唔到商品——試下其他關鍵字。',
+};
 
 function CreateArticleCard({ toast, onCreated }: { toast: Toast; onCreated: (id: number) => void }) {
   const utils = trpc.useUtils();
-  const productsQ = trpc.gloGuideAdmin.weeklyProducts.useQuery(undefined, {
-    refetchOnWindowFocus: false,
-  });
+  const contract = trpc.gloGuideAdmin as unknown as GloGuideSourceContract;
+  const [mode, setMode] = useState<SourceMode>('auto');
+  const [weekStart, setWeekStart] = useState<string | null>(null);
+  const [sessionSel, setSessionSel] = useState<string | null>(null); // `${liveDate}|${liveSession}`
+  const [searchText, setSearchText] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selected, setSelected] = useState<number[]>([]);
   const [themeHint, setThemeHint] = useState('');
-  const generate = trpc.gloGuideAdmin.generate.useMutation();
+  const generate = contract.generate.useMutation();
+  const busy = generate.isPending;
 
-  const toggle = (id: number) => {
+  // 真實來源選項（server 重查 DB；staff 可查）
+  const sourcesQ = contract.productSources.useQuery(undefined, { refetchOnWindowFocus: false });
+  const weeks = sourcesQ.data?.weeks ?? [];
+  const sessions = sourcesQ.data?.sessions ?? [];
+  const activeWeek = mode === 'week' ? (weekStart ?? weeks[0]?.weekStart ?? null) : null;
+  const activeSession = useMemo(() => {
+    if (mode !== 'session') return null;
+    const raw = sessionSel ?? (sessions[0] ? `${sessions[0].liveDate}|${sessions[0].liveSession}` : null);
+    if (!raw) return null;
+    const [liveDate, liveSession] = raw.split('|');
+    return liveDate && liveSession ? { liveDate, liveSession } : null;
+  }, [mode, sessionSel, sessions]);
+
+  const filter: GloGuideProductFilter | null =
+    mode === 'auto'
+      ? { mode: 'auto' }
+      : mode === 'week'
+        ? activeWeek
+          ? { mode: 'week', weekStart: activeWeek }
+          : null
+        : mode === 'session'
+          ? activeSession
+            ? { mode: 'session', liveDate: activeSession.liveDate, liveSession: activeSession.liveSession }
+            : null
+          : searchQueryOk(searchQuery)
+            ? { mode: 'search', query: searchQuery.trim() }
+            : null;
+
+  const productsQ = contract.products.useQuery(filter ?? { mode: 'auto' }, {
+    enabled: filter !== null,
+    refetchOnWindowFocus: false,
+  });
+
+  // 換來源（方式／星期／場次／搜尋字）→ 已揀商品即清空：productIds 一定要屬於當前來源
+  useEffect(() => {
+    setSelected([]);
+  }, [mode, activeWeek, activeSession?.liveDate, activeSession?.liveSession, searchQuery]);
+
+  const toggle = (p: SourceProduct) => {
+    if (productBlockReason(p)) return;
     setSelected((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.includes(p.id)) return prev.filter((x) => x !== p.id);
       if (prev.length >= 3) return prev;
-      return [...prev, id];
+      return [...prev, p.id];
     });
   };
 
-  const run = async (productIds?: number[]) => {
+  const selection = buildGenerateSelection(mode, {
+    weekStart: activeWeek,
+    liveDate: activeSession?.liveDate ?? null,
+    liveSession: activeSession?.liveSession ?? null,
+    productIds: selected,
+  });
+
+  const run = async () => {
+    // busy 防重複：生成中再撳一律忽略（掣本身亦 disabled）
+    if (busy || !selection) return;
     try {
+      // 只送 selection＋themeHint——SPEC：同時送 top-level productIds 會 400
       const out = await generate.mutateAsync({
-        productIds: productIds && productIds.length > 0 ? productIds : undefined,
+        selection,
         themeHint: themeHint.trim() || undefined,
       });
       toast('已開始生成文章＋配搭圖，完成後會自動更新', 'success');
       setSelected([]);
       setThemeHint('');
       await utils.gloGuideAdmin.articles.invalidate();
+      // 用咗嘅商品要即時反映「已用過」→ invalidate 選貨 queries（後端落地後生效）
+      const extra = utils.gloGuideAdmin as unknown as {
+        products?: { invalidate?: () => Promise<unknown> };
+        productSources?: { invalidate?: () => Promise<unknown> };
+      };
+      await Promise.all([extra.products?.invalidate?.(), extra.productSources?.invalidate?.()]);
       onCreated(out.id);
     } catch (e) {
       toast(errMsg(e), 'error');
     }
   };
 
-  const items = productsQ.data?.items ?? [];
-  const busy = generate.isPending;
-
-  return (
-    <section className="ggp-card" aria-label="新增精選文章">
-      <h3 className="ggp-section-title">新增文章（本週商品揀 2–3 件）</h3>
-      {productsQ.isLoading ? (
-        <p className="ggp-sub">載入本週商品中…</p>
-      ) : productsQ.isError ? (
+  const renderSourcePicker = () => {
+    if (mode === 'auto') {
+      return (
+        <p className="ggp-sub">
+          自動揀貨：由本週開始向上星期、上上星期逐週搵，搵到最少 2 件從未用過嘅合資格商品就用嗰週；
+          生成嗰刻 server 會喺嗰週合資格池隨機抽 2–3 件——下面只係合資格隨機池示例預覽（只讀，唔使揀），
+          唔係實際必中名單；唔會暗中改用其他來源。
+        </p>
+      );
+    }
+    if (sourcesQ.isLoading) return <p className="ggp-sub">載入來源選項中…</p>;
+    if (sourcesQ.isError) {
+      return (
         <div>
           <p className="ggp-error" role="alert">
-            載入本週商品失敗：{productsQ.error.message}
+            載入來源選項失敗：{sourcesQ.error?.message ?? '請再試'}
+          </p>
+          <button type="button" className="ggp-btn ggp-btn-ghost" onClick={() => void sourcesQ.refetch()}>
+            重試
+          </button>
+        </div>
+      );
+    }
+    if (mode === 'week') {
+      if (weeks.length === 0) return <p className="ggp-empty">暫時冇有直播商品嘅星期可以揀。</p>;
+      return (
+        <div>
+          <label className="ggp-label" htmlFor="ggp-week">
+            揀星期（香港時間，週一至週日）
+          </label>
+          <select
+            id="ggp-week"
+            className="ggp-input"
+            value={activeWeek ?? ''}
+            disabled={busy}
+            onChange={(e) => setWeekStart(e.target.value)}
+          >
+            {weeks.map((w) => (
+              <option key={w.weekStart} value={w.weekStart}>
+                {w.weekStart} – {w.weekEnd}（可揀 {w.eligible}/{w.total} 件）
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+    if (mode === 'session') {
+      if (sessions.length === 0) return <p className="ggp-empty">暫時冇有商品嘅直播場次可以揀。</p>;
+      const sessionValue = activeSession ? `${activeSession.liveDate}|${activeSession.liveSession}` : '';
+      return (
+        <div>
+          <label className="ggp-label" htmlFor="ggp-session">
+            揀直播日期＋場次
+          </label>
+          <select
+            id="ggp-session"
+            className="ggp-input"
+            value={sessionValue}
+            disabled={busy}
+            onChange={(e) => setSessionSel(e.target.value)}
+          >
+            {sessions.map((s) => (
+              <option key={`${s.liveDate}|${s.liveSession}`} value={`${s.liveDate}|${s.liveSession}`}>
+                直播 {s.liveDate}・第 {s.liveSession} 場（可揀 {s.eligible}/{s.total} 件）
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+    // products：真商品搜尋（普通＋直播商品；1–60 字）
+    return (
+      <form
+        className="ggp-search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const q = searchText.trim();
+          if (searchQueryOk(q)) setSearchQuery(q);
+        }}
+      >
+        <label className="ggp-label" htmlFor="ggp-product-search">
+          商品搜尋（名稱關鍵字，1–60 字）
+        </label>
+        <div className="ggp-search-row">
+          <input
+            id="ggp-product-search"
+            className="ggp-input"
+            value={searchText}
+            maxLength={60}
+            disabled={busy}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="例如：蕾絲、牛仔褸"
+          />
+          <button type="submit" className="ggp-btn" disabled={busy || !searchQueryOk(searchText)}>
+            搜尋
+          </button>
+        </div>
+      </form>
+    );
+  };
+
+  const renderProducts = () => {
+    if (!filter) {
+      return <p className="ggp-sub">輸入關鍵字撳「搜尋」，由全部商品（普通＋直播）揀 2–3 件。</p>;
+    }
+    if (productsQ.isLoading) return <p className="ggp-sub">載入商品中…</p>;
+    if (productsQ.isError) {
+      return (
+        <div>
+          <p className="ggp-error" role="alert">
+            載入商品失敗：{productsQ.error?.message ?? '請再試'}
           </p>
           <button type="button" className="ggp-btn ggp-btn-ghost" onClick={() => void productsQ.refetch()}>
             重試
           </button>
         </div>
-      ) : items.length === 0 ? (
-        <p className="ggp-empty">本週暫時冇可選商品（要本週直播、上架中、有貨、有圖嘅服飾／飾品）。</p>
-      ) : (
+      );
+    }
+    const items = productsQ.data?.items ?? [];
+    if (items.length === 0) return <p className="ggp-empty">{EMPTY_COPY[mode]}</p>;
+    // auto：只讀預覽——合資格隨機池示例（首 3 件只供參考）；server 生成嗰刻先真正隨機抽 2–3 件，唔係實際必中名單
+    if (mode === 'auto') {
+      const picks = items.filter((p) => productBlockReason(p) === null).slice(0, 3);
+      if (picks.length < 2) return <p className="ggp-empty">{EMPTY_COPY.auto}</p>;
+      return (
         <>
-          <div className="ggp-product-grid">
-            {items.map((p: WeeklyProduct) => {
-              const active = selected.includes(p.id);
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  className="ggp-product"
-                  aria-pressed={active}
-                  disabled={busy || (!active && selected.length >= 3)}
-                  onClick={() => toggle(p.id)}
-                >
-                  {active && (
-                    <span className="ggp-product-check" aria-hidden="true">
-                      <Check size={14} />
-                    </span>
-                  )}
-                  {/* 商品原圖係公開授權商品圖，可以直接顯示 */}
-                  <img src={p.image} alt={p.name} loading="lazy" />
-                  <span className="ggp-product-name">{p.name}</span>
-                  <span className="ggp-product-price">
-                    {fmtHKD(p.discountPrice ?? p.price)}
-                    {p.aiTags.length > 0 ? ` · ${p.aiTags.slice(0, 3).join('／')}` : ''}
+          <p className="ggp-sub">
+            預覽：合資格隨機池示例（以下首 {picks.length} 件只供參考）；實際生成嗰刻 server 會由最近有貨嘅星期嘅合資格池隨機抽 2–3 件，呢啲唔係必中名單：
+          </p>
+          <div className="ggp-product-grid" role="list" aria-label="自動揀貨預覽">
+            {picks.map((p) => (
+              <div key={p.id} className="ggp-product ggp-product-static" role="listitem">
+                {/* 商品原圖係公開授權商品圖，可以直接顯示 */}
+                <img src={p.image} alt={p.name} loading="lazy" />
+                <span className="ggp-product-name">{p.name}</span>
+                <span className="ggp-product-price">
+                  {fmtHKD(p.discountPrice ?? p.price)}
+                  {p.aiTags.length > 0 ? ` · ${p.aiTags.slice(0, 3).join('／')}` : ''}
+                </span>
+                {(p.liveDate || p.liveSession) && (
+                  <span className="ggp-product-meta">
+                    直播 {p.liveDate ?? '—'}
+                    {p.liveSession ? `・第 ${p.liveSession} 場` : ''}
                   </span>
-                </button>
-              );
-            })}
+                )}
+              </div>
+            ))}
           </div>
-          <div style={{ marginTop: 12 }}>
-            <label className="ggp-label" htmlFor="ggp-theme-hint">
-              主題提示（選填，例如「轉季 layering」）
-            </label>
-            <input
-              id="ggp-theme-hint"
-              className="ggp-input"
-              value={themeHint}
-              maxLength={120}
-              onChange={(e) => setThemeHint(e.target.value)}
-              placeholder="留空由 Glo Glo 自由發揮"
-              disabled={busy}
-            />
-          </div>
-          <div className="ggp-actions" style={{ marginTop: 12 }}>
-            <button
-              type="button"
-              className="ggp-btn ggp-btn-primary"
-              disabled={busy || selected.length < 2}
-              onClick={() => void run(selected)}
-            >
-              {busy ? <Loader2 size={16} className="ggp-spin" aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
-              產生文章＋相（已揀 {selected.length} 件）
-            </button>
-            <button
-              type="button"
-              className="ggp-btn ggp-btn-ghost"
-              disabled={busy}
-              onClick={() => void run(undefined)}
-            >
-              自動揀最新 2–3 件
-            </button>
-          </div>
-          {selected.length > 0 && selected.length < 2 && (
-            <p className="ggp-sub" style={{ marginTop: 8 }} role="status">
-              最少要揀 2 件商品先可以手動產生。
-            </p>
-          )}
         </>
+      );
+    }
+    return (
+      <div className="ggp-product-grid">
+        {items.map((p) => {
+          const active = selected.includes(p.id);
+          const blocked = productBlockReason(p);
+          return (
+            <button
+              key={p.id}
+              type="button"
+              className="ggp-product"
+              aria-pressed={active}
+              disabled={busy || blocked !== null || (!active && selected.length >= 3)}
+              onClick={() => toggle(p)}
+            >
+              {active && (
+                <span className="ggp-product-check" aria-hidden="true">
+                  <Check size={14} />
+                </span>
+              )}
+              {/* 商品原圖係公開授權商品圖，可以直接顯示 */}
+              <img src={p.image} alt={p.name} loading="lazy" />
+              <span className="ggp-product-name">{p.name}</span>
+              <span className="ggp-product-price">
+                {fmtHKD(p.discountPrice ?? p.price)}
+                {p.aiTags.length > 0 ? ` · ${p.aiTags.slice(0, 3).join('／')}` : ''}
+              </span>
+              {(p.liveDate || p.liveSession) && (
+                <span className="ggp-product-meta">
+                  直播 {p.liveDate ?? '—'}
+                  {p.liveSession ? `・第 ${p.liveSession} 場` : ''}
+                </span>
+              )}
+              {blocked !== null && <span className="ggp-product-block">{blocked}</span>}
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <section className="ggp-card" aria-label="新增精選文章">
+      <h3 className="ggp-section-title">新增文章（揀選貨來源，2–3 件商品）</h3>
+      <p className="ggp-sub">
+        曾經出現喺任何指南嘅商品會永久鎖定、唔可以重用；server 生成時會再驗證一次。
+      </p>
+      <div className="ggp-filters" role="group" aria-label="選貨方式">
+        {SOURCE_TABS.map((t) => (
+          <button
+            key={t.mode}
+            type="button"
+            className="ggp-chip"
+            aria-pressed={mode === t.mode}
+            disabled={busy}
+            onClick={() => setMode(t.mode)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <p className="ggp-sub">{SOURCE_TABS.find((t) => t.mode === mode)?.hint}</p>
+
+      {renderSourcePicker()}
+      <div style={{ marginTop: 12 }}>{renderProducts()}</div>
+
+      <div style={{ marginTop: 12 }}>
+        <label className="ggp-label" htmlFor="ggp-theme-hint">
+          主題提示（選填，例如「轉季 layering」）
+        </label>
+        <input
+          id="ggp-theme-hint"
+          className="ggp-input"
+          value={themeHint}
+          maxLength={120}
+          onChange={(e) => setThemeHint(e.target.value)}
+          placeholder="留空由 Glo Glo 自由發揮"
+          disabled={busy}
+        />
+      </div>
+      <div className="ggp-actions" style={{ marginTop: 12 }}>
+        <button
+          type="button"
+          className="ggp-btn ggp-btn-primary"
+          disabled={busy || !selection}
+          onClick={() => void run()}
+        >
+          {busy ? <Loader2 size={16} className="ggp-spin" aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+          產生文章＋相{selected.length > 0 ? `（已揀 ${selected.length} 件）` : ''}
+        </button>
+      </div>
+      {mode === 'products' && selected.length < 2 && (
+        <p className="ggp-sub" style={{ marginTop: 8 }} role="status">
+          指定商品要揀夠 2–3 件先可以產生。
+        </p>
+      )}
+      {(mode === 'week' || mode === 'session') && selected.length === 0 && (
+        <p className="ggp-sub" style={{ marginTop: 8 }} role="status">
+          唔揀商品會由呢個來源嘅合資格池隨機抽 2–3 件；唔會改用其他星期／場次。
+        </p>
+      )}
+      {(mode === 'week' || mode === 'session') && selected.length === 1 && (
+        <p className="ggp-sub" style={{ marginTop: 8 }} role="status">
+          最少要揀 2 件商品（或者唔揀，由來源合資格池隨機抽 2–3 件）。
+        </p>
       )}
     </section>
   );
@@ -1248,7 +1623,7 @@ export default function GloGuidePanel({
         <div>
           <h2 className="ggp-title">精選文章</h2>
           <p className="ggp-sub">
-            Glo Glo 每週精選配搭：揀本週 2–3 件商品產生文章＋相，完成後提交審批；
+            Glo Glo 每週精選配搭：自動逐週揀貨，或者指定星期／直播場次／直接商品揀 2–3 件產生文章＋相，完成後提交審批；
             {canReview ? '你係主管／管理員，可以逐圖審批、批准上架、拒絕、落架。' : '主管／管理員逐圖審批＋批准後即時上架。'}
             {pendingCount > 0 ? `而家有 ${pendingCount} 篇待審批。` : ''}
           </p>
