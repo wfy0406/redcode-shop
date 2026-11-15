@@ -17,6 +17,16 @@ import { wmsDeleteOrderCallback } from "./wmsDeleteOrder";
 import { wmsDeleteItemCallback } from "./wmsDeleteItem";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
 import { wmsPhotoFeed } from "./wmsPhotoFeed"; // 2026-10-23（老闆指令）：貨圖庫官網區資料 feed（唯讀）
+import { wmsGloGuide } from "./gloGuideWms";
+import { gloGuidePublicMedia } from "./gloGuidePublicMedia";
+import { listPublishedGuideSitemapRows } from "./gloGuidePublic";
+import {
+  gloGuideSitemapEntries,
+  loadPublishedGuideFeed,
+  renderGloGuideRss,
+  renderSitemapIndex,
+  renderSitemapUrlset,
+} from "./gloGuideSyndication";
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushDeliveries, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
 import { serveEmptyCartOverride, serveGlogloBannerOverride, siteAssetsStatus, uploadSiteAsset } from "./adminAssets";
@@ -150,6 +160,10 @@ app.post("/api/wms/listing-batch", wmsListingBatch);
 // 唯讀——全量商品（上架中＋已下架＋定時下架已到）＋抽獎獎品池＋已刪商品圖檔案庫，
 // 畀 WMS 貨圖庫「官網貨圖」區一次過攞齊（公開 products.list 淨係返上架中，睇唔到舊貨）。
 app.post("/api/wms/photo-feed", wmsPhotoFeed);
+
+// WMS 員工工作台／主管審批：actor 只可由 WMS server 建立，官網 API 再驗角色；
+// 唔准 browser 直接攞 shared secret 調用呢條內部端點。
+app.post("/api/wms/glo-guide", wmsGloGuide);
 
 // WMS → 官網直播開播推送（2026-09-30 v2.2.0 合約 §8；同樣 WMS_CALLBACK_SECRET 驗證）：
 // 申請／直接發送、審批（通過即發送）、近 50 筆紀錄
@@ -532,10 +546,60 @@ app.post("/api/admin/upload-asset", uploadSiteAsset);
 app.get("/empty-cart.png", serveEmptyCartOverride);
 app.get("/gloglo-3.jpg", serveGlogloBannerOverride);
 
-// SEO（v2.2.20）：動態 sitemap——首頁＋全部公開可見產品頁（上架中＋未自動下架）。
-// 一定要註冊喺 serveStaticFiles(app) 之前，唔係會俾 SPA notFound fallback 派 HTML。
-// 鐵律：任何錯誤都唔准 500——DB 讀唔到就照出淨首頁嘅 urlset；error log 遮罩網址。
-app.get("/sitemap.xml", async (c) => {
+// SEO（v2026.11.15）：/sitemap.xml 改做 sitemap index，下掛三個 child sitemap 分區：
+// ─ /sitemap-fashion.xml     女裝購物（首頁＋公開靜態頁＋公開商品＋直播場次＋公開中獎公告）
+// ─ /sitemap-glo-guide.xml   Glo Glo 配搭指南（published-only；lastmod 用真 updatedAt）
+// ─ /sitemap-web-design.xml  企業服務（網站設計 B2B 分區，同主網域但同女裝購物分開）
+// 全部註冊喺 serveStaticFiles(app) 之前，唔係會俾 SPA notFound fallback 派 HTML。
+// 鐵律：sitemap 任何錯誤都唔准 500——index／web-design 係純字串唔掂 DB；
+// fashion 每段獨立 catch（DB 讀唔到照出已成功段）；error log 遮罩網址。
+const maskSitemapLog = (msg: string) =>
+  msg.replace(/https?:\/\/[^\s)】]+/gi, "〈網址已遮罩〉").slice(0, 300);
+const XML_HEADERS = {
+  "Content-Type": "application/xml; charset=utf-8",
+  "Cache-Control": "public, max-age=3600",
+} as const;
+
+app.get("/sitemap.xml", (c) => {
+  // 冇真修改時間數據，index 唔出 lastmod（唔放假日期）
+  const xml = renderSitemapIndex([
+    { path: "/sitemap-fashion.xml" },
+    { path: "/sitemap-glo-guide.xml" },
+    { path: "/sitemap-web-design.xml" },
+  ]);
+  return c.body(xml, 200, XML_HEADERS);
+});
+
+// 企業服務（網站設計 B2B 分區）：公開頁得 /web-design；
+// /web-design-bill/<token> 係有時限私人單據 URL，永不入 sitemap。
+app.get("/sitemap-web-design.xml", (c) => {
+  const xml = renderSitemapUrlset([
+    { path: "/web-design", changefreq: "monthly", priority: 0.5 },
+  ]);
+  return c.body(xml, 200, XML_HEADERS);
+});
+
+// Glo Glo 配搭指南：專用 published-only 查詢列出全部文章，只讀 slug／updatedAt；
+// DB 故障照出總覽-only urlset，唔 500 亦唔放假 URL；no-cache 避免落架後沿用舊 sitemap。
+app.get("/sitemap-glo-guide.xml", async (c) => {
+  let items: Awaited<ReturnType<typeof listPublishedGuideSitemapRows>> = [];
+  try {
+    items = await listPublishedGuideSitemapRows();
+  } catch (e) {
+    console.error(
+      "[sitemap] 讀 Glo Glo 指南出錯（照出總覽-only 版）:",
+      maskSitemapLog(e instanceof Error ? e.message : String(e)),
+    );
+  }
+  const xml = renderSitemapUrlset(gloGuideSitemapEntries(items));
+  return c.body(xml, 200, {
+    ...XML_HEADERS,
+    "Cache-Control": "no-cache, must-revalidate",
+  });
+});
+
+// 女裝購物 sitemap——首頁＋全部公開可見產品頁（上架中＋未自動下架）。
+app.get("/sitemap-fashion.xml", async (c) => {
   const xmlEscape = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   const maskForLog = (msg: string) =>
@@ -555,7 +619,10 @@ app.get("/sitemap.xml", async (c) => {
   // DB 一時故障唔會將公告 URL 放出嚟，都唔會 500（獨立 catch，唔連累其他段落）。
   const luckyAnnouncementOn = await isLuckyAnnouncementPublic().catch(() => false);
   // 公開靜態頁同首口 HTML 使用同一路由清單：只放 canonical、可收錄網址。
+  // /web-design 屬企業服務 B2B 分區，已獨立去 /sitemap-web-design.xml——
+  // 呢度明確過濾，避免 B2B 混入女裝 child 兼兩邊重複列出。
   for (const path of SITEMAP_STATIC_PATHS) {
+    if (path === "/web-design") continue;
     if (path === "/lucky-results" && !luckyAnnouncementOn) continue;
     addUrl(`https://redcode.red${path}`, "<changefreq>weekly</changefreq><priority>0.6</priority>");
   }
@@ -648,6 +715,25 @@ app.get("/merchant-feed.xml", async (c) => {
   }
 });
 
+// Glo Glo 配搭指南 RSS 2.0 feed（/glo-guide/feed.xml）：資料只經 published 公開查詢
+// （loadPublishedGuideFeed：列表＋逐篇 bySlug 詳情，中途變非 published 即略過，唔會 leak）。
+// 同 merchant-feed 一條鐵律：出錯回 500，唔出假成功嘅空 feed；error log 遮罩網址。
+app.get("/glo-guide/feed.xml", async (c) => {
+  try {
+    const details = await loadPublishedGuideFeed();
+    return c.body(renderGloGuideRss(details), 200, {
+      "Content-Type": "application/rss+xml; charset=utf-8",
+      "Cache-Control": "no-cache, must-revalidate",
+    });
+  } catch (e) {
+    console.error(
+      "[glo-guide-feed] 出 feed 失敗:",
+      maskSitemapLog(e instanceof Error ? e.message : String(e)),
+    );
+    return c.json({ error: "Feed temporarily unavailable" }, 500);
+  }
+});
+
 // 網站設計服務付款截圖：orderNo＋完整姓名＋電話核實、sharp 驗圖及 re-encode。
 // 同普通會員 /api/upload 分開，唔需要登入，亦唔會共用會員每日配額。
 app.post("/api/web-design/upload", webDesignProofUpload);
@@ -729,6 +815,9 @@ app.post("/api/upload", async (c) => {
   await writeFile(`${UPLOAD_DIR}/${filename}`, out);
   return c.json({ path: `/uploads/${filename}` });
 });
+
+// Glo Guide 圖片唔行一般公開 uploads 規則：每 request 查 DB，未 published／未 approved 一律 404。
+app.get("/uploads/glo-guide/:file", gloGuidePublicMedia);
 
 // Serve uploaded files（自訂 route，支援絕對路徑 UPLOAD_DIR，兼擋 path traversal）
 const UPLOAD_CONTENT_TYPES: Record<string, string> = {
@@ -942,7 +1031,16 @@ if (env.isProduction) {
   // 開機自動建表 + 種子數據（失敗唔會冧 server，淨係 log）；
   // 試穿表準備好先啟動私人圖片清理及卡住工作恢復，避免 fresh DB 開機誤報表不存在。
   ensureDatabase()
-    .then(() => startTryOnMediaSweeper())
+    .then(() => {
+      startTryOnMediaSweeper();
+      // DB ready 先恢復手動／自動生成 job；自動 slot 開關唔應令手動 job 喺重開機後永遠卡住。
+      void (async () => {
+        const { recoverGloGuideJobs } = await import("./gloGuideOrchestrator");
+        await recoverGloGuideJobs().catch((e) => console.error("[glo-guide] boot recovery failed:", e));
+        const { startGloGuideScheduler } = await import("./gloGuideScheduler");
+        startGloGuideScheduler();
+      })().catch((e) => console.error("[glo-guide] startup failed:", e));
+    })
     .catch((e) => console.error("[boot-migrate] failed:", e));
 
   // B-2 初次接駁（2026-08-06 WMS 建議）：一次性回填現有會員落 WMS；

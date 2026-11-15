@@ -29,7 +29,7 @@ export default function Footer() {
   return (
     <footer className="relative z-10 mt-24 border-t bg-space-0" style={{ borderColor: 'var(--space-line)' }}>
       <div className="mx-auto max-w-[1280px] px-5 py-16 md:px-8 xl:px-12">
-        <div className="grid gap-12 md:grid-cols-[1.4fr_1fr_1fr]">
+        <div className="grid gap-12 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_1fr]">
           {/* 品牌欄 */}
           <div>
             <img src="/logo.png" alt="RedCode Fashion Design" className="h-12 w-auto" />
@@ -46,9 +46,26 @@ export default function Footer() {
             <ul className="mt-4 space-y-3 text-sm">
               <li><Link to="/products" className="text-txt-2 transition-colors hover:text-pink-soft">全部商品</Link></li>
               <li><Link to="/live" className="text-txt-2 transition-colors hover:text-pink-soft">直播專區</Link></li>
+              {/* Glo Glo 配搭指南（/glo-guide 係凍結合同路由，UI 負責建立） */}
+              <li><Link to="/glo-guide" className="text-txt-2 transition-colors hover:text-pink-soft">Glo Glo 配搭指南</Link></li>
               <li><Link to="/about" className="text-txt-2 transition-colors hover:text-pink-soft">關於我們</Link></li>
               <li><Link to="/account" className="text-txt-2 transition-colors hover:text-pink-soft">會員中心</Link></li>
             </ul>
+          </nav>
+
+          {/* 企業服務（B2B 分區：獨立小區，唔混入商品購物導覽；/web-design 留主網域） */}
+          <nav aria-label="企業服務">
+            <h2 className="font-serif-tc text-lg font-semibold text-txt-1">企業服務</h2>
+            <ul className="mt-4 space-y-3 text-sm">
+              <li>
+                <Link to="/web-design" className="text-txt-2 transition-colors hover:text-gold">
+                  網站設計服務
+                </Link>
+              </li>
+            </ul>
+            <p className="mt-3 text-[12px] leading-[1.7] text-txt-3">
+              幫香港商戶整網站：前台、後台、SEO 逐項列明。
+            </p>
           </nav>
 
           {/* 聯絡 */}

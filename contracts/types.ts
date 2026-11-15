@@ -39,6 +39,15 @@ export interface ProductSeoFacts {
   price: number;
   discountPrice?: number | null;
   stock: number;
+  /**
+   * 已批准公開嘅 AI 重點標籤（caller 一定要過完批准閘先傳入：
+   * server 用 publicAiTags(aiTags, aiTagsEnabled)，client DTO 已係批准後嘅 string[]）。
+   * 未批准／壞資料一律當冇，絕對唔會喺度解 raw JSON。
+   */
+  aiTags?: readonly string[] | null;
+  /** 直播場次事實（products 表真欄位）：liveDate＝YYYYMMDD，liveSession＝'1','2'… */
+  liveDate?: string | null;
+  liveSession?: string | null;
 }
 
 /** 描述入面嘅 HTML、控制碼同 emoji 剝走；meta／JSON-LD 只用純文字。 */
@@ -58,15 +67,98 @@ export function truncateProductSeoText(value: string, limit = 120): string {
 }
 
 /**
- * 有真描述就用真描述；冇描述就用真貨號、分類、售價同庫存補強。
- * 唔虛構材質、尺碼、折扣或評價，亦唔再用每個商品都一樣嘅空泛句式。
+ * 真實售價：discountPrice 真係平過原價先算數；壞資料（折扣仲貴過原價）當冇折扣，
+ * 同 api/lib/productPublicFacts.productEffectivePrice 同一口徑。
+ */
+export function productSeoEffectivePrice(product: Pick<ProductSeoFacts, "price" | "discountPrice">): number {
+  return product.discountPrice != null && product.discountPrice < product.price
+    ? product.discountPrice
+    : product.price;
+}
+
+/** YYYYMMDD 且係真實日曆日期先出場次標籤（20230229／20261301 唔過；同 liveSeo.isValidLiveDate 一致） */
+function isRealCalendarYmd(d: string): boolean {
+  if (!/^\d{8}$/.test(d)) return false;
+  const y = Number(d.slice(0, 4));
+  const m = Number(d.slice(4, 6));
+  const day = Number(d.slice(6, 8));
+  if (m < 1 || m > 12 || day < 1 || day > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, day));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === day;
+}
+
+/** 場次事實標籤：「2026年10月28日 第2場」／「2026年10月28日」；壞資料回 null（唔反射 raw input） */
+export function productLiveSessionLabel(
+  liveDate: string | null | undefined,
+  liveSession: string | null | undefined,
+): string | null {
+  if (liveDate == null || !isRealCalendarYmd(liveDate)) return null;
+  const date = `${liveDate.slice(0, 4)}年${Number(liveDate.slice(4, 6))}月${Number(liveDate.slice(6, 8))}日`;
+  const session =
+    liveSession != null && /^[1-9]\d{0,2}$/.test(liveSession) ? ` 第${liveSession}場` : "";
+  return `${date}${session}`;
+}
+
+/**
+ * 商品公開事實段（描述過短時用嚟補強；次序固定，方便前後端一致及測試）。
+ * 全部係 products 表已核實欄位或已批准 AI 標籤：類別、貨號、實價、庫存、
+ * 批准重點、場次——唔虛構材質、產地、評價或「必買」呢類宣稱。
+ */
+export function productSeoFactsSegments(product: ProductSeoFacts): string[] {
+  const segments: string[] = [productCategoryLabel(product.category)];
+  const sku = product.sku?.trim();
+  if (sku) segments.push(`貨號 ${sku}`);
+  segments.push(`HK$${productSeoEffectivePrice(product)}`);
+  segments.push(product.stock > 0 ? `現貨 ${product.stock} 件` : "暫時缺貨");
+  const tags = (product.aiTags ?? [])
+    .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 5);
+  if (tags.length > 0) segments.push(`重點：${tags.join("、")}`);
+  const live = productLiveSessionLabel(product.liveDate, product.liveSession);
+  if (live) segments.push(`直播場次 ${live}`);
+  return segments;
+}
+
+/** 真描述短過呢個長度就用事實段補強（meta description 太短會被搜尋引擎當薄內容） */
+export const PRODUCT_SEO_DESC_SHORT = 60;
+
+/**
+ * 有真描述就用真描述；過短就用真名、類別、貨號、售價、庫存、已批准重點標籤
+ * 同直播場次補強；冇描述就靠同一份事實段兜底。唔虛構材質、尺碼、折扣或評價，
+ * 亦唔再用每個商品都一樣嘅空泛句式。前後端共用：server 首口 meta／OG／JSON-LD
+ * 同 React ProductDetail 載入後嘅 meta 一字唔差。
  */
 export function productSeoDescription(product: ProductSeoFacts, limit = 120): string {
   const plain = plainProductSeoText(product.description);
-  if (plain) return truncateProductSeoText(plain, limit);
-  const sku = product.sku?.trim() ? `貨號 ${product.sku.trim()}｜` : "";
-  const price = product.discountPrice ?? product.price;
-  const availability = product.stock > 0 ? `現貨 ${product.stock} 件` : "暫時缺貨";
-  const fallback = `${product.name}｜${productCategoryLabel(product.category)}｜${sku}HK$${price}｜${availability}。RedCode 香港直播精選，商品頁可睇相片、尺寸同最新購買資料。`;
+  const segments = productSeoFactsSegments(product);
+  if (plain) {
+    // 真描述夠長 → 照舊保留已批准原文，唔畫蛇添足
+    if (plain.length >= PRODUCT_SEO_DESC_SHORT) return truncateProductSeoText(plain, limit);
+    // 過短 → 補真事實；描述本身冇商品名就先補名（搜尋結果先認到件貨）
+    const head = product.name && !plain.includes(product.name) ? `${product.name}｜${plain}` : plain;
+    let out = head;
+    for (const segment of segments) {
+      if (out.includes(segment)) continue;
+      const next = `${out}｜${segment}`;
+      if (next.length > limit) break;
+      out = next;
+    }
+    return out;
+  }
+  const fallback = `${product.name}｜${segments.join("｜")}。RedCode 香港直播精選，商品頁可睇相片、尺寸同最新購買資料。`;
   return truncateProductSeoText(fallback, limit);
+}
+
+/** 商品名太短時（例如純貨號「067」），title 補真分類，唔會得個編號做搜尋標題。 */
+export const PRODUCT_SEO_TITLE_SHORT = 30;
+
+/**
+ * 商品頁 title：server 首口（og.ts）同 React ProductDetail document.title 共用。
+ * 名過短先加類別擴充；全部嚟自已核實欄位，唔加宣稱字眼。
+ */
+export function productSeoTitle(product: Pick<ProductSeoFacts, "name" | "category">): string {
+  const base = `${product.name}｜RedCode Fashion Design`;
+  if (base.length >= PRODUCT_SEO_TITLE_SHORT) return base;
+  return `${product.name}｜${productCategoryLabel(product.category)}｜RedCode Fashion Design`;
 }

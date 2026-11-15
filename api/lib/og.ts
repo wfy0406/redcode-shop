@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { products } from "@db/schema";
-import { productCategoryLabel, productSeoDescription } from "@contracts/types";
+import { productCategoryLabel, productSeoDescription, productSeoTitle } from "@contracts/types";
 import { PUBLIC_DISPATCH_POLICY, PUBLIC_RETURN_POLICY } from "@contracts/publicPolicies";
 import { stripPublicSeoContent } from "./publicSeo";
 import { publicAiTags } from "../productAiContent";
@@ -201,11 +201,12 @@ export async function injectProductOg(
     const price = productEffectivePrice(p);
     const inStock = productInStock(p);
     const sizes = productSizeOptions(p);
-    // meta description 同前端 ProductDetail 共用 contracts/types.ts 規則：
-    // 有真描述用真描述；冇描述就用真貨號、分類、售價同庫存補強，唔再每件都係同一句空泛兜底。
-    const desc = productSeoDescription(p);
+    // 已批准標籤同真實直播場次只喺描述過短時補強；長描述照舊保留，唔 keyword stuffing。
+    const aiTags = publicAiTags(p.aiTags, p.aiTagsEnabled);
+    const seoFacts = { ...p, aiTags };
+    const desc = productSeoDescription(seoFacts);
     // title 同前端 ProductDetail 嘅 document.title 對齊（server HTML 同 rendered DOM 一致）
-    const title = `${p.name}｜RedCode Fashion Design`;
+    const title = productSeoTitle(p);
 
     const tags = [
       `<meta property="og:type" content="product" />`,
@@ -241,11 +242,10 @@ export async function injectProductOg(
 
     // 首口 HTML 直接放商品名、價錢、描述同購物支援連結，唔再只放 noscript。
     // 區塊放喺 #root 外，白屏自救仍可靠 root.childNodes；React mount 後統一移除。
-    const prerenderDesc = productSeoDescription(p, 300);
+    const prerenderDesc = productSeoDescription(seoFacts, 300);
     const stockText = inStock ? `現貨 ${p.stock} 件` : "暫時缺貨";
     // AI 標籤可見重點：淨係 aiTagsEnabled=true 先出；disabled 時內容就算仲喺 DB 都絕對唔出現。
     // （只加喺現有首口描述區；Product JSON-LD／運費／退貨政策主線邏輯唔郁）
-    const aiTags = publicAiTags(p.aiTags, p.aiTagsEnabled);
     const prerender =
       `<main id="redcode-product-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8"><h1>${esc(p.name)}</h1>` +
       `${p.sku ? `<p>貨號：${esc(p.sku)}</p>` : ""}` +
@@ -265,7 +265,7 @@ export async function injectProductOg(
     // cents 淨係訂單/VIP 引擎用），所以 JSON-LD price 直接 toFixed(2)，唔准 ÷100。
     // 任何一步出錯都靜靜雞 skip，唔好炸成個 injection。
     try {
-      const jsonDesc = productSeoDescription(p, 200);
+      const jsonDesc = productSeoDescription(seoFacts, 200);
       const jsonLd = {
         "@context": "https://schema.org",
         "@type": "Product",

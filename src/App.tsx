@@ -8,6 +8,8 @@ import { SeoManager } from '@/lib/seo';
 // 其餘頁面全部 React.lazy 按需載入；Admin 一定 lazy（一般人唔會入，唔好拖慢首屏）。
 const Products = lazy(() => import('@/pages/Products'));
 const ProductDetail = lazy(() => import('@/pages/ProductDetail'));
+const GloGuideList = lazy(() => import('@/pages/GloGuideList'));
+const GloGuideDetail = lazy(() => import('@/pages/GloGuideDetail'));
 const Live = lazy(() => import('@/pages/Live'));
 const About = lazy(() => import('@/pages/About'));
 const Login = lazy(() => import('@/pages/Login'));
@@ -98,6 +100,8 @@ export default function App() {
             <Route index element={<Home />} />
             <Route path="products" element={<Products />} />
             <Route path="products/:id" element={<ProductDetail />} />
+            <Route path="glo-guide" element={<GloGuideList />} />
+            <Route path="glo-guide/:slug" element={<GloGuideDetail />} />
             <Route path="live" element={<Live />} />
             <Route path="about" element={<About />} />
             <Route path="vip" element={<Vip />} />

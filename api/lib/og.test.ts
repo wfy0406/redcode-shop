@@ -82,16 +82,16 @@ describe("injectProductOg — 商品存在", () => {
     const out = await injectProductOg(TEMPLATE, 85, ORIGIN);
     expect(out).not.toBeNull();
     const html = out!;
-    // title 同前端 ProductDetail document.title 格式對齊
-    expect(html).toContain("<title>067｜RedCode Fashion Design</title>");
+    // 短名補真分類；短描述保留原文並補真貨號、價錢、庫存
+    expect(html).toContain("<title>067｜上衣｜RedCode Fashion Design</title>");
     // ★ 核心修復：meta description 係商品專屬，唔再係首頁通用嗰條
     expect(html).toContain(
-      '<meta name="description" content="星空閃石上衣，直播限定色，S/M/L 碼齊。" />',
+      '<meta name="description" content="067｜星空閃石上衣，直播限定色，S/M/L 碼齊。｜貨號 SKU-067｜HK$199｜現貨 5 件" />',
     );
     expect(html).not.toContain(GENERIC_HOME_DESC);
     // canonical 指返自己（self-canonical）
     expect(html).toContain('<link rel="canonical" href="https://redcode.red/products/85" />');
-    expect(html).toContain('<meta property="og:title" content="067｜RedCode Fashion Design" />');
+    expect(html).toContain('<meta property="og:title" content="067｜上衣｜RedCode Fashion Design" />');
     expect(html).toContain('<meta property="og:url" content="https://redcode.red/products/85" />');
     // 首頁通用 og:image 被商品圖取代
     expect(html).toContain('<meta property="og:image" content="https://redcode.red/uploads/p85.jpg" />');
@@ -111,7 +111,7 @@ describe("injectProductOg — 商品存在", () => {
   it("description 有 HTML tag／emoji → 入 meta 前剝走做純文字", async () => {
     mockRows = [makeProduct({ description: "<p>靚衫✨</p>\n<b>必買</b>" })];
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
-    expect(html).toContain('<meta name="description" content="靚衫 必買" />');
+    expect(html).toContain('<meta name="description" content="067｜靚衫 必買｜上衣｜貨號 SKU-067｜HK$199｜現貨 5 件" />');
     // 原始 markup／emoji 唔准漏入任何輸出（meta／OG／JSON-LD／noscript 全部要純文字）。
     // 注意唔好断言 "<p>靚衫"：noscript 摘要合法地用 <p> 包住剝咗 markup 嘅純文字。
     expect(html).not.toContain("<p>靚衫✨</p>");
@@ -134,7 +134,7 @@ describe("injectProductOg — 商品存在", () => {
     expect(html).toContain("<p>貨號：SKU-067</p>");
     expect(html).toContain("<p>尺寸：S、M、L</p>");
     expect(html).toContain("<p>HK$199</p>");
-    expect(html).toContain("<p>星空閃石上衣，直播限定色，S/M/L 碼齊。</p>");
+    expect(html).toContain("<p>067｜星空閃石上衣，直播限定色，S/M/L 碼齊。｜貨號 SKU-067｜HK$199｜現貨 5 件</p>");
     expect(html).toContain("<p>正常情況下，訂單確認後約 7–10 個工作天寄出，惟部分商品可能需要更久。</p>");
     expect(html).toContain("呢個係寄出時間，唔係保證送達時間，亦唔係收貨後 7 天嘅退換申請期限。");
     expect(html).toContain('<a href="/products">全部貨品</a>');

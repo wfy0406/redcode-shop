@@ -59,6 +59,19 @@ describe("PAGE_SEO 文案", () => {
     expect(isNoIndexPath("/web-design/")).toBe(false);
   });
 
+  it("Glo Guide 列表同詳情過渡 SEO 可收錄，canonical 唔會跌返首頁", () => {
+    expect(resolveSeo("/glo-guide")).toEqual(PAGE_SEO["/glo-guide"]);
+    expect(resolveSeo("/glo-guide/")).toEqual(PAGE_SEO["/glo-guide"]);
+    expect(resolveSeo("/glo-guide/rainy-day-layering")).toEqual(PAGE_SEO["/glo-guide/:slug"]);
+    expect(isNoIndexPath("/glo-guide")).toBe(false);
+    expect(isNoIndexPath("/glo-guide/rainy-day-layering/")).toBe(false);
+    expect(resolveCanonicalPath("/glo-guide/rainy-day-layering/")).toBe("/glo-guide/rainy-day-layering");
+    expect(isNoIndexPath("/glo-guide/not_a_slug")).toBe(true);
+    expect(resolveCanonicalPath("/glo-guide/not_a_slug")).toBeNull();
+    expect(PAGE_SEO["/glo-guide"].description).toContain("AI 配搭效果圖");
+    expect(PAGE_SEO["/glo-guide"].description).not.toContain("真人");
+  });
+
   it("index.html 預設 description 同 PAGE_SEO['/'] 一致", () => {
     const indexHtml = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
     expect(indexHtml).toContain(`<meta name="description" content="${PAGE_SEO["/"].description}" />`);

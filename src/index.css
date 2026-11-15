@@ -729,3 +729,603 @@
     transition: none;
   }
 }
+
+/* =====================================================================
+   Glo Glo 精選配搭指南（/glo-guide）—— editorial 雜誌風專屬區
+   深色＋金、CJK 襯線大標、hairline、自然 grain、2:3 相集。
+   全部 class 用 gg- 前綴，唔會同全站其他樣式相撞。
+   ===================================================================== */
+
+.gg-page {
+  position: relative;
+  isolation: isolate;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 5rem;
+}
+
+@media (min-width: 768px) {
+  .gg-page {
+    padding: 4rem 2rem 6rem;
+  }
+}
+
+/* 自然 grain：固定頻率 fractalNoise，靜態（唔係動畫），極低透明度 */
+.gg-grain {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.gg-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 0 0 0.75rem;
+}
+
+.gg-hairline {
+  border: 0;
+  height: 1px;
+  margin: 1.75rem 0;
+  background: linear-gradient(
+    to right,
+    rgba(245, 197, 24, 0.55),
+    rgba(245, 197, 24, 0.12) 60%,
+    transparent
+  );
+}
+
+.gg-date {
+  font-size: 13px;
+  color: var(--text-3);
+  margin: 0.75rem 0 0;
+}
+
+.gg-read-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-top: 0.75rem;
+  color: var(--gold-soft);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-decoration: underline;
+  text-underline-offset: 6px;
+  text-decoration-color: rgba(245, 197, 24, 0.4);
+}
+
+.gg-read-link:hover {
+  color: var(--gold);
+  text-decoration-color: var(--gold);
+}
+
+/* ---------- 總覽頁 ---------- */
+
+.gg-header {
+  max-width: 44rem;
+  margin-bottom: 3rem;
+}
+
+.gg-page-title {
+  font-family: var(--font-serif-tc);
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--starlight);
+  margin: 0;
+}
+
+.gg-page-intro {
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text-2);
+  margin: 1rem 0 0;
+}
+
+/* 頭版：非對稱 split-screen（文 7 格／相 5 格），相框金色 hairline 錯位 */
+.gg-featured {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  align-items: center;
+  margin-bottom: 4rem;
+}
+
+@media (min-width: 768px) {
+  .gg-featured {
+    grid-template-columns: 7fr 5fr;
+    gap: 3.5rem;
+  }
+}
+
+.gg-featured-title {
+  font-family: var(--font-serif-tc);
+  font-size: clamp(1.75rem, 4vw, 2.75rem);
+  font-weight: 700;
+  line-height: 1.28;
+  margin: 0;
+}
+
+.gg-featured-title a {
+  color: var(--text-1);
+  text-decoration: none;
+}
+
+.gg-featured-title a:hover {
+  color: var(--gold-soft);
+}
+
+.gg-featured-excerpt {
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text-2);
+  margin: 1.25rem 0 0;
+}
+
+.gg-featured-frame {
+  position: relative;
+  display: block;
+}
+
+.gg-featured-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translate(14px, 14px);
+  border: 1px solid rgba(245, 197, 24, 0.45);
+  pointer-events: none;
+}
+
+.gg-featured-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+}
+
+/* 其餘文章：CSS multi-column masonry，直落閱讀、唔係一式一樣卡片牆 */
+.gg-masonry {
+  columns: 1;
+  column-gap: 2.5rem;
+}
+
+@media (min-width: 768px) {
+  .gg-masonry {
+    columns: 2;
+  }
+}
+
+.gg-masonry-item {
+  break-inside: avoid;
+  margin-bottom: 3rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid var(--space-line);
+}
+
+.gg-masonry-frame {
+  display: block;
+  margin-bottom: 1.25rem;
+}
+
+.gg-masonry-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+}
+
+.gg-masonry-title {
+  font-family: var(--font-serif-tc);
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.gg-masonry-title a {
+  color: var(--text-1);
+  text-decoration: none;
+}
+
+.gg-masonry-title a:hover {
+  color: var(--gold-soft);
+}
+
+.gg-masonry-excerpt {
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text-2);
+  margin: 0.75rem 0 0;
+}
+
+/* ---------- 狀態（載入／錯誤／空） ---------- */
+
+.gg-state {
+  padding: 4rem 0;
+  max-width: 36rem;
+}
+
+.gg-state p {
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text-2);
+  margin: 0 0 0.5rem;
+}
+
+.gg-state-title {
+  font-family: var(--font-serif-tc);
+  font-size: 1.5rem;
+  color: var(--text-1) !important;
+}
+
+.gg-retry {
+  min-height: 44px;
+  padding: 0 1.5rem;
+  margin-top: 1rem;
+  border: 1px solid rgba(245, 197, 24, 0.55);
+  background: transparent;
+  color: var(--gold-soft);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.gg-retry:hover {
+  background: rgba(245, 197, 24, 0.12);
+  color: var(--gold);
+}
+
+/* ---------- 詳情頁 ---------- */
+
+.gg-breadcrumb {
+  font-size: 13px;
+  color: var(--text-3);
+  margin-bottom: 2.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.gg-breadcrumb a {
+  color: var(--text-3);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: transparent;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.gg-breadcrumb a:hover {
+  color: var(--gold-soft);
+  text-decoration-color: rgba(245, 197, 24, 0.4);
+}
+
+/* 非對稱 split：相集 5 格（sticky）／正文 7 格 */
+.gg-detail {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2.5rem;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .gg-detail {
+    grid-template-columns: 5fr 7fr;
+    gap: 4rem;
+  }
+
+  .gg-gallery {
+    position: sticky;
+    top: 96px;
+  }
+}
+
+.gg-gallery {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.75rem;
+}
+
+@media (min-width: 560px) {
+  .gg-gallery {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .gg-gallery .gg-figure:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 900px) {
+  .gg-gallery {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gg-figure {
+  margin: 0;
+}
+
+/* AI 披露：效果圖旁白，細字但對比足（text-2 唔係 text-3） */
+.gg-disclosure {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-2);
+  border-left: 2px solid rgba(245, 197, 24, 0.55);
+  padding-left: 0.75rem;
+}
+
+.gg-figure-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+}
+
+.gg-figure-cap {
+  font-size: 13px;
+  color: var(--text-3);
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--space-line);
+  margin-top: 0.5rem;
+}
+
+.gg-figure-cap a {
+  color: var(--gold-soft);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.gg-article-title {
+  font-family: var(--font-serif-tc);
+  font-size: clamp(2rem, 4.5vw, 3.25rem);
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--starlight);
+  margin: 0;
+}
+
+/* 正文 ≥16px／1.7（呢度 17px／1.85）；首字放大係純排版，唔係動效 */
+.gg-body p {
+  font-size: 17px;
+  line-height: 1.85;
+  color: var(--text-1);
+  margin: 0 0 1.4em;
+}
+
+.gg-body > p:first-child::first-letter {
+  font-family: var(--font-serif-tc);
+  font-size: 2.6em;
+  line-height: 1;
+  color: var(--gold);
+  padding-right: 0.12em;
+  float: left;
+}
+
+/* Gloria 簽名：原圖深啡字透明底，filter 提亮做金（binary 冇郁） */
+.gg-sign-block {
+  margin-top: 2.5rem;
+}
+
+.gg-sign-byline {
+  font-size: 14px;
+  color: var(--text-3);
+  margin: 0 0 0.5rem;
+}
+
+.gg-sign-img {
+  width: 180px;
+  height: auto;
+  filter: invert(0.82) sepia(0.55) saturate(4.5) hue-rotate(-10deg) brightness(1.05);
+  opacity: 0.92;
+}
+
+/* ---------- 文中單品（editorial 商品行） ---------- */
+
+.gg-products {
+  margin-top: 4rem;
+}
+
+.gg-products-title {
+  font-family: var(--font-serif-tc);
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  font-weight: 700;
+  color: var(--starlight);
+  margin: 0 0 1.5rem;
+}
+
+.gg-products-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gg-product {
+  display: grid;
+  grid-template-columns: 2.5rem 96px 1fr;
+  gap: 1rem;
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--space-line);
+  align-items: start;
+}
+
+@media (min-width: 768px) {
+  .gg-product {
+    grid-template-columns: 3.5rem 140px 1fr;
+    gap: 1.75rem;
+  }
+}
+
+.gg-product-index {
+  font-family: var(--font-serif-tc);
+  font-size: 1.5rem;
+  color: var(--gold);
+  line-height: 1.2;
+}
+
+.gg-product-thumb {
+  display: block;
+}
+
+.gg-product-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+}
+
+.gg-product-meta {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+  margin: 0 0 0.25rem;
+}
+
+.gg-product-name {
+  font-family: var(--font-serif-tc);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.gg-product-name a {
+  color: var(--text-1);
+  text-decoration: none;
+}
+
+.gg-product-name a:hover {
+  color: var(--gold-soft);
+}
+
+.gg-product-tags {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0;
+  padding: 0;
+}
+
+.gg-product-tags li {
+  font-size: 12px;
+  color: var(--gold-soft);
+  border: 1px solid rgba(245, 197, 24, 0.35);
+  padding: 0.15rem 0.6rem;
+}
+
+.gg-product-price {
+  margin: 0.75rem 0 0;
+  font-size: 16px;
+  color: var(--text-1);
+}
+
+.gg-product-price strong {
+  font-size: 1.15rem;
+  color: var(--gold-soft);
+  font-weight: 600;
+}
+
+.gg-product-price s {
+  margin-left: 0.6rem;
+  color: var(--text-3);
+  font-size: 0.9em;
+}
+
+.gg-product-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+/* CTA：深色實心＋金色描邊（驗收要求，唔係 transparent ghost）；觸控 ≥44px */
+.gg-product-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 1.5rem;
+  border: 1px solid var(--gold);
+  background: var(--space-3);
+  color: var(--gold-soft);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.gg-product-cta:hover:not(:disabled) {
+  background: var(--space-4);
+  color: var(--gold);
+}
+
+.gg-product-cta:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.gg-product-detail-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--text-3);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.gg-product-detail-link:hover {
+  color: var(--gold-soft);
+}
+
+.gg-product-soldout {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--text-disabled);
+}
+
+.gg-product-feedback {
+  margin: 0.6rem 0 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.gg-product-feedback--ok {
+  color: var(--success);
+}
+
+.gg-product-feedback--err {
+  color: var(--pink-soft);
+}
+
+.gg-products-note {
+  margin-top: 1.25rem;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+/* reduced motion：指南頁冇動畫，連 hover transition 都唔留 */
+@media (prefers-reduced-motion: reduce) {
+  .gg-page a,
+  .gg-page button {
+    transition: none;
+  }
+}

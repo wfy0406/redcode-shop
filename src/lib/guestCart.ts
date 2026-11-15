@@ -35,17 +35,24 @@ export function getGuestCart(): GuestCartItem[] {
   }
 }
 
-function save(items: GuestCartItem[]): void {
+/**
+ * 寫入 localStorage；成功回 true。
+ * 私隱模式／quota 爆滿寫唔入回 false（唔再靜默）——caller（例如 Glo Glo 指南
+ * 商品行）靠佢決定顯示「已加入」定錯誤，唔准假顯示成功。
+ * 舊 caller 唔理回傳值都完全相容。
+ */
+function save(items: GuestCartItem[]): boolean {
   try {
     localStorage.setItem(KEY, JSON.stringify(items));
   } catch {
-    // 私隱模式寫唔入就靜默（落單時 server 都會再驗）
+    return false;
   }
-  window.dispatchEvent(new CustomEvent(EVENT));
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(EVENT));
+  return true;
 }
 
-/** 加貨：同 productId＋同 size 就加數量（上限 99），否則新行 */
-export function addToGuestCart(productId: number, size: string | null, quantity: number): void {
+/** 加貨：同 productId＋同 size 就加數量（上限 99），否則新行。回傳寫入成功與否。 */
+export function addToGuestCart(productId: number, size: string | null, quantity: number): boolean {
   const items = getGuestCart();
   const found = items.find((it) => it.productId === productId && it.size === size);
   if (found) {
@@ -53,7 +60,7 @@ export function addToGuestCart(productId: number, size: string | null, quantity:
   } else {
     items.push({ productId, size, quantity: Math.min(99, Math.max(1, quantity)) });
   }
-  save(items);
+  return save(items);
 }
 
 /** 更新某行數量；quantity <= 0 等於刪除（同 server cart 規矩一致） */

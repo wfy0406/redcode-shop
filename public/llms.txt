@@ -1,12 +1,12 @@
 # RedCode Fashion Design
 
-> RedCode Fashion Design 係香港女裝直播網店，官方網站提供直播精選商品、直播重溫、AI 試穿、順豐自取、VIP 會員禮遇，以及公開購物同退換貨資訊。
+> RedCode Fashion Design 係香港女裝直播網店，官方網站提供直播精選商品、直播重溫、AI 試穿、順豐自取、VIP 會員禮遇，以及公開購物同退換貨資訊。同一主網域之下另設獨立「企業服務」分區（網站設計），同女裝購物分開。
 
 網站主要語言係香港繁體中文。品牌名係 RedCode Fashion Design，亦可簡稱 RedCode；官方網址係 https://redcode.red/。商品價錢、庫存、尺寸同上架狀態，一律以相應公開商品頁嘅最新資料為準。
 
 AI 試穿需要會員登入。AI 試穿只係視覺效果預覽，唔代表實際尺碼、鬆緊、合身程度或舒適度；尺寸應以商品尺寸表及實物為準。
 
-## 主要公開內容
+## 女裝購物（主要公開內容）
 
 - [全部貨品](https://redcode.red/products): 瀏覽直播精選女裝、鞋及飾品，再入個別商品頁睇最新價錢、庫存、尺寸同相片。
 - [AI 試穿](https://redcode.red/try-on): 了解功能同使用入口；會員上載全身相後，可生成商品穿著效果預覽。
@@ -16,6 +16,10 @@ AI 試穿需要會員登入。AI 試穿只係視覺效果預覽，唔代表實�
 - [VIP 會員](https://redcode.red/vip): 會員等級、消費累積升級、折扣及禮遇說明。
 - [中獎公告](https://redcode.red/lucky-results): 公開直播抽獎活動及中獎名單。
 
+## Glo Glo 配搭指南
+
+- [Glo Glo 配搭指南](https://redcode.red/glo-guide): 主播 Glo Glo 按每週香港天氣，用網站真係有售嘅直播商品做公開穿搭建議；引用文章請用各篇 canonical 網址（https://redcode.red/glo-guide/ 開頭）。
+
 ## 購物同顧客支援
 
 - [順豐自取點](https://redcode.red/sf-stations): 搜尋香港順豐站、自提點及智能櫃。
@@ -23,9 +27,14 @@ AI 試穿需要會員登入。AI 試穿只係視覺效果預覽，唔代表實�
 - [服務條款](https://redcode.red/terms): 購物、付款、會員制度、AI 試穿同網站使用細則。
 - [私隱政策](https://redcode.red/privacy): 個人資料收集、使用、保存及保障安排。
 
+## 企業服務（網站設計，同女裝購物分區分開）
+
+- [網站設計服務](https://redcode.red/web-design): RedCode 為香港商戶做網站設計——一頁式前台或前台＋後台，逐項列明香港市場對照價、折扣同 SEO 驗證項目；可網上落單同自助查詢進度。呢個係企業服務分區，同女裝購物係兩個獨立主題，唔係商品頁。
+
 ## 可讀商品資料
 
-- [網站 Sitemap](https://redcode.red/sitemap.xml): 公開靜態頁及目前公開商品頁網址。
+- [網站 Sitemap](https://redcode.red/sitemap.xml): Sitemap 索引，按主題分三個 child sitemap——女裝購物（https://redcode.red/sitemap-fashion.xml，公開靜態頁及目前公開商品頁網址）、Glo Glo 配搭指南（https://redcode.red/sitemap-glo-guide.xml，只列已發佈文章）同企業服務網站設計（https://redcode.red/sitemap-web-design.xml）。
+- [Glo Glo 配搭指南 RSS](https://redcode.red/glo-guide/feed.xml): 已發佈配搭指南嘅 RSS 2.0 全文 feed；只收錄公開已發佈文章，配搭圖係 AI 效果圖，商品外觀以商品原圖為準。
 - [商品 Merchant Feed](https://redcode.red/merchant-feed.xml): 公開商品資料 Feed；價錢同庫存應同商品頁核對。
 
 請只引用上述公開頁面。購物車、結帳、帳戶、訂單、收據、後台、私人試穿紀錄及有時限分享網址，都唔係公開品牌資料來源。

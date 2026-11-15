@@ -33,6 +33,14 @@
 .wd-page img { display: block; max-width: 100%; }
 .wd-page a, .wd-page button, .wd-page summary { -webkit-tap-highlight-color: transparent; }
 .wd-container { width: min(1280px, calc(100% - clamp(36px, 7vw, 112px))); margin-inline: auto; }
+/* ===== Breadcrumb（SEO 分區：首頁 > 網站設計服務；少量樣式融入 editorial 風格） ===== */
+.wd-breadcrumb { position: relative; z-index: 3; padding-top: clamp(16px, 3vh, 28px); }
+.wd-breadcrumb-list { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 12px; letter-spacing: .14em; color: var(--wd-ink-3); }
+.wd-breadcrumb-item { display: inline-flex; align-items: center; gap: 8px; }
+.wd-breadcrumb-item + .wd-breadcrumb-item::before { content: '›'; color: var(--wd-ink-3); opacity: .6; }
+.wd-breadcrumb-link { color: var(--wd-ink-2); text-decoration: none; transition: color .2s ease; }
+.wd-breadcrumb-link:hover { color: var(--wd-orange); }
+.wd-breadcrumb-item[aria-current='page'] { color: var(--wd-ink); font-weight: 600; }
 .wd-kicker { margin: 0 0 16px; color: var(--wd-orange); font-size: 11px; font-weight: 800; letter-spacing: .28em; line-height: 1.5; text-transform: uppercase; }
 .wd-h1, .wd-h2, .wd-h3 { font-family: var(--wd-font-display); font-weight: 600; }
 .wd-h1 { margin: 0; font-size: clamp(54px, 7.5vw, 122px); letter-spacing: -.055em; line-height: .91; }

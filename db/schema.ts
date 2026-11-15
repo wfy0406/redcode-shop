@@ -923,6 +923,143 @@ export const webDesignInquiries = pgTable("webDesignInquiries", {
   index("webdesigninquiries_status").on(t.status, t.createdAt),
 ]);
 
+// ===== Glo Glo 精選配搭指南（gloGuide，SPEC v1）=====
+// 官網係文章／商品關聯／圖片／生成 job 嘅 single source of truth；WMS 經
+// POST /api/wms/glo-guide（WMS_CALLBACK_SECRET）操作，公開只回 status='published'。
+export const gloGuideArticles = pgTable(
+  "gloGuideArticles",
+  {
+    id: serial("id").primaryKey(),
+    // 對外穩定 ID（uuid）：內部 list／job payload 用，唔暴露 serial 增長規律
+    publicId: varchar("publicId", { length: 36 }).notNull(),
+    slug: varchar("slug", { length: 180 }).notNull(),
+    title: varchar("title", { length: 255 }).notNull(),
+    body: text("body").notNull(),
+    theme: varchar("theme", { length: 255 }).notNull(),
+    // 主題去重鍵：theme 經 NFC＋小寫＋剝空白標點後嘅規範形（近 8 篇非 archived 唔准撞）
+    themeKey: varchar("themeKey", { length: 180 }).notNull(),
+    // draft | pending_review | published | rejected | archived
+    status: varchar("status", { length: 16 }).notNull().default("draft"),
+    // auto（排程生成）| manual（WMS 員工觸發）
+    source: varchar("source", { length: 8 }).notNull().default("manual"),
+    // idle | queued | processing | completed | failed（失敗原因落 generationError，絕不假成功）
+    generationStatus: varchar("generationStatus", { length: 16 }).notNull().default("idle"),
+    generationError: text("generationError"),
+    // 生成當刻 HKO 7 日預報／降級季節提示快照（審批可對照；stale 會標記）
+    weatherSnapshot: jsonb("weatherSnapshot"),
+    // 模特兒參考圖（真實授權相，例如 /gloglo-3.jpg）；公開 DTO 永遠唔輸出
+    modelImage: varchar("modelImage", { length: 512 }),
+    createdById: integer("createdById"),
+    createdByName: varchar("createdByName", { length: 128 }),
+    reviewedById: integer("reviewedById"),
+    reviewedByName: varchar("reviewedByName", { length: 128 }),
+    reviewedAt: timestamp("reviewedAt"),
+    rejectionReason: text("rejectionReason"),
+    publishedAt: timestamp("publishedAt"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("gloguidearticles_publicid").on(t.publicId),
+    uniqueIndex("gloguidearticles_slug").on(t.slug),
+    // 公開列表熱點：status='published' ＋ publishedAt desc
+    index("gloguidearticles_status_published").on(t.status, t.publishedAt),
+  ],
+);
+
+// 指南 ↔ 商品關聯：2–3 件不重複商品；snapshot 欄係揀貨當刻嘅對照基準
+// （商品日後改圖 → sourceImageSnapshot 唔再等於 products.image → 過唔到最終閘，要重生）
+export const gloGuideArticleProducts = pgTable(
+  "gloGuideArticleProducts",
+  {
+    id: serial("id").primaryKey(),
+    articleId: integer("articleId")
+      .notNull()
+      .references(() => gloGuideArticles.id),
+    productId: integer("productId").notNull(),
+    position: integer("position").notNull(),
+    sourceImageSnapshot: varchar("sourceImageSnapshot", { length: 512 }),
+    productNameSnapshot: varchar("productNameSnapshot", { length: 255 }),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("gloguidearticleproducts_article_product").on(t.articleId, t.productId),
+    uniqueIndex("gloguidearticleproducts_article_position").on(t.articleId, t.position),
+  ],
+);
+
+// 指南圖片：每張連結其中一件已選商品、逐張人工 approved（有 reviewer/time）先過閘；
+// 所有持久圖片路徑只准 /uploads/glo-guide/（短期 Fashn CDN URL 永不入庫、唔入公開 DTO）
+export const gloGuideImages = pgTable(
+  "gloGuideImages",
+  {
+    id: serial("id").primaryKey(),
+    publicId: varchar("publicId", { length: 36 }).notNull(),
+    articleId: integer("articleId")
+      .notNull()
+      .references(() => gloGuideArticles.id),
+    productId: integer("productId"),
+    // 持久站內路徑 /uploads/glo-guide/<uuid>.png；生成中／失敗係 NULL
+    path: varchar("path", { length: 512 }),
+    // 生成嗰刻嘅商品現行圖（products.image）：drift 檢查基準
+    sourceProductImage: varchar("sourceProductImage", { length: 512 }),
+    providerJobId: varchar("providerJobId", { length: 160 }),
+    // queued | processing | completed | failed
+    status: varchar("status", { length: 16 }).notNull().default("queued"),
+    // pending | approved | rejected（文章／商品改動會重置返 pending）
+    reviewStatus: varchar("reviewStatus", { length: 16 }).notNull().default("pending"),
+    error: text("error"),
+    position: integer("position").notNull().default(0),
+    // 重生一次 +1（同 productId 下區分版本）
+    version: integer("version").notNull().default(1),
+    // 圖像素尺寸（sharp 實測；公開 DTO width/height／首口 aspect-ratio 用）
+    width: integer("width"),
+    height: integer("height"),
+    reviewedById: integer("reviewedById"),
+    reviewedByName: varchar("reviewedByName", { length: 128 }),
+    reviewedAt: timestamp("reviewedAt"),
+    // 軟刪：歷史審批留底，公開及閘口一律唔計
+    deletedAt: timestamp("deletedAt"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("gloguideimages_publicid").on(t.publicId),
+    index("gloguideimages_article").on(t.articleId),
+  ],
+);
+
+// 生成 job：scheduled（排程）| full（成篇＋圖）| article（淨文字）| image（單張）。
+// idempotencyKey unique：排程 slot／重生請求撞 key 唔會重複生成；重開機後靠
+// status＋providerJobId 恢復（recovery），失敗留 error，絕不靜默重試。
+export const gloGuideJobs = pgTable(
+  "gloGuideJobs",
+  {
+    id: serial("id").primaryKey(),
+    publicId: varchar("publicId", { length: 36 }).notNull(),
+    articleId: integer("articleId")
+      .notNull()
+      .references(() => gloGuideArticles.id),
+    imageId: integer("imageId"),
+    kind: varchar("kind", { length: 16 }).notNull(), // scheduled | full | article | image
+    // queued | submitted | processing | completed | failed
+    status: varchar("status", { length: 16 }).notNull().default("queued"),
+    idempotencyKey: varchar("idempotencyKey", { length: 128 }).notNull(),
+    providerJobId: varchar("providerJobId", { length: 160 }),
+    attempts: integer("attempts").notNull().default(0),
+    error: text("error"),
+    payload: jsonb("payload"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+    completedAt: timestamp("completedAt"),
+  },
+  (t) => [
+    uniqueIndex("gloguidejobs_publicid").on(t.publicId),
+    uniqueIndex("gloguidejobs_idempotency").on(t.idempotencyKey),
+    index("gloguidejobs_article").on(t.articleId),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type TryOnJob = typeof tryOnJobs.$inferSelect;
 export type ApprovalRequest = typeof approvalRequests.$inferSelect;
@@ -951,3 +1088,7 @@ export type WebDesignOrder = typeof webDesignOrders.$inferSelect;
 export type WebDesignOrderItem = typeof webDesignOrderItems.$inferSelect;
 export type WebDesignPaymentProof = typeof webDesignPaymentProofs.$inferSelect;
 export type WebDesignInquiry = typeof webDesignInquiries.$inferSelect;
+export type GloGuideArticle = typeof gloGuideArticles.$inferSelect;
+export type GloGuideArticleProduct = typeof gloGuideArticleProducts.$inferSelect;
+export type GloGuideImage = typeof gloGuideImages.$inferSelect;
+export type GloGuideJob = typeof gloGuideJobs.$inferSelect;

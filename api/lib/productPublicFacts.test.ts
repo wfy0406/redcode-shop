@@ -114,10 +114,10 @@ describe("productSizeOptions — 尺寸選項係真欄位", () => {
 });
 
 describe("Feed 描述／標題 — 同 contracts 同一份清理截斷", () => {
-  it("有描述：剝 HTML／emoji／控制碼做純文字", () => {
+  it("有描述但過短：剝 HTML／emoji／控制碼，再以真商品事實補強", () => {
     expect(
       productFeedDescription({ ...base, description: "<p>靚衫✨</p>\n<b>必買</b>" }),
-    ).toBe("靚衫 必買");
+    ).toBe("067｜靚衫 必買｜上衣｜貨號 SKU-067｜HK$199｜現貨 5 件");
   });
 
   it("無描述：用真貨號／分類／價錢／庫存補強，唔係模板假內容", () => {

@@ -91,16 +91,17 @@ beforeEach(() => {
 });
 
 describe("描述口徑一致＋冇模板假內容", () => {
-  it("有描述：Feed description 係剝咗 HTML／emoji 嘅純文字，同 og meta description 同源", async () => {
+  it("有描述但過短：Feed 同 og 都用剝淨原文＋真商品事實補強", async () => {
     const p = makeProduct({ description: "<p>靚衫✨</p>\n<b>必買</b>" });
     mockRows = [p];
+    const expected = "067｜靚衫 必買｜上衣｜貨號 SKU-067｜HK$199｜現貨 5 件";
     const xml = await buildMerchantFeedXml();
-    expect(xml).toContain("<description>靚衫 必買</description>");
+    expect(xml).toContain(`<description>${expected}</description>`);
     expect(xml).not.toContain("✨");
     expect(xml).not.toContain("<b>必買</b>");
 
     const html = (await injectProductOg(TEMPLATE, 85, ORIGIN))!;
-    expect(html).toContain('<meta name="description" content="靚衫 必買" />');
+    expect(html).toContain(`<meta name="description" content="${expected}" />`);
   });
 
   it("冇描述：用真貨號／分類／售價／庫存補強，唔再出舊模板兜底", async () => {

@@ -163,6 +163,24 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
           areaServed: { "@type": "Country", name: "Hong Kong" },
           inLanguage: "zh-Hant-HK",
         },
+        {
+          "@type": "BreadcrumbList",
+          "@id": "https://redcode.red/web-design#breadcrumb",
+          itemListElement: [
+            {
+              "@type": "ListItem",
+              position: 1,
+              name: "首頁",
+              item: "https://redcode.red/",
+            },
+            {
+              "@type": "ListItem",
+              position: 2,
+              name: "網站設計服務",
+              item: "https://redcode.red/web-design",
+            },
+          ],
+        },
       ],
     },
   },

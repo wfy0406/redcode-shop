@@ -126,6 +126,9 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(html).toContain('<meta name="twitter:image" content="https://redcode.red/web-design/web-design-og.webp" />');
     expect(html).toContain('data-redcode-route-schema="/web-design"');
     expect(html.match(/"@type":"Service"/g)).toHaveLength(1);
+    expect(html.match(/"@type":"BreadcrumbList"/g)).toHaveLength(1);
+    expect(html).toContain('"@id":"https://redcode.red/web-design#breadcrumb"');
+    expect(html).toContain('"name":"網站設計服務","item":"https://redcode.red/web-design"');
     expect(html).toContain('"provider":{"@id":"https://redcode.red/#org"}');
     expect(html).not.toContain('#organization');
     expect(html).toContain(`<meta name="twitter:title" content="${page.title}" />`);

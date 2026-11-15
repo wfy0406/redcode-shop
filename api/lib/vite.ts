@@ -144,11 +144,71 @@ export function serveStaticFiles(app: App) {
       const normPath = reqPath.length > 1 ? reqPath.replace(/\/+$/, "") : reqPath;
       const luckyEventMatch = normPath.match(/^\/lucky-results\/(\d+)$/);
       const isLuckyTicket = /^\/lucky-tickets\/\d+$/.test(normPath);
+      const gloGuideDetailMatch = normPath.match(/^\/glo-guide\/([a-z0-9-]+)$/i);
       const pageSeo = PUBLIC_PAGES[normPath];
       if (isLuckyTicket) {
         // 公開查劵頁：200＋專屬 title/description＋self canonical＋noindex。
         // 唔入 PUBLIC_PAGES／sitemap、唔查 DB、唔注入活動名／名單／winners（見 LUCKY_TICKET_SEO 註）。
         content = injectRouteMeta(content, { ...LUCKY_TICKET_SEO, path: normPath, noindex: true });
+      } else if (normPath === "/glo-guide" || gloGuideDetailMatch) {
+        // 首口 HTML 同公開 tRPC 共用 published 查詢：完整內容唔依賴 client JS。
+        // 真不存在／未發布 → 404；DB 故障 → 503＋noindex，唔好誤報空列表或 404。
+        const {
+          gloGuideDetailRouteMeta,
+          gloGuideListRouteMeta,
+          injectGloGuideContent,
+          renderGloGuideDetail,
+          renderGloGuideIndex,
+        } = await import("../gloGuideSeo");
+        if (normPath === "/glo-guide") {
+          try {
+            const { listPublishedGuides } = await import("../gloGuidePublic");
+            const items = await listPublishedGuides(24);
+            content = injectRouteMeta(content, gloGuideListRouteMeta());
+            content = injectGloGuideContent(content, renderGloGuideIndex(items));
+          } catch {
+            content = injectRouteMeta(content, {
+              title: "Glo Glo 指南暫時未能顯示｜RedCode Fashion Design",
+              description: "指南系統暫時未能回應，請稍後再開啟連結。",
+              canonical: null,
+              noindex: true,
+            });
+            content = injectGloGuideContent(
+              content,
+              '<main id="redcode-glo-guide-seo" data-redcode-prerender><h1>Glo Glo 指南暫時未能顯示</h1><p>指南系統暫時未能回應，請稍後再試。</p><nav><a href="/">返回首頁</a></nav></main>',
+            );
+            return c.html(content, 503);
+          }
+        } else if (gloGuideDetailMatch) {
+          let detail: Awaited<ReturnType<typeof import("../gloGuidePublic").getPublishedGuideBySlug>> = null;
+          let dbError = false;
+          try {
+            const { getPublishedGuideBySlug } = await import("../gloGuidePublic");
+            detail = await getPublishedGuideBySlug(gloGuideDetailMatch[1]);
+          } catch {
+            dbError = true;
+          }
+          if (dbError) {
+            content = injectRouteMeta(content, {
+              title: "Glo Glo 指南暫時未能顯示｜RedCode Fashion Design",
+              description: "指南系統暫時未能回應，請稍後再開啟連結。",
+              canonical: null,
+              noindex: true,
+            });
+            return c.html(content, 503);
+          }
+          if (!detail) {
+            content = injectRouteMeta(content, {
+              title: "搵唔到呢篇指南｜RedCode Fashion Design",
+              description: "呢篇指南未發布、已移除或網址有誤，去 Glo Glo 精選配搭指南總覽睇最新文章。",
+              canonical: null,
+              noindex: true,
+            });
+            return c.html(content, 404);
+          }
+          content = injectRouteMeta(content, gloGuideDetailRouteMeta(detail));
+          content = injectGloGuideContent(content, renderGloGuideDetail(detail));
+        }
       } else if (luckyEventMatch) {
         // 單場公告必須真係存在兼 winnersPublic=true；否則任何數字 id 都會變 200 soft-404。
         const { getPublicLuckyEventSeo, injectLuckyEventSeoContent, luckyEventRouteMeta } = await import("./luckyEventSeo");

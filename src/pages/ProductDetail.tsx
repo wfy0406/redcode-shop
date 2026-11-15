@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { CalendarDays, Check, Heart, Minus, Plus, ScanLine, Share2, ShoppingBag, Tag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
-import { productCategoryLabel, productSeoDescription } from '@contracts/types';
+import { productCategoryLabel, productSeoDescription, productSeoTitle } from '@contracts/types';
 import { resolveTryOnProductKind } from '@contracts/tryon';
 import { PUBLIC_DISPATCH_POLICY } from '@contracts/publicPolicies';
 import ProductCard from '@/components/ProductCard';
@@ -156,7 +156,7 @@ export default function ProductDetail() {
       return;
     }
     if (!product) return;
-    document.title = `${product.name}｜RedCode Fashion Design`;
+    document.title = productSeoTitle(product);
     document
       .querySelector('meta[name="description"]')
       ?.setAttribute('content', productSeoDescription(product));

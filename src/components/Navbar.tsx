@@ -71,6 +71,7 @@ const INFO_LINKS = [
 // 新兩項擺最前（主打功能），其餘跟老闆指定嘅 INFO_LINKS 順序。
 const MORE_LINKS = [
   { to: '/try-on', label: 'AI 試穿' },
+  { to: '/glo-guide', label: 'Glo Glo 指南' },
   { to: '/lucky-results', label: '中獎公告' },
   { to: '/web-design', label: '網站設計' },
   ...INFO_LINKS,

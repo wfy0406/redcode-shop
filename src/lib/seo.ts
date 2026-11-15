@@ -133,6 +133,14 @@ export const PAGE_SEO: Record<string, { title: string; description: string }> = 
     title: 'RedCode 專屬網上單據｜RedCode Fashion Design',
     description: 'RedCode 專屬網上單據，查看服務項目、費用、備註及付款資料。',
   },
+  '/glo-guide': {
+    title: 'Glo Glo 精選配搭指南｜RedCode Fashion Design',
+    description: 'Glo Glo 按香港天氣同生活場景揀選直播單品，每篇附主題配搭文同 AI 配搭效果圖；商品外觀以商品頁原圖為準。',
+  },
+  '/glo-guide/:slug': {
+    title: '配搭文章｜Glo Glo 精選配搭指南｜RedCode Fashion Design',
+    description: '睇 Glo Glo 點按香港天氣同生活場景配搭直播單品。文章附 AI 配搭效果圖；商品外觀以商品頁原圖為準。',
+  },
   // 動態段路由：SeoManager 用 pattern 對返呢兩條
   '/products/:id': {
     title: '商品詳情｜RedCode Fashion Design',
@@ -188,6 +196,7 @@ export function resolveSeo(pathname: string, search = ''): { title: string; desc
   }
   // token 有效定無效由公開單據頁處理；深層 route 永遠唔應落入通用 404 標題。
   if (/^\/web-design-bill\/[^/]+\/?$/.test(pathname)) return PAGE_SEO['/web-design-bill/:token'];
+  if (/^\/glo-guide\/[a-z0-9-]+\/?$/i.test(pathname)) return PAGE_SEO['/glo-guide/:slug'];
   if (/^\/products\/\d+/.test(pathname)) return PAGE_SEO['/products/:id'];
   if (/^\/receipt\//.test(pathname)) return PAGE_SEO['/receipt/:orderId'];
   if (/^\/lucky-results\/\d+/.test(pathname)) return PAGE_SEO['/lucky-results/:eventId'];
@@ -203,6 +212,7 @@ const PUBLIC_EXACT_PATHS = new Set([
   '/live',
   '/about',
   '/web-design',
+  '/glo-guide',
   '/vip',
   '/sf-stations',
   '/faq',
@@ -218,6 +228,7 @@ export function isNoIndexPath(pathname: string): boolean {
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   if (PUBLIC_EXACT_PATHS.has(normalized)) return false;
   if (/^\/products\/\d+$/.test(normalized)) return false;
+  if (/^\/glo-guide\/[a-z0-9-]+$/i.test(normalized)) return false;
   if (/^\/lucky-results\/\d+$/.test(normalized)) return false;
   return true;
 }
@@ -232,6 +243,7 @@ export function resolveCanonicalPath(pathname: string, search = ''): string | nu
   }
   if (PUBLIC_EXACT_PATHS.has(normalized)) return normalized;
   if (/^\/products\/\d+$/.test(normalized)) return normalized;
+  if (/^\/glo-guide\/[a-z0-9-]+$/i.test(normalized)) return normalized;
   if (/^\/lucky-results\/\d+$/.test(normalized)) return normalized;
   // 查劵頁雖然 noindex，server 本來就用 self canonical，前後保持一致。
   if (/^\/lucky-tickets\/\d+$/.test(normalized)) return normalized;

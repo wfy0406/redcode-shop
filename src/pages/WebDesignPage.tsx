@@ -13,6 +13,7 @@
  * SEO：單一 H1、語義 sections、真實 Service JSON-LD（無虛假評分／案例）。
  */
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import {
   DEFAULT_WEB_DESIGN_CATALOG,
   planAllows,
@@ -427,6 +428,15 @@ export default function WebDesignPage() {
   return (
     <main className="wd-page" id="wd-top">
       <CrystalBackground />
+      {/* 語義 Breadcrumb（資訊架構分區：首頁 > 網站設計服務，同 JSON-LD 同一份內容） */}
+      <nav className="wd-breadcrumb wd-container" aria-label="breadcrumb">
+        <ol className="wd-breadcrumb-list">
+          <li className="wd-breadcrumb-item">
+            <Link to="/" className="wd-breadcrumb-link">首頁</Link>
+          </li>
+          <li className="wd-breadcrumb-item" aria-current="page">網站設計服務</li>
+        </ol>
+      </nav>
       {/* ===== ① Hero（直片 stage）＋ 服務 ===== */}
       <section className="wd-hero" data-crystal="hero" aria-label="RedCode 網頁設計服務簡介">
         <SuitScroll spacerVh={250} />

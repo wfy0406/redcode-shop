@@ -19,6 +19,7 @@ import { walletRouter } from "./walletRouter";
 import { tryonRouter } from "./tryonRouter";
 import { webDesignRouter } from "./webDesignRouter";
 import { webDesignPublicBillRouter } from "./webDesignPublicBill";
+import { gloGuidePublicRouter } from "./gloGuidePublic";
 
 export const appRouter = createRouter({
   ping: publicQuery.query(() => ({ ok: true, ts: Date.now() })),
@@ -50,6 +51,8 @@ export const appRouter = createRouter({
   // v2026.11.13.1（SPEC §9，老闆新要求）：redcode.red/web-design-bill/<token> 公開單據入口——
   // server-side 白名單代理 WMS webDesignBilling.getPublic／confirmAndPay（唔洩漏 WMS 域名）
   webDesignPublicBill: webDesignPublicBillRouter,
+  // Glo Glo 精選配搭指南（SPEC v1）：公開只回 published；WMS 操作行 /api/wms/glo-guide
+  gloGuide: gloGuidePublicRouter,
 });
 
 export type AppRouter = typeof appRouter;

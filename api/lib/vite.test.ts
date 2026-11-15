@@ -22,6 +22,21 @@ import fs from "node:fs";
 import { Hono } from "hono";
 import type { HttpBindings } from "@hono/node-server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GuideDetail, GuideImage, GuideListItem } from "@contracts/gloGuide";
+
+let mockGuideItems: GuideListItem[] = [];
+let mockGuideDetail: GuideDetail | null = null;
+let mockGuideError: Error | null = null;
+vi.mock("../gloGuidePublic", () => ({
+  listPublishedGuides: async () => {
+    if (mockGuideError) throw mockGuideError;
+    return mockGuideItems;
+  },
+  getPublishedGuideBySlug: async () => {
+    if (mockGuideError) throw mockGuideError;
+    return mockGuideDetail;
+  },
+}));
 
 // ── mock 1：serveStatic 唔派静态檔，全部落入 notFound fallback ──
 vi.mock("@hono/node-server/serve-static", () => ({
@@ -107,6 +122,52 @@ function makeProduct(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function guideImage(id: number): GuideImage {
+  return {
+    id,
+    path: `/uploads/glo-guide/guide-${id}.png`,
+    alt: `Glo Glo 配搭效果圖 ${id}`,
+    width: 1024,
+    height: 1536,
+    position: id - 1,
+    productId: 85,
+  };
+}
+
+function makeGuide(): GuideDetail {
+  return {
+    id: 1,
+    slug: "mong-kok-rainy-day",
+    title: "落雨返工唔使灰",
+    excerpt: "用短身外套同直筒褲襯出利落比例，落雨返工都可以輕鬆有精神。",
+    theme: "香港雨天通勤",
+    publishedAt: "2026-11-15T16:00:00.000Z",
+    updatedAt: "2026-11-15T16:05:00.000Z",
+    coverImage: guideImage(1),
+    products: [
+      {
+        id: 85,
+        name: "短身風衣外套",
+        image: "/uploads/p85.jpg",
+        photos: ["/uploads/p85.jpg"],
+        price: 399,
+        discountPrice: 299,
+        category: "outerwear",
+        stock: 5,
+        sizeEnabled: true,
+        sizes: ["S", "M"],
+        aiTags: ["短身剪裁", "通勤"],
+        isActive: true,
+        liveDate: "2026-11-13",
+        liveSession: "2",
+      },
+    ],
+    body: "香港落雨最煩係出入冷氣同濕笠笠。短身外套襯高腰直筒褲，比例即刻利落。\n鞋袋入面放定後備襪，返到辦公室就唔使硬頂，呢招真係返工仔恩物。",
+    images: [guideImage(1), guideImage(2)],
+    modelImage: null,
+  };
+}
+
 /** 模擬 Render 反向代理後面嘅訪客：handler 靠呢兩個 header 還原 https origin */
 const PROXY_HEADERS = { "x-forwarded-proto": "https", "x-forwarded-host": "redcode.red" };
 
@@ -117,6 +178,9 @@ function canonicalHref(html: string): string | null {
 beforeEach(() => {
   mockRows = [];
   queryError = null;
+  mockGuideItems = [];
+  mockGuideDetail = null;
+  mockGuideError = null;
   mockAnnouncement = { value: "true" };
   resetLuckyAnnouncementPublicCache();
   // mock 2：攔截 handler 嘅 index.html read，回 fixture（每個 test 前裝，完即還原）
@@ -128,6 +192,73 @@ afterEach(() => {
 });
 
 describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic／fs）", () => {
+  it("指南總覽首口 HTML 有真文章、商品、cover、OG 同 self canonical", async () => {
+    mockGuideItems = [makeGuide()];
+    const res = await makeApp().request("/glo-guide", { headers: PROXY_HEADERS });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(canonicalHref(html)).toBe("https://redcode.red/glo-guide");
+    expect(html).toContain("<title>Glo Glo 精選配搭指南｜RedCode Fashion Design</title>");
+    expect(html).toContain('<meta property="og:url" content="https://redcode.red/glo-guide" />');
+    expect(html).toContain('<main id="redcode-glo-guide-seo" data-redcode-prerender');
+    expect(html).toContain("<h2>落雨返工唔使灰</h2>");
+    expect(html).toContain('<a href="/products/85">短身風衣外套</a>｜HK$299');
+    expect(html).toContain('src="https://redcode.red/uploads/glo-guide/guide-1.png"');
+    expect(html).toContain('fetchpriority="high"');
+    expect(html).toContain("2026-11-16 00:00");
+    expect(html).toContain("AI 效果圖，商品外觀以商品原圖為準");
+  });
+
+  it("指南詳情首口有完整文章、Article JSON-LD、商品卡，gallery 唔重複 cover", async () => {
+    mockGuideDetail = makeGuide();
+    const res = await makeApp().request("/glo-guide/mong-kok-rainy-day", { headers: PROXY_HEADERS });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(canonicalHref(html)).toBe("https://redcode.red/glo-guide/mong-kok-rainy-day");
+    expect(html).toContain("<title>落雨返工唔使灰｜Glo Glo 精選配搭指南｜RedCode Fashion Design</title>");
+    expect(html).toContain("<h1>落雨返工唔使灰</h1>");
+    expect(html).toContain("香港落雨最煩係出入冷氣同濕笠笠。短身外套襯高腰直筒褲，比例即刻利落。");
+    expect(html).toContain("鞋袋入面放定後備襪，返到辦公室就唔使硬頂，呢招真係返工仔恩物。");
+    expect(html).toContain("發文時間（香港）：2026-11-16 00:00");
+    expect(html).toContain('"@type":"Article"');
+    expect(html).toContain('"headline":"落雨返工唔使灰"');
+    expect(html).toContain('"@type":"BreadcrumbList"');
+    expect(html).toContain("短身剪裁、通勤");
+    expect(html).toContain("<s>HK$399</s> HK$299");
+    expect(html).toContain("相集係 AI 配搭效果圖；商品外觀以商品原圖為準");
+    const block = html.match(/<main id="redcode-glo-guide-seo"[\s\S]*?<\/main>/)?.[0] ?? "";
+    expect(block.match(/guide-1\.png/g)).toHaveLength(1);
+    expect(block.match(/guide-2\.png/g)).toHaveLength(1);
+    expect(block).toContain('fetchpriority="high"');
+    expect(block).toContain('loading="lazy"');
+  });
+
+  it("未發布／唔存在指南回真 404＋noindex，唔會出舊文或 self canonical", async () => {
+    mockGuideDetail = null;
+    const res = await makeApp().request("/glo-guide/not-published", { headers: PROXY_HEADERS });
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("搵唔到呢篇指南");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+    expect(canonicalHref(html)).toBeNull();
+    expect(html).not.toContain('property="og:url"');
+    expect(html).not.toContain('id="redcode-glo-guide-seo"');
+  });
+
+  it("指南列表同詳情 DB 故障都回 503＋noindex，唔會假裝空列表或 404", async () => {
+    mockGuideError = new Error("database unavailable");
+    for (const path of ["/glo-guide", "/glo-guide/mong-kok-rainy-day"]) {
+      const res = await makeApp().request(path, { headers: PROXY_HEADERS });
+      expect(res.status).toBe(503);
+      const html = await res.text();
+      expect(html).toContain("Glo Glo 指南暫時未能顯示");
+      expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
+      expect(canonicalHref(html)).toBeNull();
+      expect(html).not.toContain("暫時未有已發布指南");
+      expect(html).not.toContain("落雨返工唔使灰");
+    }
+  });
+
   it("(1) 在架商品 /products/85 → 200＋self canonical＋專屬 description＋noscript", async () => {
     mockRows = [makeProduct()];
     const res = await makeApp().request("/products/85", { headers: PROXY_HEADERS });
@@ -138,9 +269,9 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(canonicalHref(html)).toBe("https://redcode.red/products/85");
     // 商品專屬 meta description（唔係首頁通用嗰條）
     expect(html).toContain(
-      '<meta name="description" content="星空閃石上衣，直播限定色，S/M/L 碼齊。" />',
+      '<meta name="description" content="067｜星空閃石上衣，直播限定色，S/M/L 碼齊。｜貨號 SKU-067｜HK$199｜現貨 5 件" />',
     );
-    expect(html).toContain("<title>067｜RedCode Fashion Design</title>");
+    expect(html).toContain("<title>067｜上衣｜RedCode Fashion Design</title>");
     // server-rendered 真 HTML 商品摘要（唔行 JS 嘅 crawler 都直接讀到）
     expect(html).toContain('<main id="redcode-product-seo" data-redcode-prerender');
     expect(html).toContain("<h1>067</h1>");
