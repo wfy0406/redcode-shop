@@ -63,8 +63,10 @@ describe('全站共用 PWA 安裝狀態', () => {
     expect(pwa.getPwaInstallSnapshot().canInstall).toBe(false);
     await expect(pwa.promptPwaInstall()).resolves.toBe('unavailable');
     expect(event.prompt).not.toHaveBeenCalled();
+    expect(pwa.CHROME_ANDROID_INSTALL_INTENT).toContain('intent://redcode.red/app#Intent');
     expect(pwa.CHROME_ANDROID_INSTALL_INTENT).toContain('package=com.android.chrome');
-    expect(pwa.CHROME_ANDROID_INSTALL_INTENT).toContain('S.browser_fallback_url=https%3A%2F%2Fredcode.red%2Ffaq');
+    expect(pwa.CHROME_ANDROID_INSTALL_INTENT).toContain('S.browser_fallback_url=https%3A%2F%2Fredcode.red%2Fapp');
+    expect(pwa.APP_INSTALL_SHORT_URL).toBe('redcode.red/app');
   });
 
   it('iPhone 冇原生事件時回傳 unavailable，並正確識別 iOS', async () => {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, Download, MoreVertical, Share } from 'lucide-react';
 import {
+  APP_INSTALL_SHORT_URL,
   CHROME_ANDROID_INSTALL_INTENT,
   isAndroid,
   isChromeAndroid,
@@ -82,7 +83,7 @@ export default function AppInstallGuide() {
       )}
       {needsChrome && (
         <p className="faq-install-hint">
-          如果按鈕冇反應，請複製 <strong>redcode.red/faq</strong>，再喺最新版 Chrome 開啟。
+          如果按鈕冇反應，請複製 <strong>{APP_INSTALL_SHORT_URL}</strong>，再喺最新版 Chrome 開啟，會直接去到安裝位置。
         </p>
       )}
       <p className="faq-install-hint">Android 必須使用最新版 Chrome 安裝；系統生成 App 可能要幾分鐘。iPhone 會話你知 Safari 安裝步驟。</p>

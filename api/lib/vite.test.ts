@@ -195,6 +195,13 @@ afterEach(() => {
 });
 
 describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic／fs）", () => {
+  it("短網址 /app 直達 FAQ 安裝錨點，唔會停喺頁頂", async () => {
+    const res = await makeApp().request("/app");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/faq#app-install");
+    expect(res.headers.get("cache-control")).toBe("no-cache, must-revalidate");
+  });
+
   it("Chrome Android 保留 standalone WebAPK manifest，並按 UA 分快取", async () => {
     const ua = "Mozilla/5.0 (Linux; Android 16; Pixel 9 Pro) AppleWebKit/537.36 Chrome/142.0.0.0 Mobile Safari/537.36";
     const res = await makeApp().request("/manifest.webmanifest?v=20261117", { headers: { "user-agent": ua } });

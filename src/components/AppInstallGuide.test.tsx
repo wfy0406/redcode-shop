@@ -56,10 +56,12 @@ describe('常見問題 — Android Chrome-only 安裝入口', () => {
     const link = container!.querySelector<HTMLAnchorElement>('a[href^="intent://"]');
     expect(link).not.toBeNull();
     expect(link!.textContent).toContain('用 Chrome 開啟並安裝');
+    expect(link!.href).toContain('intent://redcode.red/app#Intent');
     expect(link!.href).toContain('package=com.android.chrome');
-    expect(link!.href).toContain('S.browser_fallback_url=https%3A%2F%2Fredcode.red%2Ffaq');
+    expect(link!.href).toContain('S.browser_fallback_url=https%3A%2F%2Fredcode.red%2Fapp');
     expect(container!.textContent).toContain('Samsung Internet／其他瀏覽器');
     expect(container!.textContent).toContain('如果按鈕冇反應');
-    expect(container!.textContent).toContain('redcode.red/faq');
+    expect(container!.textContent).toContain('redcode.red/app');
+    expect(container!.textContent).toContain('會直接去到安裝位置');
   });
 });

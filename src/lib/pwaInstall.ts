@@ -14,9 +14,10 @@ export type BeforeInstallPromptEvent = Event & {
 export type PwaInstallOutcome = 'accepted' | 'dismissed' | 'unavailable' | 'error';
 export type PwaInstallSnapshot = { canInstall: boolean; installed: boolean };
 
-/** 固定去 RedCode FAQ 安裝區；fallback 只准官方 HTTPS URL，唔接受外來跳轉參數。 */
+/** 固定短網址會以 HTTPS 開啟，再 302 去 /faq#app-install；手動輸入都直達安裝區。 */
+export const APP_INSTALL_SHORT_URL = 'redcode.red/app';
 export const CHROME_ANDROID_INSTALL_INTENT =
-  'intent://redcode.red/faq#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Fredcode.red%2Ffaq;end';
+  'intent://redcode.red/app#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Fredcode.red%2Fapp;end';
 
 let deferredPrompt: BeforeInstallPromptEvent | null = null;
 let initialized = false;

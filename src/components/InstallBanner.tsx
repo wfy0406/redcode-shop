@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Download, Share, X } from 'lucide-react';
 import {
+  APP_INSTALL_SHORT_URL,
   CHROME_ANDROID_INSTALL_INTENT,
   isAndroid,
   isChromeAndroid,
@@ -91,7 +92,7 @@ export default function InstallBanner() {
           ) : mode === 'chrome' ? (
             <p className="mt-0.5 text-sm leading-relaxed text-txt-2">
               Android 必須使用最新版 Chrome 安裝。撳下面跳去 Chrome，再確認安裝 RedCode App。
-              如果按鈕冇反應，請複製 redcode.red/faq 去 Chrome 開啟。
+              如果按鈕冇反應，請複製 {APP_INSTALL_SHORT_URL} 去 Chrome 開啟，會直接去到安裝位置。
             </p>
           ) : (
             <p className="mt-0.5 text-sm leading-relaxed text-txt-2">

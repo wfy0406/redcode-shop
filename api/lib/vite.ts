@@ -50,6 +50,13 @@ const NOINDEX_EXACT = [
 export function serveStaticFiles(app: App) {
   const distPath = path.resolve(import.meta.dirname, "../dist/public");
 
+  // 客人可讀短網址：無論由 Chrome intent 定手動輸入，都直達現有 FAQ 安裝錨點。
+  // FAQ 已按 hash 自動捲到安裝卡；唔另造新頁，亦唔改一般 /faq 訪客嘅瀏覽位置。
+  app.get("/app", (c) => {
+    c.header("Cache-Control", "no-cache, must-revalidate");
+    return c.redirect("/faq#app-install", 302);
+  });
+
   // 2026-11-17 Android 瀏覽器相容調整：保留 Chrome Android 嘅 WebAPK。
   // 其他可識別 Android 瀏覽器攞 display:browser（唔符合 PWA 安裝條件），再由 FAQ／banner
   // 引導去 Chrome；iOS、桌面同 Chrome Android 沿用原 manifest，絕不削弱開播通知。
