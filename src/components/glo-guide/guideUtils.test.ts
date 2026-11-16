@@ -15,6 +15,9 @@ import {
   guideLiveDateLabel,
   guidePath,
   guideProductPath,
+  guideTryOnKind,
+  guideTryOnPath,
+  parseGuideSlugParam,
   productForImage,
   resolveGuideCartAction,
   sortGuideImages,
@@ -129,6 +132,37 @@ describe('resolveGuideCartAction 加車尺寸邊界', () => {
       kind: 'add',
       size: null,
     });
+  });
+});
+
+describe('指南商品 → AI 試穿深連結', () => {
+  it('重用試穿部位判斷；下架及唔支援商品唔出資格', () => {
+    expect(guideTryOnKind(product({ category: 'top' }))).toBe('top');
+    expect(guideTryOnKind(product({ category: 'accessory', name: '金色頸鏈' }))).toBe('necklace');
+    expect(guideTryOnKind(product({ category: 'accessory', name: '泛稱飾品' }))).toBeNull();
+    expect(guideTryOnKind(product({ category: 'top', isActive: false }))).toBeNull();
+  });
+
+  it('缺貨但未下架仍可做視覺預覽，同現有 tryon.listProducts 一致', () => {
+    expect(guideTryOnKind(product({ category: 'top', stock: 0 }))).toBe('top');
+  });
+
+  it('保留 productId、商品原圖 photoIndex 同 guide slug', () => {
+    expect(guideTryOnPath(product({ id: 42 }), 'autumn-knit', 2)).toBe(
+      '/try-on?productId=42&photoIndex=2&guide=autumn-knit',
+    );
+    expect(guideTryOnPath(product({ id: 42 }), 'glo-guide-20261117-ab12', -1)).toBe(
+      '/try-on?productId=42&photoIndex=0&guide=glo-guide-20261117-ab12',
+    );
+  });
+
+  it('來源 slug 只接受安全站內格式', () => {
+    expect(parseGuideSlugParam('autumn-knit')).toBe('autumn-knit');
+    expect(parseGuideSlugParam('glo-guide-20261117-ab12')).toBe('glo-guide-20261117-ab12');
+    expect(parseGuideSlugParam('')).toBeNull();
+    expect(parseGuideSlugParam('../account')).toBeNull();
+    expect(parseGuideSlugParam('https://evil.example')).toBeNull();
+    expect(parseGuideSlugParam('a'.repeat(181))).toBeNull();
   });
 });
 

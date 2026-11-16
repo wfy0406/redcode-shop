@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from '@/hooks/useAuth';
+import { consumeAuthReturn, fromLocationState, stashAuthReturn } from '@/lib/authReturn';
 import FormField from '@/components/account/FormField';
 import WishingStar from '@/components/account/WishingStar';
 import GoogleLoginButton from '@/components/account/GoogleLoginButton';
@@ -15,7 +16,8 @@ import PushPermissionGuide from '@/components/push/PushPermissionGuide';
  * 預設取貨方式（2026-08-08 加，Glo 要求：送貨上門／順豐站／智能櫃，自取可填站點；結帳自動帶入）、
  * 年齡（選填）、生日月份（選填，2026-07-29 加）。
  * 前端驗證：必填 / 電話 8 位數字起 / 密碼 ≥8 位 / 兩次密碼一致 / Email 格式；
- * 後端 CONFLICT（電話已註冊／Email 已綁定）友善顯示。成功自動登入 → /account。
+ * 後端 CONFLICT（電話已註冊／Email 已綁定）友善顯示。成功自動登入 → 安全站內 location.state?.from
+ * ?? sessionStorage 兜底 ?? /account（iteration-7：Login 帶過嚟嘅返回路徑會保留，見 src/lib/authReturn.ts）。
  */
 
 type FieldErrors = {
@@ -52,6 +54,25 @@ function normalizePhone(raw: string): string {
 export default function Register() {
   const { register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // iteration-7：由 Login 帶過嚟嘅返回路徑（Glo Guide → TryOn 深層連結）。
+  // 一律過 sanitizeInternalPath，外站／//／反斜線／控制字符全部當冇。
+  const explicitFrom = fromLocationState(location.state);
+  // 兜底：Google 全頁跳轉會丟 location.state，一入頁用 effect 落 sessionStorage（唔喺 render 寫）
+  useEffect(() => {
+    if (explicitFrom) stashAuthReturn(explicitFrom);
+  }, [explicitFrom]);
+
+  // 註冊／Google 成功後去邊：state.from 優先，sessionStorage 兜底，最後 /account。
+  // 只有成功先會叫呢個函數，先至 consume 兜底記號（失敗唔清，客人重試仲有得用）。
+  const postRegisterTarget = () => {
+    if (explicitFrom) {
+      consumeAuthReturn();
+      return explicitFrom;
+    }
+    return consumeAuthReturn() ?? '/account';
+  };
 
   const [name, setName] = useState('');
   // 2026-10-09 查單擴展：訪客查單後推薦註冊，?phone= 帶起落單電話（唔使再打一次）
@@ -136,13 +157,13 @@ export default function Register() {
       } as Parameters<typeof register>[0]);
       // v2.2.12 修復（老闆回報「剔咗通知但註冊後無反應」）：剔咗開播通知
       // 就要停一停彈綁定講解——之前漏咗呢步，直頭跳去會員中心，
-      // PushPermissionGuide 永遠冇機會彈。guide onClose 入面會 navigate 去 /account。
+      // PushPermissionGuide 永遠冇機會彈。guide onClose 入面會 navigate 去 postRegisterTarget()。
       if (wantLivePush) {
         setShowPushGuide(true);
         setSubmitting(false);
         return;
       }
-      navigate('/account', { replace: true });
+      navigate(postRegisterTarget(), { replace: true });
     } catch (err) {
       if (isConflict(err)) {
         // CONFLICT 分兩種：撞 email 定撞電話，跟後端訊息分辨
@@ -499,7 +520,7 @@ export default function Register() {
                 setGoogleSubmitting(true);
                 try {
                   await loginWithGoogle(idToken);
-                  navigate('/account', { replace: true });
+                  navigate(postRegisterTarget(), { replace: true });
                 } catch (err) {
                   setSubmitError(backendMessage(err, 'Google 登入失敗，請稍後再試'));
                   setGoogleSubmitting(false);
@@ -518,12 +539,12 @@ export default function Register() {
         </p>
       </div>
 
-      {/* 直播通知權限講解（註冊成功後先彈；無論成功與否都入會員中心，唔阻塞註冊） */}
+      {/* 直播通知權限講解（註冊成功後先彈；無論成功與否都入原定目標，唔阻塞註冊） */}
       <PushPermissionGuide
         open={showPushGuide}
         onClose={() => {
           setShowPushGuide(false);
-          navigate('/account', { replace: true });
+          navigate(postRegisterTarget(), { replace: true });
         }}
       />
     </section>

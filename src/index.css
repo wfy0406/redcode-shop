@@ -1515,6 +1515,82 @@
   font-size: 0.9em;
 }
 
+/* 指南 × AI 試穿：每件合資格單品都有明確深色實心入口，唔係隱藏喺文字鏈。 */
+.gg-product-tryon {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: min(100%, 430px);
+  min-height: 64px;
+  margin-top: 1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--gg-gold);
+  background: var(--gg-ink);
+  color: var(--gg-cream);
+  text-decoration: none;
+  box-shadow: 0 8px 24px rgba(21, 21, 21, 0.1);
+}
+
+.gg-product-tryon > svg {
+  flex: 0 0 auto;
+  color: var(--gg-gold);
+}
+
+.gg-product-tryon > span {
+  min-width: 0;
+  flex: 1;
+}
+
+.gg-product-tryon strong,
+.gg-product-tryon small {
+  display: block;
+}
+
+.gg-product-tryon strong {
+  font-family: var(--gg-font-serif);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.gg-product-tryon small {
+  margin-top: 0.2rem;
+  color: var(--gg-cream);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  opacity: 0.82;
+}
+
+.gg-product-tryon:hover {
+  background: var(--gg-gold);
+  color: var(--gg-ink);
+}
+
+.gg-product-tryon:hover > svg,
+.gg-product-tryon:hover small {
+  color: var(--gg-ink);
+}
+
+.gg-product-tryon:focus-visible {
+  outline: 2px solid var(--gg-gold-text);
+  outline-offset: 3px;
+}
+
+@media (max-width: 420px) {
+  .gg-product-tryon {
+    gap: 0.55rem;
+    padding-inline: 0.7rem;
+  }
+
+  .gg-product-tryon strong {
+    font-size: 0.92rem;
+  }
+
+  .gg-product-tryon small {
+    font-size: 0.68rem;
+  }
+}
+
 .gg-product-actions {
   display: flex;
   flex-wrap: wrap;

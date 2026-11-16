@@ -103,14 +103,15 @@ export async function listPublishedGuideSitemapRows(): Promise<
 }
 
 /** 公開列表（首口 SEO 同 tRPC 共用）：published、publishedAt desc */
-export async function listPublishedGuides(limit = 12): Promise<GuideListItem[]> {
+export async function listPublishedGuides(limit = 12, offset = 0): Promise<GuideListItem[]> {
   const db = getDb();
   const rows = await db
     .select()
     .from(gloGuideArticles)
     .where(eq(gloGuideArticles.status, "published"))
     .orderBy(desc(gloGuideArticles.publishedAt))
-    .limit(Math.min(Math.max(limit, 1), 50));
+    .limit(Math.min(Math.max(limit, 1), 50))
+    .offset(Math.max(0, Math.floor(offset)));
   const items: GuideListItem[] = [];
   for (const article of rows) {
     const { productRows, images } = await loadPublicAssets(db, article.id, article.title);
@@ -121,9 +122,21 @@ export async function listPublishedGuides(limit = 12): Promise<GuideListItem[]> 
 
 export const gloGuidePublicRouter = createRouter({
   list: publicQuery
-    .input(z.object({ limit: z.number().int().min(1).max(50).optional() }).optional())
-    .query(async ({ input }): Promise<{ items: GuideListItem[] }> => {
-      return { items: await listPublishedGuides(input?.limit ?? 12) };
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(50).optional(),
+        // 舊刊分頁：cursor 係 offset；唔帶就同舊版一樣由最新一期開始。
+        cursor: z.number().int().min(0).max(100_000).optional(),
+      }).optional(),
+    )
+    .query(async ({ input }): Promise<{ items: GuideListItem[]; nextCursor: number | null }> => {
+      const limit = input?.limit ?? 12;
+      const cursor = input?.cursor ?? 0;
+      const items = await listPublishedGuides(limit, cursor);
+      return {
+        items,
+        nextCursor: items.length === limit ? cursor + items.length : null,
+      };
     }),
   bySlug: publicQuery
     .input(z.object({ slug: z.string().min(1).max(180) }))

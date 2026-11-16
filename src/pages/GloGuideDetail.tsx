@@ -474,7 +474,7 @@ export default function GloGuideDetail() {
           </h2>
           <ol className="gg-products-list">
             {detail.products.map((product, i) => (
-              <GuideProductCard key={product.id} product={product} index={i} />
+              <GuideProductCard key={product.id} product={product} index={i} guideSlug={detail.slug} />
             ))}
           </ol>
           <p className="gg-products-note">品名、價錢同庫存以商品頁為準。</p>

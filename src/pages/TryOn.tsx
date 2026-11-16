@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { Link, useNavigationType, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigationType, useSearchParams } from 'react-router';
 import {
   AlertTriangle,
+  ArrowLeft,
+  BookOpen,
   Camera,
   Check,
   Clock3,
@@ -59,6 +61,9 @@ import {
 import { emitTryOnGuideAction } from '@/components/globalFairyGuide';
 import TryOnPurchase from './TryOnPurchase';
 import AiTryOnTutorial from '@/components/AiTryOnTutorial';
+import TryOnGuideCatalog from '@/components/tryon/TryOnGuideCatalog';
+import type { GuideListItem } from '@contracts/gloGuide';
+import { guidePath, parseGuideSlugParam } from '@/components/glo-guide/guideUtils';
 
 type RouterOutputs = inferRouterOutputs<AppRouter>;
 type TryOnProduct = RouterOutputs['tryon']['listProducts'][number];
@@ -188,7 +193,10 @@ function shareProductsForJob(job: TryOnJob): TryOnShareProduct[] {
     }));
 }
 
-function lineageBlockReason(product: TryOnProduct, job: TryOnJob | undefined): string | null {
+function lineageBlockReason(
+  product: Pick<TryOnProduct, 'id' | 'tryOnKind'>,
+  job: TryOnJob | undefined,
+): string | null {
   if (!job) return null;
   // 防重只睇當前步或之前嘅 usage rows：更後嘅步屬另一分支（刪除後應可以再由呢度追加）；
   // 先前步即使 mediaDeleted，商品仍可能已喺圖入面（可由更後 source 追加落嚟），所以唔排除。
@@ -223,9 +231,12 @@ export default function TryOn() {
   userIdRef.current = userId;
   const utils = trpc.useUtils();
   const navigationType = useNavigationType();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const preselectProductId = Number(searchParams.get('productId'));
   const preselectPhotoIndex = Number(searchParams.get('photoIndex') ?? 0);
+  const sourceGuideSlug = parseGuideSlugParam(searchParams.get('guide'));
+  const tryOnReturnPath = `${location.pathname}${location.search}${location.hash}`;
   const requestedRecord = searchParams.get('record');
   const recordPublicId = requestedRecord && /^[0-9a-f-]{36}$/i.test(requestedRecord) ? requestedRecord : null;
   const purchaseRequested = searchParams.get('purchase') === '1';
@@ -253,6 +264,8 @@ export default function TryOn() {
   const [batchActionPending, setBatchActionPending] = useState(false);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<'all' | TryOnProductKind>('all');
+  const [productMode, setProductMode] = useState<'guide' | 'all'>(sourceGuideSlug ? 'guide' : 'all');
+  const [activeGuideSlug, setActiveGuideSlug] = useState<string | null>(sourceGuideSlug);
   // 直播節目冊篩選（2026-10-28）：只影響商品清單顯示，已揀商品 selections 永遠保留。
   const [liveFilter, setLiveFilter] = useState<{ liveDate: string | null; liveSession: number | null }>({
     liveDate: null,
@@ -319,6 +332,36 @@ export default function TryOn() {
     staleTime: 60_000,
   });
   const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
+  const sourceGuideQuery = trpc.gloGuide.bySlug.useQuery(
+    { slug: sourceGuideSlug ?? '' },
+    { enabled: Boolean(sourceGuideSlug), staleTime: 300_000, retry: 1 },
+  );
+  const guideCatalogQuery = trpc.gloGuide.list.useInfiniteQuery(
+    { limit: 12 },
+    {
+      enabled: Boolean(user && access),
+      initialCursor: 0,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      staleTime: 300_000,
+      retry: 1,
+    },
+  );
+  const catalogGuides = useMemo(() => {
+    const bySlug = new Map<string, GuideListItem>();
+    // 原篇固定置頂；之後先係最新刊期。同一 slug 以原篇詳情為準，唔會重複出現。
+    if (sourceGuideQuery.data) bySlug.set(sourceGuideQuery.data.slug, sourceGuideQuery.data);
+    for (const page of guideCatalogQuery.data?.pages ?? []) {
+      for (const guide of page.items) {
+        if (!bySlug.has(guide.slug)) bySlug.set(guide.slug, guide);
+      }
+    }
+    return Array.from(bySlug.values());
+  }, [guideCatalogQuery.data, sourceGuideQuery.data]);
+  const resolvedGuideSlug = activeGuideSlug && catalogGuides.some((guide) => guide.slug === activeGuideSlug)
+    ? activeGuideSlug
+    : sourceGuideSlug && catalogGuides.some((guide) => guide.slug === sourceGuideSlug)
+      ? sourceGuideSlug
+      : catalogGuides[0]?.slug ?? null;
 
   const jobQuery = trpc.tryon.getJob.useQuery(
     { publicId: currentPublicId ?? '00000000-0000-0000-0000-000000000000' },
@@ -645,6 +688,17 @@ export default function TryOn() {
   }, [currentPublicId, preselectPhotoIndex, preselectProductId, products]);
 
   const selectionLimit = canEditRoot ? 2 : 1;
+  const chooseProduct = useCallback((product: Pick<TryOnProduct, 'id' | 'tryOnKind'>) => {
+    const result = addTryOnProductSelection({
+      selections,
+      products,
+      product,
+      kindLabel: kindLabel(product.tryOnKind),
+      maxSelections: selectionLimit,
+    });
+    setSelections(result.selections);
+    setActionError(result.ok ? null : result.reason);
+  }, [products, selectionLimit, selections]);
   const selectedItems = selections.map((selection) => ({
     selection,
     product: products.find((product) => product.id === selection.productId) ?? null,
@@ -1150,6 +1204,7 @@ export default function TryOn() {
   const isStaff = Boolean(user && user.role !== 'member');
   const flowStep = job ? 3 : originalPreview ? 2 : 1;
   const failureHelp = job?.status === 'failed' ? getFailureHelp(job.failureCode, isStaff) : null;
+  const sourceGuideNotFound = sourceGuideQuery.error?.data?.code === 'NOT_FOUND';
 
   return (
     <main className="tryon-page">
@@ -1204,6 +1259,52 @@ export default function TryOn() {
         <p><strong>AI 試穿只係視覺預覽</strong>，唔代表實際尺碼、鬆緊、合身程度或舒適度；尺寸以商品尺寸表及實物為準。</p>
       </div>
 
+      {sourceGuideSlug && (
+        <section className="tryon-source-guide" aria-label="由 Glo Glo 指南開始">
+          {sourceGuideQuery.isPending ? (
+            <div className="tryon-source-guide-state" role="status">
+              <LoaderCircle className="tryon-spin" size={22} aria-hidden="true" />
+              <p>正在帶入原篇指南同刊期…</p>
+            </div>
+          ) : sourceGuideQuery.data ? (
+            <>
+              {sourceGuideQuery.data.coverImage && (
+                <img
+                  className="tryon-source-guide-cover"
+                  src={sourceGuideQuery.data.coverImage.path}
+                  alt={sourceGuideQuery.data.coverImage.alt}
+                  width={sourceGuideQuery.data.coverImage.width}
+                  height={sourceGuideQuery.data.coverImage.height}
+                />
+              )}
+              <div className="tryon-source-guide-copy">
+                <p className="tryon-kicker">FROM THE EDIT · 由指南開始</p>
+                <h2>{sourceGuideQuery.data.title}</h2>
+                <p>{sourceGuideQuery.data.excerpt}</p>
+                <span>文中單品會用商品原圖預選；登入後可以繼續揀同刊或其他刊。</span>
+                <Link to={guidePath(sourceGuideQuery.data.slug)} className="tryon-guide-article-link">
+                  <ArrowLeft size={17} aria-hidden="true" />返原篇指南
+                </Link>
+              </div>
+            </>
+          ) : sourceGuideQuery.isError ? (
+            <div className="tryon-source-guide-copy" role="alert">
+              <p className="tryon-kicker">GUIDE LINK · 指南連結</p>
+              <h2>{sourceGuideNotFound ? '原篇指南而家未能公開顯示' : '原篇指南暫時載入唔到'}</h2>
+              <p>{sourceGuideNotFound ? '你仍然可以喺試穿頁揀其他已發布刊期或全部商品。' : '請檢查網絡後重試；商品深連結同已揀單品唔會受影響。'}</p>
+              <div className="tryon-source-guide-actions">
+                <Link to="/glo-guide" className="tryon-guide-article-link"><BookOpen size={17} />睇其他指南</Link>
+                {!sourceGuideNotFound && (
+                  <button type="button" className="tryon-text-button" onClick={() => void sourceGuideQuery.refetch()}>
+                    <RefreshCcw size={16} />重新載入原篇
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      )}
+
       {authLoading ? (
         <section className="tryon-access-card" role="status">
           <LoaderCircle className="tryon-spin" size={24} aria-hidden="true" />
@@ -1215,7 +1316,11 @@ export default function TryOn() {
           <p className="tryon-kicker">MEMBERS &amp; STAFF</p>
           <h2>先登入，先可以使用私人試穿工作枱</h2>
           <p>原相同結果不會放入公開商品圖庫；每位用戶只可以讀取自己嘅工作。</p>
-          <Link to="/login" className="tryon-primary-link"><LogIn size={18} />登入／註冊</Link>
+          <Link to="/login" state={{ from: tryOnReturnPath }} className="tryon-primary-link">
+            <LogIn size={18} />{Number.isInteger(preselectProductId) && preselectProductId > 0
+              ? '登入／註冊，繼續試呢件'
+              : '登入／註冊'}
+          </Link>
         </section>
       ) : (
         <>
@@ -1398,10 +1503,60 @@ export default function TryOn() {
             <section className="tryon-product-panel" aria-labelledby="tryon-product-title">
               <div className="tryon-panel-heading">
                 <div><p className="tryon-kicker">02 · REAL PRODUCTS</p><h2 id="tryon-product-title">揀一件或兩件，一次確認</h2></div>
-                <span className="tryon-count">符合篩選 {filteredProducts.length}／合資格 {products.length} 件</span>
+                <span className="tryon-count">
+                  {productMode === 'guide'
+                    ? `已載入 ${catalogGuides.length} 刊／合資格 ${products.length} 件`
+                    : `符合篩選 ${filteredProducts.length}／合資格 ${products.length} 件`}
+                </span>
               </div>
               <p className="tryon-product-intro">第一次生成前可即場揀齊兩件不同穿著部位，各自揀商品相片及調換次序。兩件仍係兩次生成、各用 1 次額度及 {creditsPerGeneration} credits；只揀一件就只做一次。每套最多 {access?.maxMixSteps ?? 3} 件，未確認唔會自動追加。</p>
 
+              <div className="tryon-product-modes" role="group" aria-label="選擇商品來源">
+                <button
+                  type="button"
+                  data-active={productMode === 'guide'}
+                  aria-pressed={productMode === 'guide'}
+                  onClick={() => setProductMode('guide')}
+                >
+                  <BookOpen size={19} aria-hidden="true" />
+                  <span><strong>Glo Glo 精選</strong><small>跟刊期揀單品</small></span>
+                </button>
+                <button
+                  type="button"
+                  data-active={productMode === 'all'}
+                  aria-pressed={productMode === 'all'}
+                  onClick={() => setProductMode('all')}
+                >
+                  <Shirt size={19} aria-hidden="true" />
+                  <span><strong>全部商品</strong><small>搜尋／直播篩選</small></span>
+                </button>
+              </div>
+
+              {productMode === 'guide' ? (
+                <TryOnGuideCatalog
+                  guides={catalogGuides}
+                  products={products}
+                  activeGuideSlug={resolvedGuideSlug}
+                  onGuideChange={setActiveGuideSlug}
+                  selections={selections}
+                  selectionLocked={selectionLocked}
+                  hasLaterLineage={hasLaterLineage}
+                  getBlockReason={(product) => lineageBlockReason(product, job)}
+                  onSelectProduct={chooseProduct}
+                  isLoading={guideCatalogQuery.isPending || productsQuery.isPending}
+                  error={guideCatalogQuery.isError || productsQuery.isError
+                    ? '請檢查網絡連線，然後重新載入；已揀商品會保留。'
+                    : null}
+                  onRetry={() => {
+                    void guideCatalogQuery.refetch();
+                    void productsQuery.refetch();
+                  }}
+                  hasNextPage={Boolean(guideCatalogQuery.hasNextPage)}
+                  isFetchingNextPage={guideCatalogQuery.isFetchingNextPage}
+                  onLoadMore={() => void guideCatalogQuery.fetchNextPage()}
+                />
+              ) : (
+                <div className="tryon-all-products">
               <div className="tryon-programme" aria-label="商品篩選及直播節目">
                 <div className="tryon-programme-head">
                   <p className="tryon-kicker">LIVE PROGRAMME · 篩選</p>
@@ -1491,17 +1646,7 @@ export default function TryOn() {
                         className="tryon-product-card"
                         data-selected={selected}
                         disabled={Boolean(blockReason) || selectionLocked || hasLaterLineage}
-                        onClick={() => {
-                          const result = addTryOnProductSelection({
-                            selections,
-                            products,
-                            product,
-                            kindLabel: kindLabel(product.tryOnKind),
-                            maxSelections: selectionLimit,
-                          });
-                          setSelections(result.selections);
-                          setActionError(result.ok ? null : result.reason);
-                        }}
+                        onClick={() => chooseProduct(product)}
                         aria-pressed={selected}
                       >
                         <span className="tryon-product-image-wrap">
@@ -1538,6 +1683,8 @@ export default function TryOn() {
                   {emptyReason && emptyReason !== 'no-eligible' && (
                     <button type="button" className="tryon-text-button" onClick={clearProductFilters}>清除所有篩選</button>
                   )}
+                </div>
+              )}
                 </div>
               )}
 
@@ -2193,6 +2340,235 @@ const TRYON_CSS = /* css */ `
     .tryon-filter-group { grid-template-columns: 1fr; gap: 0; padding: 10px 0; }
     .tryon-filter-label { padding-top: 0; }
     .tryon-filter-options { gap: 0 16px; }
+  }
+  /* ===== 2026-11-17 Glo Glo 指南 × AI 試穿：刊期編排、原篇書籤、同一選擇狀態 ===== */
+  .tryon-source-guide {
+    position: relative;
+    max-width: 1380px;
+    margin: 28px auto 0;
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    gap: 28px;
+    align-items: center;
+    padding: 26px 32px;
+    border-top: 1px solid var(--studio-ink);
+    border-bottom: 1px solid var(--studio-line);
+    background: #f6f5ee;
+  }
+  .tryon-source-guide::before, .tryon-source-guide::after {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    pointer-events: none;
+  }
+  .tryon-source-guide::before { top: -1px; left: -1px; border-top: 3px solid var(--studio-gold); border-left: 3px solid var(--studio-gold); }
+  .tryon-source-guide::after { right: -1px; bottom: -1px; border-right: 3px solid var(--studio-gold); border-bottom: 3px solid var(--studio-gold); }
+  .tryon-source-guide-cover {
+    display: block;
+    width: 132px;
+    max-height: 176px;
+    object-fit: contain;
+    background: var(--studio-paper);
+  }
+  .tryon-source-guide-copy { min-width: 0; }
+  .tryon-source-guide-copy h2 { margin: 7px 0 0; font-family: 'Noto Serif TC', serif; font-size: clamp(24px, 3vw, 34px); line-height: 1.35; }
+  .tryon-source-guide-copy > p:not(.tryon-kicker) { max-width: 760px; margin: 10px 0 0; color: var(--studio-muted); font-size: 15px; line-height: 1.75; }
+  .tryon-source-guide-copy > span { display: block; margin-top: 10px; color: var(--studio-ink); font-size: 13px; line-height: 1.65; }
+  .tryon-source-guide-state { grid-column: 1 / -1; min-height: 92px; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--studio-muted); }
+  .tryon-source-guide-state p { margin: 0; }
+  .tryon-source-guide-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 14px; }
+  .tryon-guide-article-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 44px;
+    margin-top: 14px;
+    color: var(--studio-ink);
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    border-bottom: 1px solid var(--studio-gold);
+    cursor: pointer;
+    transition: color .18s ease-out, border-color .18s ease-out;
+  }
+  .tryon-guide-article-link:hover { color: var(--studio-pink); border-color: var(--studio-pink); }
+  .tryon-access-card .tryon-primary-link { border: 1px solid var(--studio-gold); }
+
+  .tryon-product-modes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 24px 0 0;
+    padding: 10px 0;
+    border-top: 1px solid var(--studio-ink);
+    border-bottom: 1px solid var(--studio-line);
+  }
+  .tryon-product-modes > button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 11px;
+    min-width: 0;
+    min-height: 70px;
+    padding: 10px 16px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--studio-muted);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color .18s ease-out, color .18s ease-out, border-color .18s ease-out;
+  }
+  .tryon-product-modes > button > svg { flex: 0 0 auto; }
+  .tryon-product-modes > button > span { min-width: 0; }
+  .tryon-product-modes strong, .tryon-product-modes small { display: block; }
+  .tryon-product-modes strong { font-family: 'Noto Serif TC', serif; font-size: 17px; }
+  .tryon-product-modes small { margin-top: 3px; font-size: 11px; }
+  .tryon-product-modes > button[data-active='true'] { border-color: var(--studio-gold); background: var(--studio-ink); color: var(--studio-paper); }
+  .tryon-product-modes > button[data-active='true'] > svg { color: var(--studio-gold); }
+  .tryon-product-modes > button:hover:not([data-active='true']) { border-color: var(--studio-line); color: var(--studio-ink); }
+
+  .tryon-guide-catalog { margin-top: 26px; }
+  .tryon-guide-editorial-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+  .tryon-guide-editorial-head h3 { margin: 6px 0 0; font-family: 'Noto Serif TC', serif; font-size: 27px; line-height: 1.4; }
+  .tryon-guide-editorial-head > p { max-width: 350px; margin: 0; color: var(--studio-muted); font-size: 13px; line-height: 1.75; }
+  .tryon-guide-issues {
+    display: flex;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+    border-top: 1px solid var(--studio-ink);
+    border-bottom: 1px solid var(--studio-line);
+    scrollbar-width: thin;
+    scrollbar-color: var(--studio-gold) transparent;
+  }
+  .tryon-guide-issues > button {
+    position: relative;
+    flex: 0 0 224px;
+    min-width: 0;
+    min-height: 116px;
+    padding: 17px 20px 19px;
+    scroll-snap-align: start;
+    border: 0;
+    border-right: 1px solid var(--studio-line);
+    background: transparent;
+    color: var(--studio-muted);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color .18s ease-out, color .18s ease-out;
+  }
+  .tryon-guide-issues > button::after {
+    content: '';
+    position: absolute;
+    right: 20px;
+    bottom: 12px;
+    left: 20px;
+    height: 2px;
+    background: var(--studio-pink);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform .2s ease-out;
+  }
+  .tryon-guide-issues > button[data-active='true'] { background: rgba(245, 192, 54, .11); color: var(--studio-ink); }
+  .tryon-guide-issues > button[data-active='true']::after { transform: scaleX(1); }
+  .tryon-guide-issues > button:hover { color: var(--studio-ink); }
+  .tryon-guide-issues > button > span, .tryon-guide-issues > button > strong, .tryon-guide-issues > button > small { display: block; }
+  .tryon-guide-issues > button > span { font-family: 'DM Mono', 'Noto Sans TC', monospace; font-size: 11px; letter-spacing: .05em; }
+  .tryon-guide-issues > button > strong { margin-top: 8px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-family: 'Noto Serif TC', serif; font-size: 16px; line-height: 1.45; }
+  .tryon-guide-issues > button > small { margin-top: 6px; font-size: 12px; }
+  .tryon-guide-issue { padding-top: 24px; }
+  .tryon-guide-issue-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(150px, 1fr);
+    gap: 20px;
+    align-items: start;
+    padding-bottom: 22px;
+  }
+  .tryon-guide-issue-head > div { min-width: 0; }
+  .tryon-guide-issue-theme { margin: 0; color: var(--studio-pink); font-family: 'DM Mono', 'Noto Sans TC', monospace; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+  .tryon-guide-issue-head h4 { margin: 7px 0 0; font-family: 'Noto Serif TC', serif; font-size: 25px; line-height: 1.4; }
+  .tryon-guide-issue-head > div > p:last-child { max-width: 570px; margin: 9px 0 0; color: var(--studio-muted); font-size: 14px; line-height: 1.75; }
+  .tryon-guide-issue-head > .tryon-guide-article-link { justify-self: end; margin-top: 0; }
+  .tryon-guide-issue-badge { display: inline-flex; align-items: center; gap: 7px; padding-top: 4px; white-space: nowrap; color: var(--studio-muted); font-family: 'DM Mono', 'Noto Sans TC', monospace; font-size: 11px; letter-spacing: .05em; }
+  .tryon-guide-issue-badge > i { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-gold); }
+
+  .tryon-guide-product-rail {
+    display: flex;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+    border-top: 1px solid var(--studio-line);
+    border-bottom: 1px solid var(--studio-ink);
+    scrollbar-width: thin;
+    scrollbar-color: var(--studio-gold) transparent;
+  }
+  .tryon-guide-product {
+    flex: 0 0 236px;
+    min-width: 0;
+    padding: 20px;
+    scroll-snap-align: start;
+    border: 0;
+    border-right: 1px solid var(--studio-line);
+    background: transparent;
+    color: var(--studio-ink);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color .18s ease-out, opacity .18s ease-out;
+  }
+  .tryon-guide-product:first-child { padding-left: 0; }
+  .tryon-guide-product:hover:not(:disabled) { background: rgba(245, 192, 54, .08); }
+  .tryon-guide-product:disabled { opacity: .55; cursor: not-allowed; }
+  .tryon-guide-product-visual { position: relative; display: block; aspect-ratio: 4 / 5; overflow: hidden; background: #f6f5ee; }
+  .tryon-guide-product[data-selected='true'] .tryon-guide-product-visual { outline: 2px solid var(--studio-gold); outline-offset: 3px; }
+  .tryon-guide-product-visual > img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  .tryon-guide-product-number { position: absolute; top: 10px; left: 10px; min-width: 34px; padding: 4px 6px; background: var(--studio-paper); color: var(--studio-ink); font-family: 'DM Mono', monospace; font-size: 11px; text-align: center; }
+  .tryon-guide-product-kind { position: absolute; bottom: 10px; left: 10px; padding: 4px 7px; background: var(--studio-paper); color: var(--studio-ink); font-size: 11px; }
+  .tryon-guide-product-selected { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 4px 8px; border: 1px solid var(--studio-gold); background: var(--studio-ink); color: var(--studio-paper); font-size: 11px; font-weight: 700; }
+  .tryon-guide-product-selected > svg { color: var(--studio-gold); }
+  .tryon-guide-product-copy { display: block; padding-top: 14px; }
+  .tryon-guide-product-copy > strong { display: block; min-height: 44px; font-family: 'Noto Serif TC', serif; font-size: 16px; line-height: 1.45; }
+  .tryon-guide-product-copy > small { display: block; margin-top: 5px; color: var(--studio-muted); font-family: 'DM Mono', 'Noto Sans TC', monospace; font-size: 11px; }
+  .tryon-guide-product-copy > span { display: block; margin-top: 9px; font-size: 15px; font-weight: 700; }
+  .tryon-guide-product-copy > em { display: block; min-height: 38px; margin-top: 9px; color: var(--studio-pink); font-size: 12px; font-style: normal; line-height: 1.55; }
+  .tryon-guide-state, .tryon-guide-empty-issue { display: grid; place-items: center; min-height: 210px; margin-top: 24px; padding: 32px 20px; border-top: 1px solid var(--studio-ink); border-bottom: 1px solid var(--studio-line); text-align: center; }
+  .tryon-guide-state > svg, .tryon-guide-empty-issue > svg { color: var(--studio-pink); }
+  .tryon-guide-state h3 { margin: 12px 0 0; font-family: 'Noto Serif TC', serif; font-size: 22px; }
+  .tryon-guide-state p, .tryon-guide-empty-issue p { max-width: 520px; margin: 10px 0 0; color: var(--studio-muted); font-size: 14px; line-height: 1.75; }
+  .tryon-guide-state > button { margin-top: 16px; }
+  .tryon-guide-more { padding: 16px 0 0; text-align: center; }
+  .tryon-guide-more > p { margin: 0 0 10px; color: var(--studio-pink); font-size: 13px; }
+  .tryon-guide-more > button { min-height: 46px; }
+
+  @media (max-width: 820px) {
+    .tryon-source-guide { grid-template-columns: 108px minmax(0, 1fr); gap: 20px; padding: 22px; }
+    .tryon-source-guide-cover { width: 108px; max-height: 144px; }
+    .tryon-guide-editorial-head { align-items: flex-start; flex-direction: column; gap: 10px; }
+    .tryon-guide-editorial-head > p { max-width: 620px; }
+    .tryon-guide-issue-head { grid-template-columns: minmax(0, 1fr) auto; }
+    .tryon-guide-issue-badge { grid-column: 1 / -1; grid-row: 2; }
+    .tryon-guide-issue-head > .tryon-guide-article-link { grid-column: 2; grid-row: 1; }
+  }
+  @media (max-width: 560px) {
+    .tryon-source-guide { grid-template-columns: 84px minmax(0, 1fr); gap: 16px; padding: 20px 16px; }
+    .tryon-source-guide-cover { width: 84px; max-height: 126px; }
+    .tryon-source-guide-copy h2 { font-size: 22px; }
+    .tryon-source-guide-copy > p:not(.tryon-kicker) { font-size: 14px; }
+    .tryon-source-guide-copy > span { font-size: 12px; }
+    .tryon-source-guide-state { min-height: 110px; text-align: center; }
+    .tryon-product-modes { gap: 6px; }
+    .tryon-product-modes > button { min-height: 76px; gap: 8px; padding: 9px 10px; }
+    .tryon-product-modes strong { font-size: 15px; }
+    .tryon-product-modes small { font-size: 11px; }
+    .tryon-guide-editorial-head h3 { font-size: 23px; }
+    .tryon-guide-issues > button { flex-basis: 188px; min-height: 112px; padding: 15px 16px 18px; }
+    .tryon-guide-issues > button::after { right: 16px; left: 16px; }
+    .tryon-guide-issue-head { grid-template-columns: 1fr; gap: 12px; }
+    .tryon-guide-issue-head h4 { font-size: 22px; }
+    .tryon-guide-issue-head > .tryon-guide-article-link, .tryon-guide-issue-badge { grid-column: 1; grid-row: auto; justify-self: start; }
+    .tryon-guide-product { flex-basis: 198px; padding: 16px 14px 18px; }
+    .tryon-guide-product-copy > strong { font-size: 15px; }
+    .tryon-guide-product-selected { right: 6px; bottom: 38px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .tryon-spin, .tryon-generation-bars i, .tryon-toast, .tryon-result-frame::before, .tryon-result-spark { animation: none; }

@@ -288,6 +288,39 @@ describe('GloGuideDetail 全寬主配搭圖舞台', () => {
   });
 });
 
+describe('GloGuideDetail 文中單品 → AI 試穿', () => {
+  it('合資格上衣同褲有深色 CTA，保留商品、原圖 index 同原篇 slug', () => {
+    setQuery({ data: DETAIL });
+    const html = renderDetail();
+    expect(html.match(/class="gg-product-tryon"/g)).toHaveLength(2);
+    expect(html).toContain('href="/try-on?productId=101&amp;photoIndex=0&amp;guide=autumn-knit"');
+    expect(html).toContain('href="/try-on?productId=102&amp;photoIndex=0&amp;guide=autumn-knit"');
+    expect(html).toContain('aria-label="用 AI 試穿 駝色開胸針織褸"');
+    expect(html).toContain('帶入商品原圖・登入後繼續');
+  });
+
+  it('唔支援嘅頸巾及下架帽唔出試穿死 CTA；缺貨合資格商品仍可試穿', () => {
+    setQuery({
+      data: {
+        ...DETAIL,
+        products: [
+          ...DETAIL.products,
+          {
+            ...DETAIL.products[0],
+            id: 105,
+            name: '售罄針織背心',
+            stock: 0,
+          },
+        ],
+      },
+    });
+    const html = renderDetail();
+    expect(html).not.toContain('productId=103');
+    expect(html).not.toContain('productId=104');
+    expect(html).toContain('href="/try-on?productId=105&amp;photoIndex=0&amp;guide=autumn-knit"');
+  });
+});
+
 describe('GloGuideDetail 加車尺寸邊界', () => {
   it('sizeEnabled＋多尺寸 → 「去商品頁揀尺寸」連結，唔係加車按鈕', () => {
     setQuery({ data: DETAIL });

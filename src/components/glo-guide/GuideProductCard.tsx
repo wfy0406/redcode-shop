@@ -9,6 +9,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router';
+import { ArrowUpRight, Sparkles } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { addToGuestCart } from '@/lib/guestCart';
@@ -20,6 +21,8 @@ import {
   guideHighlightTags,
   guideLiveDateLabel,
   guideProductPath,
+  guideTryOnKind,
+  guideTryOnPath,
   resolveGuideCartAction,
 } from './guideUtils';
 import type { GuideProduct } from './types';
@@ -29,9 +32,11 @@ type AddState = { kind: 'idle' } | { kind: 'pending' } | { kind: 'added' } | { k
 export default function GuideProductCard({
   product,
   index,
+  guideSlug,
 }: {
   product: GuideProduct;
   index: number;
+  guideSlug: string;
 }) {
   const { user } = useAuth();
   const utils = trpc.useUtils();
@@ -43,6 +48,7 @@ export default function GuideProductCard({
   const unavailable = delisted || soldOut;
   const tags = guideHighlightTags(product.aiTags);
   const liveLabel = guideLiveDateLabel(product.liveDate);
+  const tryOnKind = guideTryOnKind(product);
 
   const addCart = trpc.cart.add.useMutation({
     onSuccess: () => {
@@ -110,6 +116,20 @@ export default function GuideProductCard({
           <strong>{formatPrice(guideEffectivePrice(product))}</strong>
           {guideHasDiscount(product) && <s>{formatPrice(product.price)}</s>}
         </p>
+        {tryOnKind && (
+          <Link
+            to={guideTryOnPath(product, guideSlug)}
+            className="gg-product-tryon"
+            aria-label={`用 AI 試穿 ${product.name}`}
+          >
+            <Sparkles size={19} strokeWidth={1.7} aria-hidden="true" />
+            <span>
+              <strong>AI 試穿呢件</strong>
+              <small>帶入商品原圖・登入後繼續</small>
+            </span>
+            <ArrowUpRight size={19} strokeWidth={1.7} aria-hidden="true" />
+          </Link>
+        )}
         <div className="gg-product-actions">
           {unavailable ? (
             <span className="gg-product-soldout" role="status">

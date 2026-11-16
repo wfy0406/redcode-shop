@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '@/hooks/useAuth';
+import { consumeAuthReturn, fromLocationState, stashAuthReturn } from '@/lib/authReturn';
 import { trpc } from '@/providers/trpc';
 import FormField from '@/components/account/FormField';
 import WishingStar from '@/components/account/WishingStar';
@@ -10,7 +11,9 @@ import GoogleLoginButton from '@/components/account/GoogleLoginButton';
 /**
  * RedCode 設計系統 §P5 —— 會員登入 /login
  * 置中玻璃單卡（max 420px，--glass-bg-strong + blur 16px），卡頂 logo + 花體「Welcome back, star」。
- * 電話 + 密碼 → useAuth().login()；成功 → location.state?.from ?? '/account'。
+ * 電話 + 密碼 → useAuth().login()；成功 → 安全站內 location.state?.from ?? sessionStorage 兜底 ?? '/account'。
+ * （iteration-7：from 經 sanitizeInternalPath 淨化，防 open-redirect；Google 全頁跳轉丟 state 時靠
+ * sessionStorage 短 TTL 記號兜底，見 src/lib/authReturn.ts。）
  * 錯誤直接顯示後端訊息（如「電話號碼或密碼錯誤」）。
  *
  * 2026-08-04 加：忘記密碼流程（email 收 6 位驗證碼 → 驗證 → 重設密碼）。
@@ -80,18 +83,36 @@ export default function Login() {
     },
   });
 
-  const state = location.state as { from?: string | { pathname?: string } } | null;
-  const rawFrom = state?.from;
-  const from = typeof rawFrom === 'string' ? rawFrom : (rawFrom?.pathname ?? '/account');
+  // iteration-7：state.from 相容字串同 { pathname, search?, hash? } 兩種寫法，
+  // 一律過 sanitizeInternalPath——外站／//／反斜線／控制字符全部當冇（防 open-redirect）。
+  const state = location.state as {
+    from?: string | { pathname?: string; search?: string; hash?: string };
+  } | null;
+  const explicitFrom = fromLocationState(state);
+
+  // Google 登入喺手機/in-app browser 可能行全頁跳轉，location.state 會丟；
+  // 所以一入頁就用 effect 將 from 落 sessionStorage 短 TTL 兜底（只存路徑＋時間戳，永遠冇 token）。
+  // 用 effect 寫，唔喺 render 寫，避免 StrictMode／重渲染副作用。
+  useEffect(() => {
+    if (explicitFrom) stashAuthReturn(explicitFrom);
+  }, [explicitFrom]);
 
   // v2.5.5（老闆實測 msg76c）：有未完成的「移入訪客訂單」→ 登入後直去 /orders 接返確認框。
-  // Google 登入喺手機/in-app browser 可能行全頁跳轉，location.state 會丟（from 變返 /account），
   // 靠 sessionStorage 嘅記號兜底，唔會再「登入完變空嘅我的訂單」。（記號只有單號＋電話，永遠冇 token）
+  // iteration-7：pendingClaim 優先級不變；之後先 state.from，再 authReturn 兜底，最後 /account。
+  // 注意：只有登入成功先會行到呢度，先至 consume 兜底記號，避免失敗時誤清。
   const postLoginTarget = () => {
     try {
-      if (sessionStorage.getItem('rc.pendingClaim')) return '/orders';
+      if (sessionStorage.getItem('rc.pendingClaim')) {
+        consumeAuthReturn(); // 去 /orders 都一併清兜底記號，避免下次登入誤中舊 TryOn 路徑
+        return '/orders';
+      }
     } catch { /* 私隱模式當冇 */ }
-    return from;
+    if (explicitFrom) {
+      consumeAuthReturn(); // 清走兜底記號，避免下次登入誤中舊路徑
+      return explicitFrom;
+    }
+    return consumeAuthReturn() ?? '/account';
   };
 
   const switchMode = (m: Mode) => {
@@ -274,7 +295,11 @@ export default function Login() {
 
             <p className="mt-6 text-center text-sm text-txt-2">
               未係會員？{' '}
-              <Link to="/register" className="font-medium text-purple-text underline-offset-4 hover:underline">
+              <Link
+                to="/register"
+                state={explicitFrom ? { from: explicitFrom } : undefined}
+                className="font-medium text-purple-text underline-offset-4 hover:underline"
+              >
                 立即註冊
               </Link>
             </p>

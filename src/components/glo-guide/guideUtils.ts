@@ -7,6 +7,7 @@
  */
 
 import { productCategoryLabel } from '@contracts/types';
+import { resolveTryOnProductKind, type TryOnProductKind } from '@contracts/tryon';
 import { formatLiveDateLabel } from '@/lib/liveShare';
 import type { GuideImage, GuideListItem, GuideProduct } from './types';
 
@@ -18,6 +19,33 @@ export function guidePath(slug: string): string {
 /** 商品詳情頁網址（站內真連結，無 JS 都 work） */
 export function guideProductPath(productId: number): string {
   return `/products/${productId}`;
+}
+
+/**
+ * 指南商品可唔可以入 AI 試穿：同商品詳情頁／tryon.listProducts 共用部位判斷。
+ * 下架商品唔再出 CTA；缺貨唔阻視覺預覽（現有試穿清單本來就保留缺貨商品）。
+ */
+export function guideTryOnKind(
+  product: Pick<GuideProduct, 'category' | 'name' | 'isActive'>,
+): TryOnProductKind | null {
+  if (!product.isActive) return null;
+  return resolveTryOnProductKind(product.category, product.name);
+}
+
+/** 文中單品深連結：商品原圖 index 係 TryOn gallery index，唔係配搭圖 position。 */
+export function guideTryOnPath(
+  product: Pick<GuideProduct, 'id'>,
+  slug: string,
+  photoIndex = 0,
+): string {
+  const safeIndex = Number.isInteger(photoIndex) && photoIndex >= 0 ? photoIndex : 0;
+  return `/try-on?productId=${product.id}&photoIndex=${safeIndex}&guide=${encodeURIComponent(slug)}`;
+}
+
+/** URL 入面嘅來源 slug 只接受站內指南安全字元；無效值當冇來源，唔亂造返回連結。 */
+export function parseGuideSlugParam(value: string | null): string | null {
+  if (!value || value.length > 180) return null;
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value) ? value : null;
 }
 
 /**
