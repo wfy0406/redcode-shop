@@ -306,7 +306,7 @@ function AdminConsole() {
         canReview={isSupervisorOrAdmin}
       />
     ),
-    guide: <GloGuidePanel toast={pushToast} canReview={isSupervisorOrAdmin} />,
+    guide: <GloGuidePanel toast={pushToast} canReview={isSupervisorOrAdmin} isAdmin={isAdmin} />,
     purchase: <PurchaseStats />,
     // F8：商品 view ＝ ProductManager（新增/編輯/📺直播場次）＋ 下面 ListingBatchesCard（WMS 上架紀錄，唯讀）
     products: (

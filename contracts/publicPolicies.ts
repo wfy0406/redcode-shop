@@ -13,6 +13,26 @@ export const PUBLIC_DISPATCH_POLICY = {
 
 export const PUBLIC_RETURN_POLICY = {
   applicationDays: 7,
+  /** 申請期限＋貨品狀態＋先聯絡客服（同 Returns.tsx 第 01/06 節、Terms 第 12 節一致）。 */
+  conditionsText:
+    "收到貨品當日起計 7 天內可提出退換申請；貨品須未經穿著或使用、吊牌未剪、原包裝完整，唔影響二次銷售，並請先聯絡客服確認。",
+  /** 運費承擔（同 Returns.tsx 2.3／3.3 一致）：破損／寄錯貨店方包來回；尺寸換貨客人到付。 */
+  feesText:
+    "貨品破損或寄錯貨嘅退換，來回運費由我哋承擔；尺寸更換嘅來回運費由客人承擔（順豐到付）。",
+} as const;
+
+// 順豐運費政策單一來源（同 Terms.tsx 11.2 及 FAQ「幾多錢包郵」一致）：
+// 自取滿 HK$350 免運；未滿門檻嘅自取同所有送貨上門一律順豐到付，運費以順豐官方收費為準。
+const SHIPPING_PICKUP_FREE_TEXT = "順豐站／自提點／智能櫃自取滿 HK$350 免運";
+const SHIPPING_FREIGHT_COLLECT_TEXT =
+  "未滿免運門檻嘅自取訂單同送貨上門，一律順豐到付，運費以順豐官方收費為準";
+
+export const PUBLIC_SHIPPING_POLICY = {
+  /** 自取免運門檻（港元整數）；實際門檻以結帳頁不時公布為準。 */
+  freePickupThresholdHKD: 350,
+  pickupFreeText: SHIPPING_PICKUP_FREE_TEXT,
+  freightCollectText: SHIPPING_FREIGHT_COLLECT_TEXT,
+  visibleText: `${SHIPPING_PICKUP_FREE_TEXT}；${SHIPPING_FREIGHT_COLLECT_TEXT}。`,
 } as const;
 
 export const PUBLIC_PAYMENT_POLICY = {

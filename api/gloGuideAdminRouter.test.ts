@@ -13,6 +13,8 @@
  * ⚠️ 界限：DB 已 mock，service 內部 transaction／閘口邏輯唔喺度驗（嗰啲係 gloGuideService.test 範圍）。
  */
 import { describe, expect, it, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 // ───────────────────────── mock 基礎設施（hoisted）─────────────────────────
 const h = vi.hoisted(() => {
@@ -89,7 +91,18 @@ const h = vi.hoisted(() => {
       dataBase64: "AAAA",
     }),
   };
-  return { state, db, service };
+  const usage = {
+    getSettings: fn({ imageCostCents: 30, textCostCents: 120 } as unknown),
+    saveSettings: fn(undefined as unknown),
+    getStats: fn({
+      periods: { date: "2026-06-15", month: "2026-06", year: "2026" },
+      today: { article: {}, regenerate: {}, image: {} },
+      month: { article: {}, regenerate: {}, image: {} },
+      year: { article: {}, regenerate: {}, image: {} },
+      recentJobs: [],
+    } as unknown),
+  };
+  return { state, db, service, usage };
 });
 
 vi.mock("./queries/connection", () => ({ getDb: () => h.db }));
@@ -106,9 +119,20 @@ vi.mock("./gloGuideService", async (importOriginal) => {
 vi.mock("./gloGuideProviders", () => ({
   defaultGloGuideProviders: vi.fn(() => ({ kind: "mock-providers" })),
 }));
+// 保留真 schema／常數（GLO_GUIDE_USAGE_MAX_CENTS 等），DB 函數換 mock
+vi.mock("./gloGuideUsage", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("./gloGuideUsage")>();
+  return {
+    ...mod,
+    getGloGuideUsageSettings: h.usage.getSettings,
+    saveGloGuideUsageSettings: h.usage.saveSettings,
+    getGloGuideUsageStats: h.usage.getStats,
+  };
+});
 
 import { gloGuideAdminRouter } from "./gloGuideAdminRouter";
 import { GloGuideError } from "./gloGuideService";
+import { logAudit } from "./audit";
 
 function caller() {
   return gloGuideAdminRouter.createCaller({
@@ -496,5 +520,78 @@ describe("輸入形狀閘（zod 先擋，service 唔會收到壞 payload）", ()
     await expect(
       caller().articles({ status: "hacked" as never }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
+describe("用量及估算成本（admin-only）", () => {
+  it("未登入 → UNAUTHORIZED；member／staff／supervisor → FORBIDDEN，而且 usage 函數完全冇被調用", async () => {
+    for (const user of [
+      null,
+      { userId: 1, role: "member" },
+      { userId: 7, role: "staff" },
+      { userId: 8, role: "supervisor" },
+    ]) {
+      reset(user);
+      const expected = user === null ? "UNAUTHORIZED" : "FORBIDDEN";
+      await expectCode(caller().usageSettings(), expected);
+      await expectCode(caller().usageStats(), expected);
+      await expectCode(
+        caller().setUsageSettings({ imageCostCents: 30, textCostCents: 120 }),
+        user === null ? "UNAUTHORIZED" : "FORBIDDEN",
+      );
+      expect(h.usage.getSettings).not.toHaveBeenCalled();
+      expect(h.usage.getStats).not.toHaveBeenCalled();
+      expect(h.usage.saveSettings).not.toHaveBeenCalled();
+    }
+  });
+
+  it("admin 可以讀 usageSettings／usageStats（原樣回傳）", async () => {
+    reset({ userId: 9, role: "admin" });
+    const settings = await caller().usageSettings();
+    expect(settings).toEqual({ imageCostCents: 30, textCostCents: 120 });
+    const stats = await caller().usageStats();
+    expect(stats).toMatchObject({ periods: { date: "2026-06-15" }, recentJobs: [] });
+    expect(h.usage.getSettings).toHaveBeenCalledTimes(1);
+    expect(h.usage.getStats).toHaveBeenCalledTimes(1);
+  });
+
+  it("setUsageSettings：admin 儲存（null＝未知、0＝明確免費都收），save 後 logAudit", async () => {
+    reset({ userId: 9, role: "admin" });
+    const res = await caller().setUsageSettings({ imageCostCents: 0, textCostCents: null });
+    expect(res).toEqual({ ok: true, settings: { imageCostCents: 0, textCostCents: null } });
+    expect(h.usage.saveSettings).toHaveBeenCalledWith({ imageCostCents: 0, textCostCents: null });
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: 9,
+        actorRole: "admin",
+        action: "gloGuide.usageSettingsUpdate",
+        targetType: "setting",
+        targetId: "glo_guide_usage_rules",
+      }),
+    );
+  });
+
+  it("zod 金額閘：負數／小數／超上限（>100000 仙）→ BAD_REQUEST，save 完全冇被調用", async () => {
+    reset({ userId: 9, role: "admin" });
+    await expectCode(caller().setUsageSettings({ imageCostCents: -1, textCostCents: 0 }), "BAD_REQUEST");
+    await expectCode(caller().setUsageSettings({ imageCostCents: 0, textCostCents: 12.5 }), "BAD_REQUEST");
+    await expectCode(
+      caller().setUsageSettings({ imageCostCents: 100_001, textCostCents: 0 }),
+      "BAD_REQUEST",
+    );
+    expect(h.usage.saveSettings).not.toHaveBeenCalled();
+  });
+
+  it("source contract：三個 usage procedure 都係 adminProcedure（唔准放寬做 staff／supervisor）", () => {
+    const src = readFileSync(path.join(__dirname, "gloGuideAdminRouter.ts"), "utf8");
+    expect(src).toContain("usageSettings: adminProcedure");
+    expect(src).toContain("setUsageSettings: adminProcedure");
+    expect(src).toContain("usageStats: adminProcedure");
+  });
+
+  it("既有權限閘唔變：staff 越權 approve 照樣 FORBIDDEN（新 procedure 冇郁到舊閘）", async () => {
+    reset({ userId: 7, role: "staff" });
+    await expectCode(caller().approve({ id: 1 }), "FORBIDDEN");
+    expect(h.service.approveArticle).not.toHaveBeenCalled();
   });
 });

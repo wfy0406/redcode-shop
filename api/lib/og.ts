@@ -2,7 +2,11 @@ import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "../queries/connection";
 import { products } from "@db/schema";
 import { productCategoryLabel, productSeoDescription, productSeoTitle } from "@contracts/types";
-import { PUBLIC_DISPATCH_POLICY, PUBLIC_RETURN_POLICY } from "@contracts/publicPolicies";
+import {
+  PUBLIC_DISPATCH_POLICY,
+  PUBLIC_RETURN_POLICY,
+  PUBLIC_SHIPPING_POLICY,
+} from "@contracts/publicPolicies";
 import { stripPublicSeoContent } from "./publicSeo";
 import { publicAiTags } from "../productAiContent";
 import {
@@ -314,6 +318,10 @@ export async function injectProductOg(
       `${aiTags.length ? `<p>重點：${esc(aiTags.join("、"))}</p>` : ""}` +
       `<p>${esc(PUBLIC_DISPATCH_POLICY.visibleText)}</p>` +
       `<p>${esc(PUBLIC_DISPATCH_POLICY.clarificationText)}</p>` +
+      // 同商品頁 CTA 旁政策卡對齊：運費門檻／到付同退換條件首口已可見，
+      // 一律經 publicPolicies 單一來源，唔准同 Returns/Terms/FAQ 講唔同嘢。
+      `<p>${esc(PUBLIC_SHIPPING_POLICY.visibleText)}</p>` +
+      `<p>${esc(PUBLIC_RETURN_POLICY.conditionsText)}${esc(PUBLIC_RETURN_POLICY.feesText)}</p>` +
       `<nav aria-label="購物相關頁面"><ul><li><a href="/products">全部貨品</a></li><li><a href="/try-on">AI 試穿</a></li><li><a href="/returns">退換貨政策</a></li></ul></nav></main>`;
     out = out.replace("</body>", `    ${prerender}\n  </body>`);
 
@@ -347,6 +355,7 @@ export async function injectProductOg(
           hasMerchantReturnPolicy: {
             "@type": "MerchantReturnPolicy",
             applicableCountry: "HK",
+            returnPolicyCountry: "HK",
             returnPolicyCategory: "https://schema.org/MerchantReturnFiniteReturnWindow",
             merchantReturnDays: PUBLIC_RETURN_POLICY.applicationDays,
             merchantReturnLink: "https://redcode.red/returns",
@@ -354,25 +363,11 @@ export async function injectProductOg(
             itemDefectReturnFees: "https://schema.org/FreeReturn",
             customerRemorseReturnFees: "https://schema.org/ReturnShippingFees",
           },
-          // 只描述正常寄出 handling estimate；7–10 個工作天唔係送達保證，更加唔係退貨期限。
-          // 冇確認 transitTime，所以唔寫；運費亦要由結帳按收貨方式及小計計，唔寫固定 shippingRate。
-          shippingDetails: {
-            "@type": "OfferShippingDetails",
-            description: PUBLIC_DISPATCH_POLICY.visibleText,
-            shippingDestination: {
-              "@type": "DefinedRegion",
-              addressCountry: "HK",
-            },
-            deliveryTime: {
-              "@type": "ShippingDeliveryTime",
-              handlingTime: {
-                "@type": "QuantitativeValue",
-                minValue: PUBLIC_DISPATCH_POLICY.minBusinessDays,
-                maxValue: PUBLIC_DISPATCH_POLICY.maxBusinessDays,
-                unitCode: "DAY",
-              },
-            },
-          },
+          // shippingDetails 整塊省略：順豐到付金額逐單計，冇真實固定 shippingRate；
+          // 7–10 個工作天只係寄出 handling 估計、冇確認 transitTime——與其出個
+          // 唔完整嘅 OfferShippingDetails 觸發 Search Console 警告，不如唔出，
+          // 寄出時間照舊喺首口 HTML 可見文字如實講（上面 prerender 區塊）。
+          // 絕對唔好為消警告亂填假 shippingRate／transitTime／aggregateRating／GTIN。
         },
       };
       // SEO（v2.2.21 E2）：BreadcrumbList JSON-LD（首頁 > 全部貨品 > 產品名），

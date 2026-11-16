@@ -19,6 +19,7 @@ import GloGuideRichText from '@/components/GloGuideRichText';
 import { parseGloGuideRichText, wrapGloGuideSelection, type GloGuideRichTag } from '@contracts/gloGuideRichText';
 import { productCategoryLabel } from '@contracts/types';
 import { fmtDateTime, fmtHKD } from './format';
+import GloGuideUsagePanel from './GloGuideUsagePanel';
 import type { ToastKind } from './useToasts';
 import './GloGuidePanel.css';
 
@@ -1641,9 +1642,12 @@ const FILTERS: { value: GuideStatus | undefined; label: string }[] = [
 export default function GloGuidePanel({
   toast,
   canReview,
+  isAdmin = false,
 }: {
   toast: Toast;
   canReview: boolean;
+  /** 管理員先見到「用量及估算成本」區（admin-only queries；非 admin 唔會發出） */
+  isAdmin?: boolean;
 }) {
   const [status, setStatus] = useState<GuideStatus | undefined>(undefined);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -1700,6 +1704,8 @@ export default function GloGuidePanel({
       </div>
 
       {showModels && <ModelImagesCard toast={toast} />}
+
+      {isAdmin && <GloGuideUsagePanel toast={toast} />}
 
       {showCreate && (
         <CreateArticleCard

@@ -6,7 +6,11 @@ import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { productCategoryLabel, productSeoDescription, productSeoTitle } from '@contracts/types';
 import { resolveTryOnProductKind } from '@contracts/tryon';
-import { PUBLIC_DISPATCH_POLICY } from '@contracts/publicPolicies';
+import {
+  PUBLIC_DISPATCH_POLICY,
+  PUBLIC_RETURN_POLICY,
+  PUBLIC_SHIPPING_POLICY,
+} from '@contracts/publicPolicies';
 import ProductCard from '@/components/ProductCard';
 import WishingStar from '@/components/admin/WishingStar';
 import {
@@ -133,7 +137,9 @@ export default function ProductDetail() {
   const infoRef = useReveal<HTMLDivElement>();
   const gridRef = useRevealDep<HTMLDivElement>([productId]);
 
-  // SEO：商品載入後按真商品名改 title/description；故障同 NOT_FOUND 都 noindex。
+  // SEO：商品載入後按真商品名改 title/description；只有明確 NOT_FOUND 先 noindex＋移除 canonical。
+  // 暫時網絡／server 故障（productLoadFailed）只改 title/description 提示重試，
+  // 保留 server 首口／SeoManager 嘅 index,follow 同 self canonical——在架商品唔准因一時故障被踢出索引。
   // unmount 唔使 reset：轉頁時 SeoManager 會按新 pathname 接管。
   useEffect(() => {
     const robots = document.querySelector('meta[name="robots"]');
@@ -142,8 +148,6 @@ export default function ProductDetail() {
       document
         .querySelector('meta[name="description"]')
         ?.setAttribute('content', '商品資料暫時載入唔到，請稍後重試或返回全部商品。');
-      robots?.setAttribute('content', 'noindex, nofollow');
-      setCanonicalPath(null);
       return;
     }
     if (product === null) {
@@ -526,10 +530,26 @@ export default function ProductDetail() {
             </div>
           )}
 
+          {/* 寄出／運費／退換：落單前直接睇到，全部經 publicPolicies 單一來源，
+              同 /returns、/terms、FAQ 逐字一致；純文字卡，唔彈窗、唔撐爆手機寬度。 */}
           <div className="mt-6 border-t pt-5" style={{ borderColor: 'var(--space-line)' }}>
-            <h2 className="text-[15px] font-bold text-txt-1">寄出時間</h2>
-            <p className="mt-2 text-sm leading-[1.8] text-txt-2">{PUBLIC_DISPATCH_POLICY.visibleText}</p>
-            <p className="mt-1 text-[13px] leading-[1.8] text-txt-3">
+            <h2 className="text-[15px] font-bold text-txt-1">寄出、運費同退換</h2>
+            <ul className="mt-2 space-y-2 text-sm leading-[1.8] text-txt-2">
+              <li>
+                <span className="text-txt-3">寄出：</span>
+                {PUBLIC_DISPATCH_POLICY.visibleText}
+              </li>
+              <li>
+                <span className="text-txt-3">運費：</span>
+                {PUBLIC_SHIPPING_POLICY.visibleText}
+              </li>
+              <li>
+                <span className="text-txt-3">退換：</span>
+                {PUBLIC_RETURN_POLICY.conditionsText}
+                {PUBLIC_RETURN_POLICY.feesText}
+              </li>
+            </ul>
+            <p className="mt-2 text-[13px] leading-[1.8] text-txt-3">
               {PUBLIC_DISPATCH_POLICY.clarificationText}
               <Link to="/returns" className="ml-1 text-pink-soft underline underline-offset-4">
                 睇退換貨政策

@@ -65,6 +65,15 @@ import {
 } from "./gloGuideProductSelection";
 import { hkTodayYmd } from "@contracts/livePublicSummary";
 import type { GloGuideProviders } from "./gloGuideProviders";
+import { notifyGloGuideReviewers } from "./gloGuideReviewPush";
+import {
+  getGloGuideUsageSettings,
+  gloGuideJobCostSnapshot,
+  mergeCostSnapshotPayload,
+  notStartedCostSnapshot,
+  snapshotGloGuideJobCost,
+  type GloGuideJobCostSnapshot,
+} from "./gloGuideUsage";
 
 // GloGuideError 已搬落 gloGuideValidation（純模組，俾商品選擇線共用）；
 // 呢度 re-export 保持舊 import 路徑（router／WMS handler／測試）唔使改。
@@ -383,6 +392,11 @@ export async function listArticleSummaries(input: { status?: string; limit?: num
  * 建 job：idempotencyKey unique 撞咗 → 返已存在嘅 job（created=false），唔會重複生成。
  * 可傳 executor（transaction）令 job 同文章／links 同一交易落 DB（M4：唔會 orphan）。
  * L9：unique 撞用 code=23505＋constraint 名判定，唔齋靠 message。
+ *
+ * 用量統計：每個新 job 都會將**建立當刻**嘅估算成本 snapshot 寫入 payload 內部欄
+ * （estimatedCostCents）——caller 可以傳 costSnapshot（一批 child 共用一次讀取）；
+ * 唔傳就即場讀 siteSettings 單價（讀取失敗照抛真錯誤，唔會靜默當免費）。
+ * 舊 job 冇 snapshot ＝ 成本未知，呢度唔會回填。
  */
 export async function createGloGuideJob(
   input: {
@@ -391,10 +405,13 @@ export async function createGloGuideJob(
     kind: "scheduled" | "full" | "article" | "image";
     idempotencyKey: string;
     payload?: Record<string, unknown>;
+    /** 一批 job 共用嘅成本快照（由 caller 讀一次單價砌好）；唔傳就即場讀取 */
+    costSnapshot?: GloGuideJobCostSnapshot;
   },
   executor?: Pick<Db, "insert">,
 ): Promise<{ job: typeof gloGuideJobs.$inferSelect; created: boolean }> {
   const db = getDb();
+  const costSnapshot = input.costSnapshot ?? (await snapshotGloGuideJobCost(input.kind));
   try {
     const [job] = await (executor ?? db)
       .insert(gloGuideJobs)
@@ -405,7 +422,7 @@ export async function createGloGuideJob(
         kind: input.kind,
         status: "queued",
         idempotencyKey: input.idempotencyKey,
-        payload: input.payload ?? null,
+        payload: mergeCostSnapshotPayload(input.payload, costSnapshot),
       })
       .returning();
     return { job, created: true };
@@ -516,6 +533,8 @@ export async function generateArticle(
   // source／jobKind／idempotencyKey 一定要跟 options（排程 slot unique key 靠呢度落 DB，
   // 唔係 scheduler 每 5 分鐘會搵唔到 slotKey 而重複開文）
   const jobParams = resolveGenerateJobParams(publicId, options);
+  // 成本快照：建立 job 當刻嘅單價（一次讀取，slug 重試共用）；讀取失敗照抛真錯誤
+  const costSnapshot = gloGuideJobCostSnapshot(jobParams.jobKind, await getGloGuideUsageSettings());
   // M4：文章＋links＋job 同一個 transaction——job insert 撞 23505 會成個 rollback，
   // 唔會有 orphan 文章／重複 slot；slug 撞 unique 換 rand 重開新 tx 再試（最多 3 次）。
   let created:
@@ -564,6 +583,7 @@ export async function generateArticle(
             kind: jobParams.jobKind,
             idempotencyKey: jobParams.idempotencyKey,
             payload: { themeHint: input.themeHint?.slice(0, 120) ?? null, requestedBy: actor.name },
+            costSnapshot,
           },
           tx,
         );
@@ -632,6 +652,8 @@ export async function recordFailedScheduledSlot(slotKey: string, error: string):
         status: "failed",
         idempotencyKey: slotKey,
         error: error.slice(0, 900),
+        // 未開始 provider 嘅失敗：明確 snapshot 0＋costNotStarted，唔當有生成成本
+        payload: mergeCostSnapshotPayload(null, notStartedCostSnapshot()),
         completedAt: new Date(),
       });
     });
@@ -691,6 +713,8 @@ export async function regenerateArticle(
     kind: "article",
     idempotencyKey: `regen:${publicId}:${randomBytes(4).toString("hex")}`,
     payload: { themeHint: input.themeHint?.slice(0, 120) ?? null, requestedBy: actor.name },
+    // 文字重生算一次文字生成：snapshot 建立當刻嘅文字單價
+    costSnapshot: gloGuideJobCostSnapshot("article", await getGloGuideUsageSettings()),
   });
   kickJob(job.id);
   void logAudit({
@@ -819,7 +843,7 @@ export async function submitArticle(
   id: number,
 ): Promise<ReturnType<typeof toInternalArticle>> {
   const db = getDb();
-  await db.transaction(async (tx) => {
+  const submitted = await db.transaction(async (tx) => {
     const locked = await tx.execute(
       sql`SELECT id, status FROM "gloGuideArticles" WHERE id = ${id} FOR UPDATE`,
     );
@@ -832,10 +856,13 @@ export async function submitArticle(
     if (!bundle) throw notFound();
     const errors = evaluateGloGuideGate(gateInputFrom(bundle), { requireImageApproval: false });
     if (errors.length > 0) throw conflict(`未過審批閘：${errors.join("；")}`);
-    await tx
+    const [updated] = await tx
       .update(gloGuideArticles)
       .set({ status: "pending_review", rejectionReason: null, updatedAt: new Date() })
-      .where(eq(gloGuideArticles.id, id));
+      .where(eq(gloGuideArticles.id, id))
+      .returning({ publicId: gloGuideArticles.publicId, updatedAt: gloGuideArticles.updatedAt });
+    if (!updated) throw notFound();
+    return updated;
   });
   void logAudit({
     actorId: actor.id,
@@ -846,6 +873,8 @@ export async function submitArticle(
     targetId: id,
     detail: "提交指南審批（pending_review）",
   });
+  // 每次 draft/rejected 真係提交成功先推一次；key 綁定呢次提交版本，唔會喺無效重按再推。
+  void notifyGloGuideReviewers(id, `submit:${submitted.publicId}:${submitted.updatedAt.toISOString()}`);
   return toInternalArticle(await getArticleBundle(id));
 }
 
@@ -1185,6 +1214,8 @@ export async function generateImages(
 ): Promise<ReturnType<typeof toInternalArticle>> {
   const db = getDb();
   const kicked: number[] = [];
+  // 同一批 image job 共用一次單價讀取（成本快照＝建立當刻嘅配搭圖單價）；讀取失敗照抛真錯誤
+  const imageCostSnapshot = gloGuideJobCostSnapshot("image", await getGloGuideUsageSettings());
 
   try {
     await db.transaction(async (tx) => {
@@ -1231,6 +1262,7 @@ export async function generateImages(
           kind: "image",
           idempotencyKey: `img:${img.publicId}:v${version}`,
           payload: { requestedBy: actor.name },
+          costSnapshot: imageCostSnapshot,
         },
         tx,
       );
@@ -1284,6 +1316,7 @@ export async function generateImages(
           kind: "image",
           idempotencyKey: `img:${img.publicId}:v1`,
           payload: { requestedBy: actor.name },
+          costSnapshot: imageCostSnapshot,
         },
         tx,
       );

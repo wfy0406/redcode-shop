@@ -2,6 +2,7 @@ import {
   PUBLIC_DISPATCH_POLICY,
   PUBLIC_OFFER_POLICY_TEXT,
   PUBLIC_PAYMENT_POLICY,
+  PUBLIC_SHIPPING_POLICY,
 } from "@contracts/publicPolicies";
 
 export interface PublicSeoSection {
@@ -345,7 +346,7 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
       },
       {
         heading: "幾多錢包郵？",
-        text: "揀順豐站／自提點／智能櫃自取，買滿 $350 就免運費，湊夠數就唔使畀。送貨上門就一律順豐到付，運費收貨時直接畀順豐。",
+        text: PUBLIC_SHIPPING_POLICY.visibleText,
       },
       {
         heading: "訂閱通知會收到咩？",

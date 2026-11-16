@@ -11,6 +11,7 @@ import {
   WEB_DESIGN_FAQ,
 } from "./publicSeo";
 import { injectRouteMeta } from "./og";
+import { PUBLIC_SHIPPING_POLICY } from "@contracts/publicPolicies";
 
 describe("公開頁 SEO／AEO／GEO 內容", () => {
   it("sitemap 只包含存在嘅公開 canonical 頁，並補齊 FAQ、AI 試穿及中獎公告", () => {
@@ -269,6 +270,12 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     const faq = readFileSync(new URL("../../src/pages/Faq.tsx", import.meta.url), "utf8");
     expect(faq).toContain("PUBLIC_PAYMENT_POLICY.guestMethodText");
     expect(renderPublicContent("/faq")).toContain("訪客快速結帳只使用 Airwallex 即時支付");
+    // 運費政策單一來源：React FAQ、server 首口 /faq 及商品頁 CTA 政策卡逐字一致
+    expect(faq).toContain("PUBLIC_SHIPPING_POLICY.pickupFreeText");
+    expect(faq).toContain("PUBLIC_SHIPPING_POLICY.freightCollectText");
+    expect(renderPublicContent("/faq")).toContain(PUBLIC_SHIPPING_POLICY.visibleText);
+    const productSource = readFileSync(new URL("../../src/pages/ProductDetail.tsx", import.meta.url), "utf8");
+    expect(productSource).toContain("PUBLIC_SHIPPING_POLICY.visibleText");
   });
 
   it("注入只發生一次；未知路徑同冇 </body> 嘅 HTML 原樣返回", () => {

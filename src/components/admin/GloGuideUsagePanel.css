@@ -1,0 +1,317 @@
+/**
+ * GloGuideUsagePanel 專屬樣式（ggu- 前綴，同 ggp- 一樣唔會撞全站；index.css 唔使改）。
+ * 跟 GloGuidePanel 同一設計語言：深色實心＋金色描邊，唔准透明底／金底 gradient；
+ * mobile-first，全部 control ≥44px，375px 唔准橫向溢出（表格自己局部橫捲）。
+ */
+
+.ggu-card {
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  border-radius: 18px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.04));
+  backdrop-filter: blur(12px);
+  padding: 12px;
+  min-width: 0;
+}
+
+/* ── 摺疊開關（原位展開，唔用全屏彈窗；≥44px）────────────── */
+.ggu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--gold, #e2c27a);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+.ggu-toggle:hover {
+  background: #17111f;
+}
+.ggu-toggle span {
+  flex: 1;
+}
+
+/* ── 按鈕（同 ggp-btn 同款深色實心＋金邊）────────────────── */
+.ggu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(226, 194, 122, 0.45);
+  background: #17111f;
+  color: var(--gold, #e2c27a);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.18s ease;
+  white-space: nowrap;
+}
+.ggu-btn:hover:not(:disabled) {
+  background: #211827;
+  border-color: var(--gold, #e2c27a);
+}
+.ggu-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ggu-btn-primary {
+  background: #211827;
+  border-color: var(--gold, #e2c27a);
+  font-weight: 700;
+}
+.ggu-btn-primary:hover:not(:disabled) {
+  background: #2a1f33;
+}
+
+.ggu-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 4px 8px;
+}
+
+.ggu-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-3, #9a94b8);
+}
+.ggu-note strong {
+  color: var(--gold, #e2c27a);
+}
+
+.ggu-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 4px;
+  font-size: 13px;
+  color: var(--text-3, #9a94b8);
+}
+.ggu-error {
+  margin: 8px 4px;
+  padding: 12px;
+  border: 1px solid rgba(255, 120, 170, 0.45);
+  border-radius: 12px;
+  background: #1f1116;
+  color: var(--pink-soft, #ff9ec4);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+.ggu-empty {
+  margin: 0;
+  padding: 16px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-3, #9a94b8);
+}
+
+/* ── 今日／今月／今年卡（mobile 單欄，≥768px 三欄）────────── */
+.ggu-periods {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+@media (min-width: 768px) {
+  .ggu-periods {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.ggu-period {
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  border-radius: 14px;
+  background: #17111f;
+  padding: 12px;
+  min-width: 0;
+}
+.ggu-period-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-1, #fff);
+}
+.ggu-period-sub {
+  margin: 2px 0 0;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--text-3, #9a94b8);
+}
+
+.ggu-kind {
+  margin-top: 12px;
+  border-top: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  padding-top: 8px;
+}
+.ggu-kind-name {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--gold, #e2c27a);
+}
+.ggu-kind-grid {
+  margin: 6px 0 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+.ggu-kind-grid dt {
+  font-size: 11px;
+  color: var(--text-3, #9a94b8);
+}
+.ggu-kind-grid dd {
+  margin: 0;
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  color: var(--text-1, #fff);
+}
+.ggu-warn {
+  color: var(--gold, #e2c27a) !important;
+}
+
+.ggu-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── 成本單價表單 ───────────────────────────────── */
+.ggu-form {
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  border-radius: 14px;
+  background: #17111f;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+.ggu-form-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--gold, #e2c27a);
+}
+.ggu-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  width: 100%;
+}
+@media (min-width: 640px) {
+  .ggu-form-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.ggu-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--text-2, #c9c4de);
+}
+.ggu-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.14));
+  background: #0f0b16;
+  color: var(--text-1, #fff);
+  font-size: 14px;
+}
+.ggu-input:focus {
+  outline: none;
+  border-color: var(--gold, #e2c27a);
+}
+.ggu-input::placeholder {
+  color: var(--text-disabled, #6b6584);
+}
+.ggu-form-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--pink-soft, #ff9ec4);
+}
+
+/* ── 最近工作表（局部橫捲，唔令成頁溢出）─────────────────── */
+.ggu-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ggu-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ggu-table th {
+  text-align: left;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-3, #9a94b8);
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  white-space: nowrap;
+}
+.ggu-table td {
+  padding: 10px 12px 10px 0;
+  border-bottom: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+  color: var(--text-2, #c9c4de);
+  vertical-align: top;
+}
+.ggu-table tr:last-child td {
+  border-bottom: none;
+}
+.ggu-mono {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ggu-title-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1, #fff);
+}
+.ggu-error-cell {
+  max-width: 240px;
+  font-size: 12px;
+  color: var(--pink-soft, #ff9ec4);
+  word-break: break-word;
+}
+.ggu-status {
+  white-space: nowrap;
+}
+.ggu-status[data-tone='green'] {
+  color: var(--success, #5ee0a0);
+}
+.ggu-status[data-tone='gold'] {
+  color: var(--gold, #e2c27a);
+}
+.ggu-status[data-tone='lavender'] {
+  color: var(--lavender, #b9a8ff);
+}
+.ggu-status[data-tone='pink'] {
+  color: var(--pink-soft, #ff9ec4);
+}
+
+.ggu-spin {
+  animation: ggu-spin 0.9s linear infinite;
+}
+@keyframes ggu-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

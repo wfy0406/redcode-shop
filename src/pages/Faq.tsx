@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import AppInstallGuide from '@/components/AppInstallGuide';
 import { AI_TRYON_TUTORIAL_POSTER, AI_TRYON_TUTORIAL_SRC } from '@/components/AiTryOnTutorial';
-import { PUBLIC_DISPATCH_POLICY, PUBLIC_PAYMENT_POLICY } from '@contracts/publicPolicies';
+import {
+  PUBLIC_DISPATCH_POLICY,
+  PUBLIC_PAYMENT_POLICY,
+  PUBLIC_SHIPPING_POLICY,
+} from '@contracts/publicPolicies';
 
 /**
  * 常見問題 FAQ /faq
@@ -103,9 +107,8 @@ const FAQ_ITEMS: FaqItem[] = [
     q: '幾多錢包郵？',
     a: (
       <>
-        揀<span className="faq-key">順豐站／自提點／智能櫃自取</span>，買滿{' '}
-        <span className="faq-key">$350</span> 就免運費，湊夠數就唔使畀。
-        送貨上門就一律順豐到付，運費收貨時直接畀順豐。
+        <span className="faq-key">{PUBLIC_SHIPPING_POLICY.pickupFreeText}</span>
+        ；{PUBLIC_SHIPPING_POLICY.freightCollectText}。
       </>
     ),
   },

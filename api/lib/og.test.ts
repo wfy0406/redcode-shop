@@ -159,24 +159,20 @@ describe("injectProductOg — 商品存在", () => {
     expect(productLd!.name).toBe("067");
     expect(productLd!.size).toEqual(["S", "M", "L"]);
     const returnPolicy = offers.hasMerchantReturnPolicy as Record<string, unknown>;
+    expect(returnPolicy.applicableCountry).toBe("HK");
+    expect(returnPolicy.returnPolicyCountry).toBe("HK");
     expect(returnPolicy.merchantReturnDays).toBe(7);
     expect(returnPolicy.itemDefectReturnFees).toBe("https://schema.org/FreeReturn");
     expect(returnPolicy.customerRemorseReturnFees).toBe("https://schema.org/ReturnShippingFees");
     expect(returnPolicy.returnShippingFeesAmount).toBeUndefined();
-    const shippingDetails = offers.shippingDetails as Record<string, unknown>;
-    expect(shippingDetails["@type"]).toBe("OfferShippingDetails");
-    expect(shippingDetails.description).toBe("正常情況下，訂單確認後約 7–10 個工作天寄出，惟部分商品可能需要更久。");
-    expect(shippingDetails.shippingRate).toBeUndefined();
-    const deliveryTime = shippingDetails.deliveryTime as Record<string, unknown>;
-    expect(deliveryTime["@type"]).toBe("ShippingDeliveryTime");
-    expect(deliveryTime.transitTime).toBeUndefined();
-    expect(deliveryTime.handlingTime).toEqual({
-      "@type": "QuantitativeValue",
-      minValue: 7,
-      maxValue: 10,
-      unitCode: "DAY",
-    });
+    // shippingDetails 整塊唔出：順豐到付冇真實固定 shippingRate、transitTime 未確認，
+    // 與其出個唔完整嘅 OfferShippingDetails 觸發警告，不如省略；
+    // 寄出時間喺首口 HTML 可見文字如實講（上面 prerender 測試已斷言）。
+    // 絕對唔准為消警告亂填假 shippingRate／transitTime／aggregateRating／GTIN。
+    expect(offers.shippingDetails).toBeUndefined();
     expect(JSON.stringify(offers)).not.toContain("30.00");
+    expect(JSON.stringify(offers)).not.toContain("shippingRate");
+    expect(JSON.stringify(offers)).not.toContain("transitTime");
   });
 
   it("brand 冇真欄位：Product JSON-LD 唔再硬編碼 RedCode 品牌（同 Feed 唔出 g:brand 一致）", async () => {

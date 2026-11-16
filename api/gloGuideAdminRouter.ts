@@ -18,13 +18,21 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
-import { createRouter, staffProcedure, supervisorProcedure, type AuthUser } from "./middleware";
+import { createRouter, adminProcedure, staffProcedure, supervisorProcedure, type AuthUser } from "./middleware";
 import { getDb } from "./queries/connection";
 import { users } from "@db/schema";
 import * as service from "./gloGuideService";
 import { GloGuideError } from "./gloGuideService";
 import { defaultGloGuideProviders } from "./gloGuideProviders";
 import { GLO_GUIDE_ACTOR_ROLES, type GloGuideActor } from "./gloGuideValidation";
+import { logAudit } from "./audit";
+import {
+  GLO_GUIDE_USAGE_MAX_CENTS,
+  GLO_GUIDE_USAGE_SETTING_KEY,
+  getGloGuideUsageSettings,
+  getGloGuideUsageStats,
+  saveGloGuideUsageSettings,
+} from "./gloGuideUsage";
 
 /** GloGuideError httpStatus → tRPC code（白名單；其他一律 INTERNAL） */
 function mapGloGuideError(e: unknown): TRPCError {
@@ -426,6 +434,55 @@ export const gloGuideAdminRouter = createRouter({
         throw mapGloGuideError(e);
       }
     }),
+
+  // ── 用量及估算成本（**只限管理員**；員工生成權限／主管審批權限唔變）──
+  // 成本單價必須管理員明確輸入；null＝未知，0＝明確免費。所有數字係估算成本，
+  // 唔係供應商實收；實收以供應商帳單為準。
+
+  /** 而家嘅估算成本單價（配搭圖／文字；null＝未設定） */
+  usageSettings: adminProcedure.query(async () => {
+    try {
+      return await getGloGuideUsageSettings();
+    } catch (e) {
+      throw mapGloGuideError(e);
+    }
+  }),
+
+  /** 更新估算成本單價（整數仙，0 至上限；null＝未知）。只影響之後新建嘅 job，歷史 snapshot 唔變。 */
+  setUsageSettings: adminProcedure
+    .input(
+      z.object({
+        imageCostCents: z.number().int().min(0).max(GLO_GUIDE_USAGE_MAX_CENTS).nullable(),
+        textCostCents: z.number().int().min(0).max(GLO_GUIDE_USAGE_MAX_CENTS).nullable(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const actor = await actorFromAuthUser(ctx.user);
+        await saveGloGuideUsageSettings(input);
+        void logAudit({
+          actorId: actor.id,
+          actorRole: actor.role,
+          actorNameFallback: actor.name,
+          action: "gloGuide.usageSettingsUpdate",
+          targetType: "setting",
+          targetId: GLO_GUIDE_USAGE_SETTING_KEY,
+          detail: `更新精選文章估算成本單價：配搭圖 ${input.imageCostCents === null ? "未知" : `${input.imageCostCents} 仙`}，文字 ${input.textCostCents === null ? "未知" : `${input.textCostCents} 仙`}`,
+        });
+        return { ok: true as const, settings: input };
+      } catch (e) {
+        throw mapGloGuideError(e);
+      }
+    }),
+
+  /** 香港時間今日／今月／今年用量＋估算成本＋最近 20 個工作（唔回 payload／秘密／原圖） */
+  usageStats: adminProcedure.query(async () => {
+    try {
+      return await getGloGuideUsageStats();
+    } catch (e) {
+      throw mapGloGuideError(e);
+    }
+  }),
 });
 
 export type GloGuideAdminRouter = typeof gloGuideAdminRouter;

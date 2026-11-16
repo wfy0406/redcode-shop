@@ -36,6 +36,12 @@ import {
 } from "./gloGuideProviders";
 import { assertThemeAvailable, getRecentThemes, gloGuideModelImage } from "./gloGuideService";
 import { canClaimJobStatus, isGloGuideModelImagePath, shouldApplyGenerationToArticle } from "./gloGuideValidation";
+import { notifyGloGuideReviewers } from "./gloGuideReviewPush";
+import {
+  getGloGuideUsageSettings,
+  gloGuideJobCostSnapshot,
+  mergeCostSnapshotPayload,
+} from "./gloGuideUsage";
 
 /**
  * 文章 modelImage 快照 → provider 輸入：
@@ -130,6 +136,26 @@ async function setJob(
     .update(gloGuideJobs)
     .set({ ...patch, updatedAt: new Date() })
     .where(eq(gloGuideJobs.id, jobId));
+}
+
+/**
+ * 條件式完成 job：只准 active（queued/submitted/processing）→ completed。
+ * runFullJob／article 完成路徑同 settleGloGuideArticleInDb recovery 理論上可並發，
+ * 兩邊用同一 job key 通知都可能重複推——只有呢次 update 真係轉咗態（回 publicId）
+ * 嗰邊先准 notify；已被另一邊結算（回 null）就唔准再推。失敗路徑唔用呢度。
+ */
+async function completeJobIfActive(db: Db, jobId: number, error: string | null): Promise<string | null> {
+  const rows = await db
+    .update(gloGuideJobs)
+    .set({ status: "completed", error, completedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(gloGuideJobs.id, jobId),
+        inArray(gloGuideJobs.status, ["queued", "submitted", "processing"]),
+      ),
+    )
+    .returning({ publicId: gloGuideJobs.publicId });
+  return rows[0]?.publicId ?? null;
 }
 
 // H2：文章寫入一律行 applyToEditableArticle（conditional）；唔再提供無條件寫文章嘅 helper。
@@ -414,6 +440,8 @@ async function runFullJob(db: Db, job: Job, providers: GloGuideProviders): Promi
   });
   if (!article) throw new Error("article 唔存在");
 
+  // 同一批 child image job 共用一次單價讀取；讀取失敗照抛真錯誤（唔准靜默當免費建 job）
+  const imageCostSnapshot = gloGuideJobCostSnapshot("image", await getGloGuideUsageSettings());
   const imageJobIds: number[] = [];
   for (let i = 0; i < links.length; i++) {
     const link = links[i]!;
@@ -443,7 +471,8 @@ async function runFullJob(db: Db, job: Job, providers: GloGuideProviders): Promi
           kind: "image",
           status: "queued",
           idempotencyKey: `full-img:${article.publicId}:${img.publicId}`,
-          payload: { parentJob: job.publicId },
+          // 成本 snapshot＝建立當刻嘅配搭圖單價（payload 內部欄，唔入公開 DTO）
+          payload: mergeCostSnapshotPayload({ parentJob: job.publicId }, imageCostSnapshot),
         })
         .returning();
       return createdJob;
@@ -484,12 +513,15 @@ async function runFullJob(db: Db, job: Job, providers: GloGuideProviders): Promi
       generationError: null,
       status: "pending_review",
     });
-    await setJob(db, job.id, {
-      status: "completed",
-      completedAt: new Date(),
-      error: applied ? null : "note: 文章狀態已改變（published/archived），結果未套用",
-    });
-    if (applied) {
+    // 並發安全：settleGloGuideArticleInDb recovery 可能已經結算咗呢個 parent——
+    // 只有今次 update 真係 active→completed（ transitioned 有值）先准推，
+    // 唔係就算 notify key 一樣都會重複推。job 狀態照樣落 DB（冇郁就咩都唔寫）。
+    const transitioned = await completeJobIfActive(
+      db,
+      job.id,
+      applied ? null : "note: 文章狀態已改變（published/archived），結果未套用",
+    );
+    if (applied && transitioned) {
       void logAudit({
         actorRole: "system",
         action: "gloGuide.generationCompleted",
@@ -497,6 +529,8 @@ async function runFullJob(db: Db, job: Job, providers: GloGuideProviders): Promi
         targetId: article.id,
         detail: `指南「${article.title}」完整生成完成（${imageJobIds.length} 張圖），待審批`,
       });
+      // 每個真正完成嘅 full／scheduled job 只通知一次；notify 會再查文章仍係 pending_review。
+      void notifyGloGuideReviewers(article.id, `job:${job.publicId}`);
     }
   } else {
     const msg = `圖片生成未完成：${errors.join("；") || "未知原因"}`.slice(0, 900);
@@ -559,11 +593,13 @@ export async function runGloGuideJob(
             generationStatus: "completed",
             status: "pending_review",
           });
-          await setJob(db, job.id, {
-            status: "completed",
-            completedAt: new Date(),
-            error: applied ? null : "note: 文章狀態已改變（published/archived），結果未套用",
-          });
+          // 同 full/scheduled 一樣：只有今次真係 active→completed 先准推（防同 recovery 結算並發重複通知）
+          const transitioned = await completeJobIfActive(
+            db,
+            job.id,
+            applied ? null : "note: 文章狀態已改變（published/archived），結果未套用",
+          );
+          if (applied && transitioned) void notifyGloGuideReviewers(job.articleId, `job:${job.publicId}`);
         } catch (e) {
           const msg = `文字生成失敗：${errText(e)}`.slice(0, 900);
           await applyToEditableArticle(db, job.articleId, { generationStatus: "failed", generationError: msg });
@@ -839,7 +875,7 @@ async function settleGloGuideArticleInDb(db: Db, articleId: number): Promise<Glo
       )
       .returning({ id: gloGuideArticles.id });
     const applied = settled.length > 0;
-    await db
+    const completedParents = await db
       .update(gloGuideJobs)
       .set({
         status: "completed",
@@ -853,7 +889,14 @@ async function settleGloGuideArticleInDb(db: Db, articleId: number): Promise<Glo
           inArray(gloGuideJobs.kind, ["scheduled", "full"]),
           inArray(gloGuideJobs.status, ["queued", "submitted", "processing"]),
         ),
-      );
+      )
+      .returning({ publicId: gloGuideJobs.publicId });
+    // 只有呢次真係將 active parent 轉 completed 先推；重複 recovery 冇新 transition 就唔會再推。
+    if (applied) {
+      for (const parent of completedParents) {
+        void notifyGloGuideReviewers(articleId, `job:${parent.publicId}`);
+      }
+    }
   } else {
     const msg = "圖片生成未完成（有失敗圖／完成圖少過已選商品數），請重生或刪除失敗圖後再試";
     // H2：published/archived 文章唔郁

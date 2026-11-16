@@ -209,7 +209,8 @@ describe("recovery 結算範圍（iteration 4 修復 source guard）", () => {
   });
   it("runFullJob 建嘅 child image job payload 一定帶 parentJob（recovery 結算靠佢識別）", () => {
     const full = src.slice(src.indexOf("async function runFullJob"), src.indexOf("const runningJobs"));
-    expect(full).toContain("payload: { parentJob: job.publicId }");
+    // v5 起 child payload 經 mergeCostSnapshotPayload 加埋成本 snapshot；parentJob 欄位必須保留
+    expect(full).toContain("mergeCostSnapshotPayload({ parentJob: job.publicId }");
   });
 });
 
@@ -319,5 +320,42 @@ describe("scene context 接線 source guard（生成＋recovery 都帶文章 con
     expect(recovery).toContain("articleBody: article.body");
     expect(recovery).toContain("productName: product.name");
     expect(recovery).toContain("variation: image.position");
+  });
+});
+
+describe("成功完成＝conditional active→completed（防同 recovery 結算並發重複推）", () => {
+  const src = readFileSync(path.join(__dirname, "gloGuideOrchestrator.ts"), "utf8");
+
+  it("有 completeJobIfActive helper：UPDATE ... WHERE id AND status IN (queued/submitted/processing) RETURNING publicId", () => {
+    const helper = src.slice(src.indexOf("async function completeJobIfActive"), src.indexOf("// ──────────────────────────── 文字生成"));
+    expect(helper).toContain('inArray(gloGuideJobs.status, ["queued", "submitted", "processing"])');
+    expect(helper).toContain(".returning({ publicId: gloGuideJobs.publicId })");
+    expect(helper).toContain('status: "completed"');
+  });
+
+  it("runFullJob 成功路徑：唔再無條件 setJob completed；notify 要 applied＋ transitioned 齊先推", () => {
+    const runFull = src.slice(src.indexOf("async function runFullJob"), src.indexOf("// ──────────────────────────── 入口"));
+    expect(runFull).toContain("completeJobIfActive(");
+    expect(runFull).toContain("if (applied && transitioned)");
+    // 成功區（if (allOk) 起至 else 前）唔准留低舊嘅無條件完成寫入（失敗分支嘅 setJob failed 唔郁）
+    const successBlock = runFull.slice(runFull.indexOf("if (allOk)"), runFull.indexOf("} else {"));
+    expect(successBlock).not.toContain("setJob(db, job.id");
+    // 通知時機唔變：仍然係 pending_review 套用成功後推，key 用 job publicId
+    expect(runFull).toContain('void notifyGloGuideReviewers(article.id, `job:${job.publicId}`)');
+  });
+
+  it("article（文字重生）成功路徑：一樣 conditional，applied＋ transitioned 齊先推", () => {
+    const entry = src.slice(src.indexOf("export async function runGloGuideJob"), src.indexOf("export async function recoverGloGuideJobs"));
+    expect(entry).toContain("completeJobIfActive(");
+    expect(entry).toContain("if (applied && transitioned)");
+    expect(entry).toContain("void notifyGloGuideReviewers(job.articleId, `job:${job.publicId}`)");
+  });
+
+  it("失敗路徑唔准趁機改寫：settleGloGuideArticleInDb 仍用 completedParents 同一原則", () => {
+    const settle = src.slice(src.indexOf("async function settleGloGuideArticleInDb"));
+    // settle 嗰邊本身已係 conditional（active→completed RETURNING publicId）＋逐個 transitioned parent 先推
+    expect(settle).toContain(".returning({ publicId: gloGuideJobs.publicId })");
+    expect(settle).toContain('inArray(gloGuideJobs.status, ["queued", "submitted", "processing"])');
+    expect(settle).toContain("for (const parent of completedParents)");
   });
 });
