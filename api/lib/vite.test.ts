@@ -89,6 +89,7 @@ import "../webDesignPublicBill";
 
 // fixture：repo 真 index.html（module 頂用真 fs 預讀，唔經 mock 2 嘅 spy）
 const TEMPLATE = fs.readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+const MANIFEST = fs.readFileSync(new URL("../../public/manifest.webmanifest", import.meta.url), "utf8");
 
 function makeApp() {
   const app = new Hono<{ Bindings: HttpBindings }>();
@@ -183,8 +184,10 @@ beforeEach(() => {
   mockGuideError = null;
   mockAnnouncement = { value: "true" };
   resetLuckyAnnouncementPublicCache();
-  // mock 2：攔截 handler 嘅 index.html read，回 fixture（每個 test 前裝，完即還原）
-  vi.spyOn(fs, "readFileSync").mockImplementation(() => TEMPLATE);
+  // mock 2：index.html／manifest 分別回真 fixture（每個 test 前裝，完即還原）
+  vi.spyOn(fs, "readFileSync").mockImplementation((file) =>
+    String(file).endsWith("manifest.webmanifest") ? MANIFEST : TEMPLATE,
+  );
 });
 
 afterEach(() => {
@@ -192,6 +195,39 @@ afterEach(() => {
 });
 
 describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic／fs）", () => {
+  it("Chrome Android 保留 standalone WebAPK manifest，並按 UA 分快取", async () => {
+    const ua = "Mozilla/5.0 (Linux; Android 16; Pixel 9 Pro) AppleWebKit/537.36 Chrome/142.0.0.0 Mobile Safari/537.36";
+    const res = await makeApp().request("/manifest.webmanifest?v=20261117", { headers: { "user-agent": ua } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/manifest+json");
+    expect(res.headers.get("vary")).toBe("User-Agent");
+    expect(res.headers.get("cache-control")).toBe("no-cache, must-revalidate");
+    const manifest = await res.json() as { display: string; shortcuts: unknown[] };
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.shortcuts.length).toBeGreaterThan(0);
+  });
+
+  it("Samsung Internet Android 只攞非 installable manifest，唔再生成 WebAPK", async () => {
+    const ua = "Mozilla/5.0 (Linux; Android 16; SM-S9280) AppleWebKit/537.36 SamsungBrowser/29.0 Chrome/130.0.0.0 Mobile Safari/537.36";
+    const res = await makeApp().request("/manifest.webmanifest?v=20261117", { headers: { "user-agent": ua } });
+    expect(res.status).toBe(200);
+    const manifest = await res.json() as { display: string; shortcuts: unknown[] };
+    expect(manifest.display).toBe("browser");
+    expect(manifest.shortcuts).toEqual([]);
+  });
+
+  it("iPhone 同桌面 manifest 完全唔受 Android Chrome-only 政策影響", async () => {
+    const uas = [
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 Version/19.0 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36",
+    ];
+    for (const ua of uas) {
+      const res = await makeApp().request("/manifest.webmanifest?v=20261117", { headers: { "user-agent": ua } });
+      const manifest = await res.json() as { display: string };
+      expect(manifest.display).toBe("standalone");
+    }
+  });
+
   it("指南總覽首口 HTML 有真文章、商品、cover、OG 同 self canonical", async () => {
     mockGuideItems = [makeGuide()];
     const res = await makeApp().request("/glo-guide", { headers: PROXY_HEADERS });

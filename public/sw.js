@@ -69,7 +69,7 @@ self.addEventListener('notificationclick', function (event) {
  * 換新 SW 唔會令舊客人嘅開播通知 subscription 失效。
  */
 
-var RC_VERSION = 'v2';
+var RC_VERSION = 'v3';
 var RC_SHELL_CACHE = 'rc-shell-' + RC_VERSION;   // 離線頁＋核心圖示
 var RC_PAGES_CACHE = 'rc-pages-' + RC_VERSION;   // network-first 快取過嘅 HTML
 var RC_ASSETS_CACHE = 'rc-assets-' + RC_VERSION; // /assets/* hash 檔
@@ -79,7 +79,7 @@ var RC_MEDIA_LIMIT = 80;
 
 var RC_SHELL_URLS = [
   '/offline.html',
-  '/manifest.webmanifest',
+  // manifest 按 Android 瀏覽器 UA 回 standalone／browser，唔可以 precache 後長期重用舊版本。
   '/pwa-icon-192.png',
   '/pwa-icon-512.png',
   '/logo.png',
@@ -146,6 +146,9 @@ self.addEventListener('fetch', function (event) {
 
   // SW 檔本身唔快取（等瀏覽器 byte-check 更新機制正常運作）
   if (url.pathname === '/sw.js') return;
+
+  // manifest 按 UA 決定可唔可以生成 WebAPK；唔可以跌入下面 SWR media cache。
+  if (url.pathname === '/manifest.webmanifest') return;
 
   // HTML 導航：network-first
   if (request.mode === 'navigate') {

@@ -1,4 +1,9 @@
 import { useEffect, useState } from 'react';
+import {
+  isAndroidUserAgent,
+  isChromeAndroidUserAgent,
+  shouldDisableAndroidWebApk,
+} from '@contracts/pwaInstallPolicy';
 
 /** Chromium 專有安裝事件；事件只可以用一次，全站共用同一份狀態。 */
 export type BeforeInstallPromptEvent = Event & {
@@ -8,6 +13,10 @@ export type BeforeInstallPromptEvent = Event & {
 
 export type PwaInstallOutcome = 'accepted' | 'dismissed' | 'unavailable' | 'error';
 export type PwaInstallSnapshot = { canInstall: boolean; installed: boolean };
+
+/** 固定去 RedCode FAQ 安裝區；fallback 只准官方 HTTPS URL，唔接受外來跳轉參數。 */
+export const CHROME_ANDROID_INSTALL_INTENT =
+  'intent://redcode.red/faq#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Fredcode.red%2Ffaq;end';
 
 let deferredPrompt: BeforeInstallPromptEvent | null = null;
 let initialized = false;
@@ -25,6 +34,18 @@ export function isIos(): boolean {
   );
 }
 
+export function isAndroid(): boolean {
+  return typeof navigator !== 'undefined' && isAndroidUserAgent(navigator.userAgent);
+}
+
+export function isChromeAndroid(): boolean {
+  return typeof navigator !== 'undefined' && isChromeAndroidUserAgent(navigator.userAgent);
+}
+
+export function isAndroidWebApkDisabled(): boolean {
+  return typeof navigator !== 'undefined' && shouldDisableAndroidWebApk(navigator.userAgent);
+}
+
 export function isStandalone(): boolean {
   if (typeof window === 'undefined') return false;
   return (
@@ -35,14 +56,15 @@ export function isStandalone(): boolean {
 
 function publish(): void {
   installed = installed || isStandalone();
-  snapshot = { canInstall: Boolean(deferredPrompt), installed };
+  snapshot = { canInstall: Boolean(deferredPrompt) && !isAndroidWebApkDisabled(), installed };
   listeners.forEach((listener) => listener());
 }
 
 function onBeforeInstallPrompt(event: Event): void {
   // 全站只攔一次；InstallBanner 同 FAQ 安裝掣共用，唔會各自搶事件。
   event.preventDefault();
-  deferredPrompt = event as BeforeInstallPromptEvent;
+  // 非 Chrome Android 就算瀏覽器照出事件，都唔准前端再啟動 WebAPK 安裝。
+  deferredPrompt = isAndroidWebApkDisabled() ? null : event as BeforeInstallPromptEvent;
   publish();
 }
 
@@ -84,6 +106,7 @@ export function usePwaInstall(): PwaInstallSnapshot {
 
 export async function promptPwaInstall(): Promise<PwaInstallOutcome> {
   ensurePwaInstallCapture();
+  if (isAndroidWebApkDisabled()) return 'unavailable';
   const promptEvent = deferredPrompt;
   if (!promptEvent) return 'unavailable';
 

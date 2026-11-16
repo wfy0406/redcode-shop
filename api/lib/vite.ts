@@ -3,6 +3,7 @@ import type { HttpBindings } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import fs from "fs";
 import path from "path";
+import { shouldDisableAndroidWebApk } from "@contracts/pwaInstallPolicy";
 import {
   faqPageStructuredData,
   injectLuckyAnnouncementClosedContent,
@@ -48,6 +49,29 @@ const NOINDEX_EXACT = [
 
 export function serveStaticFiles(app: App) {
   const distPath = path.resolve(import.meta.dirname, "../dist/public");
+
+  // 2026-11-17 Android 瀏覽器相容調整：保留 Chrome Android 嘅 WebAPK。
+  // 其他可識別 Android 瀏覽器攞 display:browser（唔符合 PWA 安裝條件），再由 FAQ／banner
+  // 引導去 Chrome；iOS、桌面同 Chrome Android 沿用原 manifest，絕不削弱開播通知。
+  // 必須註冊喺 serveStatic 之前，否則靜態 standalone manifest 會繞過政策。
+  // 日後修改 manifest 內容時，要同步更新 index.html 嘅 ?v= 版本，避免舊 SW cache 延遲生效。
+  let cachedManifest: Record<string, unknown> | undefined;
+  app.get("/manifest.webmanifest", (c) => {
+    const baseManifest = (cachedManifest ??= JSON.parse(
+      fs.readFileSync(path.resolve(distPath, "manifest.webmanifest"), "utf8"),
+    ) as Record<string, unknown>);
+    const manifest = { ...baseManifest };
+    if (shouldDisableAndroidWebApk(c.req.header("user-agent"))) {
+      manifest.display = "browser";
+      manifest.shortcuts = [];
+      delete manifest.display_override;
+    }
+    return c.body(JSON.stringify(manifest), 200, {
+      "Content-Type": "application/manifest+json; charset=utf-8",
+      "Cache-Control": "no-cache, must-revalidate",
+      Vary: "User-Agent",
+    });
+  });
 
   // 2026-07-29 快取策略修復（首頁中段隱形嘅根因）：
   // 之前所有回應都冇 Cache-Control，瀏覽器會用 heuristic caching 長期揸住舊 index.html

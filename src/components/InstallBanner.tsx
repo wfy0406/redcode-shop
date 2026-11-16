@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Download, Share, X } from 'lucide-react';
-import { isIos, promptPwaInstall, usePwaInstall } from '@/lib/pwaInstall';
+import {
+  CHROME_ANDROID_INSTALL_INTENT,
+  isAndroid,
+  isChromeAndroid,
+  isIos,
+  promptPwaInstall,
+  usePwaInstall,
+} from '@/lib/pwaInstall';
 
 /**
  * PWA 安裝提示 banner（2026-10）——原位可收起，唔係全屏彈窗。
@@ -57,7 +64,8 @@ export default function InstallBanner() {
   };
 
   if (installed || dismissed) return null;
-  const mode = canInstall ? 'android' : iosDelayPassed && isIos() ? 'ios' : null;
+  const needsChrome = isAndroid() && !isChromeAndroid();
+  const mode = canInstall ? 'android' : needsChrome ? 'chrome' : iosDelayPassed && isIos() ? 'ios' : null;
   if (mode === null) return null;
 
   return (
@@ -78,7 +86,12 @@ export default function InstallBanner() {
           <p className="text-[15px] font-bold leading-snug">安裝 RedCode App</p>
           {mode === 'android' ? (
             <p className="mt-0.5 text-sm leading-relaxed text-txt-2">
-              加到主畫面，開播通知更快收到，一撳即入直播間。
+              加到主畫面，開播通知更快收到，一撳即入直播間。系統生成 App 可能要幾分鐘。
+            </p>
+          ) : mode === 'chrome' ? (
+            <p className="mt-0.5 text-sm leading-relaxed text-txt-2">
+              Android 必須使用最新版 Chrome 安裝。撳下面跳去 Chrome，再確認安裝 RedCode App。
+              如果按鈕冇反應，請複製 redcode.red/faq 去 Chrome 開啟。
             </p>
           ) : (
             <p className="mt-0.5 text-sm leading-relaxed text-txt-2">
@@ -88,6 +101,15 @@ export default function InstallBanner() {
             </p>
           )}
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            {mode === 'chrome' && (
+              <a
+                href={CHROME_ANDROID_INSTALL_INTENT}
+                className="btn btn-primary inline-flex min-h-11 items-center gap-1.5 !px-5 !py-2 text-[15px] no-underline"
+              >
+                <Download size={18} aria-hidden="true" />
+                用 Chrome 開啟並安裝
+              </a>
+            )}
             {mode === 'android' && (
               <button
                 type="button"
