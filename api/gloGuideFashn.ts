@@ -230,7 +230,8 @@ export function hasGloGuideSceneContext(
 }
 
 /**
- * 場景關鍵詞映射（主題／正文 → 明文場景）。第一個命中嘅關鍵詞組生效；
+ * 場景關鍵詞映射（主題／正文 → 明文場景）。主題有命中就優先用主題；
+ * 否則按正文實際出現次序揀首個場景，唔再按呢個表嘅排列次序冚過文章。
  * 冇命中 → 香港日常場景池隨機一個；OL 必須係獨立字，唔會誤中 Gold／Cold。
  */
 const SCENE_KEYWORDS: ReadonlyArray<{ re: RegExp; scene: string }> = [
@@ -257,6 +258,22 @@ const SCENE_KEYWORDS: ReadonlyArray<{ re: RegExp; scene: string }> = [
   { re: /維港|海港|海濱|尖沙咀|\bwaterfront\b/i, scene: "a Hong Kong Victoria Harbour waterfront promenade in soft daylight" },
   { re: /商場|購物|血拼|\bshopping\b|\bmall\b/i, scene: "a contemporary Hong Kong shopping mall with clean editorial lighting" },
 ];
+
+/**
+ * 喺一段文字入面揀最先實際提及嘅場景。regex 冇 global flag，exec 每次係新匹配；
+ * index 相同就先按關鍵詞表穩定次序，結果唔受隨機數影響。
+ */
+function firstMentionedScene(text: string): string | null {
+  let first: { index: number; order: number; scene: string } | null = null;
+  for (const [order, entry] of SCENE_KEYWORDS.entries()) {
+    const match = entry.re.exec(text);
+    if (!match || match.index < 0) continue;
+    if (!first || match.index < first.index || (match.index === first.index && order < first.order)) {
+      first = { index: match.index, order, scene: entry.scene };
+    }
+  }
+  return first?.scene ?? null;
+}
 
 /** 文章冇指明場景時嘅安全隨機池：全部都係香港日常可拍、四季都合理嘅地點。 */
 export const GLO_GUIDE_HK_FALLBACK_SCENES = [
@@ -318,9 +335,12 @@ export function buildGloGuideScenePrompt(input: GloGuideScenePromptInput): strin
     .trim()
     .slice(0, 1200);
   const styling = body || theme || "simple Hong Kong everyday styling";
-  const haystack = `${input.articleTheme}\n${input.articleBody}`;
-  const matched = SCENE_KEYWORDS.find((k) => k.re.test(haystack));
-  const scene = matched?.scene ?? GLO_GUIDE_HK_FALLBACK_SCENES[randomInt(GLO_GUIDE_HK_FALLBACK_SCENES.length)]!;
+  // 主題係文章嘅主要場景；例如「秋冬海濱吹風配搭」唔應因正文一句「返工」就變辦公室。
+  // 主題冇場景先睇正文，並用實際文字次序，避免關鍵詞表排頭嘅 office 永遠優先。
+  const scene =
+    firstMentionedScene(input.articleTheme) ??
+    firstMentionedScene(input.articleBody) ??
+    GLO_GUIDE_HK_FALLBACK_SCENES[randomInt(GLO_GUIDE_HK_FALLBACK_SCENES.length)]!;
   const pose = poseForVariation(input.category, input.variation);
   const fullBodyRequired = FULL_BODY_CATEGORIES.has(input.category);
   const placement =
@@ -335,8 +355,8 @@ export function buildGloGuideScenePrompt(input: GloGuideScenePromptInput): strin
     `The first image is NOT an outfit reference. Never copy, preserve or reuse any clothing, dress, skirt, top, trousers, footwear or accessories worn by the model in the first image.`,
     `Article styling guidance for the COMPLETE outfit: "${styling}". Follow the actual pairing and styling recommendations in this guidance, not the model's original clothes.`,
     `Replace the model's entire original outfit with a complete outfit based on the article guidance. If a complementary basic is not specified, use a simple unbranded item that suits the guidance and Hong Kong scene; never fall back to the original outfit.`,
-    `You may change the pose, framing, camera angle and background to fit the article scene.`,
-    `Scene: place the person in ${scene}, matching the article theme "${theme}".`,
+    `Change the pose, framing, camera angle and background as needed to fit the article scene; do not keep the model's original background by default.`,
+    `Scene hard requirement: the final image must clearly place the person in ${scene}, matching the article theme "${theme}". Do not retain or substitute an office or any other unrelated location when it conflicts with this scene.`,
     `Pose/composition for THIS image: ${pose}. It must be visibly different from the other images in this series.`,
     fullBodyRequired
       ? `Framing hard requirement: use full-body framing so the featured ${input.category} product is fully and clearly visible; do not crop it out of the frame.`

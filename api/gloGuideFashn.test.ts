@@ -560,6 +560,43 @@ describe("scene context（文章 theme/body → agent-images 場景路線）", (
     expect(blank).not.toContain("a lifestyle setting that clearly matches");
   });
 
+  it("海濱主題唔會被正文次要『返工』誤判做辦公室（2026-11-16 實例回歸）", () => {
+    const p = buildGloGuideScenePrompt({
+      category: "top",
+      articleTheme: "秋冬海濱吹風配搭",
+      articleBody:
+        "星期四轉涼又有一兩陣雨，我哋去海濱吹風都唔想着到成隻糉。星期五再冷少少，返工可以將風衣放最外；周末行街想輕便啲，就用抓皺外套襯背心。",
+      productName: "復古雙排扣翻領短版風衣",
+      variation: 0,
+    });
+    expect(p).toContain("Scene hard requirement");
+    expect(p).toContain("Hong Kong Victoria Harbour waterfront promenade");
+    expect(p).toContain("秋冬海濱吹風配搭");
+    expect(p).not.toContain("desk, laptop, office chairs");
+    expect(p).toContain("do not keep the model's original background by default");
+  });
+
+  it("主題冇場景時，正文按實際出現次序揀主要場景，唔再固定 office 優先", () => {
+    const base = {
+      category: "top",
+      articleTheme: "秋冬外套層次",
+      productName: "外套",
+      variation: 0,
+    };
+    const waterfrontFirst = buildGloGuideScenePrompt({
+      ...base,
+      articleBody: "先去海濱散步，之後返工都襯到。",
+    });
+    const officeFirst = buildGloGuideScenePrompt({
+      ...base,
+      articleBody: "先返工，周末再去海濱散步。",
+    });
+    expect(waterfrontFirst).toContain("Victoria Harbour waterfront promenade");
+    expect(waterfrontFirst).not.toContain("desk, laptop, office chairs");
+    expect(officeFirst).toContain("desk, laptop, office chairs");
+    expect(officeFirst).not.toContain("place the person in a Hong Kong Victoria Harbour waterfront");
+  });
+
   it("OL 場景關鍵詞只中獨立字，唔會將 Gold-tone／Cold 飾品文誤配辦公室", () => {
     const accessory = buildGloGuideScenePrompt({
       category: "accessory",
