@@ -5,7 +5,8 @@
  *
  * 舊有 /sitemap.xml 商品／上架閘測試全部保留，改打 /sitemap-fashion.xml
  * （原本公開靜態頁＋公開商品邏輯一字不變搬咗入呢個 child sitemap）：
- * (1) 商品 URL 唔再有 lastmod（listedDate 係上架日，唔係內容最後修改日）
+ * (1) 商品 URL 帶真 contentUpdatedAt 做 lastmod（listedDate 上架日唔再冒充修改日）；
+ *     無效／缺失日期唔出 lastmod（唔放假日期）；靜態頁／直播／公告 URL 永遠冇 lastmod
  * (2) 直播全日／單場 URL 由公開商品嘅真 liveDate/liveSession 得出，query 正確 escape
  * (3) 同一 URL 全表去重（重複場次／同商品頁撞 URL 都只出一次）
  * (4) 直播查詢失敗唔拖垮已成功嘅商品 URL（反之亦然）
@@ -120,25 +121,94 @@ async function getSitemap(): Promise<{ status: number; xml: string }> {
   return { status: res.status, xml: await res.text() };
 }
 
+/** 結構性 XML 檢查：urlset 包裝完整、url 標籤配對、每個 lastmod 都係合法 ISO 日期字串 */
+function expectWellFormedUrlset(xml: string) {
+  expect(xml).toContain('<?xml version="1.0" encoding="UTF-8"?>');
+  expect(xml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');
+  expect(xml.trim().endsWith("</urlset>")).toBe(true);
+  expect(xml.match(/<url>/g)?.length ?? 0).toBe(xml.match(/<\/url>/g)?.length ?? 0);
+  for (const m of xml.matchAll(/<lastmod>([^<]*)<\/lastmod>/g)) {
+    expect(m[1]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(new Date(m[1]).toISOString()).toBe(m[1]); // parse 完原樣＝合法 ISO
+  }
+}
+
+/** 抽出每條 <url> 嘅 loc 同有冇 lastmod（靜態斷言 lastmod 只屬於商品 URL 用） */
+function urlEntries(xml: string): { loc: string; lastmod: string | null }[] {
+  return [...xml.matchAll(/<url><loc>([^<]+)<\/loc>([\s\S]*?)<\/url>/g)].map((m) => ({
+    loc: m[1],
+    lastmod: m[2].match(/<lastmod>([^<]+)<\/lastmod>/)?.[1] ?? null,
+  }));
+}
+
 describe("/sitemap-fashion.xml", () => {
-  it("(1)(2) 商品 URL 冇 lastmod；直播全日／單場 URL 入 sitemap 兼正確 escape", async () => {
-    h.state.products = [{ id: 85 }, { id: 251 }];
+  it("(1)(2) 商品 URL 帶真 contentUpdatedAt lastmod（精確 ISO）；直播全日／單場 URL 入 sitemap 兼正確 escape", async () => {
+    h.state.products = [
+      { id: 85, contentUpdatedAt: new Date("2026-11-01T08:30:00.000Z") },
+      { id: 251, contentUpdatedAt: "2026-11-05T12:00:00.000Z" },
+    ];
     h.state.live = [
       { liveDate: "20261111", liveSession: null },
       { liveDate: "20261111", liveSession: "1" },
     ];
     const { status, xml } = await getSitemap();
     expect(status).toBe(200);
-    expect(xml).toContain("<loc>https://redcode.red/products/85</loc>");
-    expect(xml).toContain("<loc>https://redcode.red/products/251</loc>");
-    // lastmod 移除：listedDate 唔可以冒充內容最後修改日
-    expect(xml).not.toContain("<lastmod>");
+    expectWellFormedUrlset(xml);
+    // 真實產品修改日期原樣出現（Date 同 ISO 字串兩種 driver 形態都支援）
+    expect(xml).toContain(
+      "<url><loc>https://redcode.red/products/85</loc><lastmod>2026-11-01T08:30:00.000Z</lastmod><priority>0.8</priority></url>",
+    );
+    expect(xml).toContain(
+      "<url><loc>https://redcode.red/products/251</loc><lastmod>2026-11-05T12:00:00.000Z</lastmod><priority>0.8</priority></url>",
+    );
     expect(xml).toContain("<loc>https://redcode.red/products?liveDate=20261111</loc>");
     expect(xml).toContain(
       "<loc>https://redcode.red/products?liveDate=20261111&amp;liveSession=1</loc>",
     );
     // raw 未 escape 嘅 & 唔准出現喺 XML loc
     expect(xml).not.toContain("liveDate=20261111&liveSession");
+  });
+
+  it("(1b) 無效／缺失 contentUpdatedAt → 商品 URL 保留但唔出 lastmod（唔放假日期、唔用 listedDate 頂）", async () => {
+    h.state.products = [
+      { id: 85, contentUpdatedAt: "not-a-date" },
+      { id: 86, contentUpdatedAt: null },
+      { id: 87 }, // 欄缺失
+    ];
+    const { status, xml } = await getSitemap();
+    expect(status).toBe(200);
+    expectWellFormedUrlset(xml);
+    for (const id of [85, 86, 87]) {
+      expect(xml).toContain(`<loc>https://redcode.red/products/${id}</loc>`);
+    }
+    // 全部商品日期無效 → 成張 sitemap 一個 lastmod 都唔准有
+    expect(xml).not.toContain("<lastmod>");
+    expect(urlEntries(xml).every((e) => e.lastmod === null)).toBe(true);
+  });
+
+  it("(1c) lastmod 只屬於商品 URL：首頁／靜態頁／直播／公告 URL 一律冇；URL 集合唔變", async () => {
+    h.state.products = [{ id: 85, contentUpdatedAt: new Date("2026-11-01T00:00:00.000Z") }];
+    h.state.live = [{ liveDate: "20261111", liveSession: "1" }];
+    h.state.events = [{ id: 12 }];
+    const { xml } = await getSitemap();
+    expectWellFormedUrlset(xml);
+    const entries = urlEntries(xml);
+    expect(entries.length).toBeGreaterThan(0);
+    // 有 lastmod 嘅全部係 /products/:id 商品頁
+    const withLastmod = entries.filter((e) => e.lastmod !== null);
+    expect(withLastmod).toEqual([
+      { loc: "https://redcode.red/products/85", lastmod: "2026-11-01T00:00:00.000Z" },
+    ]);
+    // 首頁／靜態頁／直播 query／公告頁全部冇 lastmod（冇可靠內容時間唔放假日期）
+    for (const e of entries.filter((e) => e.lastmod === null)) {
+      expect(e.loc).not.toMatch(/\/products\/\d+$/);
+    }
+    expect(entries.some((e) => e.loc === "https://redcode.red/")).toBe(true);
+    expect(entries.some((e) => e.loc === "https://redcode.red/products")).toBe(true);
+    expect(
+      entries.some((e) => e.loc === "https://redcode.red/products?liveDate=20261111&amp;liveSession=1"),
+    ).toBe(true);
+    expect(entries.some((e) => e.loc === "https://redcode.red/lucky-results/12")).toBe(true);
   });
 
   it("(3) 同一 URL 去重：重複場次／同靜態頁撞車都只出一次", async () => {
@@ -252,6 +322,7 @@ const guideItem = (slug: string, over: Partial<GuideListItem> = {}): GuideListIt
   publishedAt: "2026-02-20T10:00:00.000Z",
   updatedAt: "2026-02-21T10:00:00.000Z",
   coverImage: null,
+  images: [],
   products: [],
   ...over,
 });

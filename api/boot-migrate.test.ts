@@ -70,10 +70,23 @@ type MockState = {
   tables: Map<string, Set<string>>;
   constraints: Set<string>;
   applied: string[]; // 實際執行咗嘅動作 marker（驗 backfill 次數用）
+  // v2026.11 精確擴展（contentUpdatedAt 自癒模式用）：追蹤欄嘅約束狀態，
+  // 等無條件修復語句喺已健康狀態下係真 no-op（唔記 marker）——重跑先真正「零新動作」。
+  notNullCols: Set<string>; // "table.col"：已有 NOT NULL
+  defaultCols: Set<string>; // "table.col"：已有 DEFAULT
+  pendingBackfill: Set<string>; // "table.col"：nullable 新欄，舊行仲係 NULL 未填
 };
 
 function newMockState(): MockState {
-  return { types: new Map(), tables: new Map(), constraints: new Set(), applied: [] };
+  return {
+    types: new Map(),
+    tables: new Map(),
+    constraints: new Set(),
+    applied: [],
+    notNullCols: new Set(),
+    defaultCols: new Set(),
+    pendingBackfill: new Set(),
+  };
 }
 
 function needTable(st: MockState, t: string): Set<string> {
@@ -82,9 +95,15 @@ function needTable(st: MockState, t: string): Set<string> {
   return cols;
 }
 
-/** CREATE TABLE body → 欄名集（top-level comma 切；每段第一個 token 係欄名） */
-function parseColumns(body: string): Set<string> {
+/** CREATE TABLE body → 欄名集＋約束（top-level comma 切；每段第一個 token 係欄名） */
+function parseColumns(body: string): {
+  cols: Set<string>;
+  notNull: Set<string>;
+  hasDefault: Set<string>;
+} {
   const cols = new Set<string>();
+  const notNull = new Set<string>();
+  const hasDefault = new Set<string>();
   let depth = 0;
   let cur = "";
   const parts: string[] = [];
@@ -101,9 +120,13 @@ function parseColumns(body: string): Set<string> {
   if (cur.trim()) parts.push(cur);
   for (const p of parts) {
     const m = p.trim().match(/^"?([A-Za-z_]\w*)"?/);
-    if (m && !/^(PRIMARY|FOREIGN|UNIQUE|CHECK|CONSTRAINT)$/i.test(m[1])) cols.add(m[1]);
+    if (m && !/^(PRIMARY|FOREIGN|UNIQUE|CHECK|CONSTRAINT)$/i.test(m[1])) {
+      cols.add(m[1]);
+      if (/\bNOT NULL\b/i.test(p)) notNull.add(m[1]);
+      if (/\bDEFAULT\b/i.test(p)) hasDefault.add(m[1]);
+    }
   }
-  return cols;
+  return { cols, notNull, hasDefault };
 }
 
 function execOne(stmt: string, st: MockState): void {
@@ -136,14 +159,47 @@ function execOne(stmt: string, st: MockState): void {
     if (guard) {
       const [, tname, col] = guard;
       const cols = needTable(st, tname); // ⚠️ 表未建喺度炸——就係 fresh DB 缺欄 bug 嘅重現點
+      const key = `${tname}.${col}`;
+      const beforeEndIf = s.split(/END IF;/i)[0];
       if (!cols.has(col)) {
         const add = s.match(/ALTER TABLE "?\w+"? ADD COLUMN "?(\w+)"?/i);
         if (!add) throw new Error(`mock: DO block 入面搵唔到 ADD COLUMN`);
         cols.add(add[1]);
-        st.applied.push(`addcol:${tname}.${col}`);
-        if (new RegExp(`UPDATE "${tname}" SET "${col}"`, "i").test(s)) {
-          st.applied.push(`backfill:${tname}.${col}`);
+        st.applied.push(`addcol:${key}`);
+        // nullable 新欄：舊行全部 NULL，等回填
+        st.pendingBackfill.add(key);
+        // 條件式回填（IF 之內嘅 UPDATE，例如 luckyDraws.notifiedAt 模式）
+        if (new RegExp(`UPDATE "${tname}" SET "${col}"`, "i").test(beforeEndIf)) {
+          st.pendingBackfill.delete(key);
+          st.applied.push(`backfill:${key}`);
         }
+      }
+      // v2026.11 contentUpdatedAt 自癒模式（精確擴展，唔郁舊 block 行為）：
+      // IF 之外（END IF; 之後）嘅無條件修復語句——欄已存在都照跑，
+      // 專門俾「上次半路失敗只加到 nullable 欄」嘅 partial 態自癒。
+      // 已健康嘅欄（冇 NULL 行／已有 DEFAULT／已有 NOT NULL）係真 no-op，唔記 marker——
+      // 咁先證明到「可重跑」而唔係齋執行。
+      const afterEndIf = s.split(/END IF;/i).slice(1).join(";");
+      if (
+        new RegExp(`UPDATE "${tname}" SET "${col}"`, "i").test(afterEndIf) &&
+        st.pendingBackfill.has(key)
+      ) {
+        st.pendingBackfill.delete(key);
+        st.applied.push(`heal-backfill:${key}`);
+      }
+      if (
+        new RegExp(`ALTER TABLE "?${tname}"? ALTER COLUMN "${col}" SET DEFAULT`, "i").test(afterEndIf) &&
+        !st.defaultCols.has(key)
+      ) {
+        st.defaultCols.add(key);
+        st.applied.push(`heal-setdefault:${key}`);
+      }
+      if (
+        new RegExp(`ALTER TABLE "?${tname}"? ALTER COLUMN "${col}" SET NOT NULL`, "i").test(afterEndIf) &&
+        !st.notNullCols.has(key)
+      ) {
+        st.notNullCols.add(key);
+        st.applied.push(`heal-notnull:${key}`);
       }
       return;
     }
@@ -167,7 +223,10 @@ function execOne(stmt: string, st: MockState): void {
   if (ctbl) {
     const [, tname, body] = ctbl;
     if (!st.tables.has(tname)) {
-      st.tables.set(tname, parseColumns(body));
+      const parsed = parseColumns(body);
+      st.tables.set(tname, parsed.cols);
+      for (const c of parsed.notNull) st.notNullCols.add(`${tname}.${c}`);
+      for (const c of parsed.hasDefault) st.defaultCols.add(`${tname}.${c}`);
       st.applied.push(`createtable:${tname}`);
     }
     return;
@@ -389,6 +448,104 @@ describe("winnersPublic 公告開關欄（v2026.11.08）", () => {
   });
 });
 
+// ── v2026.11：products.contentUpdatedAt（sitemap-fashion.xml 商品 lastmod 真修改時間）──────
+
+describe("products.contentUpdatedAt 真內容修改時間（v2026.11）", () => {
+  it("fresh CREATE TABLE products 直接帶欄：timestamp NOT NULL DEFAULT now()", () => {
+    expect(DDL).toMatch(
+      /CREATE TABLE IF NOT EXISTS products \([\s\S]*?"contentUpdatedAt" timestamp NOT NULL DEFAULT now\(\)[\s\S]*?\);/,
+    );
+  });
+
+  it("回填用每行真 createdAt（永遠唔係部署當刻 now()／listedDate），且 SET DEFAULT now()＋SET NOT NULL 齊全", () => {
+    // guard 包住加欄；回填來源係每行真 createdAt（建貨時間）
+    expect(DDL).toMatch(
+      /IF NOT EXISTS \(\s*SELECT 1 FROM information_schema\.columns\s+WHERE table_name = 'products' AND column_name = 'contentUpdatedAt'\s*\)/i,
+    );
+    expect(DDL).toContain(
+      'UPDATE "products" SET "contentUpdatedAt" = "createdAt" WHERE "contentUpdatedAt" IS NULL;',
+    );
+    expect(DDL).not.toMatch(/SET "contentUpdatedAt" = now\(\)/i);
+    expect(DDL).not.toMatch(/SET "contentUpdatedAt" = "listedDate"/i);
+    expect(DDL).toContain('ALTER TABLE products ALTER COLUMN "contentUpdatedAt" SET DEFAULT now();');
+    expect(DDL).toContain('ALTER TABLE products ALTER COLUMN "contentUpdatedAt" SET NOT NULL;');
+  });
+
+  it("回填／SET DEFAULT／SET NOT NULL 喺 IF 之外（自癒）：欄已存在都照跑，partial migration 唔會卡死", () => {
+    const m = DDL.match(/DO \$\$[\s\S]*?contentUpdatedAt[\s\S]*?END \$\$/);
+    expect(m).toBeTruthy();
+    const block = m![0];
+    const iEndIf = block.indexOf("END IF;");
+    expect(iEndIf).toBeGreaterThanOrEqual(0);
+    // 三句修復語句全部喺 END IF 之後＝無條件執行（fresh DB 係 no-op）
+    expect(block.indexOf('UPDATE "products" SET "contentUpdatedAt" = "createdAt"')).toBeGreaterThan(iEndIf);
+    expect(block.indexOf('ALTER COLUMN "contentUpdatedAt" SET DEFAULT now()')).toBeGreaterThan(iEndIf);
+    expect(block.indexOf('ALTER COLUMN "contentUpdatedAt" SET NOT NULL')).toBeGreaterThan(iEndIf);
+  });
+
+  it("DO block 排喺 CREATE TABLE products 之後（fresh DB 順序安全）", () => {
+    const stmts = buildMigrationStatements().map(stripComments);
+    const iTable = stmts.findIndex((s) => /CREATE TABLE IF NOT EXISTS products/i.test(s));
+    const iDo = stmts.findIndex(
+      (s) => /contentUpdatedAt/.test(s) && /^DO \$\$/i.test(s.trim()),
+    );
+    expect(iTable).toBeGreaterThanOrEqual(0);
+    expect(iDo).toBeGreaterThan(iTable);
+  });
+
+  it("fresh：CREATE TABLE 帶欄（NOT NULL DEFAULT）→ guard skip；自癒語句全係真 no-op，零新動作 marker", () => {
+    const fresh = newMockState();
+    expect(() => runMigration(fresh)).not.toThrow();
+    expect(fresh.tables.get("products")?.has("contentUpdatedAt")).toBe(true);
+    expect(fresh.notNullCols.has("products.contentUpdatedAt")).toBe(true);
+    expect(fresh.defaultCols.has("products.contentUpdatedAt")).toBe(true);
+    expect(fresh.applied.filter((a) => a.includes("contentUpdatedAt"))).toHaveLength(0);
+  });
+
+  it("existing 舊庫（冇呢欄）：加欄＋createdAt 回填＋收緊 default/NOT NULL 各一次；repeat 零新動作", () => {
+    const existing = newMockState();
+    runMigration(existing); // 先建現代結構
+    // 模擬 v2026.11 之前嘅庫：欄同埋佢嘅約束狀態全部唔存在
+    existing.tables.get("products")!.delete("contentUpdatedAt");
+    existing.notNullCols.delete("products.contentUpdatedAt");
+    existing.defaultCols.delete("products.contentUpdatedAt");
+    existing.applied = [];
+    expect(() => runMigration(existing)).not.toThrow();
+    expect(existing.tables.get("products")!.has("contentUpdatedAt")).toBe(true);
+    expect(existing.applied.filter((a) => a === "addcol:products.contentUpdatedAt")).toHaveLength(1);
+    // 回填（createdAt）、SET DEFAULT、SET NOT NULL 全部執行咗一次
+    expect(existing.applied.filter((a) => a === "heal-backfill:products.contentUpdatedAt")).toHaveLength(1);
+    expect(existing.applied.filter((a) => a === "heal-setdefault:products.contentUpdatedAt")).toHaveLength(1);
+    expect(existing.applied.filter((a) => a === "heal-notnull:products.contentUpdatedAt")).toHaveLength(1);
+    expect(existing.notNullCols.has("products.contentUpdatedAt")).toBe(true);
+    expect(existing.pendingBackfill.has("products.contentUpdatedAt")).toBe(false);
+
+    // repeat：完全冇新動作（已健康 → 自癒語句係 no-op）
+    const appliedAfterUpgrade = [...existing.applied];
+    expect(() => runMigration(existing)).not.toThrow();
+    expect(existing.applied).toEqual(appliedAfterUpgrade);
+  });
+
+  it("partial migration 自癒：上次只加到 nullable 欄就失敗（有 NULL 行、冇 default/NOT NULL）→ 重跑補晒", () => {
+    const partial = newMockState();
+    runMigration(partial); // 建到現代結構
+    // 模擬 partial 態：欄存在但係 nullable、舊行 NULL 未回填、冇 default／NOT NULL
+    partial.notNullCols.delete("products.contentUpdatedAt");
+    partial.defaultCols.delete("products.contentUpdatedAt");
+    partial.pendingBackfill.add("products.contentUpdatedAt");
+    partial.applied = [];
+    expect(() => runMigration(partial)).not.toThrow();
+    // 欄已存在 → 唔會重複加欄；IF 之外嘅修復語句一定要跑返
+    expect(partial.applied.filter((a) => a === "addcol:products.contentUpdatedAt")).toHaveLength(0);
+    expect(partial.applied).toContain("heal-backfill:products.contentUpdatedAt");
+    expect(partial.applied).toContain("heal-setdefault:products.contentUpdatedAt");
+    expect(partial.applied).toContain("heal-notnull:products.contentUpdatedAt");
+    // 自癒完成後再跑：零新動作
+    const appliedAfterHeal = [...partial.applied];
+    expect(() => runMigration(partial)).not.toThrow();
+    expect(partial.applied).toEqual(appliedAfterHeal);
+  });
+});
 
 // ── v2026.11.11 L2：productAiTagsTombstones（重點標籤 SKU 級停用 tombstone）──────
 

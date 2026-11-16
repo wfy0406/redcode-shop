@@ -5,20 +5,26 @@
  * - 主視覺：固定路徑 /glo-guide/glo-glo-editorial-hero.webp，eager＋
  *   fetchPriority=high＋固定 width/height（LCP），任何狀態都在
  * - published：期刊期號（No.03／第 3 期）＋非對稱 lead＋「呢期單品」同步欄
- *   （真商品 Link）＋全寬主配搭圖＋thumbnail index（aria-pressed 預設第一篇）
- *   ＋今期目錄全部真 Link /glo-guide/:slug；香港發文時間 <time dateTime=ISO>
+ *   （真商品 Link）＋全寬主配搭圖 gallery（呢期全部公開配搭圖出齊 slides，
+ *   上一張／下一張制＋「第 X 張，共 Y 張」status）＋thumbnail index
+ *   （aria-pressed 預設第一篇）＋今期目錄全部真 Link /glo-guide/:slug；
+ *   香港發文時間 <time dateTime=ISO>
  * - 空態：主視覺仍在＋欄目介紹＋/products＋/live CTA＋tabs（tablist）
  * - 載入中（role=status）／錯誤（role=alert＋重試）
  * - 公開措辭：任何狀態都唔准出現「生成」「人工審核」「AI」；必有
  *   「Glo Glo 撰寫」「配搭圖」「商品外觀以商品頁原圖為準」
+ * - CSS source assertion：.ggx-hero-img／.ggx-stage-img 原比例完整顯示，
+ *   無 aspect-ratio／object-fit:cover／object-position；gallery 制 ≥44px
  *
  * 互動（happy-dom＋createRoot）：
  * - click／focus／hover thumbnail 切換頭版 synopsis＋呢期單品欄；ArrowRight 鍵盤切換
+ * - 主圖上一張／下一張制循環（wrap）；切換文章 gallery 歸零返嗰篇第一張
  * - 空態 tabs click／ArrowRight 切換 panel（hidden／aria-selected）
  */
 
 // @vitest-environment happy-dom
 
+import { readFileSync } from 'node:fs';
 import { act } from 'react';
 import { renderToString } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
@@ -64,31 +70,39 @@ const PRODUCT = (id: number, name: string, price: number, discountPrice: number 
   liveSession: null,
 });
 
-const ITEM = (id: number, slug: string, title: string, products: unknown[] = []) => ({
-  id,
-  slug,
-  title,
-  excerpt: `第 ${id} 篇節錄。`,
-  theme: `主題${id}`,
-  publishedAt: '2026-11-14T16:30:00.000Z',
-  updatedAt: '2026-11-15T02:00:00.000Z',
-  coverImage: {
-    id: id * 10,
-    path: `/uploads/glo-guide/${slug}.png`,
-    alt: `${title} 封面`,
-    width: 800,
-    height: 1200,
-    position: 0,
-    productId: null,
-  },
-  products,
+const GUIDE_IMAGE = (id: number, slug: string, position: number, title: string) => ({
+  id: id * 10 + position,
+  path: `/uploads/glo-guide/${slug}-${position}.png`,
+  alt: `${title} 配搭圖 ${position + 1}`,
+  width: 800,
+  height: 1200,
+  position,
+  productId: null,
 });
+
+const ITEM = (id: number, slug: string, title: string, products: unknown[] = [], imageCount = 2) => {
+  const images = Array.from({ length: imageCount }, (_, p) =>
+    GUIDE_IMAGE(id, slug, p, title),
+  );
+  return {
+    id,
+    slug,
+    title,
+    excerpt: `第 ${id} 篇節錄。`,
+    theme: `主題${id}`,
+    publishedAt: '2026-11-14T16:30:00.000Z',
+    updatedAt: '2026-11-15T02:00:00.000Z',
+    coverImage: images[0] ?? null,
+    images,
+    products,
+  };
+};
 
 const THREE_ITEMS = {
   items: [
-    ITEM(1, 'first-post', '第一篇', [PRODUCT(101, '米白短外套', 200, 150)]),
-    ITEM(2, 'second-post', '第二篇', [PRODUCT(102, '軟皮闊腳褲', 168)]),
-    ITEM(3, 'third-post', '第三篇'),
+    ITEM(1, 'first-post', '第一篇', [PRODUCT(101, '米白短外套', 200, 150)], 2),
+    ITEM(2, 'second-post', '第二篇', [PRODUCT(102, '軟皮闊腳褲', 168)], 3),
+    ITEM(3, 'third-post', '第三篇', [], 1),
   ],
 };
 
@@ -164,26 +178,90 @@ describe('GloGuideList 內容（published）', () => {
     expect(html).toContain('2026年11月15日 00:30');
   });
 
-  it('LCP：hero eager＋high；頭版封面 eager（唔搶 high），thumbnails 全部 lazy', () => {
+  it('LCP：hero eager＋high；頭版首張 slide eager（唔搶 high），其餘 slides＋thumbnails lazy', () => {
     setQuery({ isSuccess: true, data: THREE_ITEMS });
     const html = renderList();
-    expect(html.match(/loading="eager"/g)).toHaveLength(2); // hero＋頭版封面
+    expect(html.match(/loading="eager"/g)).toHaveLength(2); // hero＋頭版首張 slide
     expect(html.match(/fetchpriority="high"/gi)).toHaveLength(2); // 得 hero（屬性＋preload）
-    expect(html.match(/loading="lazy"/g)).toHaveLength(3);
+    // 第一篇第二張 slide lazy＋3 個 index thumbnails lazy
+    expect(html.match(/loading="lazy"/g)).toHaveLength(4);
   });
 
-  it('只有一篇：舞台＋單個 selector＋單行目錄都正常（第 1 期）', () => {
-    setQuery({ isSuccess: true, data: { items: [ITEM(1, 'only-one', '唯一')] } });
+  it('頭版主圖 gallery：呢期全部公開配搭圖出齊 slides＋上一張／下一張制＋status', () => {
+    setQuery({ isSuccess: true, data: THREE_ITEMS });
+    const html = renderList();
+    // 第一篇兩張配搭圖都喺 SSR 出現（唔係得封面）
+    expect(html).toContain('/uploads/glo-guide/first-post-0.png');
+    expect(html).toContain('/uploads/glo-guide/first-post-1.png');
+    // 明顯上一張／下一張制（粵語無障礙名）＋位置 status
+    expect(html).toContain('aria-label="上一張配搭圖"');
+    expect(html).toContain('aria-label="下一張配搭圖"');
+    expect(html).toContain('第 1 張，共 2 張');
+    expect(html).toContain('role="status"');
+  });
+
+  it('只有一篇／一篇得一張圖：唔出上一張／下一張死制', () => {
+    setQuery({ isSuccess: true, data: { items: [ITEM(1, 'only-one', '唯一', [], 1)] } });
     const html = renderList();
     expect(html).toContain('ggx-stage');
     expect(html).toContain('No.01');
     expect(html.match(/ggx-index-btn/g)?.length).toBeGreaterThan(0);
     expect(html).toContain('href="/glo-guide/only-one"');
+    expect(html).toContain('/uploads/glo-guide/only-one-0.png');
+    expect(html).not.toContain('上一張配搭圖');
+    expect(html).not.toContain('下一張配搭圖');
+  });
+
+  it('舊 fixture 冇 images 欄：落返單張 coverImage，唔會炸', () => {
+    const legacy = ITEM(1, 'legacy-one', '舊格式', [], 2) as Record<string, unknown>;
+    delete legacy.images;
+    setQuery({ isSuccess: true, data: { items: [legacy] } });
+    const html = renderList();
+    expect(html).toContain('/uploads/glo-guide/legacy-one-0.png');
+    expect(html).not.toContain('上一張配搭圖');
   });
 
   it('公開措辭：有 Glo Glo 撰寫／配搭圖，無禁用字眼', () => {
     setQuery({ isSuccess: true, data: THREE_ITEMS });
     expectPublicWording(renderList());
+  });
+});
+
+describe('GloGuideList 主視覺／主圖唔裁切（CSS source assertion）', () => {
+  it('.ggx-hero-img 用真圖 1536×1024 原比例：無 aspect-ratio／object-fit／object-position', () => {
+    const css = readFileSync('src/pages/GloGuideList.css', 'utf8');
+    const blocks = css.match(/\.ggx-hero-img\s*\{[^}]*\}/g) ?? [];
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      expect(block).not.toContain('aspect-ratio');
+      expect(block).not.toContain('object-fit');
+      expect(block).not.toContain('object-position');
+    }
+    expect(blocks[0]).toContain('width: 100%');
+    expect(blocks[0]).toContain('height: auto');
+  });
+
+  it('.ggx-stage-img 按原圖比例完整顯示：無固定 aspect-ratio／object-fit: cover', () => {
+    const css = readFileSync('src/pages/GloGuideList.css', 'utf8');
+    const blocks = css.match(/\.ggx-stage-img\s*\{[^}]*\}/g) ?? [];
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      expect(block).not.toContain('aspect-ratio');
+      expect(block).not.toContain('object-fit: cover');
+      expect(block).not.toContain('object-position');
+    }
+    expect(blocks[0]).toContain('width: 100%');
+    expect(blocks[0]).toContain('height: auto');
+    expect(blocks[0]).toContain('object-fit: contain');
+  });
+
+  it('gallery 上一張／下一張制 ≥44px（全站 index.css 共用區，詳情頁直接開都有）', () => {
+    const css = readFileSync('src/index.css', 'utf8');
+    const block = css.match(/\.glo-guide-gallery-nav\s*\{[^}]*\}/);
+    expect(block).not.toBeNull();
+    expect(block![0]).toContain('width: 44px');
+    expect(block![0]).toContain('height: 44px');
+    expect(block![0]).toContain('position: absolute');
   });
 });
 
@@ -330,8 +408,75 @@ describe('GloGuideList 互動：article selector', () => {
   });
 });
 
-describe('GloGuideList 互動：hero 載入失敗兜底', () => {
-  it('主視覺 error → 收起因圖，落設計過嘅期刊舞台（無 broken icon）', () => {
+describe('GloGuideList 互動：主圖 gallery 上一張／下一張', () => {
+  const statusText = (c: HTMLElement) =>
+    c.querySelector('.glo-guide-gallery-status')?.textContent ?? '';
+
+  it('下一張／上一張循環瀏覽呢期全部配搭圖（wrap：尾→頭、頭→尾）', () => {
+    setQuery({ isSuccess: true, data: THREE_ITEMS });
+    const c = mountList();
+    const next = c.querySelector<HTMLButtonElement>('button[aria-label="下一張配搭圖"]');
+    const prev = c.querySelector<HTMLButtonElement>('button[aria-label="上一張配搭圖"]');
+    expect(next).not.toBeNull();
+    expect(prev).not.toBeNull();
+    expect(statusText(c)).toContain('第 1 張，共 2 張');
+    expect(
+      c.querySelector('[data-active="true"] .ggx-stage-img')?.getAttribute('src'),
+    ).toBe('/uploads/glo-guide/first-post-0.png');
+    act(() => {
+      next!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(statusText(c)).toContain('第 2 張，共 2 張');
+    expect(
+      c.querySelector('[data-active="true"] .ggx-stage-img')?.getAttribute('src'),
+    ).toBe('/uploads/glo-guide/first-post-1.png');
+    // wrap：最後一張再下一張返第一張
+    act(() => {
+      next!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(statusText(c)).toContain('第 1 張，共 2 張');
+    // wrap：第一張上一張去最後一張
+    act(() => {
+      prev!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(statusText(c)).toContain('第 2 張，共 2 張');
+    // 頭版 synopsis 唔受 gallery 切換影響（仍係第一篇）
+    expect(stageTitle(c)).toContain('第一篇');
+  });
+
+  it('切換頭版文章 → gallery 歸零返嗰篇第一張（期號／單品欄照舊同步）', () => {
+    setQuery({ isSuccess: true, data: THREE_ITEMS });
+    const c = mountList();
+    act(() => {
+      c.querySelector<HTMLButtonElement>(
+        'button[aria-label="下一張配搭圖"]',
+      )!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(statusText(c)).toContain('第 2 張，共 2 張');
+    const buttons = indexButtons(c);
+    act(() => {
+      buttons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(stageTitle(c)).toContain('第二篇');
+    // 歸零：第二篇第一張（第二篇有 3 張，status 即刻反映新總數）
+    expect(statusText(c)).toContain('第 1 張，共 3 張');
+    expect(
+      c.querySelector('[data-active="true"] .ggx-stage-img')?.getAttribute('src'),
+    ).toBe('/uploads/glo-guide/second-post-0.png');
+    // 呢期單品欄照舊跟 article selector 同步
+    expect(c.querySelector('.ggx-stage-products')?.textContent).toContain('軟皮闊腳褲');
+  });
+
+  it('得一篇一張圖：唔出上一張／下一張制', () => {
+    setQuery({ isSuccess: true, data: { items: [ITEM(1, 'only-one', '唯一', [], 1)] } });
+    const c = mountList();
+    expect(c.querySelector('button[aria-label="下一張配搭圖"]')).toBeNull();
+    expect(c.querySelector('button[aria-label="上一張配搭圖"]')).toBeNull();
+    expect(c.querySelector('.ggx-stage-img')).not.toBeNull();
+  });
+});
+
+describe('GloGuideList 互動：hero 載入失敗兜底', () => {  it('主視覺 error → 收起因圖，落設計過嘅期刊舞台（無 broken icon）', () => {
     setQuery({ isPending: true });
     const c = mountList();
     const img = c.querySelector<HTMLImageElement>('.ggx-hero-img');

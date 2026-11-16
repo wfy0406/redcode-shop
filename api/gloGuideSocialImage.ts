@@ -1,9 +1,11 @@
 /**
- * Glo Glo 指南——每篇專屬社交分享預覽圖。
+ * Glo Glo 指南——每篇專屬社交分享預覽圖（WhatsApp／Facebook／Telegram 兼容 JPEG）。
  *
- * GET /og/glo-guide/:slug.png → 1200×630 PNG：已發布封面＋文章主題／標題／摘要。
+ * GET /og/glo-guide/:slug.jpg?v=<encoded updatedAt> → 1200×630 JPEG
+ * （image/jpeg，quality ladder 硬上限 280KB；舊 .png 連結繼續出 PNG，唔斷已分享連結）。
  * 資料同首口 HTML 一樣只經 getPublishedGuideBySlug；非 published／唔存在一律 404，
  * 唔會因 crawler 攞預覽圖而公開草稿、待批或未審批圖片。
+ * ETag 帶格式＋設計版本：舊 PNG ETag 唔會令新 JPEG 誤回 304。
  */
 import type { Context } from "hono";
 import { createHash } from "node:crypto";
@@ -15,7 +17,19 @@ import { GLO_GUIDE_PATH_PREFIX, isGloGuideImagePath } from "./gloGuideValidation
 
 export const GLO_GUIDE_SOCIAL_IMAGE_WIDTH = 1200;
 export const GLO_GUIDE_SOCIAL_IMAGE_HEIGHT = 630;
-export const gloGuideSocialImagePath = (slug: string) => `/og/glo-guide/${slug}.png`;
+/** WhatsApp 對大圖會棄用預覽；硬性上限，超晒成個 quality ladder 都放唔落就 fail（503），唔靜默出巨圖。 */
+export const GLO_GUIDE_SOCIAL_IMAGE_MAX_BYTES = 280_000;
+export const GLO_GUIDE_SOCIAL_IMAGE_JPEG_QUALITY_LADDER = [82, 72, 62, 52, 42] as const;
+/** 卡面設計版本：入 ETag，排版一改舊 validator 即刻失效，唔會 304 出舊款。 */
+export const GLO_GUIDE_SOCIAL_IMAGE_DESIGN_VERSION = "v2";
+
+/** 新 canonical：JPEG＋updatedAt cache-buster（文章一改，URL 即變，crawler 重新拉）。 */
+export const gloGuideSocialImagePath = (slug: string, updatedAt: string) =>
+  `/og/glo-guide/${slug}.jpg?v=${encodeURIComponent(updatedAt)}`;
+/** 舊分享連結格式：仍然有效，回 PNG。 */
+export const gloGuideSocialImageLegacyPngPath = (slug: string) => `/og/glo-guide/${slug}.png`;
+
+export type GloGuideSocialImageFormat = "jpg" | "png";
 
 function esc(value: string): string {
   return value
@@ -108,7 +122,7 @@ export function buildGloGuideSocialSvg(
   <rect width="700" height="630" fill="url(#paper)"/>
   <rect x="0" y="0" width="12" height="630" fill="#d69900"/>
   <rect x="42" y="38" width="616" height="554" rx="2" fill="none" stroke="#d69900" stroke-opacity="0.55"/>
-  <text x="72" y="91" class="kicker">GLO GLO · 精選指南</text>
+  <text x="72" y="91" class="kicker">GLO GLO · 精選穿搭指南</text>
   <line x1="72" y1="116" x2="628" y2="116" stroke="#d69900" stroke-width="2"/>
   ${textLines(themeLines, 72, 153, 30, "theme")}
   ${textLines(titleLines, 72, 224, titleLineHeight, "title")}
@@ -120,22 +134,47 @@ export function buildGloGuideSocialSvg(
 }
 
 /** SVG → PNG；有已批准封面先讀檔合成，冇封面都係該篇專屬文字卡，唔出通用 logo。 */
-export async function renderGloGuideSocialImage(
+async function renderSocialBase(
   detail: GuideDetail,
   cover?: Buffer,
-): Promise<Buffer> {
+) {
   const sharp = (await import("sharp")).default;
   const svg = Buffer.from(buildGloGuideSocialSvg(detail), "utf8");
-  if (!cover) return sharp(svg).png({ compressionLevel: 9 }).toBuffer();
+  if (!cover) return sharp(svg);
   const resizedCover = await sharp(cover, { limitInputPixels: 40_000_000 })
     .rotate()
     .resize(500, 630, { fit: "cover", position: "attention" })
     .png()
     .toBuffer();
-  return sharp(svg)
-    .composite([{ input: resizedCover, top: 0, left: 700 }])
-    .png({ compressionLevel: 9 })
-    .toBuffer();
+  return sharp(svg).composite([{ input: resizedCover, top: 0, left: 700 }]);
+}
+
+/**
+ * JPEG 硬上限 280KB：順住 quality ladder 逐級降，全部超標就 throw（handler 回 503）——
+ * 寧願明確失敗，都唔會靜默出一張 WhatsApp 拒絕預覽嘅巨圖。
+ */
+async function encodeJpegWithinBudget(
+  base: import("sharp").Sharp,
+  maxBytes: number = GLO_GUIDE_SOCIAL_IMAGE_MAX_BYTES,
+): Promise<Buffer> {
+  for (const quality of GLO_GUIDE_SOCIAL_IMAGE_JPEG_QUALITY_LADDER) {
+    const jpeg = await base.clone().flatten({ background: "#fff8f1" }).jpeg({ quality, mozjpeg: true }).toBuffer();
+    if (jpeg.length <= maxBytes) return jpeg;
+  }
+  throw new Error(
+    `Glo Guide social image exceeds ${maxBytes}B budget at lowest quality ${GLO_GUIDE_SOCIAL_IMAGE_JPEG_QUALITY_LADDER[GLO_GUIDE_SOCIAL_IMAGE_JPEG_QUALITY_LADDER.length - 1]}`,
+  );
+}
+
+export async function renderGloGuideSocialImage(
+  detail: GuideDetail,
+  cover?: Buffer,
+  format: GloGuideSocialImageFormat = "png",
+  options?: { maxBytes?: number },
+): Promise<Buffer> {
+  const base = await renderSocialBase(detail, cover);
+  if (format === "jpg") return encodeJpegWithinBudget(base, options?.maxBytes);
+  return base.png({ compressionLevel: 9 }).toBuffer();
 }
 
 export async function readPublishedCover(detail: GuideDetail): Promise<Buffer | undefined> {
@@ -151,11 +190,14 @@ export async function readPublishedCover(detail: GuideDetail): Promise<Buffer | 
   return readFile(absolute);
 }
 
-/** published 狀態仍逐次查 DB；ETag 只令相同內容嘅 revalidation 唔使再讀封面及 Sharp 重畫。 */
-function socialImageETag(detail: GuideDetail): string {
+/** published 狀態仍逐次查 DB；ETag 只令相同內容嘅 revalidation 唔使再讀封面及 Sharp 重畫。
+ *  ETag 輸入帶設計版本＋輸出格式：舊 .png ETag 絕對唔會令新 .jpg 請求誤回 304。 */
+function socialImageETag(detail: GuideDetail, format: GloGuideSocialImageFormat): string {
   const digest = createHash("sha256")
     .update(
       JSON.stringify({
+        v: GLO_GUIDE_SOCIAL_IMAGE_DESIGN_VERSION,
+        format,
         slug: detail.slug,
         title: detail.title,
         theme: detail.theme,
@@ -168,7 +210,7 @@ function socialImageETag(detail: GuideDetail): string {
       }),
     )
     .digest("base64url");
-  return `W/"glo-guide-${digest}"`;
+  return `W/"glo-guide-${GLO_GUIDE_SOCIAL_IMAGE_DESIGN_VERSION}-${format}-${digest}"`;
 }
 
 interface SocialImageDependencies {
@@ -191,8 +233,11 @@ export function createGloGuideSocialImageHandler(
 ) {
   return async (c: Context) => {
     const param = c.req.param("slug") ?? "";
-    if (!/^[a-z0-9-]+\.png$/i.test(param)) return deny(c);
-    const slug = param.slice(0, -4);
+    // 新 canonical 係 .jpg（JPEG，WhatsApp 兼容）；舊 .png 分享連結照舊出 PNG。
+    const match = /^([a-z0-9-]+)\.(png|jpe?g)$/i.exec(param);
+    if (!match) return deny(c);
+    const slug = match[1];
+    const format: GloGuideSocialImageFormat = match[2].toLowerCase() === "png" ? "png" : "jpg";
     let detail: GuideDetail | null;
     try {
       detail = await dependencies.loadDetail(slug);
@@ -201,7 +246,7 @@ export function createGloGuideSocialImageHandler(
       return deny(c, 503);
     }
     if (!detail || detail.slug !== slug) return deny(c);
-    const etag = socialImageETag(detail);
+    const etag = socialImageETag(detail, format);
     const cacheHeaders = {
       ETag: etag,
       "Cache-Control": "no-cache, must-revalidate",
@@ -213,10 +258,10 @@ export function createGloGuideSocialImageHandler(
     }
     try {
       const cover = await dependencies.readCover(detail);
-      const png = await renderGloGuideSocialImage(detail, cover);
-      return c.body(new Uint8Array(png), 200, {
+      const image = await renderGloGuideSocialImage(detail, cover, format);
+      return c.body(new Uint8Array(image), 200, {
         ...cacheHeaders,
-        "Content-Type": "image/png",
+        "Content-Type": format === "jpg" ? "image/jpeg" : "image/png",
       });
     } catch (error) {
       console.error("[glo-guide-og] 社交預覽圖生成失敗:", error instanceof Error ? error.message : "unknown");

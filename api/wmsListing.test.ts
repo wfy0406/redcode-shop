@@ -186,6 +186,8 @@ describe("wmsListingBatch — 同 SKU 更新、失敗重試及商品 upsert 競�
     expect(h.state.inserts.some((row) => row.table === products)).toBe(false);
     const productUpdate = h.state.updates.find((row) => row.table === products);
     expect(productUpdate?.set).toMatchObject({ liveDate: "20261026", liveSession: "2", isActive: true });
+    // 同 SKU 上架更新＝真內容編輯 → contentUpdatedAt 刷新（sitemap-fashion.xml lastmod 用）
+    expect(productUpdate?.set?.contentUpdatedAt).toBeInstanceOf(Date);
   });
 
   it("舊批有失敗件可同批重試；保留相簿並清走舊定時下架", async () => {
@@ -291,6 +293,8 @@ describe("wmsListingBatch — AI 內容合約（approved 閘＋寫入）", () =>
     const productUpdate = h.state.updates.find((row) => row.table === products);
     expect(productUpdate?.set?.description).toBe("AI 描述");
     expect(productUpdate?.set?.aiTags).toBe('["直播熱賣","新品"]');
+    // approved 內容寫入＝真內容編輯 → contentUpdatedAt 刷新（sitemap-fashion.xml lastmod 用）
+    expect(productUpdate?.set?.contentUpdatedAt).toBeInstanceOf(Date);
     // 後台停用唔會被重推復活
     expect(productUpdate?.set).not.toHaveProperty("aiTagsEnabled");
     // 明細快照對齊
@@ -324,6 +328,8 @@ describe("wmsListingBatch — AI 內容合約（approved 閘＋寫入）", () =>
     });
     // enabled 跟 schema default true，insert 唔會指定
     expect(productInsert?.values).not.toHaveProperty("aiTagsEnabled");
+    // 新建唔使指定 contentUpdatedAt——DB default now() 頂上（boot-migrate fresh CREATE TABLE 帶欄）
+    expect(productInsert?.values).not.toHaveProperty("contentUpdatedAt");
   });
 
   it("L2 tombstone：新 SKU 有停用紀錄 → 重建出嚟 aiTagsEnabled 直接 false（WMS 重推唔會復活）", async () => {

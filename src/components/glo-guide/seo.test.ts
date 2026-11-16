@@ -10,9 +10,12 @@ import {
   guideAbsUrl,
   guideDetailDescription,
   guideDetailTitle,
+  guideSocialImagePath,
   GLO_GUIDE_LIST_SEO,
   GLO_GUIDE_NOT_FOUND_SEO,
   GLO_GUIDE_ORIGIN,
+  GLO_GUIDE_SOCIAL_IMAGE_ALT_SUFFIX,
+  GLO_GUIDE_SOCIAL_IMAGE_TYPE,
   serializeJsonLd,
 } from './seo';
 import type { GuideDetail } from './types';
@@ -162,6 +165,16 @@ describe('URL／標題常數', () => {
     expect(guideDetailDescription(detail({ excerpt: ' 有料 excerpt ' }))).toBe(' 有料 excerpt ');
     expect(guideDetailDescription(detail({}))).toBe('香港轉季三件頭配搭。');
     expect(guideDetailDescription(detail({ excerpt: '  ' }))).toContain('轉季 layering');
+  });
+
+  it('社交卡路徑同 server 口徑：.jpg＋encoded updatedAt，MIME／alt 同 server 一致', () => {
+    // 同 api/gloGuideSocialImage.ts gloGuideSocialImagePath 逐字一致
+    expect(guideSocialImagePath('autumn-knit', '2026-11-15T02:00:00.000Z')).toBe(
+      '/og/glo-guide/autumn-knit.jpg?v=2026-11-15T02%3A00%3A00.000Z',
+    );
+    // 同 api/gloGuideSeo.ts gloGuideDetailRouteMeta 嘅 imageType／imageAlt 口徑
+    expect(GLO_GUIDE_SOCIAL_IMAGE_TYPE).toBe('image/jpeg');
+    expect(GLO_GUIDE_SOCIAL_IMAGE_ALT_SUFFIX).toBe('Glo Glo 精選穿搭指南分享預覽圖');
   });
 
   it('列表／404 SEO 文案存在且非空', () => {

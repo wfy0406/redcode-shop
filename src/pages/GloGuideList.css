@@ -119,32 +119,18 @@
   min-width: 0;
 }
 
-/* 主視覺：固定 3:2 aspect（真圖 1536×1024），object-fit 應對任何替換圖；
-   人物偏右，所以 cover crop 時錨定右側，左邊負空間留畀 masthead card */
+/* 主視覺：真圖 1536×1024 原比例完整顯示（width/height 屬性鎖死 3:2 唔會 CLS），
+   任何斷點都唔設 aspect-ratio／object-fit:cover——唔准裁切；
+   taupe 底只係圖片未載入時嘅佔位色 */
 .ggx-hero-img {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  object-position: 68% 50%;
   background: var(--ggx-taupe);
 }
 
-@media (min-width: 768px) {
-  .ggx-hero-img {
-    aspect-ratio: 3 / 2;
-  }
-}
-
-@media (min-width: 1440px) {
-  .ggx-hero-img {
-    aspect-ratio: 21 / 10;
-  }
-}
-
 /* 主視覺載入失敗嘅設計兜底：taupe 實色期刊舞台＋金線框＋刊名字級，
-   aspect 同真圖一致（換咗都唔會 CLS），永遠唔會出 broken icon */
+   aspect 同真圖一致（3:2，換咗都唔會 CLS），永遠唔會出 broken icon */
 .ggx-hero-fallback {
   position: relative;
   display: flex;
@@ -153,7 +139,7 @@
   justify-content: center;
   gap: 0.35rem;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 3 / 2;
   background: var(--ggx-taupe);
   color: var(--ggx-ink);
   padding: 2rem 1.5rem;
@@ -162,14 +148,7 @@
 
 @media (min-width: 768px) {
   .ggx-hero-fallback {
-    aspect-ratio: 3 / 2;
     padding: 3rem;
-  }
-}
-
-@media (min-width: 1440px) {
-  .ggx-hero-fallback {
-    aspect-ratio: 21 / 10;
   }
 }
 
@@ -469,7 +448,7 @@
   color: var(--ggx-ink-56);
 }
 
-/* 全寬主配搭圖（封面）：固定 aspect，唔靠圖片未存在先排版 */
+/* 全寬主配搭圖舞台（gallery：上一張／下一張＋滑動，唔靠圖片未存在先排版） */
 .ggx-stage-figure {
   margin: 0;
   min-width: 0;
@@ -490,21 +469,20 @@
   pointer-events: none;
 }
 
+/* 主配搭圖：按原圖比例完整顯示（width:100%＋height:auto），唔設固定
+   aspect-ratio／object-fit:cover／object-position——直圖喺手機都睇得晒全圖。
+   taupe 底只係圖片未載入時嘅佔位色 */
 .ggx-stage-img {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  object-position: 50% 22%;
+  object-fit: contain;
   background: var(--ggx-taupe);
 }
 
-@media (min-width: 768px) {
-  .ggx-stage-img {
-    aspect-ratio: 21 / 10;
-  }
-}
+/* 主圖 gallery 控制（上一張／下一張／「第 X 張」status）嘅樣式喺
+   src/index.css 嘅 .glo-guide-gallery* 區——總覽同詳情共用，
+   直接開 /glo-guide/:slug 唔使靠呢個 lazy CSS 都有 44px 定位制 */
 
 /* 無封面時嘅排印兜底（唔放假圖） */
 .ggx-stage-frame--empty {

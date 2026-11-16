@@ -6,7 +6,8 @@
  * 覆蓋（2026-11 合約 v2）：
  * 1) 權限：staff／member／未登入 → FORBIDDEN／UNAUTHORIZED，DB 零寫入（update 冇執行、冇 audit）；
  *    supervisor／admin 每 request 以 DB 覆核角色後先放行（降職 → FORBIDDEN、刪帳號 → UNAUTHORIZED）。
- * 2) 成功停用：1–100 個唯一 ids；update 淨係 set { aiTagsEnabled:false }（內容保留）；
+ * 2) 成功停用：1–100 個唯一 ids；update set { aiTagsEnabled:false, contentUpdatedAt:Date }
+ *    （停用＝公開內容改動，刷新真修改時間；AI 內容欄保留）；
  *    where 係 products.id IN (...)；寫一條 product.disableAiTags audit。
  * 3) input 閘：重複 id／空 array／>100／非正整數 → BAD_REQUEST，resolver 未執行（零寫入）。
  * 4) 公開 byId DTO：aiTagsEnabled=false 一律回 aiTags:[]；回應唔泄 aiTagsEnabled 開關／raw JSON；
@@ -262,10 +263,13 @@ describe("disableAiTags 成功路徑", () => {
     const res = await caller().disableAiTags({ ids: [11, 22, 33] });
     expect(res).toEqual({ ok: true, count: 3 });
 
-    // 唯一一次 update；set 係**完全得** { aiTagsEnabled: false }（內容欄唔郁）
+    // 唯一一次 update；set 係 { aiTagsEnabled:false, contentUpdatedAt:真修改時間 }（內容欄唔郁）
     expect(h.state.updates).toHaveLength(1);
-    expect(h.state.updates[0].set).toEqual({ aiTagsEnabled: false });
-    expect(Object.keys(h.state.updates[0].set)).toEqual(["aiTagsEnabled"]);
+    expect(h.state.updates[0].set).toEqual({
+      aiTagsEnabled: false,
+      contentUpdatedAt: expect.any(Date),
+    });
+    expect(Object.keys(h.state.updates[0].set).sort()).toEqual(["aiTagsEnabled", "contentUpdatedAt"]);
 
     const sig = whereSig(h.state.updates[0].where);
     expect(sig.sql).toContain('"products"."id" in');
@@ -296,7 +300,10 @@ describe("disableAiTags 成功路徑", () => {
     h.state.queue = [[]]; // DB 已停用／唔存在 → returning 空
     const res = await caller().disableAiTags({ ids: [7] });
     expect(res).toEqual({ ok: true, count: 0 });
-    expect(h.state.updates[0].set).toEqual({ aiTagsEnabled: false });
+    expect(h.state.updates[0].set).toEqual({
+      aiTagsEnabled: false,
+      contentUpdatedAt: expect.any(Date),
+    });
     expect(whereSig(h.state.updates[0].where).params).toEqual([7]);
     expect(h.state.inserts).toHaveLength(0); // L2：冇行被停就唔會亂記 SKU
     expect(logAudit).toHaveBeenCalledTimes(1);

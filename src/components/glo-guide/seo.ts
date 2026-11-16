@@ -19,8 +19,13 @@ import type { GuideDetail, GuideListItem } from './types';
 export const GLO_GUIDE_ORIGIN = 'https://redcode.red';
 export const GLO_GUIDE_SOCIAL_IMAGE_WIDTH = 1200;
 export const GLO_GUIDE_SOCIAL_IMAGE_HEIGHT = 630;
-/** 每篇專屬 1200×630 社交卡；server 會重新核對文章仍係 published。 */
-export const guideSocialImagePath = (slug: string) => `/og/glo-guide/${slug}.png`;
+/** 每篇專屬 1200×630 社交卡（JPEG，WhatsApp 兼容）；server 會重新核對文章仍係 published。
+ *  v=<encoded updatedAt>：文章一改 URL 即變，crawler 唔會留住舊卡。同 server
+ *  api/gloGuideSocialImage.ts 嘅 gloGuideSocialImagePath 逐字一致。 */
+export const guideSocialImagePath = (slug: string, updatedAt: string) =>
+  `/og/glo-guide/${slug}.jpg?v=${encodeURIComponent(updatedAt)}`;
+export const GLO_GUIDE_SOCIAL_IMAGE_TYPE = 'image/jpeg';
+export const GLO_GUIDE_SOCIAL_IMAGE_ALT_SUFFIX = 'Glo Glo 精選穿搭指南分享預覽圖';
 
 /** 站內相對路徑 → 絕對 URL（OG 圖／JSON-LD 用絕對，crawler 唔使估 host） */
 export function guideAbsUrl(path: string): string {
@@ -274,16 +279,17 @@ export function useGloGuideDetailSeo(detail: GuideDetail | null | undefined): vo
       indexable: true,
       canonicalPath: path,
     });
-    // og:image 係該篇專屬社交卡（內含公開封面＋標題），唔再將直度原圖當橫向預覽。
+    // og:image 係該篇專屬社交卡（JPEG，內含公開封面＋標題），唔再將直度原圖當橫向預覽。
     // server 每次會重新核對 published；client 只係保持 SPA 轉頁後嘅 head 口徑一致。
-    const socialImage = guideAbsUrl(guideSocialImagePath(detail.slug));
+    const socialImage = guideAbsUrl(guideSocialImagePath(detail.slug, detail.updatedAt));
     setMetaProperty('og:type', 'article', snapshots);
     setMetaProperty('og:title', guideDetailTitle(detail), snapshots);
     setMetaProperty('og:description', description, snapshots);
     setMetaProperty('og:image', socialImage, snapshots);
+    setMetaProperty('og:image:type', GLO_GUIDE_SOCIAL_IMAGE_TYPE, snapshots);
     setMetaProperty('og:image:width', String(GLO_GUIDE_SOCIAL_IMAGE_WIDTH), snapshots);
     setMetaProperty('og:image:height', String(GLO_GUIDE_SOCIAL_IMAGE_HEIGHT), snapshots);
-    const socialImageAlt = `${detail.title}｜Glo Glo 精選指南分享預覽圖`;
+    const socialImageAlt = `${detail.title}｜${GLO_GUIDE_SOCIAL_IMAGE_ALT_SUFFIX}`;
     setMetaProperty('og:image:alt', socialImageAlt, snapshots);
     setMetaName('twitter:card', 'summary_large_image', snapshots);
     setMetaName('twitter:title', guideDetailTitle(detail), snapshots);

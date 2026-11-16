@@ -2,14 +2,16 @@
  * /glo-guide —— Glo Glo 精選指南總覽（潮牌雜誌風 v3，SPEC 凍結口徑）。
  *
  * 資料：凍結合同 trpc.gloGuide.list.useQuery({ limit })，server 只回 published。
- * 主視覺：固定公開 asset /glo-guide/glo-glo-editorial-hero.webp（3:2 橫向，
- * 人物偏右、左邊負空間畀 masthead card）；圖載入失敗即場收起因圖、落有設計嘅
- * 純色期刊舞台，任何情況唔會 blank／broken。hero 係 LCP：eager＋
- * fetchPriority=high＋固定 width/height/aspect-ratio，永遠唔 lazy。
+ * 主視覺：固定公開 asset /glo-guide/glo-glo-editorial-hero.webp（真圖
+ * 1536×1024，原比例完整顯示唔裁切，人物偏右、左邊負空間畀 masthead card）；
+ * 圖載入失敗即場收起因圖、落有設計嘅純色期刊舞台，任何情況唔會 blank／
+ * broken。hero 係 LCP：eager＋fetchPriority=high＋固定 width/height，永遠唔 lazy。
  *
  * 期刊式結構：masthead（期號 metadata 喺舞台同目錄）→ 全寬主視覺 →
- * 非對稱 editorial lead（左大標／右呢期單品欄）→ 全寬主配搭圖 →
- * thumbnail 文章 selector → 今期目錄（全部真 Link route）。
+ * 非對稱 editorial lead（左大標／右呢期單品欄）→ 全寬主配搭圖 gallery
+ * （呢期全部公開配搭圖，原比例完整顯示；上一張／下一張制＋滑動＋箭咀鍵，
+ * 切換文章自動歸零返第一張）→ thumbnail 文章 selector → 今期目錄
+ * （全部真 Link route）。
  * 期號＝刊登序（最新一期數字最大），全部嚟自真 published 列表，唔係虛構。
  *
  * 真動態（唔係裝飾）：thumbnail index（button＋aria-pressed）click／hover／
@@ -19,12 +21,13 @@
  * 公開措辭：文章係「Glo Glo 撰寫」，圖只叫「配搭圖」；唔提內部流程。
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router';
 import { trpc } from '@/providers/trpc';
 import { formatPrice } from '@/data/products';
 import { useGloGuideListSeo } from '@/components/glo-guide/seo';
+import GuideImageGallery from '@/components/glo-guide/GuideImageGallery';
 import {
   formatGuideDateHK,
   guideDateTimeAttr,
@@ -33,7 +36,7 @@ import {
   guidePath,
   guideProductPath,
 } from '@/components/glo-guide/guideUtils';
-import type { GuideListItem } from '@/components/glo-guide/types';
+import type { GuideImage, GuideListItem } from '@/components/glo-guide/types';
 import './GloGuideList.css';
 
 const LIST_LIMIT = 24;
@@ -126,10 +129,25 @@ function GuideDate({ iso }: { iso: string }) {
  */
 function ArticleStage({ items }: { items: GuideListItem[] }) {
   const [active, setActive] = useState(0);
+  const [slide, setSlide] = useState(0);
   const index = Math.min(active, items.length - 1);
   const item = items[index];
   // 期刊期號：刊登序由舊到新，最新一期數字最大（真列表推導，唔係虛構編號）
   const issueNo = items.length - index;
+  // 頭版主圖：用呢期全部公開配搭圖（DTO 已 position 升冪）；
+  // 舊 fixture 冇 images 先落返單張 coverImage
+  const stageImages: GuideImage[] =
+    Array.isArray(item.images) && item.images.length > 0
+      ? item.images
+      : item.coverImage
+        ? [item.coverImage]
+        : [];
+  const slideIndex = Math.min(slide, Math.max(stageImages.length - 1, 0));
+
+  // 切換頭版文章 → gallery 歸零返嗰篇第一張（Carousel 靠 key={item.id} remount）
+  useEffect(() => {
+    setSlide(0);
+  }, [item.id]);
 
   const onIndexKeyDown = (e: KeyboardEvent<HTMLOListElement>) => {
     if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
@@ -195,24 +213,33 @@ function ArticleStage({ items }: { items: GuideListItem[] }) {
       </div>
 
       <figure className="ggx-stage-figure">
-        {item.coverImage ? (
-          <Link
-            to={guidePath(item.slug)}
-            className="ggx-stage-frame"
-            tabIndex={-1}
-            aria-hidden="true"
-          >
-            <img
+        {stageImages.length > 0 ? (
+          <div className="ggx-stage-frame">
+            <GuideImageGallery
               key={item.id}
-              src={item.coverImage.path}
-              alt=""
-              width={item.coverImage.width}
-              height={item.coverImage.height}
-              loading="eager"
-              decoding="async"
-              className="ggx-stage-img"
+              images={stageImages}
+              active={slideIndex}
+              onActiveChange={setSlide}
+              ariaLabel={`${item.title} 配搭圖`}
+              renderSlide={(image, i) => (
+                <Link
+                  to={guidePath(item.slug)}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                >
+                  <img
+                    src={image.path}
+                    alt=""
+                    width={image.width}
+                    height={image.height}
+                    loading={i === 0 ? 'eager' : 'lazy'}
+                    decoding="async"
+                    className="ggx-stage-img"
+                  />
+                </Link>
+              )}
             />
-          </Link>
+          </div>
         ) : (
           <div className="ggx-stage-frame ggx-stage-frame--empty" aria-hidden="true">
             <span>{item.theme}</span>

@@ -86,7 +86,7 @@ export function gloGuideSeoKeywords(detail: GuideDetail): string[] {
 export function gloGuideDetailRouteMeta(detail: GuideDetail): RouteMeta {
   const pageUrl = `${ORIGIN}${gloGuidePath(detail.slug)}`;
   const image = detail.coverImage ? absUrl(detail.coverImage.path) : undefined;
-  const socialImage = `${ORIGIN}${gloGuideSocialImagePath(detail.slug)}`;
+  const socialImage = `${ORIGIN}${gloGuideSocialImagePath(detail.slug, detail.updatedAt)}`;
   const keywords = gloGuideSeoKeywords(detail);
   const graph: Record<string, unknown>[] = [
     {
@@ -128,9 +128,10 @@ export function gloGuideDetailRouteMeta(detail: GuideDetail): RouteMeta {
     description: detail.excerpt,
     path: gloGuidePath(detail.slug),
     image: socialImage,
+    imageType: "image/jpeg",
     imageWidth: GLO_GUIDE_SOCIAL_IMAGE_WIDTH,
     imageHeight: GLO_GUIDE_SOCIAL_IMAGE_HEIGHT,
-    imageAlt: `${detail.title}｜Glo Glo 精選指南分享預覽圖`,
+    imageAlt: `${detail.title}｜Glo Glo 精選穿搭指南分享預覽圖`,
     ogType: "article",
     articlePublishedTime: detail.publishedAt,
     articleModifiedTime: detail.updatedAt,

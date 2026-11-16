@@ -102,9 +102,28 @@ describe("toGuideListItem / toGuideDetail", () => {
     expect(detail.images.map((i) => i.id)).toEqual([1, 2]);
     expect(detail.body).toBe(article.body);
   });
+  it("列表 item 都expose 全部合法圖：images position 升冪、已過公開閘，cover＝首張", () => {
+    const item = toGuideListItem(article, [product(1)], imageRows);
+    // pending 嗰張（id 3）唔出現；順序按 position 唔按入嚟次序
+    expect(item.images.map((i) => i.id)).toEqual([1, 2]);
+    expect(item.images[0]).toEqual(item.coverImage);
+    expect(item.images.every((i) => i.path.startsWith("/uploads/glo-guide/"))).toBe(true);
+    // detail 繼承同一份 images（唔係第二個唔兼容欄位）
+    const detail = toGuideDetail(article, [product(1)], imageRows);
+    expect(detail.images).toEqual(item.images);
+  });
+  it("全部圖唔過閘 → images 空 array、coverImage null", () => {
+    const item = toGuideListItem(article, [], [
+      { row: img({ id: 3, reviewStatus: "pending" }), alt: "商品1" },
+      { row: img({ id: 4, path: "https://cdn.fashn.ai/x.png" }), alt: "商品1" },
+    ]);
+    expect(item.images).toEqual([]);
+    expect(item.coverImage).toBeNull();
+  });
   it("excerpt 截斷", () => {
     const item = toGuideListItem(article, [], []);
     expect(item.excerpt.length).toBeLessThanOrEqual(121);
     expect(item.coverImage).toBeNull();
+    expect(item.images).toEqual([]);
   });
 });

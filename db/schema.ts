@@ -206,6 +206,11 @@ export const products = pgTable("products", {
   stock: integer("stock").notNull().default(0),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
+  // 真內容最後修改時間（v2026.11 sitemap-fashion.xml lastmod 用）：淨係公開內容編輯
+  // （products.update／disableAiTags／WMS 同 SKU 上架更新）先郁佢；純庫存交易
+  // （落單／掃單／退款／出貨同步）絕對唔掂。舊庫升級由 boot-migrate 用每行真 createdAt
+  // 回填——唔准用部署當刻 now() 扮修改日，亦唔准用 listedDate（上架日）冒充。
+  contentUpdatedAt: timestamp("contentUpdatedAt").notNull().defaultNow(),
 }, (t) => [
   // perf-fix（P2-3）：公開列表查詢熱點——isActive 篩＋listedDate desc 排序（products.list/latest）
   index("products_active_listed_idx").on(t.isActive, t.listedDate),

@@ -27,6 +27,7 @@ import {
   renderGloGuideRss,
   renderSitemapIndex,
   renderSitemapUrlset,
+  validLastmod,
 } from "./gloGuideSyndication";
 import { wmsLivePushApprove, wmsLivePushDelete, wmsLivePushDeliveries, wmsLivePushEnd, wmsLivePushExtend, wmsLivePushList, wmsLivePushMove, wmsLivePushPreview, wmsLivePushRequest } from "./wmsLivePush";
 import { wmsMemberAdmin } from "./wmsMemberAdmin";
@@ -629,11 +630,12 @@ app.get("/sitemap-fashion.xml", async (c) => {
   }
   try {
     const db = getDb();
-    // v2026.11.11：商品 lastmod 之前用 listedDate（上架日期）冒充最後修改日，
-    // 會誤導 crawler 以為內容日日更新。產品表冇真 contentUpdatedAt，
-    // 冇真更新時間之前商品 URL 唔出 lastmod。
+    // v2026.11（SEO report 修復）：商品 lastmod 用真 contentUpdatedAt——
+    // 淨係公開內容編輯（products.update／disableAiTags／WMS 同 SKU 上架更新）先會郁；
+    // 舊庫由 boot-migrate 用每行真 createdAt 回填。validLastmod 把關：
+    // 無效／缺失日期直接唔出 lastmod，絕對唔會用部署時間或 listedDate 扮修改日。
     const rows = await db
-      .select({ id: products.id })
+      .select({ id: products.id, contentUpdatedAt: products.contentUpdatedAt })
       .from(products)
       .where(
         and(
@@ -646,7 +648,15 @@ app.get("/sitemap-fashion.xml", async (c) => {
         ),
       );
     for (const p of rows) {
-      addUrl(`https://redcode.red/products/${p.id}`, "<priority>0.8</priority>");
+      const lastmod = validLastmod(
+        p.contentUpdatedAt instanceof Date
+          ? p.contentUpdatedAt.toISOString()
+          : ((p.contentUpdatedAt as string | null | undefined) ?? null),
+      );
+      addUrl(
+        `https://redcode.red/products/${p.id}`,
+        `${lastmod ? `<lastmod>${lastmod}</lastmod>` : ""}<priority>0.8</priority>`,
+      );
     }
   } catch (e) {
     console.error(

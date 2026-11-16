@@ -108,7 +108,7 @@ function iso(d: Date | null): string {
   return (d ?? new Date(0)).toISOString();
 }
 
-/** 列表 item：coverImage＝position 最細嗰張合法圖（冇就 null） */
+/** 列表 item：images＝全部合法圖（position 升冪）；coverImage＝position 最細嗰張（冇就 null） */
 export function toGuideListItem(
   article: DtoArticleRow,
   productRows: readonly DtoProductRow[],
@@ -127,20 +127,17 @@ export function toGuideListItem(
     publishedAt: iso(article.publishedAt),
     updatedAt: article.updatedAt.toISOString(),
     coverImage: images[0] ?? null,
+    images,
     products: productRows.map(toGuideProduct),
   };
 }
 
-/** 詳情：list item＋body＋全部合法圖；modelImage 永遠 null */
+/** 詳情：list item（已含全部合法圖 images）＋body；modelImage 永遠 null */
 export function toGuideDetail(
   article: DtoArticleRow,
   productRows: readonly DtoProductRow[],
   imageRows: readonly { row: DtoImageRow; alt: string }[],
 ): GuideDetail {
   const item = toGuideListItem(article, productRows, imageRows);
-  const images = imageRows
-    .map(({ row, alt }) => toGuideImage(row, alt))
-    .filter((x): x is GuideImage => x !== null)
-    .sort((a, b) => a.position - b.position);
-  return { ...item, body: article.body, images, modelImage: null };
+  return { ...item, body: article.body, modelImage: null };
 }

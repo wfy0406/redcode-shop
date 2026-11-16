@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS products (
   "listedDate" timestamp NOT NULL,
   stock integer NOT NULL DEFAULT 0,
   "isActive" boolean NOT NULL DEFAULT true,
-  "createdAt" timestamp NOT NULL DEFAULT now()
+  "createdAt" timestamp NOT NULL DEFAULT now(),
+  "contentUpdatedAt" timestamp NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS "cartItems" (
@@ -266,6 +267,25 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS "aiTags" text;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS "aiTagsEnabled" boolean NOT NULL DEFAULT true;
 ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "aiDescription" text;
 ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "aiTags" text;
+
+-- v2026.11（SEO report：sitemap-fashion.xml 商品 URL 冇 lastmod）：商品真內容最後修改時間。
+-- 可重跑自癒設計：加欄喺 information_schema guard 入面（已存在就 skip），但回填／
+-- SET DEFAULT／SET NOT NULL 放喺 IF **之外**——上次半路失敗（例如只加到 nullable 欄）
+-- 重跑會補返晒；fresh DB 呢三句全係 no-op（欄冇 NULL 行、default/NOT NULL 已喺 CREATE TABLE）。
+-- 回填永遠用**每行自己嘅真 createdAt**（建貨時間）——絕對唔准用部署當刻 now() 扮
+-- 「最近改過」，亦唔准用 listedDate（上架日 ≠ 修改日）。
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'products' AND column_name = 'contentUpdatedAt'
+  ) THEN
+    ALTER TABLE products ADD COLUMN "contentUpdatedAt" timestamp;
+  END IF;
+  UPDATE "products" SET "contentUpdatedAt" = "createdAt" WHERE "contentUpdatedAt" IS NULL;
+  ALTER TABLE products ALTER COLUMN "contentUpdatedAt" SET DEFAULT now();
+  ALTER TABLE products ALTER COLUMN "contentUpdatedAt" SET NOT NULL;
+END $$;
 
 -- 忘記密碼 email 驗證碼（2026-08-04）：6 位碼存 hash，10 分鐘有效，最多試 5 次
 CREATE TABLE IF NOT EXISTS "passwordResetCodes" (

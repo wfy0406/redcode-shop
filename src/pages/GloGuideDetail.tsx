@@ -15,12 +15,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, MouseEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { Link2, Share2 } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { formatPrice } from '@/data/products';
 import GuideProductCard from '@/components/glo-guide/GuideProductCard';
+import GuideImageGallery from '@/components/glo-guide/GuideImageGallery';
 import GloSignature from '@/components/glo-guide/GloSignature';
 import GloGuideRichText from '@/components/GloGuideRichText';
 import { parseGloGuideRichText } from '@contracts/gloGuideRichText';
@@ -39,10 +40,13 @@ import {
 import type { GuideImage, GuideProduct } from '@/components/glo-guide/types';
 
 /**
- * 全寬主配搭圖舞台：大圖＋同步單品欄＋thumbnail selector。
- * 切換配搭圖（click／hover／focus／Arrow 鍵）即時同步「呢張配搭圖嘅單品」
- * 資訊——動態有真資訊用途（圖 ↔ 商品關係），唔係裝飾。首張 eager＋
- * fetchPriority=high（LCP）；thumbnails 全部 lazy；所有圖喺 SSR 已可見。
+ * 全寬主配搭圖舞台：大圖 gallery（上一張／下一張制＋滑動＋箭咀鍵）＋
+ * 同步單品欄＋thumbnail selector。
+ * 切換配搭圖（nav 制／thumbnail click・hover・focus／Arrow 鍵／swipe）
+ * 即時同步「呢張配搭圖嘅單品」資訊——動態有真資訊用途（圖 ↔ 商品關係），
+ * 唔係裝飾。首張 eager＋fetchPriority=high（LCP）；其餘 slides 同
+ * thumbnails 全部 lazy；所有圖喺 SSR 已可見。主圖原比例完整顯示唔裁切
+ * （.gg-stage-img：width:100%＋height:auto＋object-fit:contain）。
  */
 function PairingStage({
   images,
@@ -79,18 +83,29 @@ function PairingStage({
       </p>
 
       <figure className="gg-stage-figure">
-        <img
-          key={img.id}
-          src={img.path}
-          alt={img.alt || (product ? `${product.name} 配搭圖` : title)}
-          width={img.width}
-          height={img.height}
-          loading="eager"
-          fetchPriority="high"
-          decoding="async"
-          className="gg-stage-img"
+        <GuideImageGallery
+          images={images}
+          active={index}
+          onActiveChange={setActive}
+          ariaLabel={`${title} 配搭圖`}
+          showStatus={false}
+          renderSlide={(image, i) => {
+            const slideProduct = productForImage(image, products);
+            return (
+              <img
+                src={image.path}
+                alt={image.alt || (slideProduct ? `${slideProduct.name} 配搭圖` : title)}
+                width={image.width}
+                height={image.height}
+                loading={i === 0 ? 'eager' : 'lazy'}
+                fetchPriority={i === 0 ? 'high' : undefined}
+                decoding="async"
+                className="gg-stage-img"
+              />
+            );
+          }}
         />
-        <figcaption className="gg-figure-cap">
+        <figcaption className="gg-figure-cap" aria-live="polite">
           第 {index + 1} 張，共 {images.length} 張
           {product ? `｜配搭單品：${product.name}` : ''}
         </figcaption>
@@ -166,9 +181,9 @@ type ShareFeedback = { kind: 'success' | 'error'; message: string } | null;
  * Lead 分享列：「分享」＋「複製網址」兩個真按鈕。
  *
  * - 分享用正式網址 window.location.origin + guidePath(slug)；navigator.share
- *   可用時傳 title/text/url。用戶自己取消（AbortError）靜默；其他失敗明確
- *   回報並建議改用「複製網址」——唔准假成功。瀏覽器冇 navigator.share
- *   就直接行同一個真複製流程，唔會出死按鈕。
+ *   可用時淨傳 { url }（唔附 title／text）。用戶自己取消（AbortError）靜默；
+ *   其他失敗明確回報並建議改用「複製網址」——唔准假成功。瀏覽器冇
+ *   navigator.share 就直接行同一個真複製流程，唔會出死按鈕。
  * - 複製優先 navigator.clipboard.writeText；失敗用隱藏 textarea +
  *   execCommand 真 fallback；再失敗顯示完整網址 readOnly input（可全選，
  *   手機撳住即複製），無 dead control。
@@ -176,15 +191,7 @@ type ShareFeedback = { kind: 'success' | 'error'; message: string } | null;
  *   失敗 role=alert 常駐。
  * - 所有瀏覽器 API 只喺事件 handler 觸碰，SSR（renderToString）零 window。
  */
-function GuideShareActions({
-  slug,
-  title,
-  excerpt,
-}: {
-  slug: string;
-  title: string;
-  excerpt: string;
-}) {
+function GuideShareActions({ slug }: { slug: string }) {
   const [feedback, setFeedback] = useState<ShareFeedback>(null);
   const [manualUrl, setManualUrl] = useState<string | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -267,7 +274,7 @@ function GuideShareActions({
       return;
     }
     try {
-      await navigator.share({ title, text: excerpt, url });
+      await navigator.share({ url });
       setManualUrl(null);
       showFeedback({ kind: 'success', message: '已分享呢篇指南。' }, true);
     } catch (err) {
@@ -363,6 +370,27 @@ export default function GloGuideDetail() {
 
   const images = sortGuideImages(detail.images);
   const highlights = parseGloGuideRichText(detail.body).highlights;
+  const articlePath = guidePath(detail.slug);
+
+  /**
+   * 內容捷徑：root index.html 有 <base href="/">，純 href="#id" 會解去首頁
+   * 而唔係呢篇文。所以 href 用足「文章路徑＋hash」（無 JS／新分頁開都係
+   * 同一篇文嘅錨）；有 JS 就 preventDefault＋scrollIntoView，唔郁 pathname。
+   * 動效跟 prefers-reduced-motion：reduce → 即跳（auto），否則平滑捲動。
+   * 目標元素唔存在就交返俾原生錨行為（href 本身合法）。
+   */
+  const onArticleNavClick = (id: string) => (e: MouseEvent<HTMLAnchorElement>) => {
+    const target = document.getElementById(id);
+    if (!target) return;
+    e.preventDefault();
+    const reduceMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    target.scrollIntoView({
+      block: 'start',
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    });
+  };
 
   return (
     <main className="gg-page">
@@ -385,15 +413,27 @@ export default function GloGuideDetail() {
           <p className="gg-eyebrow">{detail.theme}</p>
           <h1 className="gg-article-title">{detail.title}</h1>
           <nav className="gg-article-nav" aria-label="呢篇指南內容">
-            <a href="#guide-body">睇正文</a>
-            {images.length > 0 && <a href="#guide-gallery">睇配搭圖</a>}
-            {detail.products.length > 0 && <a href="#guide-products">睇文中單品</a>}
+            <a href={`${articlePath}#guide-body`} onClick={onArticleNavClick('guide-body')}>
+              睇正文
+            </a>
+            {images.length > 0 && (
+              <a
+                href={`${articlePath}#guide-gallery`}
+                onClick={onArticleNavClick('guide-gallery')}
+              >
+                睇配搭圖
+              </a>
+            )}
+            {detail.products.length > 0 && (
+              <a
+                href={`${articlePath}#guide-products`}
+                onClick={onArticleNavClick('guide-products')}
+              >
+                睇文中單品
+              </a>
+            )}
           </nav>
-          <GuideShareActions
-            slug={detail.slug}
-            title={detail.title}
-            excerpt={detail.excerpt}
-          />
+          <GuideShareActions slug={detail.slug} />
         </div>
         <aside className="gg-lead-meta" aria-label="出版資料">
           <p className="gg-lead-meta-kicker">Glo Glo 精選指南</p>

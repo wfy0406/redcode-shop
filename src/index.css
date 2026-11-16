@@ -1127,6 +1127,63 @@
   background: var(--gg-taupe);
 }
 
+/* ---------- 配搭圖 gallery 控制（/glo-guide 總覽同 /glo-guide/:slug 共用） ----------
+   共用 class 前綴 .glo-guide-gallery-*（GloGuideList.css 係 lazy-loaded，
+   所以共用樣式擺全站呢度，直接開詳情頁都有定位制）。
+   兩頁色板同屬 SPEC（#151515・#fef1e8・#d69900），呢度用 SPEC 實色值。 */
+
+.glo-guide-gallery {
+  position: relative;
+}
+
+/* 上一張／下一張：≥44px 觸控目標，深色實心＋金邊（SPEC CTA 口徑），
+   坐落主圖左右兩側中間，任何圖片比例都清楚見到 */
+.glo-guide-gallery-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid #d69900;
+  background: rgba(21, 21, 21, 0.88);
+  color: #fef1e8;
+  cursor: pointer;
+}
+
+.glo-guide-gallery-nav--prev {
+  left: 0.5rem;
+}
+
+.glo-guide-gallery-nav--next {
+  right: 0.5rem;
+}
+
+.glo-guide-gallery-nav:hover {
+  background: #d69900;
+  border-color: #d69900;
+  color: #151515;
+}
+
+/* 「第 X 張，共 Y 張」status：主圖右下角細牌，唔遮主體 */
+.glo-guide-gallery-status {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  z-index: 2;
+  margin: 0;
+  padding: 0.2rem 0.6rem;
+  background: rgba(21, 21, 21, 0.78);
+  color: #fef1e8;
+  font-family: 'Noto Sans TC', 'PingFang HK', -apple-system, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+}
+
 .gg-figure-cap {
   font-size: 12px;
   letter-spacing: 0.08em;

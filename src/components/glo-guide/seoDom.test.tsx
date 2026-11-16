@@ -52,14 +52,16 @@ describe('Glo Guide 首口 schema → client hydration', () => {
     root = createRoot(container);
     act(() => root!.render(<SeoProbe />));
 
-    const image = 'https://redcode.red/og/glo-guide/autumn-knit.png';
+    const image = 'https://redcode.red/og/glo-guide/autumn-knit.jpg?v=2026-11-15T02%3A00%3A00.000Z';
     expect(document.head.querySelector('meta[property="og:image"]')?.getAttribute('content')).toBe(image);
+    expect(document.head.querySelector('meta[property="og:image:type"]')?.getAttribute('content')).toBe('image/jpeg');
     expect(document.head.querySelector('meta[property="og:image:width"]')?.getAttribute('content')).toBe('1200');
     expect(document.head.querySelector('meta[property="og:image:height"]')?.getAttribute('content')).toBe('630');
+    expect(document.head.querySelector('meta[property="og:image:alt"]')?.getAttribute('content')).toBe('轉季針織咁襯｜Glo Glo 精選穿搭指南分享預覽圖');
     expect(document.head.querySelector('meta[property="og:title"]')?.getAttribute('content')).toContain('轉季針織咁襯');
     expect(document.head.querySelector('meta[name="twitter:image"]')?.getAttribute('content')).toBe(image);
     expect(document.head.querySelector('meta[name="twitter:card"]')?.getAttribute('content')).toBe('summary_large_image');
-    expect(document.head.querySelector('meta[name="twitter:image:alt"]')?.getAttribute('content')).toContain('轉季針織咁襯');
+    expect(document.head.querySelector('meta[name="twitter:image:alt"]')?.getAttribute('content')).toBe('轉季針織咁襯｜Glo Glo 精選穿搭指南分享預覽圖');
   });
 
   it('同 path 只留一份 Article JSON-LD；其他路由 schema 保持不變', () => {

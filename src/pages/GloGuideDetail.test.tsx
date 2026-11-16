@@ -21,7 +21,7 @@ import { act } from 'react';
 import { renderToString } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import GloGuideDetail from './GloGuideDetail';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -181,12 +181,13 @@ describe('GloGuideDetail 期刊 lead／正文', () => {
     expect(html).toContain('Glo Glo 撰寫');
     expect(html).toContain('4 件文中單品');
     // 內容捷徑保留真錨點（小精靈導引 selector 都靠佢哋）；
-    // id="guide-body" 由 GloGuideRichText 內部提供，呢度核實唔會 dead anchor
-    expect(html).toContain('href="#guide-body"');
+    // id="guide-body" 由 GloGuideRichText 內部提供，呢度核實唔會 dead anchor。
+    // href 用足「文章路徑＋hash」——root <base href="/"> 會令純 #hash 跌返首頁
+    expect(html).toContain('href="/glo-guide/autumn-knit#guide-body"');
     expect(html).toContain('id="guide-body"');
-    expect(html).toContain('href="#guide-gallery"');
+    expect(html).toContain('href="/glo-guide/autumn-knit#guide-gallery"');
     expect(html).toContain('id="guide-gallery"');
-    expect(html).toContain('href="#guide-products"');
+    expect(html).toContain('href="/glo-guide/autumn-knit#guide-products"');
     expect(html).toContain('id="guide-products"');
   });
 
@@ -241,14 +242,26 @@ describe('GloGuideDetail 主配搭圖唔裁切（CSS source assertion）', () =>
 });
 
 describe('GloGuideDetail 全寬主配搭圖舞台', () => {
-  it('首張大圖 eager＋fetchPriority=high（LCP），thumbnails 全部 lazy', () => {
+  it('首張大圖 eager＋fetchPriority=high（LCP），其餘 slides＋thumbnails 全部 lazy', () => {
     setQuery({ data: DETAIL });
     const html = renderDetail();
     // React 19 SSR 原樣輸出 fetchPriority="high"；HTML 屬性不分大小寫
     expect(html.match(/loading="eager"/g)).toHaveLength(1);
     expect(html).toMatch(/fetchpriority="high"/i);
-    // 2 張 thumbnails lazy；商品卡圖都 lazy
-    expect(html.match(/loading="lazy"/g)!.length).toBeGreaterThanOrEqual(2);
+    // 第二張 slide＋2 張 thumbnails lazy；商品卡圖都 lazy
+    expect(html.match(/loading="lazy"/g)!.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('gallery 出齊全部配搭圖 slides＋上一張／下一張制（SSR 已可見）', () => {
+    setQuery({ data: DETAIL });
+    const html = renderDetail();
+    // 兩張配搭圖都喺 SSR 出現（唔係淨得現任嗰張）
+    expect(html).toContain('/uploads/glo-guide/a.png');
+    expect(html).toContain('/uploads/glo-guide/b.png');
+    expect(html).toContain('aria-label="上一張配搭圖"');
+    expect(html).toContain('aria-label="下一張配搭圖"');
+    // 計數由 figcaption 話事（避免同 gallery status 重複）
+    expect(html).toContain('第 1 張，共 2 張');
   });
 
   it('同步單品欄對應首張圖嘅商品：真名／真價／真連結，caption 標注配搭單品', () => {
@@ -387,9 +400,40 @@ describe('GloGuideDetail 互動：切換配搭圖同步單品', () => {
     ).toBe('/products/102');
     expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
     expect(buttons[0].getAttribute('aria-pressed')).toBe('false');
-    // 大圖 alt 同步
-    expect(c.querySelector('.gg-stage-img')?.getAttribute('alt')).toBe('直筒牛仔褲 配搭圖');
+    // 大圖 alt 同步（gallery 全部 slides 齊晒喺 DOM，揀 data-active 嗰張）
+    expect(
+      c.querySelector('[data-active="true"] .gg-stage-img')?.getAttribute('alt'),
+    ).toBe('直筒牛仔褲 配搭圖');
     expect(c.querySelector('.gg-figure-cap')?.textContent).toContain('第 2 張，共 2 張');
+  });
+
+  it('上一張／下一張制循環切換配搭圖，同步單品欄照舊即時更新', () => {
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    const panel = () => c.querySelector('.gg-stage-panel')?.textContent ?? '';
+    const next = c.querySelector<HTMLButtonElement>('button[aria-label="下一張配搭圖"]');
+    const prev = c.querySelector<HTMLButtonElement>('button[aria-label="上一張配搭圖"]');
+    expect(next).not.toBeNull();
+    expect(prev).not.toBeNull();
+    expect(panel()).toContain('駝色開胸針織褸');
+    act(() => {
+      next!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(panel()).toContain('直筒牛仔褲');
+    expect(c.querySelector('.gg-figure-cap')?.textContent).toContain('第 2 張，共 2 張');
+    expect(thumbButtons(c)[1].getAttribute('aria-pressed')).toBe('true');
+    // wrap：最後一張再下一張返第一張，單品欄跟住返
+    act(() => {
+      next!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(panel()).toContain('駝色開胸針織褸');
+    expect(c.querySelector('.gg-figure-cap')?.textContent).toContain('第 1 張，共 2 張');
+    // wrap：第一張上一張去最後一張
+    act(() => {
+      prev!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(panel()).toContain('直筒牛仔褲');
+    expect(thumbButtons(c)[1].getAttribute('aria-pressed')).toBe('true');
   });
 
   it('ArrowRight 喺 selector 移動；focus 都會同步（鍵盤 Tab 到即用）', () => {
@@ -451,17 +495,18 @@ describe('GloGuideDetail 互動：分享／複製網址', () => {
     expect(copy.tagName).toBe('BUTTON');
   });
 
-  it('navigator.share 可用時收到正確 title／text／url（origin + 正式路徑）', async () => {
+  it('navigator.share 可用時淨傳 { url }（origin + 正式路徑），唔附 title／text', async () => {
     const share = vi.fn().mockResolvedValue(undefined);
     setNavigatorProp('share', share);
     setQuery({ data: DETAIL });
     const c = mountDetail();
     await clickAndFlush(shareButtons(c).share);
     expect(share).toHaveBeenCalledTimes(1);
-    const payload = share.mock.calls[0][0] as { title: string; text: string; url: string };
-    expect(payload.title).toBe(DETAIL.title);
-    expect(payload.text).toBe(DETAIL.excerpt);
-    expect(payload.url).toBe(`${window.location.origin}${EXPECTED_PATH}`);
+    const payload = share.mock.calls[0][0] as Record<string, unknown>;
+    // payload 精準得 url 一個 key
+    expect(payload).toEqual({ url: `${window.location.origin}${EXPECTED_PATH}` });
+    expect(payload).not.toHaveProperty('title');
+    expect(payload).not.toHaveProperty('text');
     expect(payload.url).toMatch(/^https?:\/\/.+\/glo-guide\/autumn-knit$/);
     // 成功有清晰回饋（role=status）
     expect(c.querySelector('.gg-share [role="status"]')?.textContent).toContain('已分享');
@@ -563,5 +608,82 @@ describe('GloGuideDetail 互動：分享／複製網址', () => {
     await clickAndFlush(shareButtons(c).copy);
     expect(execCommand).toHaveBeenCalledWith('copy');
     expect(c.querySelector('[role="status"]')?.textContent).toContain('已複製文章網址');
+  });
+});
+
+/* ---------- 互動（happy-dom）：內容捷徑係同頁錨，唔會跌返首頁 ---------- */
+
+describe('GloGuideDetail 互動：內容捷徑（base href="/" 環境）', () => {
+  let scrollSpy: ReturnType<typeof vi.fn>;
+  let originalScrollIntoView: unknown;
+  let originalMatchMedia: unknown;
+
+  beforeEach(() => {
+    scrollSpy = vi.fn();
+    originalScrollIntoView = (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = scrollSpy;
+    originalMatchMedia = window.matchMedia;
+  });
+
+  afterEach(() => {
+    if (originalScrollIntoView) {
+      (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = originalScrollIntoView;
+    } else {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+    window.matchMedia = originalMatchMedia as typeof window.matchMedia;
+  });
+
+  it('三粒捷徑 href 用足文章路徑＋hash（純 #hash 會被 <base href="/"> 解去首頁）', () => {
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    const links = Array.from(c.querySelectorAll<HTMLAnchorElement>('.gg-article-nav a'));
+    expect(links.map((l) => l.getAttribute('href'))).toEqual([
+      '/glo-guide/autumn-knit#guide-body',
+      '/glo-guide/autumn-knit#guide-gallery',
+      '/glo-guide/autumn-knit#guide-products',
+    ]);
+  });
+
+  it('click 三粒捷徑：preventDefault＋scrollIntoView 去正確目標，pathname 唔郁', () => {
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    const pathBefore = window.location.pathname;
+    const hashBefore = window.location.hash;
+    const links = Array.from(c.querySelectorAll<HTMLAnchorElement>('.gg-article-nav a'));
+    const ids = ['guide-body', 'guide-gallery', 'guide-products'];
+    links.forEach((link, i) => {
+      scrollSpy.mockClear();
+      let defaultPrevented = false;
+      act(() => {
+        defaultPrevented = !link.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(defaultPrevented).toBe(true);
+      expect(scrollSpy).toHaveBeenCalledTimes(1);
+      // scrollIntoView 嘅 this 係正確目標元素
+      expect(scrollSpy.mock.instances[0]).toBe(document.getElementById(ids[i]));
+      expect(scrollSpy.mock.calls[0][0]).toMatchObject({ block: 'start', behavior: 'smooth' });
+    });
+    // 冇導航：pathname／hash 都唔郁（舊 bug 係純 #hash 經 base 跳走；
+    // 而家 preventDefault＋scrollIntoView，完全唔經導航）
+    expect(window.location.pathname).toBe(pathBefore);
+    expect(window.location.hash).toBe(hashBefore);
+  });
+
+  it('prefers-reduced-motion: reduce → 即跳（behavior: auto），唔平滑捲動', () => {
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      media: '(prefers-reduced-motion: reduce)',
+    }) as unknown as typeof window.matchMedia;
+    setQuery({ data: DETAIL });
+    const c = mountDetail();
+    const link = c.querySelector<HTMLAnchorElement>('.gg-article-nav a')!;
+    act(() => {
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    expect(scrollSpy.mock.calls[0][0]).toMatchObject({ block: 'start', behavior: 'auto' });
   });
 });

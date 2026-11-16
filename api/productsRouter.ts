@@ -514,7 +514,8 @@ export const productsRouter = createRouter({
       const db = getDb();
       const updated = await db
         .update(products)
-        .set({ aiTagsEnabled: false })
+        // 停用標籤＝公開內容改動（前台唔再出 tags）→ 刷新真內容修改時間（sitemap lastmod 用）
+        .set({ aiTagsEnabled: false, contentUpdatedAt: new Date() })
         .where(inArray(products.id, input.ids))
         .returning({ id: products.id, sku: products.sku });
       if (updated.length > 0) {
@@ -687,7 +688,12 @@ export const productsRouter = createRouter({
         });
         if (pending) return pending;
       }
-      await db.update(products).set(data).where(eq(products.id, id));
+      // contentUpdatedAt：真內容修改時間（sitemap-fashion.xml lastmod 用）。
+      // 加喺 set 度、唔擺入 data——describeProductChanges 嘅用家可讀摘要唔會出現系統時間戳。
+      await db
+        .update(products)
+        .set({ ...data, contentUpdatedAt: new Date() })
+        .where(eq(products.id, id));
       // 圖片歸檔：以更新後嘅最新圖為準（WMS 補舊單圖保險）
       const refreshed = await db.query.products.findFirst({
         where: eq(products.id, id),

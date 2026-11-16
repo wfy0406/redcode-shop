@@ -44,12 +44,13 @@ export interface GuideListItem {
   publishedAt: string;
   updatedAt: string;
   coverImage: GuideImage | null;
+  /** 呢期全部公開配搭圖（position 升冪，已過公開 media 閘）；冇就空 array */
+  images: GuideImage[];
   products: GuideProduct[];
 }
 
 export interface GuideDetail extends GuideListItem {
   body: string;
-  images: GuideImage[];
   /** 永遠 null：模特兒真實參考圖唔公開 */
   modelImage: null;
 }

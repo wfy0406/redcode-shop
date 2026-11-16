@@ -447,6 +447,10 @@ export async function wmsListingBatch(c: Context) {
           isActive: true,
           delistEnabled: Boolean(delistAt),
           delistAt,
+          // 同 SKU 上架更新一定郁公開內容（封面圖／分類／場次／上下架，加埋下面嘅
+          // 品名／價錢／描述／tags）→ 刷新真內容修改時間（sitemap-fashion.xml lastmod 用）。
+          // 純庫存交易（orderDelete／orderSweeper／wmsRefund／wmsShipment／wmsSync）唔會郁佢。
+          contentUpdatedAt: new Date(),
         };
         if (overrideListedDate) set.listedDate = overrideListedDate; // v2.2.2：改咗上架日期就跟上架日期
         if (it.name !== undefined) set.name = it.name;

@@ -41,6 +41,8 @@ export interface RouteMeta {
   canonical?: string | null;
   noindex?: boolean;
   image?: string;
+  /** og:image 嘅真實 MIME（例如 image/jpeg）；有俾先輸出 og:image:type，唔虛構。 */
+  imageType?: string;
   /** 社交預覽圖實際尺寸／替代文字；唔再讓直圖沿用首頁 1200×630 假聲明。 */
   imageWidth?: number;
   imageHeight?: number;
@@ -141,6 +143,13 @@ export function injectRouteMeta(html: string, meta: RouteMeta): string {
         /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/,
         `<meta name="twitter:image" content="${imageUrl}" />`,
       );
+      if (meta.imageType) {
+        out = upsertMeta(
+          out,
+          /<meta\s+property="og:image:type"\s+content="[^"]*"\s*\/>/,
+          `<meta property="og:image:type" content="${esc(meta.imageType)}" />`,
+        );
+      }
       const imageAlt = esc(meta.imageAlt ?? meta.title ?? "RedCode");
       out = upsertMeta(
         out,

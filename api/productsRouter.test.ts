@@ -166,6 +166,39 @@ describe("create — tombstoned SKU 重建保持停用", () => {
   });
 });
 
+describe("update — 真內容修改時間 contentUpdatedAt（sitemap-fashion.xml lastmod 用）", () => {
+  const existingProduct = {
+    id: 42,
+    sku: "SKU-A",
+    name: "舊品名",
+    price: 100,
+    discountPrice: null,
+    description: "舊描述",
+    image: "/uploads/old.jpg",
+    photos: ["/uploads/old.jpg"],
+    stock: 3,
+  };
+
+  it("成功更新：set 帶 contentUpdatedAt（真修改時間 Date）；audit 摘要淨係用家可讀欄位，唔出現系統時間戳", async () => {
+    h.state.productFind.push(existingProduct, { ...existingProduct, name: "新品名", price: 120 });
+    h.state.update.push([]); // products update
+    const res = await caller().update({ id: 42, name: "新品名", price: 120 });
+    expect(res).toMatchObject({ id: 42, name: "新品名" });
+    const productUpdate = h.state.updates.find((r) => r.table === products);
+    expect(productUpdate?.set).toMatchObject({ name: "新品名", price: 120 });
+    expect((productUpdate?.set as Record<string, unknown>)?.contentUpdatedAt).toBeInstanceOf(Date);
+    // 用家可讀摘要：有真欄位變更，但系統時間戳欄永遠唔入 summary
+    const auditInput = (h.logAudit.mock.calls as unknown[][])[0]?.[0] as
+      | { detail?: string }
+      | undefined;
+    const detail = auditInput?.detail ?? "";
+    expect(detail).toContain("名稱");
+    expect(detail).toContain("原價");
+    expect(detail).not.toContain("contentUpdatedAt");
+    expect(detail).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/); // ISO 時間戳唔准混入摘要
+  });
+});
+
 describe("liveSummary — 直播場次全場公開摘要（v2026.11.11.2）", () => {
   it("回全場公開 id/name/category，唔設展示 cap（>60 件都照返全場）", async () => {
     const rows = Array.from({ length: 75 }, (_, i) => ({

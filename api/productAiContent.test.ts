@@ -135,8 +135,8 @@ describe("products.disableAiTags 權限同合約（源碼級）", () => {
     expect(SRC).toContain("disableAiTags: supervisorProcedure");
   });
 
-  it("淨係閂開關：update 淨 set aiTagsEnabled=false；冇任何 enable API", () => {
-    expect(SRC).toContain(".set({ aiTagsEnabled: false })");
+  it("閂開關並記真內容修改時間；冇任何 enable API", () => {
+    expect(SRC).toContain(".set({ aiTagsEnabled: false, contentUpdatedAt: new Date() })");
     expect(SRC).not.toContain("enableAiTags");
     expect(SRC).not.toContain("aiTagsEnabled: true");
   });
