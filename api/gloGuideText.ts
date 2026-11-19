@@ -4,9 +4,10 @@
  * SPEC v1 生成流程第 3–4 步：
  * ─ env：GLO_GUIDE_AI_BASE_URL／GLO_GUIDE_AI_API_KEY／GLO_GUIDE_AI_MODEL 優先，
  *   直接 fallback 現有 DEEPSEEK_API_KEY／DEEPSEEK_BASE／DEEPSEEK_MODEL，再 fallback OPENAI_*；
- * ─ prompt 要求：香港口語廣東話、Glo Glo 第一人稱、150–300 字（空白唔計 code points）、
- *   實用配搭邏輯、生活場景、少少幽默、可間中 emoji、避開近 8 主題及內容開頭、參考明日 7 日天氣；
- * ─ 只可用輸入商品嘅真 name／category／已批准 aiTags／price；禁止估材質、品牌、產地、功能；
+ * ─ prompt 要求：香港口語廣東話、Glo Glo 第一人稱、250–550 字（空白唔計 code points）、
+ *   SEO 搜尋意圖＋GEO 可引用答案結構、最少三種穿搭／著法、生活場景、自然導購、避開近 8 主題；
+ * ─ 只可用輸入商品嘅真 name／category／已批准 aiTags／price／直播場次；品牌／材質無核實欄位就直接略過，
+ *   商品名或標籤字眼唔當材質證明；禁止估產地、功能；
  * ─ 嚴格 JSON {title,body,theme}；NFC＋控制字元清理＋硬閘 validate（gloGuideValidation）；
  * ─ 有限重試（預設總共 3 次），重試時附返上次失敗原因；仍失敗 throw 真錯，絕唔 mock。
  *
@@ -106,18 +107,27 @@ function productFacts(input: GloGuideTextInput): string {
 
 function buildSystemPrompt(): string {
   return [
-    "你係香港網店 Glo Glo 嘅主筆，用第一人稱（「我哋」／「Glo Glo」）寫每日精選配搭指南。",
+    "你係香港網店 Glo Glo 嘅主筆，用第一人稱（「我哋」／「Glo Glo」）寫每日精選文章，同時兼顧 SEO 搜尋意圖、GEO 可引用內容同真實導購。",
     "硬性要求：",
     "- 用香港口語廣東話書寫，自然、親切，唔好書面語，唔好抄內地用語。",
-    "- body 內文 150–300 字（空白唔計，以 Unicode code points 計），title 4–80 字，theme 2–80 字。",
-    "- 要有實用配搭邏輯：講清楚邊件襯邊件、點解咁襯、適合咩身形或場合。",
-    "- 要落地生活場景：返工、放假行街、約會、天氣轉變等香港日常。",
-    "- 可以帶少少幽默，間中用一兩個 emoji，但唔好濫用。",
+    "- body 內文 250–550 字（空白唔計，以 Unicode code points 計），title 4–80 字，theme 2–80 字。",
+    "- title 自然帶出真實商品類別或生活場景搜尋意圖；唔好堆關鍵字、重複同義詞、誇張承諾或 clickbait。",
+    "- body 開頭第一段直接回答今次主題：邊件已選商品適合邊個生活場景、核心襯法係咩；唔好用空泛打招呼或口號開場。",
+    "- 之後用短段落分清楚商品事實、配搭方法同場合，最少寫 3 種明顯唔同嘅穿搭或著法；每件已選商品最少準確點名一次。",
+    "- 每種穿搭要具體講邊件商品配邊類基本單品，再按已知顏色、剪裁、圖案或場景解釋；可寫攝衫、疊穿、摺褲腳、外套披開或全扣、鞋款及飾物轉換等技巧，但要適用於該商品。",
+    "- 可建議外加常見白T、恤衫、牛仔褲、半身裙、波鞋或樂福鞋等，但只能寫成配搭方向；唔好暗示外加單品屬套裝內容、隨貨附送或本店有售。",
+    "- GEO 內容要易被 AI 摘錄：用完整短句直接答「邊件襯邊件」、「適合咩場合」、「點樣轉換造型」，每段集中一個重點，唔好寫空泛形容詞或虛構問答。",
+    "- 導購要自然：可使用輸入有提供嘅真實價錢、直播日期及場次；結尾用一句行動提示引導讀者睇已連結商品詳情或相關場次。",
+    "- 唔准虛構銷量、評價、庫存、折扣期限、最後一件、熱賣或保證效果；唔准寫內部貨號、審核狀態、未知資料或『以實物為準』等旁白。",
+    "- 唔好保證顯瘦、增高、修腿、舒適等主觀或穿著效果；即使標籤有類似字眼，都只可以當商品線索，唔可以寫成效果承諾。",
+    "- 要落地香港生活場景：返工、放假行街、約會、天氣轉變等；可以帶少少幽默，間中用一兩個 emoji，但唔好濫用。",
     "- body 用 2–4 組 [tag]…[/tag] 包住簡短、具體嘅配搭重點（例如 [tag]雨天通勤[/tag]），供公開重點標籤使用；唔好成段包住。",
-    "- 需要強調時只可用 [b]…[/b]、[gold]…[/gold]、[pink]…[/pink]；標記要正確巢狀、唔可以跨段落，唔准輸出 HTML 或 Markdown。標記唔計入 150–300 字。",
+    "- 需要強調時只可用 [b]…[/b]、[gold]…[/gold]、[pink]…[/pink]；標記要正確巢狀、唔可以跨段落，唔准輸出 HTML 或 Markdown。標記唔計入 250–550 字。",
     "- 會提供香港明日起 7 日天氣（或註明天氣資料暫缺），配搭建議要配合；若註明暫缺，絕對唔好斷言具體天氣。",
-    "- 只可以使用輸入商品嘅真實資料：名稱、類別、已批准重點標籤、價錢。",
-    "- 絕對禁止憑空斷言材質（如純棉、真絲、羊毛）、品牌、產地、功能（如防水、防曬、保暖）等輸入冇講嘅嘢。",
+    "- 只可以使用輸入商品嘅真實資料：名稱、類別、已批准重點標籤、價錢、直播日期及場次。",
+    "- 輸入冇已核實品牌或材質欄位：品牌同材質一律直接略過，唔准斷言，亦唔准寫『品牌不明』、『品牌未知』、『材質不明』、『材質未知』、『未提供』或『以實物為準』等旁白。",
+    "- 商品名或標籤即使出現棉、雪紡、皮革等字眼，都只可以喺完整準確引用商品名時保留；唔可以當成材質證明、拆出嚟描述或再作推論。",
+    "- 同樣禁止憑空斷言產地、功能（如防水、防曬、保暖）等輸入冇講嘅嘢。",
     "- 會提供最近 8 篇指南嘅主題同內容開頭：theme 唔准同佢哋重複，內容開頭唔准換字重用。",
     "輸出格式：只可以輸出一個 JSON 物件，唔准包 markdown code fence，格式如下：",
     '{"title":"…","body":"…","theme":"…"}',
@@ -150,8 +160,9 @@ function buildUserPrompt(input: GloGuideTextInput): string {
 // ──────────────────────────── 無依據事實檢查 ────────────────────────────
 
 /**
- * 高風險斷言字眼（材質／產地／功能／品牌聲稱）。
- * 規則：輸出出現呢啲字眼，但輸入商品已知事實（名稱＋類別＋標籤）冇提及 → 視為無依據斷言。
+ * 高風險斷言字眼（材質／產地／功能）。
+ * 輸入冇已核實材質欄位，所以名稱或標籤出現相關字眼都唔構成材質證明；
+ * 只有完整準確引用商品名可以先剔除，其餘內容一出現相關斷言就擋。
  * 名單係保守下限；重試時會將違規字眼回饋俾模型改正。
  */
 const RISKY_FACT_TERMS: readonly string[] = [
@@ -167,26 +178,34 @@ const RISKY_FACT_TERMS: readonly string[] = [
   "防水", "防風", "防曬", "防紫外線", "uv", "抗菌", "速乾", "快乾", "保暖", "透氣", "防皺",
 ];
 
-function knownFactsText(input: GloGuideTextInput): string {
-  return input.products
-    .flatMap((p) => [p.name, p.category, p.categoryLabel, ...p.aiTags])
-    .join(" ")
-    .toLowerCase();
+const UNVERIFIED_FACT_COMMENTARY: readonly string[] = [
+  "品牌未知", "品牌不明", "未知品牌", "品牌未提供", "未有品牌資料", "唔知品牌",
+  "材質未知", "材質不明", "未知材質", "材質未提供", "未有材質資料", "唔知材質",
+  "以實物為準",
+];
+
+function withoutExactProductNames(text: string, input: GloGuideTextInput): string {
+  let result = text.toLowerCase();
+  for (const product of input.products) {
+    const exactName = product.name.trim().toLowerCase();
+    if (exactName) result = result.split(exactName).join(" ");
+  }
+  return result;
 }
 
-/** 返違規字眼清單（空 array＝合格）。只係啟發式擋無依據斷言，唔係事實保證。 */
+/** 返違規字眼清單（空 array＝合格）。只係啟發式擋無依據斷言及未知資料旁白，唔係事實保證。 */
 export function detectUnsafeFacts(
   output: GloGuideTextOutput,
   input: GloGuideTextInput,
 ): string[] {
-  const haystack = `${output.title} ${output.body} ${output.theme}`.toLowerCase();
-  const known = knownFactsText(input);
+  const original = `${output.title} ${output.body} ${output.theme}`.toLowerCase();
+  const haystack = withoutExactProductNames(original, input);
   const violations: string[] = [];
   for (const term of RISKY_FACT_TERMS) {
-    const needle = term.toLowerCase();
-    if (haystack.includes(needle) && !known.includes(needle)) {
-      violations.push(term);
-    }
+    if (haystack.includes(term.toLowerCase())) violations.push(term);
+  }
+  for (const term of UNVERIFIED_FACT_COMMENTARY) {
+    if (original.includes(term.toLowerCase())) violations.push(term);
   }
   return violations;
 }
@@ -228,7 +247,7 @@ function parseStrictJson(content: string): Record<string, unknown> {
   return obj;
 }
 
-/** NFC＋控制字元清理 → 硬閘（title 4–80／body 150–300 code points 空白唔計／theme 2–80）→ 無依據事實檢查 */
+/** NFC＋控制字元清理 → 硬閘（title 4–80／body 250–550 code points 空白唔計／theme 2–80）→ 無依據事實檢查 */
 function validateOutput(raw: Record<string, unknown>, input: GloGuideTextInput): GloGuideTextOutput {
   const output: GloGuideTextOutput = {
     title: sanitizeGloGuideLine(raw.title as string),
@@ -246,7 +265,7 @@ function validateOutput(raw: Record<string, unknown>, input: GloGuideTextInput):
   if (themeErr) errors.push(themeErr);
   const unsafe = detectUnsafeFacts(output, input);
   if (unsafe.length > 0) {
-    errors.push(`唔准斷言輸入冇提及嘅資料：${unsafe.join("、")}`);
+    errors.push(`唔准寫無依據資料或未知資料旁白：${unsafe.join("、")}`);
   }
   if (errors.length > 0) {
     throw new GloGuideProviderError("AI_VALIDATION", errors.join("；"), true);
@@ -373,7 +392,7 @@ export async function generateGloGuideText(
         role: "user",
         content:
           `上次輸出唔合格：${providerError.message}。` +
-          `請嚴格跟返格式同限制重新輸出一次 JSON（body 而家要有 150–300 字，空白唔計）。`,
+          `請嚴格跟返格式同限制重新輸出一次 JSON（body 而家要有 250–550 字，空白唔計）。`,
       });
       await sleep(300 * attempt);
     }

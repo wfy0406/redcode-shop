@@ -38,9 +38,16 @@ vi.mock("../gloGuidePublic", () => ({
   },
 }));
 
-// ── mock 1：serveStatic 唔派静态檔，全部落入 notFound fallback ──
+// ── mock 1：預設 serveStatic 落入 notFound；指定測試可模擬首頁被靜態檔提前截走 ──
+let staticHomeShortCircuit = false;
 vi.mock("@hono/node-server/serve-static", () => ({
-  serveStatic: () => async (_c: unknown, next: () => Promise<void>) => {
+  serveStatic: () => async (
+    c: { req: { path: string }; html: (body: string) => Response },
+    next: () => Promise<void>,
+  ) => {
+    if (staticHomeShortCircuit && c.req.path === "/") {
+      return c.html("STATIC_HOME_WITHOUT_CATALOG");
+    }
     await next();
   },
 }));
@@ -83,7 +90,7 @@ vi.mock("../queries/connection", () => ({
   }),
 }));
 
-import { serveStaticFiles } from "./vite";
+import { publicAssetCacheControl, serveStaticFiles } from "./vite";
 // 喺 fs.readFileSync spy 裝上之前預載公開單據 gateway；否則 Node 動態載入 dotenv 時會誤讀 HTML fixture。
 import "../webDesignPublicBill";
 
@@ -179,6 +186,7 @@ function canonicalHref(html: string): string | null {
 beforeEach(() => {
   mockRows = [];
   queryError = null;
+  staticHomeShortCircuit = false;
   mockGuideItems = [];
   mockGuideDetail = null;
   mockGuideError = null;
@@ -246,13 +254,17 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain('<main id="redcode-glo-guide-seo" data-redcode-prerender');
     expect(html).toContain("<h2>落雨返工唔使灰</h2>");
     expect(html).toContain('<a href="/products/85">短身風衣外套</a>｜HK$299');
-    expect(html).toContain('src="https://redcode.red/uploads/glo-guide/guide-1.png"');
+    // R05：首口圖用 <picture> 多尺寸 AVIF／WebP derivative；<img src> 係中檔 WebP 兜底，唔再直載原 PNG
+    expect(html).toContain('src="https://redcode.red/uploads/glo-guide/guide-1.png?w=768&amp;fmt=webp"');
+    expect(html).toContain('type="image/avif"');
+    expect(html).toContain('type="image/webp"');
     expect(html).toContain('fetchpriority="high"');
     expect(html).toContain("2026-11-16 00:00");
     expect(html).toContain("Glo Glo 撰寫每週直播新品配搭靈感，附重點標籤同配搭圖");
-    // 首口 SEO 區塊保留；JS 啟用時喺首次繪畫前收起，避免 React mount 移除造成 CLS。
-    expect(html).toContain("nodes[i].style.display='none'");
-    expect(html.indexOf('id="redcode-glo-guide-seo"')).toBeLessThan(html.indexOf("nodes[i].style.display='none'"));
+    // R01：首口 SEO 區塊保持可見直到 React 真資料 commit（慢網絡唔會全版消失）；
+    // 唔再附 inline <script> 收起——CSP script-src 只許白名單 hash，inline 會被擋兼報 violation。
+    expect(html).not.toContain("nodes[i].style.display='none'");
+    expect(html).not.toContain("<script>(function()");
   });
 
   it("指南詳情首口有完整文章、Article JSON-LD、商品卡，gallery 唔重複 cover", async () => {
@@ -289,8 +301,11 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("<s>HK$399</s> HK$299");
     expect(html).toContain("配搭圖只供配搭參考；商品外觀以商品原圖為準");
     const block = html.match(/<main id="redcode-glo-guide-seo"[\s\S]*?<\/main>/)?.[0] ?? "";
-    expect(block.match(/guide-1\.png/g)).toHaveLength(1);
-    expect(block.match(/guide-2\.png/g)).toHaveLength(1);
+    // R05：每張配搭圖一個 <figure>（picture 多尺寸 srcset 令同一路徑出現多次屬正常）；
+    // gallery 唔重複 cover 嘅本意改以 figure 數量驗證（商品卡另有自己嘅 <img>）。
+    expect(block.match(/<figure>/g)).toHaveLength(2);
+    expect(block).toContain("guide-1.png");
+    expect(block).toContain("guide-2.png");
     expect(block).toContain('fetchpriority="high"');
     expect(block).toContain('loading="lazy"');
   });
@@ -446,7 +461,14 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("（貨號 SKU-067）");
     expect(html).toContain("HK$199；有貨");
     expect(html).toContain('<div id="root"></div>');
-    expect(html).not.toContain("<noscript");
+    // 無 JS 時仍可載入品牌字體；但 SEO 主內容唔准收埋喺 noscript 扮可爬正文。
+    const noscriptBlocks = html.match(/<noscript\b[\s\S]*?<\/noscript>/gi) ?? [];
+    expect(noscriptBlocks.length).toBeGreaterThan(0);
+    for (const block of noscriptBlocks) {
+      expect(block).not.toContain('id="redcode-catalog-seo"');
+      expect(block).not.toContain('id="redcode-public-seo"');
+      expect(block).not.toContain('id="redcode-product-seo"');
+    }
 
     queryError = new Error("connection refused");
     const fallback = await (await makeApp().request("/products")).text();
@@ -463,11 +485,27 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain('id="redcode-catalog-seo"');
     expect(html).toContain('<a href="/products/85"><strong>首頁真商品</strong></a>');
     expect(html).toContain("RedCode Fashion Design｜香港女裝直播網店");
+    expect(html).toContain('<base href="/" />');
+    expect(html).toContain('<link rel="preload" as="image" href="/vip/member-hero.jpg" fetchpriority="high" />');
+    expect(html.indexOf('href="/vip/member-hero.jpg"')).toBeLessThan(html.indexOf("</head>"));
+    expect(html).not.toContain('href="/live-banner.jpg"');
+    expect(res.headers.get("cache-control")).toBe("no-cache, must-revalidate");
 
     queryError = new Error("connection refused");
     const fallback = await (await makeApp().request("/")).text();
     expect(fallback).toContain('id="redcode-public-seo"');
     expect(fallback).not.toContain('id="redcode-catalog-seo"');
+  });
+
+  it("(4c-route-order) 即使 static 本來會直接派首頁，專用路由仍先注入真商品目錄", async () => {
+    staticHomeShortCircuit = true;
+    mockRows = [makeProduct({ name: "路由次序真商品" })];
+    const res = await makeApp().request("/");
+    const html = await res.text();
+    expect(res.status).toBe(200);
+    expect(html).not.toContain("STATIC_HOME_WITHOUT_CATALOG");
+    expect(html).toContain('id="redcode-catalog-seo"');
+    expect(html).toContain("路由次序真商品");
   });
 
   it("(4d) /live 首口列真節目日期及場次連結；DB 故障保留原直播摘要", async () => {
@@ -483,6 +521,9 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain('<a href="/products?liveDate=20261111">2026年11月11日 全日直播商品</a>');
     expect(html).toContain('<a href="/products?liveDate=20261111&amp;liveSession=2">2026年11月11日 第2場直播商品</a>');
     expect(html.indexOf("2026年11月11日")).toBeLessThan(html.indexOf("2026年11月3日"));
+    expect(html).toContain('<link rel="preload" as="image" href="/live-banner.jpg" fetchpriority="high" />');
+    expect(html.indexOf('href="/live-banner.jpg"')).toBeLessThan(html.indexOf("</head>"));
+    expect(html).not.toContain('href="/vip/member-hero.jpg"');
 
     queryError = new Error("connection refused");
     const fallback = await (await makeApp().request("/live")).text();
@@ -508,7 +549,9 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("<title>2026年10月28日 全日直播商品｜RedCode Fashion Design</title>");
     expect(html).toContain("全日全部場次");
     expect(canonicalHref(html)).toBe("https://redcode.red/products?liveDate=20261028");
+    expect(html).toContain("<h1>2026年10月28日 全日直播商品</h1>");
     expect(html).toContain("<h2>2026年10月28日 全日直播商品</h2>");
+    expect(html).not.toContain("<h1>RedCode 全部貨品</h1>");
     expect(html).toContain('<a href="/products/85"><strong>全日直播真商品</strong></a>');
     // og:image 保留 index.html 預設嗰張（直播頁冇專屬圖）
     expect(html).toContain('<meta property="og:image" content="https://redcode.red/og-image.jpg" />');
@@ -534,7 +577,9 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain(
       '<meta property="og:url" content="https://redcode.red/products?liveDate=20261028&amp;liveSession=2" />',
     );
+    expect(html).toContain("<h1>2026年10月28日 第2場直播商品</h1>");
     expect(html).toContain("<h2>2026年10月28日 第2場直播商品</h2>");
+    expect(html).not.toContain("<h1>RedCode 全部貨品</h1>");
     expect(html).toContain("第2場直播真商品");
   });
 
@@ -895,6 +940,15 @@ describe("serveStaticFiles — route-level（真 handler，mock DB／serveStatic
     expect(html).toContain("<title>搵唔到呢頁｜RedCode Fashion Design</title>");
     expect(html).toContain('<meta name="robots" content="noindex, nofollow" />');
     expect(html).not.toContain("抽獎劵查詢");
+  });
+
+  it("(15-cache) 公開媒體短 cache、版本化媒體延長；撤回路徑唔被覆寫，404 唔長 cache", () => {
+    expect(publicAssetCacheControl("/logo.png", 200)).toBe("public, max-age=3600, stale-while-revalidate=86400");
+    expect(publicAssetCacheControl("/home/hero.webp", 200, true)).toBe("public, max-age=604800, stale-while-revalidate=86400");
+    expect(publicAssetCacheControl("/uploads/glo-guide/private.png", 200, true)).toBeNull();
+    expect(publicAssetCacheControl("/og/glo-guide/story.jpg", 200, true)).toBeNull();
+    expect(publicAssetCacheControl("/missing.png", 404)).toBe("no-store");
+    expect(publicAssetCacheControl("/faq", 200)).toBeNull();
   });
 
   it("(16) /llms.txt 回應帶 X-Robots-Tag: noindex（静态檔存在與否由部署驗收）", async () => {

@@ -28,6 +28,9 @@ export interface Product {
   soldOut?: boolean;
   /** AI 重點標籤（已批准）；冇就唔顯示 */
   aiTags?: string[];
+  /** 直播場次事實（products 表真欄位；冇就唔顯示，U04） */
+  liveDate?: string | null;
+  liveSession?: string | null;
 }
 
 export const PRODUCTS: Product[] = [

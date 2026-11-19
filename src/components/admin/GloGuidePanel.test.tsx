@@ -1,6 +1,6 @@
 /**
  * GloGuidePanel 純邏輯測試——唔掂 trpc／DOM，淨係驗面板用嘅閘口規則：
- * ─ 純文字字數（剝 [b]/[gold]/[pink]/[tag] 標記、空白唔計）同 service 150–300 閘一致；
+ * ─ 純文字字數（剝 [b]/[gold]/[pink]/[tag] 標記、空白唔計）同 service 250–550 閘一致；
  * ─ 編輯／提交／批准／落架嘅狀態閘（published 唔准改、生成中鎖住等）；
  * ─ 上傳檔 client 檢查（格式／10MB）＋ dataURL→base64。
  */
@@ -43,8 +43,8 @@ describe('plainBodyCharCount（同 service countBodyCodePoints 同一規則）',
   });
 });
 
-describe('bodyCountOk（150–300 硬閘）', () => {
-  it('邊界：149 唔得、150 得、300 得、301 唔得', () => {
+describe('bodyCountOk（250–550 硬閘）', () => {
+  it('邊界：249 唔得、250 得、550 得、551 唔得', () => {
     expect(bodyCountOk(BODY_MIN - 1)).toBe(false);
     expect(bodyCountOk(BODY_MIN)).toBe(true);
     expect(bodyCountOk(BODY_MAX)).toBe(true);

@@ -21,13 +21,19 @@
  * 公開措辭：文章係「Glo Glo 撰寫」，圖只叫「配搭圖」；唔提內部流程。
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router';
 import { trpc } from '@/providers/trpc';
 import { formatPrice } from '@/data/products';
 import { useGloGuideListSeo } from '@/components/glo-guide/seo';
 import GuideImageGallery from '@/components/glo-guide/GuideImageGallery';
+import GuidePicture from '@/components/glo-guide/GuidePicture';
+import {
+  adoptGloGuidePrerender,
+  discardGloGuidePrerender,
+  hasGloGuidePrerender,
+} from '@/components/glo-guide/prerender';
 import {
   formatGuideDateHK,
   guideDateTimeAttr,
@@ -227,13 +233,13 @@ function ArticleStage({ items }: { items: GuideListItem[] }) {
                   tabIndex={-1}
                   aria-hidden="true"
                 >
-                  <img
-                    src={image.path}
+                  <GuidePicture
+                    path={image.path}
                     alt=""
                     width={image.width}
                     height={image.height}
-                    loading={i === 0 ? 'eager' : 'lazy'}
-                    decoding="async"
+                    eager={i === 0}
+                    sizes="100vw"
                     className="ggx-stage-img"
                   />
                 </Link>
@@ -268,13 +274,12 @@ function ArticleStage({ items }: { items: GuideListItem[] }) {
                 {`No.${pad2(items.length - i)}`}
               </span>
               {it.coverImage && (
-                <img
-                  src={it.coverImage.path}
+                <GuidePicture
+                  path={it.coverImage.path}
                   alt=""
                   width={it.coverImage.width}
                   height={it.coverImage.height}
-                  loading="lazy"
-                  decoding="async"
+                  sizes="140px"
                   className="ggx-index-img"
                 />
               )}
@@ -437,6 +442,22 @@ export default function GloGuideList() {
   const query = trpc.gloGuide.list.useQuery({ limit: LIST_LIMIT }, { staleTime: 300_000 });
   const items = query.isSuccess ? query.data.items : [];
 
+  /**
+   * R01 prerender 生命周期（收口喺 components/glo-guide/prerender.ts）：
+   * 首口 HTML 嘅真指南列表區塊保持可見，直到真資料 commit（isSuccess）先清走；
+   * pending／錯誤期間搬入 outlet 原位（Masthead 下面）繼續俾客人讀——
+   * 慢網絡唔會全版消失，亦唔會出現兩份 visible 列表。
+   */
+  useEffect(() => {
+    if (query.isSuccess) discardGloGuidePrerender();
+  }, [query.isSuccess]);
+
+  const adoptRef = useCallback((el: HTMLDivElement | null) => {
+    if (el) adoptGloGuidePrerender(el);
+  }, []);
+
+  const prerenderKept = !query.isSuccess && hasGloGuidePrerender();
+
   return (
     <main className="ggx-page">
       {/* 站內已載入 Noto Serif TC / Noto Sans TC，淨補 Marcellus（拉丁 display 用） */}
@@ -446,13 +467,20 @@ export default function GloGuideList() {
       />
       <MastheadHero issueCount={query.isSuccess ? items.length : null} />
 
-      {query.isPending && (
-        <div className="ggx-state" role="status" aria-label="指南載入中">
-          <p className="ggx-state-title">Glo Glo 整理緊最新配搭…</p>
-          <hr className="ggx-rule" aria-hidden="true" />
-          <p>最新一期即刻送到，請稍候。</p>
-        </div>
-      )}
+      {prerenderKept && <div ref={adoptRef} />}
+
+      {query.isPending &&
+        (prerenderKept ? (
+          <p role="status" className="sr-only">
+            Glo Glo 整理緊最新配搭…
+          </p>
+        ) : (
+          <div className="ggx-state" role="status" aria-label="指南載入中">
+            <p className="ggx-state-title">Glo Glo 整理緊最新配搭…</p>
+            <hr className="ggx-rule" aria-hidden="true" />
+            <p>最新一期即刻送到，請稍候。</p>
+          </div>
+        ))}
 
       {query.isError && (
         <div className="ggx-state" role="alert">

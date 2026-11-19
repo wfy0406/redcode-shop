@@ -63,3 +63,77 @@
     animation: none;
   }
 }
+
+/*
+ * U04 直播場次 metadata row（主卡 anchor 嘅 sibling，唔係巢狀連結）
+ * editorial 語言：1px 低對比 hairline 頂部分隔、DM Mono 數字、緊湊細字；
+ * 唔做 bulky 圓角徽章、唔遮商品圖。互動只係 150ms color／背景；≥44px 觸控高。
+ */
+.pc-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin: 0;
+  padding: 7px 16px 8px;
+  border-top: 1px solid var(--space-line);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+  text-decoration: none;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+
+.pc-live-kicker {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  color: var(--pink-soft);
+}
+
+.pc-live-date {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.pc-live-session {
+  flex: none;
+  padding-left: 8px;
+  border-left: 1px solid var(--space-line);
+  color: var(--gold-soft);
+  white-space: nowrap;
+}
+
+.pc-live-arrow {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  transition: color 150ms ease, transform 150ms ease;
+}
+
+.pc-live:hover {
+  color: var(--text-1);
+  background: rgba(255, 0, 84, 0.05);
+}
+
+.pc-live:hover .pc-live-arrow {
+  color: var(--pink-soft);
+  transform: translate(1px, -1px);
+}
+
+.pc-live:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-live,
+  .pc-live-arrow {
+    transition: none;
+  }
+  .pc-live:hover .pc-live-arrow {
+    transform: none;
+  }
+}

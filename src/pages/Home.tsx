@@ -738,6 +738,10 @@ export default function Home() {
 
       {/* ============ 1. Hero（§4.3 全構圖） ============ */}
       <section className="relative flex min-h-[100dvh] items-center overflow-hidden">
+        {/* R04：hero 底圖原本齋 CSS backgroundImage，preload scanner 睇唔到；
+            React 19 會將呢個 <link> hoist 落 <head>，等 member-hero.jpg 可提前發現
+            （視覺原樣，唔改 background 層；各 breakpoint 同一張圖唔會重複下載） */}
+        <link rel="preload" as="image" href="/vip/member-hero.jpg" fetchPriority="high" />
         {/* v2.2.0：member-hero.jpg 絲綢珍珠 flat-lay 做底（左側留白，文字擺左）＋深色漸層保證可讀 */}
         <div
           aria-hidden="true"

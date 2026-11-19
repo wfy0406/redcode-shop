@@ -48,6 +48,10 @@ export const users = pgTable("users", {
   googleEmail: varchar("googleEmail", { length: 255 }),
   googleName: varchar("googleName", { length: 255 }),
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
+  // S05（2026-11-19 安全修復）：密碼最後更改時間。改密碼／驗證碼重設時寫入；
+  // JWT iat 早過呢個時間 → 舊 token 即時作廢（middleware.ts verifiedUser 強制）。
+  // NULL＝從未改過密碼（舊會員／新註冊／Google 開戶），唔影響現有 token。
+  passwordChangedAt: timestamp("passwordChangedAt"),
   address: text("address"),
   // 預設取貨方式（2026-08-08 Glo 要求）：address 送貨上門（用上面 address 欄）／
   // sf_station 順豐站／sf_locker 智能櫃（站點名稱/編號落 pickupPoint，選填）。

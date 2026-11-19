@@ -27,6 +27,9 @@ export interface ShopProduct {
   stock: number;
   /** 重點標籤（公開 API 已批准先回 string[]；停用嘅 server 回 []；舊後端/示範數據冇呢欄） */
   aiTags?: string[];
+  /** 直播場次事實（products 表真欄位；list API 有回，latest/舊後端/示範數據冇呢欄 → 卡片唔出場次行） */
+  liveDate?: string | null;
+  liveSession?: string | null;
 }
 
 /** 重點標籤正規化：淨係留非空字串、trim、去重（順序保留）；乜嘢壞資料都回 [] 唔會爆 */
@@ -89,6 +92,9 @@ export interface CardProduct {
   stock: number;
   /** 重點標籤（已批准）；冇就唔顯示 */
   aiTags?: string[];
+  /** 直播場次事實（YYYYMMDD／'1','2'…）；冇就唔顯示（U04：唔虛構、唔出空徽章） */
+  liveDate?: string | null;
+  liveSession?: string | null;
 }
 
 /** listedDate 兼容 Date（superjson）同 ISO 字串；Invalid 就用今日保底，唔好畀 Intl.DateTimeFormat 爆（Invalid time value） */
@@ -113,6 +119,8 @@ export function toCardProduct(p: ShopProduct): CardProduct {
     soldOut: p.stock <= 0,
     stock: p.stock,
     aiTags: aiTags.length > 0 ? aiTags : undefined,
+    liveDate: p.liveDate ?? null,
+    liveSession: p.liveSession ?? null,
   };
 }
 

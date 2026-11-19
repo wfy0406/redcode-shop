@@ -4,6 +4,9 @@ import './index.css'
 import { TRPCProvider } from "@/providers/trpc"
 import { AuthProvider } from "@/hooks/useAuth"
 import App from './App.tsx'
+import { activatePreloadedFontStylesheet } from './lib/fontStylesheet'
+
+activatePreloadedFontStylesheet(document);
 
 // react-dev.md：唔好包 <React.StrictMode>（會令 canvas effects 行兩次）
 // BrowserRouter：正式路徑利 SEO（Google 對 # 後面嘅路徑永遠當一頁）；

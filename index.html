@@ -76,10 +76,20 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- 同一套品牌字體提早下載，但唔再由 parser-blocking stylesheet 阻住首屏；
+         main.tsx 開機時將呢個 preload 轉做 stylesheet。無 JS 嘅首口內容由 noscript 保留原字體。 -->
     <link
+      id="redcode-font-stylesheet"
       href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&family=Cormorant+Garamond:wght@500;600&family=DM+Mono:wght@400;500&family=Great+Vibes&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      as="style"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&family=Cormorant+Garamond:wght@500;600&family=DM+Mono:wght@400;500&family=Great+Vibes&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
   </head>
   <body>
     <div id="root"></div>

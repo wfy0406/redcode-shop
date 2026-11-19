@@ -562,12 +562,14 @@ export default function Navbar() {
             min-w-0：右 cluster 喺 flex 入面可縮，長會員名唔會再頂爆頂欄（2026-10-26 overflow 修正） */}
         <div className="flex min-w-0 items-center gap-2 xl:gap-3">
           {/* Messenger 鈕（2026-08-06 Glo 要求）：icon-only，一撳直開專頁對話。
-              2026-10 batch1 UX：min-h-11（44px 觸控）＋icon 20px（年長客群） */}
+              2026-10 batch1 UX：min-h-11（44px 觸控）＋icon 20px（年長客群）。
+              R10：320px 超窄機頂欄頂爆 32px——<360px 收埋頂欄呢粒
+              （頁面右下角 Messenger 浮鈕全站照常，入口唔會消失） */}
           <a
             href={MESSENGER_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-messenger min-h-11 !px-3 !py-2 text-sm"
+            className="btn btn-messenger min-h-11 !px-3 !py-2 text-sm max-[359px]:hidden"
             aria-label="Facebook Messenger 聯絡我們"
           >
             <MessengerIcon size={20} />

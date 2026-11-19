@@ -25,6 +25,12 @@ export function verifyPassword(password: string, stored: string): boolean {
 export type AuthUser = {
   userId: number;
   role: "member" | "staff" | "supervisor" | "admin";
+  /**
+   * S05（2026-11-19）：JWT issued-at（Unix 秒）。middleware 覆核時對照
+   * users.passwordChangedAt——iat 早過改密碼時間嘅舊 token 即時拒絕。
+   * 可選＝向後兼容（手簽／測試用嘅 AuthUser 冇 iat 都仲用得）。
+   */
+  iat?: number;
 };
 
 function jwtSecret(): Uint8Array {
@@ -50,7 +56,7 @@ export async function verifyToken(token: string): Promise<AuthUser | null> {
     if (!Number.isInteger(userId) || !["member", "staff", "supervisor", "admin"].includes(role)) {
       return null;
     }
-    return { userId, role };
+    return { userId, role, iat: payload.iat };
   } catch {
     return null;
   }

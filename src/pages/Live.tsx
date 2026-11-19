@@ -141,6 +141,10 @@ export default function Live() {
 
       {/* ============ 1. Hero：live-banner.png 底 + LIVE 眨燈 badge ============ */}
       <section className="relative flex min-h-[70dvh] items-center overflow-hidden">
+        {/* R04：hero 底圖原本齋 CSS backgroundImage，preload scanner 睇唔到；
+            React 19 將 <link rel="preload"> hoist 落 <head>，live-banner.jpg 可提前發現
+            （視覺原樣；background 層照舊，瀏覽器共用同一快取唔會重複下載） */}
+        <link rel="preload" as="image" href="/live-banner.jpg" fetchPriority="high" />
         <div
           aria-hidden="true"
           className="absolute inset-0 bg-cover bg-center"

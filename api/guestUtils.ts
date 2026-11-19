@@ -88,12 +88,49 @@ export class RateLimiter {
   }
 }
 
-/** 取客戶端 IP（rate limit key 用）：proxy 後嘅 x-forwarded-for 第一個，fallback x-real-ip */
-export function clientIpFromRequest(req: Request): string {
+/**
+ * 可信代理層數（R06，2026-11-19 安全修復）：
+ * Render 嘅 reverse proxy 會將真實 client IP **append** 喺 X-Forwarded-For 最尾
+ * （客戶自帶嘅 XFF 會保留喺前面，所以「取第一個」會被偽造繞過限流）。
+ * 預設 1＝只信 Render 一層；如果日後前面加咗 Cloudflare 等 CDN，
+ * 要喺 staging 核實 append／overwrite 行為後將 TRUSTED_PROXY_COUNT 調做 2。
+ * 0＝完全唔信 XFF（直連部署），只用 x-real-ip。
+ */
+export function trustedProxyCount(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.TRUSTED_PROXY_COUNT;
+  if (raw === undefined || raw.trim() === "") return 1;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0 || n > 10) return 1; // 亂填 fail-safe 去預設
+  return n;
+}
+
+/**
+ * 取客戶端 IP（rate limit key 用）——R06 修復後唔再盲信 XFF 第一個值：
+ * ─ 有 XFF 且層數 ≥ 可信代理數：取「倒數第 trustedProxyCount 個」（最尾嗰層係
+ *   我哋信嘅 proxy 親手 append 嘅真實來源，前面嘅全部可以係客人自帶偽造）；
+ * ─ XFF 層數少過可信代理數（繞過 proxy 直連嘅可疑請求）→ "unknown"（共享 bucket，
+ *   唔會畀佢用自訂 XFF 無限換 key 重置限流）；
+ * ─ 無 XFF：fallback x-real-ip（本地 dev 用），再無就 "unknown"。
+ * 回傳值只做 in-memory 限流 key，唔落 log／audit（唔記敏感完整 IP）。
+ */
+export function clientIpFromRequest(
+  req: Request,
+  trusted: number = trustedProxyCount(),
+): string {
   const fwd = req.headers.get("x-forwarded-for");
   if (fwd) {
-    const first = fwd.split(",")[0]?.trim();
-    if (first) return first;
+    if (trusted <= 0) {
+      // 唔信 XFF 嘅部署：直連，XFF 全部係 client 自帶，唔好用
+      return req.headers.get("x-real-ip")?.trim() || "unknown";
+    }
+    const hops = fwd
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (hops.length >= trusted) {
+      return hops[hops.length - trusted]!;
+    }
+    return "unknown";
   }
   return req.headers.get("x-real-ip")?.trim() || "unknown";
 }

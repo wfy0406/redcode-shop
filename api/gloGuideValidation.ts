@@ -2,7 +2,7 @@
  * Glo Glo 精選配搭指南——純邏輯校驗／閘口模組（唔掂 DB、唔掂 network）。
  *
  * SPEC v1 硬閘（iteration 4 更新）：
- * ─ 文章 NFC＋控制字元清理；title 4–80、body 150–300 Unicode code points（空白唔計）、theme 2–80。
+ * ─ 文章 NFC＋控制字元清理；title 4–80、body 250–550 Unicode code points（空白唔計）、theme 2–80。
  * ─ themeKey 對最近 8 篇非 archived 文章不可重複。
  * ─ 最少 2 件不重複商品（手動指定冇上限；自動／無指定先隨機抽 2–3 件）。
  * ─ 圖片唔再設全局 3–5 數量閘：每件已選商品最少一張 completed＋source-drift-safe
@@ -62,8 +62,8 @@ export function countBodyCodePoints(body: string): number {
 
 export const GLO_GUIDE_TITLE_MIN = 4;
 export const GLO_GUIDE_TITLE_MAX = 80;
-export const GLO_GUIDE_BODY_MIN = 150;
-export const GLO_GUIDE_BODY_MAX = 300;
+export const GLO_GUIDE_BODY_MIN = 250;
+export const GLO_GUIDE_BODY_MAX = 550;
 export const GLO_GUIDE_THEME_MIN = 2;
 export const GLO_GUIDE_THEME_MAX = 80;
 
@@ -85,7 +85,7 @@ export function validateGloGuideTheme(theme: string): string | null {
   return null;
 }
 
-/** body 校驗（已清理）：格式標記先過結構閘，再計 150–300 個純文字 code points。 */
+/** body 校驗（已清理）：格式標記先過結構閘，再計 250–550 個純文字 code points。 */
 export function validateGloGuideBody(body: string): string | null {
   const markupError = parseGloGuideRichText(body).error;
   if (markupError) return `內文格式錯誤：${markupError}`;

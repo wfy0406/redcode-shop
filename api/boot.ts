@@ -16,6 +16,7 @@ import { wmsShipmentCallback } from "./wmsShipment";
 import { wmsDeleteOrderCallback } from "./wmsDeleteOrder";
 import { wmsDeleteItemCallback } from "./wmsDeleteItem";
 import { listingImageUpload, wmsListingBatch } from "./wmsListing";
+import { wmsProductContentBatch } from "./wmsProductContent";
 import { wmsPhotoFeed } from "./wmsPhotoFeed"; // 2026-10-23（老闆指令）：貨圖庫官網區資料 feed（唯讀）
 import { wmsGloGuide } from "./gloGuideWms";
 import { gloGuidePublicMedia } from "./gloGuidePublicMedia";
@@ -38,7 +39,14 @@ import { env } from "./lib/env";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb } from "./queries/connection";
 import { luckyDrawEvents, orders, productImageArchive, products, users, walletTopups } from "@db/schema";
-import { getAirwallexConfig, retrievePaymentIntent, verifyWebhookSignature } from "./airwallex";
+import {
+  getAirwallexConfig,
+  retrievePaymentIntent,
+  verifyWebhookSignature,
+  isWebhookTimestampFresh,
+  processWebhookEvent,
+  WebhookEventDeduper,
+} from "./airwallex";
 import { sendOrderPaidOnlineEmail, sendOrderReviewAlertEmail, orderVipEmailInfo, sendWalletTopupApprovedEmail } from "./email";
 import { approveTopupCore } from "./walletRouter";
 import { isTopupNo } from "./wallet";
@@ -157,6 +165,8 @@ app.post("/api/wms/delete-item", wmsDeleteItemCallback);
 // 手動上傳貨圖（multipart）＋ 批量推送（批准 execute／拒絕 reject）
 app.post("/api/wms/listing-image", listingImageUpload);
 app.post("/api/wms/listing-batch", wmsListingBatch);
+// 已批准描述／重點標籤專用批：dry-run／execute；唔經一般上架 upsert，唔郁圖、價錢、庫存或場次。
+app.post("/api/wms/product-content-batch", wmsProductContentBatch);
 
 // WMS → 官網貨圖庫資料 feed（2026-10-23 老闆指令；同樣 shared secret 驗證）：
 // 唯讀——全量商品（上架中＋已下架＋定時下架已到）＋抽獎獎品池＋已刪商品圖檔案庫，
@@ -495,6 +505,10 @@ async function handlePaidOnline(
 
 // ② Webhook 收款確認：Airwallex 會 retry，所以全程冪等——conditional update
 //    淨郁 status='pending_payment' 嘅單，郁到（第一次）先寄 email。
+// R13（2026-11-19）：驗簽後加 timestamp 新鮮度窗（預設 24h，官方 retry 約 3 日、
+//    文件冇保證 retry 重簽 timestamp，所以唔敢用 5 分鐘短窗；可用
+//    AIRWALLEX_WEBHOOK_TOLERANCE_MS 收緊）＋ event id 去重（官方 retry 帶同一 id）。
+const airwallexEventDeduper = new WebhookEventDeduper();
 app.post("/api/airwallex/webhook", async (c) => {
   // 後台設定／env 未配置都照註冊：回 503 JSON，唔好冧 server
   const cfg = await getAirwallexConfig();
@@ -509,31 +523,44 @@ app.post("/api/airwallex/webhook", async (c) => {
     console.error("[airwallex] webhook 簽名驗證失敗");
     return c.json({ ok: false, error: "簽名驗證失敗" }, 401);
   }
-  let event: { name?: string; data?: { object?: Record<string, unknown> } };
+  // R13：timestamp 係 HMAC 覆蓋範圍（驗簽通過先可信），新鮮度窗擋舊事件 replay
+  if (!isWebhookTimestampFresh(timestamp)) {
+    console.error("[airwallex] webhook timestamp 超出容忍窗（拒絕，等 Airwallex retry 帶新簽名）");
+    return c.json({ ok: false, error: "webhook timestamp 過期" }, 401);
+  }
+  let event: { id?: string; name?: string; data?: { object?: Record<string, unknown> } };
   try {
     event = JSON.parse(rawBody);
   } catch {
     return c.json({ ok: false, error: "body 要係 JSON" }, 400);
   }
-  // 只處理收款成功；其他事件照回 200（唔理嘅事件唔應該畀 Airwallex 無限 retry）
-  if (event?.name !== "payment_intent.succeeded") {
-    return c.json({ ok: true, ignored: true });
-  }
-  const intent = event.data?.object ?? {};
-  const merchantOrderId =
-    typeof intent.merchant_order_id === "string" ? intent.merchant_order_id : "";
-  const intentId = typeof intent.id === "string" ? intent.id : null;
-  if (!merchantOrderId) {
-    return c.json({ ok: true, ignored: true });
-  }
-  // 收款確認：網站設計 WD、購物金 WT、普通商品各自行獨立 handler。
-  // 三路都冪等（conditional update 郁 0 行 → alreadyHandled 收檔），WD 唔會跌入普通 orders 表。
-  const handled = isWebDesignOrderNo(merchantOrderId)
-    ? await handleWebDesignWebhookPaid(intent)
-    : isTopupNo(merchantOrderId)
-      ? await handleTopupPaidOnline(merchantOrderId, intentId, "webhook")
-      : await handlePaidOnline(merchantOrderId, intentId, "webhook");
-  if (!handled) {
+  // R13：inflight／completed 分開。handler 失敗會向外丟（HTTP 非 2xx）並釋放 claim，
+  // 合法 retry 帶同一 event id 仍可重入；成功／ignored／alreadyHandled 先記 completed。
+  // 跨 instance／重啟嘅重複由三路 handler 嘅 conditional update 冪等兜底。
+  const eventId = typeof event?.id === "string" ? event.id : "";
+  const outcome = await processWebhookEvent(airwallexEventDeduper, eventId, async () => {
+    // 只處理收款成功；其他事件照回 200（唔理嘅事件唔應該畀 Airwallex 無限 retry）
+    if (event?.name !== "payment_intent.succeeded") {
+      return { kind: "ignored" as const };
+    }
+    const intent = event.data?.object ?? {};
+    const merchantOrderId =
+      typeof intent.merchant_order_id === "string" ? intent.merchant_order_id : "";
+    const intentId = typeof intent.id === "string" ? intent.id : null;
+    if (!merchantOrderId) return { kind: "ignored" as const };
+
+    // 收款確認：網站設計 WD、購物金 WT、普通商品各自行獨立 handler。
+    // 三路都冪等（conditional update 郁 0 行 → alreadyHandled 收檔），WD 唔會跌入普通 orders 表。
+    const handled = isWebDesignOrderNo(merchantOrderId)
+      ? await handleWebDesignWebhookPaid(intent)
+      : isTopupNo(merchantOrderId)
+        ? await handleTopupPaidOnline(merchantOrderId, intentId, "webhook")
+        : await handlePaidOnline(merchantOrderId, intentId, "webhook");
+    return { kind: handled ? ("handled" as const) : ("alreadyHandled" as const) };
+  });
+  if (outcome.status === "duplicate") return c.json({ ok: true, duplicate: true });
+  if (outcome.value.kind === "ignored") return c.json({ ok: true, ignored: true });
+  if (outcome.value.kind === "alreadyHandled") {
     // 唔存在嘅單／已處理過嘅 retry：照回 200 收檔
     return c.json({ ok: true, alreadyHandled: true });
   }

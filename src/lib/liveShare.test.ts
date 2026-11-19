@@ -9,6 +9,7 @@ import {
   formatLiveDateLabel,
   isValidLiveDate,
   isValidLiveSession,
+  liveProductHeading,
   liveSharePath,
   liveShareText,
   liveShareTitle,
@@ -95,12 +96,14 @@ describe('日期格式化＋分享文案（全日／單場有分別）', () => {
   it('全日：標題／內文强调全部場次', () => {
     const t = { liveDate: '20261028', liveSession: null };
     expect(liveShareTitle(t)).toBe('2026年10月28日 全日直播商品｜RedCode');
+    expect(liveProductHeading(t)).toBe('2026年10月28日 全日直播商品');
     expect(liveShareText(t)).toContain('全日直播商品');
     expect(liveShareText(t)).toContain('全部場次');
   });
   it('單場：標題／內文强调指定場次即睇即買', () => {
     const t = { liveDate: '20261028', liveSession: '2' };
     expect(liveShareTitle(t)).toBe('2026年10月28日 第2場直播商品｜RedCode');
+    expect(liveProductHeading(t)).toBe('2026年10月28日 第2場直播商品');
     expect(liveShareText(t)).toContain('第2場');
     expect(liveShareText(t)).toContain('即睇即買');
   });

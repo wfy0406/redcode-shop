@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { randomBytes, randomInt } from "node:crypto";
 import { getDb } from "./queries/connection";
 import { passwordResetCodes, users } from "@db/schema";
-import { createRouter, publicQuery, authedProcedure } from "./middleware";
+import { createRouter, publicQuery, authedProcedure, invalidateUserRecheckCache } from "./middleware";
 import { hashPassword, verifyPassword, signToken } from "./auth";
 import { logAudit } from "./audit";
 import { sendPasswordResetEmail, sendWelcomeEmail } from "./email";
@@ -660,8 +660,11 @@ export const authRouter = createRouter({
       }
       await db
         .update(users)
-        .set({ passwordHash: hashPassword(input.newPassword) })
+        // S05（2026-11-19）：記低改密碼時間——iat 較舊嘅 JWT 即時作廢（包括而家用呢個 token）
+        .set({ passwordHash: hashPassword(input.newPassword), passwordChangedAt: new Date() })
         .where(eq(users.id, user.id));
+      // 即時殺 member 級 60 秒覆核 cache，唔係舊 token 仲用到最遲 60 秒
+      invalidateUserRecheckCache(user.id);
       return { ok: true };
     }),
 
@@ -751,8 +754,10 @@ export const authRouter = createRouter({
       if (!user) throw invalid();
       await db
         .update(users)
-        .set({ passwordHash: hashPassword(input.newPassword) })
+        // S05（2026-11-19）：重設密碼同樣撤銷晒舊 JWT
+        .set({ passwordHash: hashPassword(input.newPassword), passwordChangedAt: new Date() })
         .where(eq(users.id, user.id));
+      invalidateUserRecheckCache(user.id);
       await db
         .update(passwordResetCodes)
         .set({ usedAt: new Date() })

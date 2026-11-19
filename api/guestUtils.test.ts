@@ -129,3 +129,57 @@ describe("decideGuestShipping", () => {
     expect(d.remarks[0]).toContain("順豐到付");
   });
 });
+
+// ── R06（2026-11-19 安全修復）：XFF trusted proxy ────────────────────────────
+// 原始漏洞：clientIpFromRequest 取 XFF 第一個值——客人自帶
+// 「X-Forwarded-For: 1.2.3.4」就可以任意換限流 key，繞過登入／重設碼／查單限流。
+// 修復後：只信最尾 trustedProxyCount 層（Render proxy append 嘅真實來源）。
+import { clientIpFromRequest, trustedProxyCount } from "./guestUtils";
+
+function reqWith(headers: Record<string, string>): Request {
+  return new Request("https://redcode.red/api/trpc/x", { headers });
+}
+
+describe("trustedProxyCount", () => {
+  it("預設 1（Render 單層 proxy）；亂填 fail-safe 返 1", () => {
+    expect(trustedProxyCount({})).toBe(1);
+    expect(trustedProxyCount({ TRUSTED_PROXY_COUNT: "" })).toBe(1);
+    expect(trustedProxyCount({ TRUSTED_PROXY_COUNT: "abc" })).toBe(1);
+    expect(trustedProxyCount({ TRUSTED_PROXY_COUNT: "-1" })).toBe(1);
+    expect(trustedProxyCount({ TRUSTED_PROXY_COUNT: "99" })).toBe(1);
+  });
+  it("合法值照用（0＝唔信 XFF；2＝CDN＋Render 兩層）", () => {
+    expect(trustedProxyCount({ TRUSTED_PROXY_COUNT: "0" })).toBe(0);
+    expect(trustedProxyCount({ TRUSTED_PROXY_COUNT: "2" })).toBe(2);
+  });
+});
+
+describe("clientIpFromRequest（R06 修復後）", () => {
+  it("★ 原始漏洞：自帶偽造 XFF 第一個值唔再生效——取 proxy append 嘅最尾值", () => {
+    // 攻擊者自帶 "6.6.6.6"，Render proxy 喺最尾 append 真實來源 203.0.113.9
+    const req = reqWith({ "x-forwarded-for": "6.6.6.6, 203.0.113.9" });
+    expect(clientIpFromRequest(req, 1)).toBe("203.0.113.9");
+  });
+  it("兩層代理（CDN＋Render）：trusted=2 取倒數第二個", () => {
+    const req = reqWith({ "x-forwarded-for": "6.6.6.6, 198.51.100.7, 10.0.0.1" });
+    expect(clientIpFromRequest(req, 2)).toBe("198.51.100.7");
+    // 同一個請求如果錯配 trusted=1，會攞到 Render 內網 IP（限流 key 錯但唔會被客人控制）
+    expect(clientIpFromRequest(req, 1)).toBe("10.0.0.1");
+  });
+  it("XFF 層數少過可信代理數（繞過 proxy 直連）→ unknown 共享 bucket", () => {
+    expect(clientIpFromRequest(reqWith({ "x-forwarded-for": "6.6.6.6" }), 2)).toBe("unknown");
+  });
+  it("合法流程：正常單層 XFF／無 XFF 用 x-real-ip／乜都冇 → unknown", () => {
+    expect(clientIpFromRequest(reqWith({ "x-forwarded-for": "203.0.113.9" }), 1)).toBe("203.0.113.9");
+    expect(clientIpFromRequest(reqWith({ "x-real-ip": "192.168.1.5" }), 1)).toBe("192.168.1.5");
+    expect(clientIpFromRequest(reqWith({}), 1)).toBe("unknown");
+  });
+  it("trusted=0（直連部署）：XFF 完全唔信，只用 x-real-ip", () => {
+    const req = reqWith({ "x-forwarded-for": "6.6.6.6", "x-real-ip": "192.168.1.5" });
+    expect(clientIpFromRequest(req, 0)).toBe("192.168.1.5");
+  });
+  it("XFF 有空格／空段都正常 trim 同過濾", () => {
+    const req = reqWith({ "x-forwarded-for": " 6.6.6.6 , , 203.0.113.9 " });
+    expect(clientIpFromRequest(req, 1)).toBe("203.0.113.9");
+  });
+});

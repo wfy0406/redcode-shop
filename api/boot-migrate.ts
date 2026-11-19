@@ -4,7 +4,7 @@
 // 咁樣 Render 全新 PostgreSQL 一開機就即用得，唔使人手跑 migration。
 import { Pool } from "pg";
 import { env } from "./lib/env";
-import { getDb } from "./queries/connection";
+import { getDb, resolveDbSslConfig } from "./queries/connection";
 import { products, sfStations } from "@db/schema";
 import { ensureInitialAdmin } from "./initialAdmin";
 import { SF_STATIONS } from "./data/sfStations";
@@ -659,6 +659,9 @@ CREATE INDEX IF NOT EXISTS ordershipments_email ON "orderShipments" ("orderId") 
 -- ===== v2.5.0 會員購物金（2026-10-09 老闆指令）=====
 -- 會員購物金餘額（整數港元；舊會員自動 0）
 ALTER TABLE users ADD COLUMN IF NOT EXISTS "storeCredit" integer NOT NULL DEFAULT 0;
+-- S05（2026-11-19 安全修復）：密碼最後更改時間——改密碼／重設後舊 JWT 即時作廢；
+-- 舊會員 NULL＝從未改密碼，現有 token 唔受影響（安全向後兼容）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS "passwordChangedAt" timestamp;
 -- 訂單用咗幾多購物金＋返還冪等鎖（NULL＝未返還）
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS "walletUsed" integer NOT NULL DEFAULT 0;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS "walletReturnedAt" timestamp;
@@ -1005,11 +1008,12 @@ export function buildMigrationStatements(): string[] {
 }
 
 export async function ensureDatabase(): Promise<void> {
+  // R14（2026-11-19）：同 queries/connection.ts 行同一份 TLS 策略（兩條連線路徑一致）
+  const { ssl, warning } = resolveDbSslConfig(env.databaseUrl);
+  if (warning) console.warn(warning);
   const pool = new Pool({
     connectionString: env.databaseUrl,
-    ssl: env.databaseUrl.includes("localhost")
-      ? false
-      : { rejectUnauthorized: false },
+    ssl,
   });
   try {
     console.log("[boot-migrate] ensuring tables...");

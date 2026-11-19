@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TouchEvent } from 'react';
-import { Link, useParams } from 'react-router';
-import { CalendarDays, Check, Heart, Minus, Plus, ScanLine, Share2, ShoppingBag, Tag } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router';
+import { ArrowLeft, CalendarDays, Check, Heart, Minus, Plus, ScanLine, Share2, ShoppingBag, Tag } from 'lucide-react';
 import { trpc } from '@/providers/trpc';
 import { useAuth } from '@/hooks/useAuth';
 import { productCategoryLabel, productSeoDescription, productSeoTitle } from '@contracts/types';
@@ -26,6 +26,7 @@ import { useReveal } from '@/hooks/useReveal';
 import { useRevealDep } from '@/components/shop/useRevealDep';
 import { addToGuestCart } from '@/lib/guestCart';
 import { isProductNotFoundError } from '@/lib/productQuery';
+import { readProductReturnFor } from '@/lib/productReturn';
 import { setCanonicalPath } from '@/lib/seo';
 
 /**
@@ -42,6 +43,7 @@ export default function ProductDetail() {
   const validProductId = Number.isInteger(productId) && productId > 0;
   const { user } = useAuth();
   const utils = trpc.useUtils();
+  const navigate = useNavigate();
 
   const productQuery = trpc.products.byId.useQuery(
     { id: productId },
@@ -188,9 +190,35 @@ export default function ProductDetail() {
   };
 
   if (product === undefined) {
+    // R02：loading 預留同完成態相若嘅版面（左 3:4 圖框＋右欄各行高度貼近真內容，
+    // 整體高過首屏令 Footer 一直喺 fold 以下）——慢網絡下商品入替唔會令可視範圍
+    // 大幅位移（CLS）；spinner 照舊許願星。
     return (
-      <section className="mx-auto max-w-[1280px] px-5 py-24 md:px-8">
-        <div className="flex flex-col items-center gap-3">
+      <section className="mx-auto max-w-[1280px] px-5 pb-24 pt-10 md:px-8 xl:px-12">
+        <div className="mb-5 h-11 w-28 rounded-full border" style={{ borderColor: 'var(--space-line)', background: 'var(--space-2)' }} aria-hidden="true" />
+        <div className="mt-5 h-4 w-64 max-w-full rounded" style={{ background: 'var(--space-3)' }} aria-hidden="true" />
+        <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-14">
+          <div className="aspect-[3/4] w-full rounded-3xl border" style={{ borderColor: 'var(--glass-border)', background: 'var(--space-2)' }} aria-hidden="true" />
+          <div aria-hidden="true">
+            <div className="h-4 w-24 rounded" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-3 h-10 w-11/12 rounded" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-3.5 h-11 w-44 rounded-full" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-6 h-36 w-full rounded-2xl border" style={{ borderColor: 'var(--glass-border)', background: 'var(--space-2)' }} />
+            <div className="mt-6 h-10 w-48 rounded" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-7 h-5 w-28 rounded" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-3 h-11 w-64 max-w-full rounded-full" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-7 h-5 w-24 rounded" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-3 h-11 w-40 rounded-full" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-8 h-[52px] w-full rounded-full" style={{ background: 'var(--space-3)' }} />
+            <div className="mt-6 h-32 w-full border-t pt-5" style={{ borderColor: 'var(--space-line)' }}>
+              <div className="h-4 w-32 rounded" style={{ background: 'var(--space-3)' }} />
+              <div className="mt-3 h-3.5 w-full rounded" style={{ background: 'var(--space-3)' }} />
+              <div className="mt-2.5 h-3.5 w-5/6 rounded" style={{ background: 'var(--space-3)' }} />
+              <div className="mt-2.5 h-3.5 w-4/6 rounded" style={{ background: 'var(--space-3)' }} />
+            </div>
+          </div>
+        </div>
+        <div className="mt-10 flex flex-col items-center gap-3">
           <WishingStar size={32} />
           <p className="text-[14px] text-txt-3">許願星搬緊商品資料…</p>
         </div>
@@ -241,6 +269,11 @@ export default function ProductDetail() {
   const effPrice = effectivePrice(product);
   const outOfStock = product.stock <= 0;
 
+  // U01 返回掣來源：tab-scoped sessionStorage 有呢件商品嘅站內來源記錄
+  // （撳卡嗰刻記低 URL＋scrollY）先用 navigate(-1)；直接開／無效來源 → /products。
+  // 絕對唔靠 history.length 估（直開詳情都有 length≥1），唔會盲目 back 去外站。
+  const backEntry = readProductReturnFor(product.id);
+
   // 上架日期顯示（YYYY-MM-DD，跟瀏覽器本地時區——香港客睇就係香港日期）；
   // 舊數據/壞日期就冚咗佢唔顯示
   const listedDateText = (() => {
@@ -277,6 +310,23 @@ export default function ProductDetail() {
 
   return (
     <section className="mx-auto max-w-[1280px] px-5 pb-24 pt-10 md:px-8 xl:px-12">
+      {/* U01 返回掣（文檔流最頂，唔 floating）：有站內來源記錄 → navigate(-1)
+          行 POP 恢復（Layout 統一 restore scroll＋focus 原本嗰張卡）；
+          直接開／無效來源 → 安全去 /products。 */}
+      <div className="mb-5">
+        {backEntry ? (
+          <button type="button" onClick={() => navigate(-1)} className="pd-back">
+            <ArrowLeft size={16} aria-hidden="true" />
+            返回
+          </button>
+        ) : (
+          <Link to="/products" className="pd-back">
+            <ArrowLeft size={16} aria-hidden="true" />
+            返回
+          </Link>
+        )}
+      </div>
+
       {/* 麵包屑 */}
       <nav aria-label="麵包屑" className="text-[13px] text-txt-3">
         <Link to="/" className="transition-colors hover:text-txt-1">
@@ -355,15 +405,17 @@ export default function ProductDetail() {
           </h1>
 
           {/* 類別＋上架日期（2026-08-03 加）：同 ProductCard 同款玻璃 pill＋icon，
-              一行過放標題同價錢之間，唔阻落單流程 */}
+              一行過放標題同價錢之間，唔阻落單流程。
+              U03：類別係真 Link 去 /products?category=…（keyboard／touch／focus 可用） */}
           <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span
-              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-sm text-lavender"
-              style={{ borderColor: 'var(--glass-border)', background: 'var(--glass-bg)' }}
+            <Link
+              to={`/products?category=${encodeURIComponent(product.category)}`}
+              className="pd-cat"
+              aria-label={`睇返「${productCategoryLabel(product.category)}」分類全部商品`}
             >
               <Tag size={12} aria-hidden="true" />
               {productCategoryLabel(product.category)}
-            </span>
+            </Link>
             {listedDateText && (
               <span className="inline-flex items-center gap-1.5 font-mono text-sm text-txt-3">
                 <CalendarDays size={13} aria-hidden="true" />
@@ -373,8 +425,15 @@ export default function ProductDetail() {
           </div>
 
           {/* 商品小筆記（深色細框卡 + 重點 tags）：放喺價錢上面，
-              冇描述但有 tags 都出，兩樣都冇 ProductStory 自己回 null */}
-          <ProductStory description={product.description} aiTags={aiTags} className="mt-6" />
+              冇描述但有 tags 都出；U02：有真 liveDate 喺卡底出場次 row（真 Link）。
+              三樣都冇 ProductStory 自己回 null */}
+          <ProductStory
+            description={product.description}
+            aiTags={aiTags}
+            liveDate={product.liveDate}
+            liveSession={product.liveSession}
+            className="mt-6"
+          />
 
           {/* 售價帶：同小筆記同一視覺語言（pd-price 系列喺 product-story.css） */}
           <p className="pd-price mt-6">

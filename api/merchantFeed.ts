@@ -53,6 +53,7 @@ export async function buildMerchantFeedXml(): Promise<string> {
     );
 
   const items: string[] = [];
+  let skipped = 0;
   for (const p of rows) {
     // 單一產品壞咗 skip 佢，唔准炸成個 feed
     try {
@@ -97,12 +98,17 @@ export async function buildMerchantFeedXml(): Promise<string> {
       ];
       items.push(`  <item>\n${lines.join("\n")}\n  </item>`);
     } catch (e) {
+      skipped += 1;
       // log 遮罩：唔落產品資料／URL，淨落 id 同錯誤類別
       console.error(
         `[merchant-feed] 產品 ${p.id} 跳過（${e instanceof Error ? e.name : "unknown"}）`,
       );
     }
   }
+
+  // 對帳用摘要：只記數量，唔記商品資料。selected != emitted 就代表有逐件 skip，
+  // 部署後可直接同公開商品數同 Render 逐件錯誤日誌核對，唔再靠 Feed 外觀猜原因。
+  console.log(`[merchant-feed] selected=${rows.length} emitted=${items.length} skipped=${skipped}`);
 
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +

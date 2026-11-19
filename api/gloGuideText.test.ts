@@ -43,16 +43,17 @@ function makeInput(): GloGuideTextInput {
   };
 }
 
-/** 產生一個啱硬閘嘅輸出（body 150–300 code points，空白唔計） */
+/** 產生一個啱硬閘嘅輸出（body 250–550 code points，空白唔計） */
 function validOutput(overrides: Partial<{ title: string; body: string; theme: string }> = {}) {
   return {
     title: "夏日返工咁著最醒",
     body:
-      "我哋 Glo Glo 今期幫你襯好[tag]輕盈返工[/tag] look：荷葉邊雪紡感上衣配高腰闊腳褲，上身輕盈下身修長，" +
-      "視覺即刻高一截，[tag]修長比例[/tag]即刻出晒嚟。聽日廿六到三十度，大致多雲，咁著啱啱好，唔怕焗又唔怕凍。" +
-      "返工見客得體，放工約朋友食飯又夠 casual，一套搞掂兩個場景，抵！" +
-      "落雨加件薄外套都唔失禮，周末著住去市集行下又一樣咁靚，實用度爆燈。" +
-      "記得襯對簡約平底鞋，成個造型更加分 😊 快啲入手啦！",
+      "我哋 Glo Glo 今期用荷葉邊雪紡感上衣同高腰闊腳褲，示範[tag]返工至周末[/tag]三種襯法。" +
+      "第一種係返工：將上衣攝入褲頭，加對樂福鞋；荷葉邊已經有細節，飾物保持簡潔，重點放喺領口同高腰剪裁。" +
+      "第二種係[tag]放假休閒[/tag]：上衣襯牛仔褲同波鞋，褲腳輕輕摺起；高腰闊腳褲亦可分開配淨色T恤，兩件單品唔一定要一套著。" +
+      "第三種適合晚飯聚會：上衣外面加淨色外套，披開時保留領口層次；褲款就配短款外套同平底鞋，由日頭返工轉成晚間造型。" +
+      "聽日 26–30°C、大致多雲，外套揀易穿脫嘅款式，出入室內外都方便增減。" +
+      "上衣而家 HK$159（原價 HK$199），曾喺 2025-06-11 晚市場次出現；想重溫可以睇相關場次，再入商品詳情睇兩件單品。", 
     theme: "夏日返工輕盈配搭",
     ...overrides,
   };
@@ -83,8 +84,8 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(result.title).toBe("夏日返工咁著最醒");
     expect(result.theme).toBe("夏日返工輕盈配搭");
     const len = gloGuideBodyLength(result.body);
-    expect(len).toBeGreaterThanOrEqual(150);
-    expect(len).toBeLessThanOrEqual(300);
+    expect(len).toBeGreaterThanOrEqual(250);
+    expect(len).toBeLessThanOrEqual(550);
 
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe("https://ai.example.com/v1/chat/completions");
@@ -94,7 +95,7 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(payload.response_format).toEqual({ type: "json_object" });
   });
 
-  it("prompt 含全部硬要求：廣東話、Glo Glo 第一人稱、150–300 字、禁估材質、近 8 主題、天氣", async () => {
+  it("prompt 含全部硬要求：廣東話、250–550 字、SEO／GEO、三種穿搭、真實導購、禁估資料", async () => {
     let system = "";
     let user = "";
     const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -108,10 +109,20 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(system).toContain("廣東話");
     expect(system).toContain("Glo Glo");
     expect(system).toContain("第一人稱");
-    expect(system).toContain("150–300");
+    expect(system).toContain("250–550");
+    expect(system).not.toContain("150–300");
+    expect(system).toContain("SEO");
+    expect(system).toContain("GEO");
+    expect(system).toContain("最少寫 3 種");
+    expect(system).toContain("真實價錢、直播日期及場次");
+    expect(system).toContain("唔准虛構銷量、評價、庫存、折扣期限");
+    expect(system).toContain("品牌同材質一律直接略過");
+    expect(system).toContain("品牌不明");
+    expect(system).toContain("材質未知");
+    expect(system).toContain("商品名或標籤即使出現棉、雪紡、皮革等字眼");
+    expect(system).toContain("唔可以當成材質證明");
     expect(system).toContain("emoji");
     expect(system).toContain("[tag]…[/tag]");
-    expect(system).toContain("絕對禁止憑空斷言材質");
     expect(system).toContain("JSON");
     // user prompt：真實商品 facts（名／類別／標籤／價錢）
     expect(user).toContain("荷葉邊雪紡感上衣");
@@ -144,7 +155,8 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     const lastPayload = JSON.parse(String(fetchImpl.mock.calls[2]![1]?.body));
     const lastMessage = lastPayload.messages[lastPayload.messages.length - 1].content;
     expect(lastMessage).toContain("上次輸出唔合格");
-    expect(lastMessage).toContain("內文要 150–300 字");
+    expect(lastMessage).toContain("內文要 250–550 字");
+    expect(lastMessage).toContain("250–550 字，空白唔計");
   });
 
   it("自動稿冇重點標籤 → 唔會當成功，會要求改正", async () => {
@@ -186,16 +198,32 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
-  it("detectUnsafeFacts：輸入本身講明嘅字眼唔當違規", () => {
+  it("detectUnsafeFacts：完整商品名可保留；名稱或標籤字眼唔可以拆出嚟當材質證明", () => {
     const input = makeInput();
-    const output = {
-      title: validOutput().title,
-      body: `${validOutput().body} 呢件係純棉。`,
-      theme: validOutput().theme,
-    };
-    expect(detectUnsafeFacts(output, input)).toContain("純棉");
-    // 商品名本身有「雪紡」→ 唔算無依據
+    // 商品名本身有「雪紡感」；完整點名唔等於材質斷言。
     expect(detectUnsafeFacts(validOutput(), input)).toEqual([]);
+
+    const inferredFromName = validOutput({ body: `${validOutput().body}呢件係雪紡。` });
+    expect(detectUnsafeFacts(inferredFromName, input)).toContain("雪紡");
+
+    input.products[0]!.aiTags = ["純棉", "百搭"];
+    const inferredFromTag = validOutput({ body: `${validOutput().body}呢件係純棉。` });
+    expect(detectUnsafeFacts(inferredFromTag, input)).toContain("純棉");
+  });
+
+  it("品牌／材質未知旁白都唔准出街，會喺硬閘擋返", async () => {
+    const input = makeInput();
+    const commentary = validOutput({
+      body: `${validOutput().body}品牌未知，材質未提供，以實物為準。`,
+    });
+    const violations = detectUnsafeFacts(commentary, input);
+    expect(violations).toEqual(expect.arrayContaining(["品牌未知", "材質未提供", "以實物為準"]));
+
+    const fetchImpl = vi.fn(async () => chatResponse(commentary));
+    await expect(
+      generateGloGuideText(input, { fetchImpl, env: ENV, sleep: noSleep, maxAttempts: 1 }),
+    ).rejects.toMatchObject({ code: "AI_VALIDATION" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("控制字元會被剝走再 validate（NFC 清理）", async () => {

@@ -59,7 +59,7 @@ export interface GloGuideTextInput {
   themeHint?: string;
 }
 
-/** 已清理兼通過硬閘（title 4–80／body 150–300 code points 空白唔計／theme 2–80） */
+/** 已清理兼通過硬閘（title 4–80／body 250–550 code points 空白唔計／theme 2–80） */
 export interface GloGuideTextOutput {
   title: string;
   body: string;

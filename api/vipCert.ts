@@ -117,16 +117,72 @@ const SOFT = "#6b5847";
 const IVORY = "#f7efdd"; // QR 底板色（貼近底圖奶油紙色，零圓角）
 
 /**
- * HMAC-SHA256("vip-cert:"+memberNo, JWT_SECRET) hex 簽名。
- * secret 缺失／任何錯都回空字串（verifyVipCert 會比對失敗回 ok:false，唔會洩漏）。
+ * VIP 證書驗證簽名密鑰（S05，2026-11-19 安全修復）：
+ * 舊做法直接用 JWT_SECRET 簽 HMAC——JWT secret 一旦失守，攻擊者仲可以偽造
+ * 證書驗證連結（跨用途 secret 重用）。而家優先用專用 VIP_CERT_SECRET：
+ * ─ 設咗 VIP_CERT_SECRET → 簽名同驗證都只用佢（同 JWT secret 完全分離）；
+ *    過渡期要繼續接受舊證書（JWT_SECRET 簽嘅），另設 VIP_CERT_LEGACY_ACCEPT=1；
+ * ─ 未設 VIP_CERT_SECRET → 向後兼容跌落 JWT_SECRET（警告一次；安全性同舊版一樣，
+ *    強烈建議喺部署環境補設專用密鑰）。
+ */
+let vipCertFallbackWarned = false;
+function vipCertSigningSecret(): string | null {
+  const dedicated = process.env.VIP_CERT_SECRET?.trim();
+  if (dedicated) return dedicated;
+  const legacy = process.env.JWT_SECRET;
+  if (legacy && !vipCertFallbackWarned) {
+    vipCertFallbackWarned = true;
+    console.warn(
+      "[vipCert] 未設定 VIP_CERT_SECRET，證書簽名暫用 JWT_SECRET（同 JWT 共用密鑰，建議盡快分離）",
+    );
+  }
+  return legacy || null;
+}
+
+function hmacHex(secret: string, memberNo: string): string {
+  return crypto.createHmac("sha256", secret).update(`vip-cert:${memberNo}`).digest("hex");
+}
+
+function safeEqHex(a: string, b: string): boolean {
+  const ba = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
+  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+}
+
+/**
+ * HMAC-SHA256("vip-cert:"+memberNo, VIP_CERT_SECRET) hex 簽名（未設專用密鑰時向後兼容用 JWT_SECRET）。
+ * secret 缺失／任何錯都回空字串（verifyVipCertSignature 會比對失敗回 ok:false，唔會洩漏）。
  */
 export function signVipCertMemberNo(memberNo: string): string {
   try {
-    const secret = process.env.JWT_SECRET;
+    const secret = vipCertSigningSecret();
     if (!secret) return "";
-    return crypto.createHmac("sha256", secret).update(`vip-cert:${memberNo}`).digest("hex");
+    return hmacHex(secret, memberNo);
   } catch {
     return "";
+  }
+}
+
+/**
+ * 驗證證書簽名（constant-time）。專用密鑰設定後只認專用簽名；
+ * VIP_CERT_LEGACY_ACCEPT=1 過渡期額外接受 JWT_SECRET 舊簽名（已印出嘅實體證書 QR）。
+ */
+export function verifyVipCertSignature(memberNo: string, supplied: string): boolean {
+  try {
+    const dedicated = process.env.VIP_CERT_SECRET?.trim();
+    const sig = supplied.toLowerCase();
+    if (dedicated) {
+      if (safeEqHex(hmacHex(dedicated, memberNo), sig)) return true;
+      if (process.env.VIP_CERT_LEGACY_ACCEPT === "1" && process.env.JWT_SECRET) {
+        return safeEqHex(hmacHex(process.env.JWT_SECRET, memberNo), sig);
+      }
+      return false;
+    }
+    const legacy = process.env.JWT_SECRET;
+    if (!legacy) return false;
+    return safeEqHex(hmacHex(legacy, memberNo), sig);
+  } catch {
+    return false;
   }
 }
 

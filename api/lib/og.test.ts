@@ -139,7 +139,9 @@ describe("injectProductOg — 商品存在", () => {
     expect(html).toContain("呢個係寄出時間，唔係保證送達時間，亦唔係收貨後 7 天嘅退換申請期限。");
     expect(html).toContain('<a href="/products">全部貨品</a>');
     expect(html).toContain('<a href="/returns">退換貨政策</a>');
-    expect(html).not.toContain("<noscript");
+    // 非阻塞字體有合法 noscript stylesheet fallback；要擋嘅只係將商品摘要收埋入 noscript。
+    const noscriptBlocks = [...html.matchAll(/<noscript[^>]*>[\s\S]*?<\/noscript>/g)].map((match) => match[0]);
+    expect(noscriptBlocks.every((block) => !block.includes('id="redcode-product-seo"'))).toBe(true);
     // 商品摘要喺 </body> 前、唔喺 #root 入面（白屏自救 script 靠 root 空唔空判斷）
     expect(html.indexOf('id="redcode-product-seo"')).toBeGreaterThan(html.indexOf('id="root"'));
     expect(html).toMatch(/<div id="root"><\/div>/);

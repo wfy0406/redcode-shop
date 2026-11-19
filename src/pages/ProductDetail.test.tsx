@@ -42,7 +42,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const DESCRIPTION = '黑色背心身配啡色翻領，領位同左胸口袋都係啡色。\n\n襯長袖底衫或高領打底都好有層次感。';
 
-function renderDetail() {
+function renderDetail(overrides: Record<string, unknown> = {}) {
   mocks.byIdQuery.data = {
     id: 1,
     sku: 'B249',
@@ -58,6 +58,9 @@ function renderDetail() {
     stock: 20,
     isActive: true,
     aiTags: ['黑色', '背心', '拼色翻領'],
+    liveDate: null,
+    liveSession: null,
+    ...overrides,
   };
   return renderToString(
     <MemoryRouter initialEntries={['/products/1']}>
@@ -124,6 +127,64 @@ describe('ProductDetail 商品小筆記＋售價帶（DOM 順序＋內容保留�
     expect(html2).not.toContain('ps-story');
     expect(html2).toContain('pd-price-amount');
     expect(html).toContain('ps-story');
+  });
+});
+
+describe('U03 分類係真連結', () => {
+  it('分類 pill 係 <a> 去 /products?category=top（唔再係純文字）', () => {
+    const html = renderDetail();
+    // pd-cat link：href 正確、文字係類別 label、唔係 <span>
+    const start = html.indexOf('pd-cat');
+    expect(start).toBeGreaterThan(-1);
+    const block = html.slice(Math.max(0, start - 200), start + 300);
+    expect(block).toContain('href="/products?category=top"');
+    expect(block).toContain('上衣');
+    expect(block).not.toContain('<span class="pd-cat"');
+  });
+});
+
+describe('U02 小筆記直播場次 row（真 liveDate 先出）', () => {
+  it('有 liveDate＋liveSession：顯示日期＋第N場，連結去該場次；原 note 保留', () => {
+    const html = renderDetail({ liveDate: '20261112', liveSession: '2' });
+    expect(html).toContain('ps-live-link');
+    expect(html).toContain('2026年11月12日');
+    expect(html).toContain('第 2 場');
+    expect(html).toContain('liveDate=20261112');
+    expect(html).toContain('liveSession=2');
+    // 原 note 文案一字唔郁
+    expect(html).toContain('黑色背心身配啡色翻領，領位同左胸口袋都係啡色。');
+  });
+
+  it('得 liveDate 無場次：連結只去該日，唔出「第N場」', () => {
+    const html = renderDetail({ liveDate: '20261112' });
+    expect(html).toContain('ps-live-link');
+    expect(html).toContain('liveDate=20261112');
+    expect(html).not.toContain('liveSession=');
+    const start = html.indexOf('ps-live-link');
+    const end = html.indexOf('</a>', start);
+    expect(html.slice(start, end)).not.toContain('第');
+  });
+
+  it('無 liveDate → 唔出場次 row（唔虛構、唔出空徽章），note 照舊', () => {
+    const html = renderDetail({ liveDate: null, liveSession: null });
+    expect(html).not.toContain('ps-live');
+    expect(html).toContain('商品小筆記');
+  });
+
+  it('壞 liveDate（20261301）→ 唔出場次 row', () => {
+    const html = renderDetail({ liveDate: '20261301', liveSession: '1' });
+    expect(html).not.toContain('ps-live');
+  });
+});
+
+describe('U01 返回掣', () => {
+  it('SSR／無來源記錄（直接開）→ fallback 係去 /products 嘅真連結', () => {
+    const html = renderDetail();
+    const start = html.indexOf('pd-back');
+    expect(start).toBeGreaterThan(-1);
+    const block = html.slice(Math.max(0, start - 300), start + 1200);
+    expect(block).toContain('href="/products"');
+    expect(block).toContain('返回');
   });
 });
 

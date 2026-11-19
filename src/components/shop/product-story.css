@@ -217,14 +217,156 @@
   }
 }
 
+/* ===== U02 直播場次 metadata row（小筆記卡底） =====
+   editorial 語言：hairline 頂部分隔、DM Mono 日期數字、緊湊細字；
+   成 row 係真 Link 去 /products?liveDate=…〔&liveSession=…〕。
+   互動只係 150ms color／背景；≥44px 觸控高。 */
+.ps-live {
+  margin: 18px 0 0;
+  border-top: 1px solid var(--space-line);
+}
+
+.ps-live-link {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 2px 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-3);
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+.ps-live-kicker {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  color: var(--pink-soft);
+}
+
+.ps-live-label {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.ps-live-date {
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.ps-live-session {
+  padding-left: 8px;
+  border-left: 1px solid var(--space-line);
+  color: var(--gold-soft);
+  white-space: nowrap;
+}
+
+.ps-live-arrow {
+  flex: none;
+  color: var(--text-3);
+  transition: color 150ms ease, transform 150ms ease;
+}
+
+.ps-live-link:hover {
+  color: var(--text-1);
+}
+
+.ps-live-link:hover .ps-live-arrow {
+  color: var(--pink-soft);
+  transform: translate(1px, -1px);
+}
+
+.ps-live-link:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ===== U01 返回掣（詳情主內容開頭，文檔流內，唔 floating） =====
+   深色實心＋品牌金邊；ArrowLeft＋「返回」；≥44px；focus-visible 金框。 */
+.pd-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--gold);
+  border-radius: 9999px;
+  background: var(--space-2);
+  color: var(--gold-soft);
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease;
+}
+
+.pd-back:hover {
+  background: var(--glass-bg-strong);
+  color: var(--gold);
+}
+
+.pd-back:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* ===== U03 分類真連結（原玻璃 pill 視覺保留，而家撳得去 /products?category=…） ===== */
+.pd-cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 9999px;
+  background: var(--glass-bg);
+  color: var(--pink-tint);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+  text-decoration: none;
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+}
+
+.pd-cat:hover {
+  border-color: var(--pink-soft);
+  background: var(--pink-haze);
+  color: var(--text-1);
+}
+
+.pd-cat:active {
+  background: rgba(255, 0, 84, 0.16);
+}
+
+.pd-cat:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ps-story,
   .ps-story *,
   .ps-story *::before,
   .ps-story *::after,
   .pd-price,
-  .pd-price * {
+  .pd-price *,
+  .ps-live-link,
+  .ps-live-arrow,
+  .pd-back,
+  .pd-cat {
     transition: none !important;
     animation: none !important;
+  }
+  .ps-live-link:hover .ps-live-arrow {
+    transform: none;
   }
 }

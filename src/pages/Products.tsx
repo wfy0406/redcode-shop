@@ -7,6 +7,7 @@ import {
   facebookShareUrl,
   isValidLiveDate,
   isValidLiveSession,
+  liveProductHeading,
   liveShareText,
   liveShareTitle,
   liveShareUrl,
@@ -276,6 +277,8 @@ export default function Products() {
 
   // 分享當前全日／單場（liveDate 有效先會有 panel，normalize 係雙重保險）
   const shareTarget = liveDate ? normalizeLiveShare(liveDate, liveSession || null) : null;
+  // R10：有效場次嘅 React H1 同 server 首口 H1 對齊；只由已驗證 state 產生。
+  const pageHeading = shareTarget ? liveProductHeading(shareTarget) : introTitle;
   const shareUrl = shareTarget ? liveShareUrl(window.location.origin, shareTarget) : '';
   const shareText = shareTarget ? liveShareText(shareTarget) : '';
   // 系統分享淨係支援時先出掣；失敗／取消要誠實，唔准假稱已分享
@@ -342,7 +345,7 @@ export default function Products() {
       <header>
         <p className="script text-3xl md:text-4xl">{introSub}</p>
         <h1 className="mt-2 font-serif-tc text-3xl font-bold leading-[1.2] text-txt-1 md:text-[44px]">
-          {introTitle}
+          {pageHeading}
         </h1>
       </header>
 
@@ -771,7 +774,9 @@ export default function Products() {
                   className="reveal"
                   style={{ transitionDelay: `${Math.min(i * 80, 400)}ms` }}
                 >
-                  <ProductCard product={toCardProduct(p)} />
+                  {/* R03：淨係第一張卡（真正首屏 LCP 候選）eager＋fetchpriority=high，
+                      其餘全部維持 lazy */}
+                  <ProductCard product={toCardProduct(p)} priority={i === 0} />
                 </div>
               ))}
             </div>

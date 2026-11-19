@@ -40,11 +40,25 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(indexHtml).toContain(renderPublicContent("/"));
     expect(indexHtml).toContain('<link rel="describedby" type="text/plain" href="/llms.txt" />');
     expect(indexHtml).toContain('<div id="root"></div>');
-    expect(indexHtml).not.toContain("<noscript");
+    // 容許合法字體 noscript fallback；首口品牌／商品主內容仍要喺正常 HTML。
+    const noscriptBlocks = indexHtml.match(/<noscript\b[\s\S]*?<\/noscript>/gi) ?? [];
+    expect(noscriptBlocks.length).toBeGreaterThan(0);
+    for (const block of noscriptBlocks) {
+      expect(block).not.toContain('id="redcode-public-seo"');
+      expect(block).not.toContain('id="redcode-catalog-seo"');
+      expect(block).not.toContain('id="redcode-product-seo"');
+    }
     expect(indexHtml).toContain('"alternateName": ["RedCode", "Red Code HK直播台", "redcodexhk"]');
     const appSource = readFileSync(new URL("../../src/App.tsx", import.meta.url), "utf8");
     expect(appSource).toContain("useEffect(() => {");
-    expect(appSource).toContain("document.querySelectorAll('[data-redcode-prerender]')");
+    // R01：首口注入清理由 src/components/glo-guide/prerender.ts 收口——
+    // App mount 移除非 glo-guide 注入；glo-guide 文章留俾真資料 commit 後先清。
+    expect(appSource).toContain("removeNonGuidePrerenderBlocks");
+    const prerenderSource = readFileSync(
+      new URL("../../src/components/glo-guide/prerender.ts", import.meta.url),
+      "utf8",
+    );
+    expect(prerenderSource).toContain("data-redcode-prerender");
   });
 
   it("公開頁 title 同 description 各自唯一", () => {
@@ -276,6 +290,20 @@ describe("公開頁 SEO／AEO／GEO 內容", () => {
     expect(renderPublicContent("/faq")).toContain(PUBLIC_SHIPPING_POLICY.visibleText);
     const productSource = readFileSync(new URL("../../src/pages/ProductDetail.tsx", import.meta.url), "utf8");
     expect(productSource).toContain("PUBLIC_SHIPPING_POLICY.visibleText");
+  });
+
+  it("VIP、順豐站、私隱同條款首口有具體答案；順豐流量接回購物／直播／指南", () => {
+    const vip = renderPublicContent("/vip");
+    expect(vip).toContain("免費註冊");
+    expect(vip).toContain("唔會喺首口 HTML 寫死未核實數字");
+    const stations = renderPublicContent("/sf-stations");
+    expect(stations).toContain("地址、GPS、地區同站點類型都可以搵");
+    expect(stations).toContain(PUBLIC_SHIPPING_POLICY.visibleText);
+    expect(stations).toContain('href="/products"');
+    expect(stations).toContain('href="/live"');
+    expect(stations).toContain('href="/glo-guide"');
+    expect(renderPublicContent("/privacy")).toContain("資料保安、保留同你嘅權利");
+    expect(renderPublicContent("/terms")).toContain("帳戶、訂單成立同付款");
   });
 
   it("注入只發生一次；未知路徑同冇 </body> 嘅 HTML 原樣返回", () => {

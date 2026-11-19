@@ -114,7 +114,10 @@ export function productInStock(row: ProductPublicRow): boolean {
  * 唔再係「{名}｜RedCode 香港女裝直播」呢類冇事實嘅模板兜底。
  */
 export function productFeedDescription(row: ProductPublicRow): string {
-  return productSeoDescription(row, FEED_DESCRIPTION_LIMIT);
+  // products.aiTags 喺 DB 係 JSON 字串，唔係公開 DTO 嘅 string[]。Feed 明確唔用 AI 標籤，
+  // 所以傳空 array 畀共用描述 mapper：既避免 raw string.map TypeError 令逐件商品被 skip，
+  // 亦保證標籤唔會經 productSeoFactsSegments 混入 Feed 描述。
+  return productSeoDescription({ ...row, aiTags: [] }, FEED_DESCRIPTION_LIMIT);
 }
 
 /** Feed title：同其他出口一樣用 truncateProductSeoText（截斷補「…」，唔硬切） */

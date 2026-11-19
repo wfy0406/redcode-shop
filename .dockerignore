@@ -3,3 +3,7 @@ dist
 .git
 *.swp
 *.log
+# Docker COPY . . 唔准將本機秘密焗入 image；公開範例仍然保留。
+.env
+.env.*
+!.env.example

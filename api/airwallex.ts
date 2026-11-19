@@ -371,8 +371,9 @@ export async function createAirwallexRefund(opts: {
  * value_to_digest = x-timestamp（原樣字串，唔准轉格式）＋ raw body，
  * HMAC-SHA256（key = webhook secret）→ hex，同 x-signature 做 constant-time 比對。
  * 必須傳入**未經 JSON.parse / 重排**嘅原始 body，否則 bytes 唔同簽名會夾唔到。
- * 唔設時間窗（timestamp tolerance）：Airwallex 失敗會 retry，retry 嘅 timestamp 可能
- * 好舊；簽名本身已經防偽造，重複事件交由業務層冪等處理（conditional update）。
+ * R13（2026-11-19）：簽名驗證之後仲要做 timestamp 新鮮度檢查（isWebhookTimestampFresh，
+ * 預設 24h 窗，見下面核實紀錄）＋event id 去重（WebhookEventDeduper），
+ * 重複／舊事件嘅業務安全由 conditional update 冪等兜底。
  */
 export function verifyWebhookSignature(
   secret: string,
@@ -388,4 +389,119 @@ export function verifyWebhookSignature(
   const a = Buffer.from(expected, "utf8");
   const b = Buffer.from(signature, "utf8");
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// ─── Webhook timestamp 新鮮度＋event 去重（R13，2026-11-19 安全修復）──────────
+//
+// 官方文件核實紀錄（listen-for-webhook-events／webhooks-overview）：
+// - 官方第 4 步本來就建議驗完簽名後對 x-timestamp 做 tolerance 檢查（但冇硬性規定窗口）；
+// - 非 2xx／timeout 會 exponential backoff retry 約 3 日，retry 嘅 event id 不變，
+//   官方指引係以 event id 去重；
+// - 官方文件冇講明 retry 嗰陣 x-timestamp 係咪每次重簽——所以預設窗口攞 24 小時
+//   （將「無限 replay 窗」收窄到 24h，同時唔會截停合法 retry）；staging 用官方測試事件
+//   核實 retry timestamp 語意後，可以用 AIRWALLEX_WEBHOOK_TOLERANCE_MS 收緊（例如 5 分鐘）。
+// - 時效檢查一定要喺簽名驗證**之後**做：timestamp 本身有 HMAC 保護，驗簽先成立先可信。
+
+/** 預設 webhook timestamp 容忍窗：24 小時（見上核實紀錄；可用 env 收緊） */
+export const DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE_MS = 24 * 60 * 60 * 1000;
+
+/** 讀容忍窗（env AIRWALLEX_WEBHOOK_TOLERANCE_MS；亂填／缺失 → 預設 24h） */
+export function webhookTimestampToleranceMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.AIRWALLEX_WEBHOOK_TOLERANCE_MS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE_MS;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE_MS;
+  return n;
+}
+
+/**
+ * x-timestamp 新鮮度檢查（官方格式：毫秒 Unix timestamp 字串）。
+ * ─ 非純數字／未來超過容忍窗／舊過容忍窗 → false（拒絕）；
+ * ─ 未來方向都擋：clock skew 細微未來係正常，但大幅未來一樣係異常。
+ */
+export function isWebhookTimestampFresh(
+  timestamp: string,
+  nowMs: number = Date.now(),
+  toleranceMs: number = webhookTimestampToleranceMs(),
+): boolean {
+  if (!/^\d{1,15}$/.test(timestamp)) return false;
+  const ts = Number.parseInt(timestamp, 10);
+  if (!Number.isSafeInteger(ts)) return false;
+  return Math.abs(nowMs - ts) <= toleranceMs;
+}
+
+/**
+ * Webhook event id 去重（in-memory LRU，cap 10k）：
+ * 「處理中」同「已完成」必須分開——第一次處理失敗時，合法 retry 仍要入到 handler；
+ * 只有成功、明確 ignored 或 alreadyHandled 先標 completed。
+ * 跨 instance／重啟嘅重複由業務層 conditional update 兜底，呢層唔係唯一防線。
+ */
+export class WebhookEventDeduper {
+  private seen = new Map<string, { state: "inflight" | "completed"; updatedAt: number }>();
+  private readonly cap: number;
+  private readonly now: () => number;
+  constructor(cap = 10_000, now: () => number = Date.now) {
+    this.cap = Math.max(1, Math.floor(cap));
+    this.now = now;
+  }
+  /** 新 event → true 並標 inflight；處理中／已完成嘅重複 → false。 */
+  claim(eventId: string): boolean {
+    if (!eventId) return true; // 冇 id 嘅事件唔阻（業務層冪等兜底）
+    if (this.seen.has(eventId)) return false;
+    if (this.seen.size >= this.cap) {
+      // 優先丟最舊已完成 entry；極端全部 inflight 時仍維持 cap，業務冪等兜底。
+      const dropCount = Math.max(1, Math.floor(this.cap / 10));
+      let dropped = 0;
+      for (const [key, value] of this.seen) {
+        if (value.state !== "completed") continue;
+        this.seen.delete(key);
+        if (++dropped >= dropCount) break;
+      }
+      while (this.seen.size >= this.cap) {
+        const oldest = this.seen.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        this.seen.delete(oldest);
+      }
+    }
+    this.seen.set(eventId, { state: "inflight", updatedAt: this.now() });
+    return true;
+  }
+  /** 成功／明確唔再需要處理後先記 completed。 */
+  complete(eventId: string): void {
+    if (!eventId) return;
+    const current = this.seen.get(eventId);
+    if (current?.state !== "inflight") return;
+    // delete＋set 令 LRU 次序按最近完成時間更新。
+    this.seen.delete(eventId);
+    this.seen.set(eventId, { state: "completed", updatedAt: this.now() });
+  }
+  /** 失敗只釋放 inflight；已完成事件唔會因異常路徑被刪走。 */
+  release(eventId: string): void {
+    if (!eventId) return;
+    if (this.seen.get(eventId)?.state === "inflight") this.seen.delete(eventId);
+  }
+}
+
+export type WebhookEventDedupResult<T> =
+  | { status: "processed"; value: T }
+  | { status: "duplicate" };
+
+/**
+ * 包住實際 webhook disposition：handler 丟錯會 release inflight 並向外丟，
+ * 等 HTTP 非 2xx 觸發合法 retry；成功先 complete，之後同 event id 先回 duplicate。
+ */
+export async function processWebhookEvent<T>(
+  deduper: WebhookEventDeduper,
+  eventId: string,
+  operation: () => Promise<T>,
+): Promise<WebhookEventDedupResult<T>> {
+  if (eventId && !deduper.claim(eventId)) return { status: "duplicate" };
+  try {
+    const value = await operation();
+    deduper.complete(eventId);
+    return { status: "processed", value };
+  } catch (error) {
+    deduper.release(eventId);
+    throw error;
+  }
 }

@@ -9,6 +9,7 @@ import {
   injectLuckyAnnouncementClosedContent,
   injectLuckyAnnouncementUnavailableContent,
   injectPublicSeoContent,
+  injectPublicSeoHeading,
   LUCKY_ANNOUNCEMENT_CLOSED_SEO,
   LUCKY_ANNOUNCEMENT_UNAVAILABLE_SEO,
   PUBLIC_PAGES,
@@ -16,6 +17,36 @@ import {
 } from "./publicSeo";
 
 type App = Hono<{ Bindings: HttpBindings }>;
+
+/**
+ * 公開靜態媒體快取：版本化 URL 可以長啲；未版本化 logo／圖片只短 cache，
+ * 避免換圖後長期舊內容。uploads／OG／可撤回媒體由各自 route 決定，唔喺度覆寫。
+ */
+export function publicAssetCacheControl(
+  pathname: string,
+  status: number,
+  versioned = false,
+): string | null {
+  if (!/\.(?:png|jpe?g|webp|avif|svg|gif|woff2?|ttf|otf|ico|mp4|webm)$/i.test(pathname)) return null;
+  if (status === 404) return "no-store";
+  if (status !== 200 || pathname.startsWith("/uploads/") || pathname.startsWith("/og/")) return null;
+  return versioned
+    ? "public, max-age=604800, stale-while-revalidate=86400"
+    : "public, max-age=3600, stale-while-revalidate=86400";
+}
+
+const HERO_IMAGE_PRELOADS: Record<string, string> = {
+  "/": "/vip/member-hero.jpg",
+  "/live": "/live-banner.jpg",
+};
+
+/** R04：preload 必須出喺首口 HTML，唔好等 React 執行先發現 LCP 底圖。 */
+export function injectHeroImagePreload(html: string, pathname: string): string {
+  const href = HERO_IMAGE_PRELOADS[pathname];
+  if (!href || html.includes(`href="${href}"`)) return html;
+  const link = `<link rel="preload" as="image" href="${href}" fetchpriority="high" />`;
+  return html.includes("</head>") ? html.replace("</head>", `    ${link}\n  </head>`) : html;
+}
 
 // 公開頁 meta／無 JS 內容統一由 publicSeo.ts 提供；server 首口 HTML 同 sitemap
 // 使用同一路由事實來源，避免 canonical、sitemap 同實際頁面互相打架。
@@ -105,7 +136,32 @@ export function serveStaticFiles(app: App) {
       }
     } else if ((c.res.headers.get("Content-Type") ?? "").includes("text/html")) {
       c.header("Cache-Control", "no-cache, must-revalidate");
+    } else if (!c.res.headers.has("Cache-Control")) {
+      const versioned = new URL(c.req.url).searchParams.has("v");
+      const policy = publicAssetCacheControl(c.req.path, c.res.status, versioned);
+      if (policy) c.header("Cache-Control", policy);
     }
+  });
+
+  // 首頁必須喺 serveStatic 之前進入同一條公開 SEO 管線。否則靜態 index.html
+  // 會直接回出，令 notFound 入面嘅真商品目錄注入變成死代碼。
+  // 只攔截 GET /；其他 static 檔、HTML fallback 同白屏自救全部維持原次序。
+  app.get("/", async (c) => {
+    const indexPath = path.resolve(distPath, "index.html");
+    let content = fs.readFileSync(indexPath, "utf-8");
+    content = content.replace("<head>", `<head>\n    <base href="/" />`);
+    content = stripPublicSeoContent(content);
+    const { injectRouteMeta } = await import("./og");
+    content = injectRouteMeta(content, { ...PUBLIC_PAGES["/"], path: "/" });
+    content = injectHeroImagePreload(content, "/");
+    content = injectPublicSeoContent(content, "/");
+    try {
+      const { injectPublicCatalog, listPublicCatalog } = await import("./catalogSeo");
+      content = injectPublicCatalog(content, await listPublicCatalog(8));
+    } catch {
+      // DB 一時故障保留品牌摘要，唔當成零商品。
+    }
+    return c.html(content);
   });
 
   app.use("*", serveStatic({ root: "./dist/public" }));
@@ -168,6 +224,9 @@ export function serveStaticFiles(app: App) {
         return c.html(notFoundHtml, 404);
       }
       content = injected;
+      // 只加同呢件商品有真資料關係嘅內鏈；附屬查詢失敗時保留原有商品首口。
+      const { injectProductInternalLinks } = await import("./productInternalLinks");
+      content = await injectProductInternalLinks(content, productId);
     } else {
       // 公開頁注入專屬 meta＋無 JS 內容；私人／有時限分享頁 noindex；
       // 未知路徑回真 404，避免任何字串都變成首頁嘅軟 404。
@@ -333,6 +392,8 @@ export function serveStaticFiles(app: App) {
           );
           content = injectPublicSeoContent(content, "/products");
           const heading = liveMeta?.title?.replace("｜RedCode Fashion Design", "");
+          // 有效場次唔再只得專屬 title、H1 卻寫「全部貨品」；H1／目錄同 title 同源。
+          if (heading) content = injectPublicSeoHeading(content, heading);
           content = injectPublicCatalog(content, catalogItems, heading);
         } else {
           // 無效直播 query 先行通用 /products；合法直播 query 嘅 DB 故障就用
@@ -464,6 +525,7 @@ export function serveStaticFiles(app: App) {
         return c.html(content, 404);
       }
     }
+    content = injectHeroImagePreload(content, reqPath.replace(/\/+$/, "") || "/");
     return c.html(content);
   });
 }

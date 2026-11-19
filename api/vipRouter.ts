@@ -25,7 +25,6 @@ import { loadTryOnPurchaseItems } from "./purchase";
 // P3-6（2026-10 安全修復）：geocodeAddress 公開代理外部服務，加 per-IP 限流
 // （同 IP 每分鐘 10 次）——防被當免費 geocode proxy 用到我哋 server IP 被上游封
 const geocodeIpLimiter = new RateLimiter(10, 60 * 1000);
-import crypto from "node:crypto";
 import {
   computeCheckoutQuote,
   effectiveVipTier,
@@ -40,7 +39,7 @@ import {
   buildVipCertJpeg,
   buildVipCertPdf,
   buildVipVerifyUrl,
-  signVipCertMemberNo,
+  verifyVipCertSignature,
 } from "./vipCert";
 
 /** 會員專用 procedure（v2.2.0 證書下載用）；同 authedProcedure 一樣要 Bearer JWT，改名貼合契約叫法 */
@@ -318,11 +317,9 @@ export const vipRouter = createRouter({
         if (!/^[0-9a-f]{64}$/i.test(input.s)) {
           return { ok: false as const, reason: "驗證簽名格式唔啱" };
         }
-        const expected = signVipCertMemberNo(input.c);
-        if (!expected) return { ok: false as const, reason: "系統未設定驗證密鑰" };
-        const a = Buffer.from(input.s.toLowerCase(), "utf8");
-        const b = Buffer.from(expected, "utf8");
-        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        // S05（2026-11-19）：專用 VIP_CERT_SECRET 驗簽（同 JWT secret 分離）；
+        // 未設專用密鑰時向後兼容 JWT_SECRET 簽名（見 vipCert.ts）
+        if (!verifyVipCertSignature(input.c, input.s)) {
           return { ok: false as const, reason: "驗證簽名唔啱" };
         }
         const db = getDb();

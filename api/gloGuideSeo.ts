@@ -4,10 +4,21 @@
  * Glo Glo 署名、商品真名／真實價錢／重點標籤、圖片 URL、canonical、OG、Article JSON-LD。
  * 未 published 唔會入到呢度（vite.ts 先攞 data；null → 真 404/noindex）。
  * 資料來源同公開 tRPC 一致（gloGuidePublic 嘅 published 查詢＋DTO），唔准虛構。
- * 純字串操作；注入失敗只回原 HTML，絕對唔阻正常出頁。React mount 後由 App 移除
- * data-redcode-prerender 區塊（同其他首口注入一致，唔會重複 visible DOM）。
+ * 純字串操作；注入失敗只回原 HTML，絕對唔阻正常出頁。
+ *
+ * Prerender 生命周期（2026-11-19 R01 收口）：首口文章區塊標
+ * data-redcode-prerender="glo-guide"，**保持可見**，唔再用 inline <script> 收起
+ * （CSP script-src 只許白名單 hash，inline cleanup 會被擋兼報 violation）。
+ * React 端由 src/components/glo-guide/prerender.ts 統一收口：頁面真資料＋真 H1
+ * commit 後先移除對應區塊；SPA 轉頁／明確 NOT_FOUND 都會正確清理——
+ * 慢網絡下文章由第一幀一直可讀到真頁交接，唔會全版消失。
  */
 import type { GuideDetail, GuideImage, GuideListItem } from "@contracts/gloGuide";
+import {
+  GLO_GUIDE_DERIVATIVE_FALLBACK_WIDTH,
+  gloGuideDerivativeSrcSet,
+  gloGuideDerivativeUrl,
+} from "@contracts/gloGuide";
 import {
   gloGuideRichTextPlain,
   parseGloGuideRichText,
@@ -157,7 +168,7 @@ export function renderGloGuideIndex(items: readonly GuideListItem[]): string {
     })
     .join("");
   return (
-    `<main id="redcode-glo-guide-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8">` +
+    `<main id="redcode-glo-guide-seo" data-redcode-prerender="glo-guide" style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8">` +
     `<h1>Glo Glo 精選配搭指南</h1>` +
     `<p>Glo Glo 撰寫每週直播新品配搭靈感，附重點標籤同配搭圖；商品外觀以商品原圖為準。</p>` +
     (items.length > 0 ? `<ul>${rows}</ul>` : `<p>Glo Glo 最新撰寫嘅指南刊登後會喺呢度見到，不妨先去睇最新直播商品。</p>`) +
@@ -173,7 +184,18 @@ function renderImage(img: GuideImage, eager = false): string {
     img.width > 0 && img.height > 0 ? ` width="${img.width}" height="${img.height}"` : "";
   // 首圖（cover）係 LCP 候選：唔准 lazy；其餘 lazy
   const loading = eager ? ` fetchpriority="high"` : ` loading="lazy"`;
-  return `<figure><img src="${esc(absUrl(img.path))}" alt="${esc(img.alt)}"${dims}${loading} decoding="async" /></figure>`;
+  // R05：多尺寸 AVIF/WebP derivative（閘道 query，權限由原路徑閘把關）；
+  // <img src> 只放中檔 WebP 兜底，原 PNG 唔再係預設下載。
+  const avifSrcSet = gloGuideDerivativeSrcSet(img.path, "avif", img.width, absUrl);
+  const webpSrcSet = gloGuideDerivativeSrcSet(img.path, "webp", img.width, absUrl);
+  const fallback = absUrl(gloGuideDerivativeUrl(img.path, GLO_GUIDE_DERIVATIVE_FALLBACK_WIDTH, "webp"));
+  return (
+    `<figure><picture>` +
+    `<source type="image/avif" srcset="${esc(avifSrcSet)}" />` +
+    `<source type="image/webp" srcset="${esc(webpSrcSet)}" />` +
+    `<img src="${esc(fallback)}" alt="${esc(img.alt)}"${dims}${loading} decoding="async" />` +
+    `</picture></figure>`
+  );
 }
 
 /** 詳情首口：完整文章＋Glo Glo 署名＋香港發文時間＋3–5 配搭圖＋真商品卡。
@@ -204,7 +226,7 @@ export function renderGloGuideDetail(detail: GuideDetail): string {
     })
     .join("");
   return (
-    `<main id="redcode-glo-guide-seo" data-redcode-prerender style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8">` +
+    `<main id="redcode-glo-guide-seo" data-redcode-prerender="glo-guide" style="max-width:56rem;margin:0 auto;padding:4rem 1.5rem;color:#fff;background:#0a0614;line-height:1.8">` +
     `<article>` +
     `<h1>${esc(detail.title)}</h1>` +
     `<p>主題：${esc(detail.theme)}</p>` +
@@ -222,15 +244,14 @@ export function renderGloGuideDetail(detail: GuideDetail): string {
   );
 }
 
-/** 注入失敗只係回原 HTML；同一頁唔會重複注入。 */
+/** 注入失敗只係回原 HTML；同一頁唔會重複注入。唔再附 inline script（CSP 安全）。 */
 export function injectGloGuideContent(html: string, block: string): string {
   try {
     if (!block || html.includes('id="redcode-glo-guide-seo"')) return html;
-    // JS 可用時喺首次繪畫前收起無 JS／crawler fallback，避免 React mount 移除區塊造成 CLS；
-    // 停用 JS 時 script 唔會執行，完整公開內容仍然可見、可讀、可索引。
-    const prerenderBoot =
-      '<script>(function(){var nodes=document.querySelectorAll(\'#redcode-glo-guide-seo[data-redcode-prerender]\');for(var i=0;i<nodes.length;i++){nodes[i].style.display=\'none\';}})();</script>';
-    return html.replace("</body>", `    ${block}\n    ${prerenderBoot}\n  </body>`);
+    // R01：首口文章保持可見直至 React 頁面真資料 commit（慢網絡唔會全版消失）；
+    // 收起／移除由 src/components/glo-guide/prerender.ts 統一收口，
+    // 唔再靠 inline <script>（CSP script-src 唔許未登記 hash，絕唔加 unsafe-inline）。
+    return html.replace("</body>", `    ${block}\n  </body>`);
   } catch {
     return html;
   }

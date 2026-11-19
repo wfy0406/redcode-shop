@@ -211,7 +211,9 @@ export default function LiveHistorySection() {
   return (
     <section className="relative mx-auto mt-16 max-w-[1280px] px-5 md:mt-24 md:px-8 xl:px-12">
       {/* 成區嘅聚光燈底（兩支大光錐由頂射落嚟，呼吸明暗；只郁 opacity） */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 -top-10 h-[420px] overflow-visible">
+      {/* R10：光錐有 rotate，overflow-visible 會喺窄屏造出頁面橫向溢出；
+          只裁呢個 pointer-events-none 裝飾層，回顧卡嘅 replay-shelf 橫向滑動唔受影響。 */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 -top-10 h-[420px] overflow-hidden">
         <div
           className="stage-beam stage-beam-l absolute -top-6 left-[8%] h-full w-[24%]"
           style={{

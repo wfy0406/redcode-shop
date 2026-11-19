@@ -14,7 +14,7 @@
  * 配色全部 scope 落 .gg-page，後台預覽嘅 .ggp-preview 自成一套唔受影響。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { Link2, Share2 } from 'lucide-react';
@@ -22,10 +22,16 @@ import { trpc } from '@/providers/trpc';
 import { formatPrice } from '@/data/products';
 import GuideProductCard from '@/components/glo-guide/GuideProductCard';
 import GuideImageGallery from '@/components/glo-guide/GuideImageGallery';
+import GuidePicture from '@/components/glo-guide/GuidePicture';
 import GloSignature from '@/components/glo-guide/GloSignature';
 import GloGuideRichText from '@/components/GloGuideRichText';
 import { parseGloGuideRichText } from '@contracts/gloGuideRichText';
 import { useGloGuideDetailSeo } from '@/components/glo-guide/seo';
+import {
+  adoptGloGuidePrerender,
+  discardGloGuidePrerender,
+  hasGloGuidePrerender,
+} from '@/components/glo-guide/prerender';
 import {
   formatGuideDateHK,
   guideCategoryLabel,
@@ -92,14 +98,14 @@ function PairingStage({
           renderSlide={(image, i) => {
             const slideProduct = productForImage(image, products);
             return (
-              <img
-                src={image.path}
+              <GuidePicture
+                path={image.path}
                 alt={image.alt || (slideProduct ? `${slideProduct.name} 配搭圖` : title)}
                 width={image.width}
                 height={image.height}
-                loading={i === 0 ? 'eager' : 'lazy'}
-                fetchPriority={i === 0 ? 'high' : undefined}
-                decoding="async"
+                eager={i === 0}
+                priority={i === 0}
+                sizes="100vw"
                 className="gg-stage-img"
               />
             );
@@ -153,13 +159,12 @@ function PairingStage({
                   onMouseEnter={() => setActive(i)}
                   onFocus={() => setActive(i)}
                 >
-                  <img
-                    src={it.path}
+                  <GuidePicture
+                    path={it.path}
                     alt=""
                     width={it.width}
                     height={it.height}
-                    loading="lazy"
-                    decoding="async"
+                    sizes="120px"
                     className="gg-stage-thumb-img"
                   />
                 </button>
@@ -331,11 +336,28 @@ export default function GloGuideDetail() {
   const detail = query.data ?? (notFound ? null : undefined);
   useGloGuideDetailSeo(detail);
 
+  /**
+   * R01 prerender 生命周期（收口喺 components/glo-guide/prerender.ts）：
+   * 首口 HTML 嘅真文章區塊保持可見，直到下面其中一個 commit 先清走——
+   * ─ 真資料 commit（正式頁面真 H1 已在 DOM）→ discard；
+   * ─ 明確 NOT_FOUND（文章已撤稿／未發布；404 態已 commit）→ discard（撤稿唔留殘影）；
+   * ─ pending／其他錯誤（網絡問題）→ 唔清，區塊搬入 outlet 原位繼續俾客人讀。
+   */
+  useEffect(() => {
+    if (detail || notFound) discardGloGuidePrerender();
+  }, [detail, notFound]);
+
+  const adoptRef = useCallback((el: HTMLDivElement | null) => {
+    if (el) adoptGloGuidePrerender(el);
+  }, []);
+
   // 錯誤要排喺 loading 之前：非 NOT_FOUND 錯誤時 data 係 undefined，
   // 唔好誤落「永遠載入中」分支
   if (query.isError) {
     return (
       <main className="gg-page gg-page--status">
+        {/* 非 NOT_FOUND 錯誤：首口真文章繼續可讀，錯誤卡喺下面提示重試 */}
+        {!notFound && hasGloGuidePrerender() ? <div ref={adoptRef} /> : null}
         <div className="gg-state" role={notFound ? undefined : 'alert'}>
           <p className="gg-state-title">
             {notFound ? '搵唔到呢篇指南' : '文章暫時載入唔到'}
@@ -359,6 +381,18 @@ export default function GloGuideDetail() {
   }
 
   if (!detail) {
+    // 慢網絡保命：首口 HTML 已含真文章 → 搬入 outlet 原位照讀，唔出全屏 loading；
+    // 無 prerender（SPA 轉入）先落原載入態。
+    if (hasGloGuidePrerender()) {
+      return (
+        <main className="gg-page">
+          <div ref={adoptRef} />
+          <p role="status" className="sr-only">
+            載入緊 Glo Glo 嘅文章…
+          </p>
+        </main>
+      );
+    }
     return (
       <main className="gg-page gg-page--status">
         <div className="gg-state" role="status" aria-label="文章載入中">

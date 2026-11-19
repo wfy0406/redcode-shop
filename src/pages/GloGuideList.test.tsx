@@ -30,7 +30,15 @@ import { renderToString } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  GLO_GUIDE_DERIVATIVE_FALLBACK_WIDTH,
+  gloGuideDerivativeUrl,
+} from '@contracts/gloGuide';
 import GloGuideList, { GLO_GUIDE_HERO_SRC } from './GloGuideList';
+
+/** R05：GuidePicture 嘅 <img src> 係中檔 WebP derivative 兜底（唔再係原 PNG） */
+const stageSrc = (path: string) =>
+  gloGuideDerivativeUrl(path, GLO_GUIDE_DERIVATIVE_FALLBACK_WIDTH, 'webp');
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -422,14 +430,14 @@ describe('GloGuideList 互動：主圖 gallery 上一張／下一張', () => {
     expect(statusText(c)).toContain('第 1 張，共 2 張');
     expect(
       c.querySelector('[data-active="true"] .ggx-stage-img')?.getAttribute('src'),
-    ).toBe('/uploads/glo-guide/first-post-0.png');
+    ).toBe(stageSrc('/uploads/glo-guide/first-post-0.png'));
     act(() => {
       next!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(statusText(c)).toContain('第 2 張，共 2 張');
     expect(
       c.querySelector('[data-active="true"] .ggx-stage-img')?.getAttribute('src'),
-    ).toBe('/uploads/glo-guide/first-post-1.png');
+    ).toBe(stageSrc('/uploads/glo-guide/first-post-1.png'));
     // wrap：最後一張再下一張返第一張
     act(() => {
       next!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -462,7 +470,7 @@ describe('GloGuideList 互動：主圖 gallery 上一張／下一張', () => {
     expect(statusText(c)).toContain('第 1 張，共 3 張');
     expect(
       c.querySelector('[data-active="true"] .ggx-stage-img')?.getAttribute('src'),
-    ).toBe('/uploads/glo-guide/second-post-0.png');
+    ).toBe(stageSrc('/uploads/glo-guide/second-post-0.png'));
     // 呢期單品欄照舊跟 article selector 同步
     expect(c.querySelector('.ggx-stage-products')?.textContent).toContain('軟皮闊腳褲');
   });

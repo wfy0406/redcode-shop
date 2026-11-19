@@ -138,10 +138,10 @@ export function plainBodyCharCount(body: string): number {
   return n;
 }
 
-export const BODY_MIN = 150;
-export const BODY_MAX = 300;
+export const BODY_MIN = 250;
+export const BODY_MAX = 550;
 
-/** 字數閘狀態：合格 150–300 */
+/** 字數閘狀態：合格 250–550 */
 export function bodyCountOk(count: number): boolean {
   return count >= BODY_MIN && count <= BODY_MAX;
 }

@@ -235,8 +235,19 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
     heading: "RedCode VIP 會員制度",
     summary:
       "了解 RedCode 會員等級、消費累積升級、專屬折扣及禮遇；實際會員資格同優惠以帳戶資料為準。",
+    sections: [
+      {
+        heading: "免費註冊，消費累積升級",
+        text: "普通會員免費註冊；銀會員同金會員嘅升級門檻、折扣、期限同每日 AI 試穿福利會按後台現行設定顯示，唔會喺首口 HTML 寫死未核實數字。",
+      },
+      {
+        heading: "會員購物同自取安排",
+        text: "登入後可以管理訂單、會員資料同常用順豐站點；實際折扣、免運門檻、送貨方式及適用範圍以會員頁、結帳頁同現行政策為準。",
+      },
+    ],
     links: [
       { href: "/products", label: "全部貨品" },
+      { href: "/sf-stations", label: "設定常用順豐站點" },
       { href: "/faq", label: "會員常見問題" },
       { href: "/terms", label: "服務條款" },
     ],
@@ -247,8 +258,20 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
     heading: "香港順豐站、自提點同智能櫃查詢",
     summary:
       "按地址或位置搜尋香港順豐站、自提點同智能櫃，方便喺 RedCode 落單時選擇收貨地點。",
+    sections: [
+      {
+        heading: "地址、GPS、地區同站點類型都可以搵",
+        text: "輸入中英文地址或授權瀏覽器定位，可以睇最近站點、約幾遠同預計步行時間；亦可以按香港／澳門、地區、順豐站／智能櫃／服務點篩選，再搜尋名稱、地址或編號。",
+      },
+      {
+        heading: "登入後儲存常用站，再返去揀貨",
+        text: `會員可將常用站設為預設，結帳時自動帶入。揀定取貨點之後，可以直接去全部貨品或直播重溫揀款；${PUBLIC_SHIPPING_POLICY.visibleText}退換安排以退換貨政策為準。`,
+      },
+    ],
     links: [
-      { href: "/products", label: "全部貨品" },
+      { href: "/products", label: "揀定站再去全部貨品" },
+      { href: "/live", label: "睇直播重溫揀款" },
+      { href: "/glo-guide", label: "睇 Glo Glo 配搭指南" },
       { href: "/faq", label: "運費同自取常見問題" },
       { href: "/returns", label: "退換貨政策" },
     ],
@@ -259,6 +282,16 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
     heading: "RedCode 私隱政策",
     summary:
       "了解 RedCode 收集、使用、保存及保障個人資料嘅安排，以及你嘅私隱權利同聯絡方法。",
+    sections: [
+      {
+        heading: "收集資料、用途同付款邊界",
+        text: "政策逐項說明帳戶、訂單、送貨、技術資料、Web Push、AI 試穿相片及公開抽獎公告嘅收集同用途；網上付款資料由 Airwallex 處理，RedCode 唔會出售你嘅個人資料。",
+      },
+      {
+        heading: "資料保安、保留同你嘅權利",
+        text: "正式政策列明資料披露、Cookies、第三方服務、保安、保留、香港以外轉移，以及查閱、改正或其他私隱要求嘅聯絡途徑。",
+      },
+    ],
     links: [
       { href: "/terms", label: "服務條款" },
       { href: "/returns", label: "退換貨政策" },
@@ -271,6 +304,16 @@ export const PUBLIC_PAGES: Record<string, PublicSeoPage> = {
     heading: "RedCode 服務條款",
     summary:
       "查閱 RedCode 網站使用、商品訂購、付款、會員制度、AI 試穿及退換貨嘅正式條款。",
+    sections: [
+      {
+        heading: "帳戶、訂單成立同付款",
+        text: "條款分開說明帳戶責任、訂單流程、合約成立、付款與網上付款、購物金、價格與存貨，以及訂單取消同審批；唔將提交訂單同付款狀態混為一談。",
+      },
+      {
+        heading: "AI 試穿、送貨同退換",
+        text: `${PUBLIC_DISPATCH_POLICY.visibleText}AI 試穿只係視覺預覽，唔代表尺碼或合身程度；送貨、退貨、換貨、優惠碼同會員優惠以正式條款及相關政策頁為準。`,
+      },
+    ],
     links: [
       { href: "/returns", label: "退換貨政策" },
       { href: "/privacy", label: "私隱政策" },
@@ -571,6 +614,19 @@ export function renderPublicContent(pathname: string): string {
     `<p>${esc(page.summary)}</p>${sections}` +
     `<nav aria-label="相關公開頁面"><ul>${links}</ul></nav></main>`
   );
+}
+
+/** 有效直播場次沿用同一公開摘要，但 H1 必須同真場次 title 對齊；其他頁唔受影響。 */
+export function injectPublicSeoHeading(html: string, heading: string): string {
+  try {
+    if (!html.includes('id="redcode-public-seo"')) return html;
+    return html.replace(
+      /(<main id="redcode-public-seo"[^>]*><h1>)[^<]*(<\/h1>)/,
+      `$1${esc(heading)}$2`,
+    );
+  } catch {
+    return html;
+  }
 }
 
 /** SPA fallback 開頭先移除首頁預設內容，再按實際路由注入，避免私人頁／商品頁帶錯摘要。 */

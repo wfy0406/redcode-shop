@@ -1,8 +1,14 @@
-import { Suspense, lazy, useEffect } from 'react';
-import { Routes, Route } from 'react-router';
+import { Suspense, lazy, useEffect, useRef } from 'react';
+import { Routes, Route, useLocation } from 'react-router';
 import Layout from '@/components/Layout';
 import Home from '@/pages/Home';
 import { SeoManager } from '@/lib/seo';
+import {
+  adoptGloGuidePrerender,
+  discardGloGuidePrerender,
+  hasGloGuidePrerender,
+  removeNonGuidePrerenderBlocks,
+} from '@/components/glo-guide/prerender';
 
 // Code splitting（v2.2.20 SEO/效能）：Home 同 Layout/Navbar/Footer 保持 eager（LCP 考量），
 // 其餘頁面全部 React.lazy 按需載入；Admin 一定 lazy（一般人唔會入，唔好拖慢首屏）。
@@ -81,8 +87,22 @@ function PageLoading() {
  * 真內容載入後被推晒出 viewport（實測 CLS 0.56–0.82）。呢層 minHeight:100dvh
  * 令 loading 期間 outlet 已經撐足一屏，Footer 由一開始就喺首屏以下。
  * PageLoading 本身原樣重用；淨係 glo-guide 兩條 route 用，其他 routes 唔郁。
+ *
+ * 2026-11-19（R01）：入口首口 HTML 已含真文章（glo-guide prerender）時，
+ * 唔好用不透明全屏 loading 冚住佢——將區塊搬入 outlet 原位，chunk 載入期間
+ * 客人可以照讀（慢網絡無全版消失）；頁面真資料 commit 後由頁面自己清走。
+ * 冇 prerender（SPA 轉入）→ 沿用原 100dvh loading fallback。
  */
 function GuideRouteLoading() {
+  if (hasGloGuidePrerender()) {
+    return (
+      <div
+        ref={(el) => {
+          if (el) adoptGloGuidePrerender(el);
+        }}
+      />
+    );
+  }
   return (
     <div style={{ minHeight: '100dvh' }}>
       <PageLoading />
@@ -97,11 +117,24 @@ function GuideRouteLoading() {
  * SeoManager 要喺 BrowserRouter 之下（main.tsx 包咗），每次轉頁更新 title/description。
  */
 export default function App() {
+  const location = useLocation();
+  // 入口路徑：首口 prerender 只屬於呢個 path；之後任何 SPA 轉頁都要清剩餘區塊
+  const entryPath = useRef(location.pathname);
+
   useEffect(() => {
-    // Server 首口 HTML 嘅公開內容只係無 JS／crawler fallback；React 成功 mount 先移除，
-    // 避免同正式頁面重複。#root 自始至終由 React 管理，白屏自救唔受影響。
-    document.querySelectorAll('[data-redcode-prerender]').forEach((node) => node.remove());
+    // Server 首口 HTML 嘅公開內容只係無 JS／crawler fallback。非 glo-guide 注入
+    // （首頁／公開頁摘要等）對應 eager 頁面，React 成功 mount 即移除，避免重複；
+    // glo-guide 文章區塊（data-redcode-prerender="glo-guide"）留俾對應頁面喺
+    // 真資料＋真 H1 commit 後先清（見 components/glo-guide/prerender.ts），
+    // 慢網絡下唔會全版消失。#root 自始至終由 React 管理，白屏自救唔受影響。
+    removeNonGuidePrerenderBlocks();
   }, []);
+
+  useEffect(() => {
+    // SPA 轉頁／notFound：離開入口路徑即清 glo-guide prerender（包括被領養中嘅），
+    // 其他頁唔會留低舊文；入口路徑重渲染（同 path）唔郁。
+    if (location.pathname !== entryPath.current) discardGloGuidePrerender();
+  }, [location.pathname]);
 
   return (
     <>

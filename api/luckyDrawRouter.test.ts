@@ -99,9 +99,10 @@ const h = vi.hoisted(() => {
       const rec = {
         from: undefined as any,
         where: undefined as any,
+        // S05（2026-11-19）：middleware 覆核而家 select { role, passwordChangedAt } 兩欄，
+        // 唔再單欄——唔好用 key 數目判斷，認 users.role column reference 就得。
         authRoleQuery:
           selection &&
-          Object.keys(selection).length === 1 &&
           state.userRoleColumn &&
           selection.role === state.userRoleColumn,
       };

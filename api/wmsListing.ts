@@ -57,6 +57,42 @@ const LISTING_IMAGE_TYPES: Record<string, string> = {
 const MAX_LISTING_IMAGE_SIZE = 8 * 1024 * 1024; // 8MB（契約 §4.1）
 const MAX_DOWNLOAD_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB（契約 §4.2 下載上限）
 
+/* ---------- S06（2026-11-19 安全修復）：真圖片驗證 ----------
+ * 舊做法淨信 client 報嘅 MIME／外連回應嘅 content-type——偽裝 image/jpeg 嘅
+ * HTML／SVG／script 會原樣落地再被 /uploads/:file 以 image/* 送出（stored XSS 面）。
+ * 而家同 /api/upload／webDesignUpload 一套做法：sharp 讀真檔頭驗格式（limitInputPixels
+ * 擋解壓炸彈），通過後 re-encode 剝走 metadata 先寫碟；驗唔過一律拒絕。
+ * sharp 動態 import——裝唔到＝驗唔到真身，fail-closed 拒絕（唔會靜默放行假圖）。 */
+type VerifiedImage = { pipeline: import("sharp").Sharp; format: "jpeg" | "png" | "webp" };
+
+export async function verifyRealImage(raw: Buffer): Promise<VerifiedImage | null> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const pipeline = sharp(raw, { limitInputPixels: 25_000_000 });
+    const format = (await pipeline.metadata()).format ?? "";
+    if (format === "jpeg" || format === "png" || format === "webp") {
+      return { pipeline, format };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** re-encode（rotate 跟 EXIF 轉正＋剝 metadata）；回 { buffer, ext }，失敗 throw */
+export async function reencodeVerifiedImage(
+  v: VerifiedImage,
+): Promise<{ buffer: Buffer; ext: string }> {
+  const oriented = v.pipeline.rotate();
+  if (v.format === "jpeg") {
+    return { buffer: await oriented.jpeg({ quality: 85 }).toBuffer(), ext: ".jpg" };
+  }
+  if (v.format === "png") {
+    return { buffer: await oriented.png({ compressionLevel: 9 }).toBuffer(), ext: ".png" };
+  }
+  return { buffer: await oriented.webp({ quality: 85 }).toBuffer(), ext: ".webp" };
+}
+
 const CATEGORY_SET = new Set<string>(PRODUCT_CATEGORY_VALUES);
 
 /* ---------- 型別（契約 §4.2，逐字對齊 WMS） ---------- */
@@ -125,10 +161,21 @@ export async function listingImageUpload(c: Context) {
   if (file.size > MAX_LISTING_IMAGE_SIZE) {
     return c.json({ ok: false, error: "圖片大過 8MB" }, 400);
   }
+  // S06：唔信 client MIME——sharp 驗真檔頭，偽裝圖一律拒絕
+  const raw = Buffer.from(await file.arrayBuffer());
+  const verified = await verifyRealImage(raw);
+  if (!verified) {
+    return c.json({ ok: false, error: "檔案唔係有效圖片（只接受真 jpg／png／webp）" }, 400);
+  }
+  let out: { buffer: Buffer; ext: string };
+  try {
+    out = await reencodeVerifiedImage(verified);
+  } catch {
+    return c.json({ ok: false, error: "圖片處理失敗，請轉做 jpg／png 再試" }, 400);
+  }
   await mkdir(UPLOAD_DIR, { recursive: true });
-  const filename = `listing-${randomUUID()}${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(`${UPLOAD_DIR}/${filename}`, buffer);
+  const filename = `listing-${randomUUID()}${out.ext}`;
+  await writeFile(`${UPLOAD_DIR}/${filename}`, out.buffer);
   console.log(`[listing] 圖片上傳 ${filename} ${file.size} bytes`);
   void logAudit({
     actorId: null,
@@ -153,8 +200,7 @@ async function downloadListingImage(url: string, sku: string): Promise<string> {
     throw new Error(`HTTP ${res.status}`);
   }
   const mime = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  const ext = LISTING_IMAGE_TYPES[mime];
-  if (!ext) {
+  if (!LISTING_IMAGE_TYPES[mime]) {
     throw new Error(`唔係圖片（content-type: ${mime || "未知"}）`);
   }
   const buf = Buffer.from(await res.arrayBuffer());
@@ -164,10 +210,16 @@ async function downloadListingImage(url: string, sku: string): Promise<string> {
   if (buf.length > MAX_DOWNLOAD_IMAGE_SIZE) {
     throw new Error("圖片大過 10MB");
   }
+  // S06：外連 content-type 都唔信——驗真檔頭＋re-encode（假圖／壞圖直接當 item failed）
+  const verified = await verifyRealImage(buf);
+  if (!verified) {
+    throw new Error("檔案唔係有效圖片（content-type 同實際內容唔符）");
+  }
+  const out = await reencodeVerifiedImage(verified);
   await mkdir(UPLOAD_DIR, { recursive: true });
-  const filename = `listing-${randomUUID()}${ext}`;
-  await writeFile(`${UPLOAD_DIR}/${filename}`, buf);
-  console.log(`[listing] 圖片下載 ${sku} 成功（${url} → /uploads/${filename}，${Math.round(buf.length / 1024)}KB）`);
+  const filename = `listing-${randomUUID()}${out.ext}`;
+  await writeFile(`${UPLOAD_DIR}/${filename}`, out.buffer);
+  console.log(`[listing] 圖片下載 ${sku} 成功（${url} → /uploads/${filename}，${Math.round(out.buffer.length / 1024)}KB）`);
   return `/uploads/${filename}`;
 }
 

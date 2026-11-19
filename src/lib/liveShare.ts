@@ -72,6 +72,11 @@ export function liveShareTitle(t: LiveShareTarget): string {
     : `${d} 全日直播商品｜RedCode`;
 }
 
+/** 商品列表可見 H1：沿用已驗證場次目標，同首口標題一致但唔帶品牌 suffix。 */
+export function liveProductHeading(t: LiveShareTarget): string {
+  return liveShareTitle(t).replace("｜RedCode", "");
+}
+
 /** 分享內文（WhatsApp／系統分享 text）：全日强调全部場次；單場强调指定場次即睇即買。
  *  v2026.11.11：唔准無條件承諾「直播優惠價發售」——價錢／折扣係逐件貨嘅事實，
  *  以商品頁為準（同 api/lib/liveSeo.ts 及商品真描述口徑一致）。 */

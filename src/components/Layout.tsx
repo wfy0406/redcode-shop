@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Outlet, useLocation } from 'react-router';
+import { Outlet, useLocation, useNavigationType } from 'react-router';
 import { MessageCircle } from 'lucide-react';
 import Starfield from '@/components/Starfield';
 import Meteors from '@/components/Meteors';
@@ -10,6 +10,11 @@ import MarketingConsentModal from '@/components/MarketingConsentModal';
 import PrizeWinModal from '@/components/PrizeWinModal';
 import InstallBanner from '@/components/InstallBanner';
 import GlobalFairyGuide from '@/components/GlobalFairyGuide';
+import {
+  clearProductReturn,
+  readProductReturn,
+  resolveScrollIntent,
+} from '@/lib/productReturn';
 
 /**
  * 全站 Layout —— Nested-route pattern（react-dev.md Pattern B）：
@@ -26,18 +31,77 @@ const WHATSAPP_URL = 'https://wa.me/85254835368';
 const MESSENGER_URL = 'https://m.me/redcodexhk';
 
 export default function Layout() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const navigationType = useNavigationType();
   // 管理員工作台係數據密集頁：唔要星空/流星/星雲動效（用戶要求全站有、唯獨 admin 冇）
   const isAdmin = pathname.startsWith('/admin');
   // /cart /checkout /guest-checkout /guest-payment 手機版有底部 sticky 結帳欄：WA 浮鈕抬高唔好騎住佢
   const hasBottomBar =
     pathname === '/cart' || pathname === '/checkout' || pathname === '/guest-checkout' || pathname === '/guest-payment';
 
-  // SPA 路由轉換時捲返去頁頂——React Router 預設保留 scroll 位置，
-  // 客人喺列表撳商品會留喺中段，要人手掃返上去先見到內容
+  // SPA 路由轉換捲動（U01，單一決策點 resolveScrollIntent）：
+  // - PUSH/REPLACE（正常撳連結轉頁）→ 照舊捲返頁頂；
+  // - POP（自製返回掣／原生 browser/OS back）＋ sessionStorage 來源記錄 URL 對得上
+  //   → 等來源頁商品卡渲染好（真資料＋固定比例圖框），先 restore 原本 scrollY
+  //   兼 focus 返嗰張卡（preventScroll，唔會搶走啱啱 restore 嘅位置）；
+  // - POP 但冇記錄／URL 唔對 → 交俾瀏覽器原生 scroll restoration，
+  //   唔准好似舊版咁硬 scrollTo(0) 搶走返頁位置。
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
-  }, [pathname]);
+    const entry = readProductReturn();
+    const intent = resolveScrollIntent(navigationType, entry, pathname, search);
+    if (intent === 'top') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+      return;
+    }
+    if (intent !== 'restore-product' || !entry) return;
+
+    const POLL_MS = 120;
+    const TIMEOUT_MS = 2500;
+    let elapsed = 0;
+    let stopped = false;
+    let timer = 0;
+    let stableTicks = 0;
+    let focused = false;
+
+    // 收斂式 restore：瀏覽器原生 POP scroll restoration／圖片字型載入可能喺我哋
+    // restore 之後先落地，所以唔係「set 一次就算」——每拍檢查，未到位就重設；
+    // scroll 連續兩拍企穩而且卡已出現，先 focus（preventScroll）兼收手，
+    // 唔會長期霸住用戶捲動。搵唔到卡都至少保住 scroll 位置，timeout 收手。
+    const tick = () => {
+      if (stopped) return;
+      const card = document.querySelector<HTMLElement>(`[data-product-card="${entry.productId}"]`);
+      if (Math.abs(window.scrollY - entry.scrollY) > 1) {
+        window.scrollTo({ top: entry.scrollY, left: 0, behavior: 'instant' as ScrollBehavior });
+        stableTicks = 0;
+      } else {
+        stableTicks += 1;
+      }
+      if (card && !focused) {
+        try {
+          card.focus({ preventScroll: true });
+        } catch {
+          /* 舊瀏覽器 focus 失敗唔阻：scroll 經已 restore 咗 */
+        }
+        focused = true;
+      }
+      if (card && stableTicks >= 2) {
+        clearProductReturn();
+        return;
+      }
+      elapsed += POLL_MS;
+      if (elapsed >= TIMEOUT_MS) {
+        window.scrollTo({ top: entry.scrollY, left: 0, behavior: 'instant' as ScrollBehavior });
+        clearProductReturn();
+        return;
+      }
+      timer = window.setTimeout(tick, POLL_MS);
+    };
+    timer = window.setTimeout(tick, 60);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [pathname, search, navigationType]);
 
   return (
     <div className="relative min-h-[100dvh] bg-space-1 text-txt-1">

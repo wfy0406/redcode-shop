@@ -45,8 +45,10 @@ const h = vi.hoisted(() => {
     select: (selection?: unknown) => {
       const rec: Rec = {
         selection,
+        // S05（2026-11-19）：middleware 覆核 select { role, passwordChangedAt } 兩欄，
+        // 唔再單欄——認 users.role column reference，唔好睇 key 數目。
         authRoleQuery: Boolean(
-          selection && Object.keys(selection).length === 1 && state.userRoleColumn &&
+          selection && state.userRoleColumn &&
           (selection as any).role === state.userRoleColumn,
         ),
       };

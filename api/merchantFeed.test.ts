@@ -17,7 +17,7 @@
  */
 import { readFileSync } from "node:fs";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let mockRows: unknown[] = [];
 let queryError: Error | null = null;
@@ -90,6 +90,11 @@ beforeEach(() => {
   seenWhere = null;
 });
 
+afterEach(() => {
+  // 就算斷言中途失敗，都還原 spy，避免一個測試嘅失敗污染下一個而製造連環假錯。
+  vi.restoreAllMocks();
+});
+
 describe("描述口徑一致＋冇模板假內容", () => {
   it("有描述但過短：Feed 同 og 都用剝淨原文＋真商品事實補強", async () => {
     const p = makeProduct({ description: "<p>靚衫✨</p>\n<b>必買</b>" });
@@ -109,6 +114,19 @@ describe("描述口徑一致＋冇模板假內容", () => {
     const xml = await buildMerchantFeedXml();
     expect(xml).toContain("067｜上衣｜貨號 SKU-067｜HK$199｜現貨 5 件");
     expect(xml).not.toContain("RedCode 香港女裝直播");
+  });
+
+  it("有描述同冇描述都必須出 Feed，並留 selected／emitted／skipped 對帳摘要", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockRows = [
+      makeProduct({ id: 85, description: "已批准獨立描述，兩件都應該出 Feed。" }),
+      makeProduct({ id: 86, description: null }),
+    ];
+    const xml = await buildMerchantFeedXml();
+    expect(xml).toContain("<g:id>85</g:id>");
+    expect(xml).toContain("<g:id>86</g:id>");
+    expect(logSpy).toHaveBeenCalledWith("[merchant-feed] selected=2 emitted=2 skipped=0");
+    logSpy.mockRestore();
   });
 });
 
@@ -218,16 +236,22 @@ describe("價錢／折扣／庫存／尺寸：Feed 同首口＋JSON-LD 一致", 
 });
 
 describe("AI 標籤唔入 Feed、brand 唔虛構", () => {
-  it("aiTagsEnabled=false 唔洩標籤；就算 enabled，Feed 都唔會將 AI 標籤當規格出街", async () => {
+  it("aiTags raw JSON 字串唔會令商品被 skip；無論開關都唔洩標籤", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockRows = [makeProduct({ aiTags: '["直播熱賣","新品"]', aiTagsEnabled: false })];
     let xml = await buildMerchantFeedXml();
+    // 舊測試齋驗標籤唔出現會假通過：成件商品被 TypeError skip 都一樣見唔到標籤。
+    expect(xml).toContain("<g:id>85</g:id>");
     expect(xml).not.toContain("直播熱賣");
     expect(xml).not.toContain("新品");
 
     mockRows = [makeProduct({ aiTags: '["直播熱賣","新品"]', aiTagsEnabled: true })];
     xml = await buildMerchantFeedXml();
+    expect(xml).toContain("<g:id>85</g:id>");
     expect(xml).not.toContain("直播熱賣");
     expect(xml).not.toContain("新品");
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("brand 冇真欄位：唔出 g:brand，保留 identifier_exists=no", async () => {
