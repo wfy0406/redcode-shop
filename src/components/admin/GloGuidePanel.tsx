@@ -16,7 +16,7 @@ import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '../../../api/router';
 import { trpc } from '@/providers/trpc';
 import GloGuideRichText from '@/components/GloGuideRichText';
-import { parseGloGuideRichText, wrapGloGuideSelection, type GloGuideRichTag } from '@contracts/gloGuideRichText';
+import { gloGuideHeadingText, parseGloGuideRichText, wrapGloGuideSelection, type GloGuideRichTag } from '@contracts/gloGuideRichText';
 import { productCategoryLabel } from '@contracts/types';
 import { fmtDateTime, fmtHKD } from './format';
 import GloGuideUsagePanel from './GloGuideUsagePanel';
@@ -138,12 +138,20 @@ export function plainBodyCharCount(body: string): number {
   return n;
 }
 
-export const BODY_MIN = 250;
-export const BODY_MAX = 550;
+export const BODY_MIN = 400;
+export const BODY_MAX = 800;
 
-/** 字數閘狀態：合格 250–550 */
+/** 字數閘狀態：合格 400–800 */
 export function bodyCountOk(count: number): boolean {
   return count >= BODY_MIN && count <= BODY_MAX;
+}
+
+/** 同 server 一樣：見到 [h2] 標記就一定要係有效獨立副標題，唔可以齋數成功嗰幾個。 */
+export function bodyHeadingStructureOk(body: string): boolean {
+  const blocks = body.split(/\n{2,}|\n/).map((part) => part.trim()).filter(Boolean);
+  const marked = blocks.filter((part) => part.includes('[h2]') || part.includes('[/h2]'));
+  return marked.length >= 2 && marked.length <= 4
+    && marked.every((part) => gloGuideHeadingText(part) !== null);
 }
 
 /** published 文章唔可以直接改（SPEC：先落架）；生成中都鎖住 */
@@ -984,6 +992,7 @@ const TOOLBAR: { tag: GloGuideRichTag; label: string; className?: string; hint: 
   { tag: 'gold', label: '金', className: 'ggp-tool-gold', hint: '金黃色' },
   { tag: 'pink', label: '粉', className: 'ggp-tool-pink', hint: '粉紅色' },
   { tag: 'tag', label: '重點', hint: '重點標籤' },
+  { tag: 'h2', label: 'H2', hint: '獨立副標題（揀一整行純文字）' },
 ];
 
 function BodyEditor({
@@ -997,8 +1006,13 @@ function BodyEditor({
 }) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const count = plainBodyCharCount(value);
-  const ok = bodyCountOk(count);
+  const headingCount = value
+    .split(/\n{2,}|\n/)
+    .map((part) => part.trim())
+    .filter((part) => gloGuideHeadingText(part) !== null).length;
   const parsed = useMemo(() => parseGloGuideRichText(value), [value]);
+  const headingStructureOk = bodyHeadingStructureOk(value);
+  const ok = !parsed.error && headingStructureOk && bodyCountOk(count);
   const [showPreview, setShowPreview] = useState(true);
 
   const applyTag = (tag: GloGuideRichTag) => {
@@ -1048,11 +1062,16 @@ function BodyEditor({
         aria-label="文章內文"
       />
       <p className="ggp-count" data-ok={ok} role="status">
-        純文字 {count} 字（要 {BODY_MIN}–{BODY_MAX} 字，空白／格式標記唔計）
+        純文字 {count} 字（要 {BODY_MIN}–{BODY_MAX} 字，空白／格式標記唔計）；副標題 {headingCount} 個（要 2–4 個）
       </p>
       {parsed.error && (
         <p className="ggp-preview-error" role="alert">
           格式錯誤：{parsed.error}
+        </p>
+      )}
+      {!parsed.error && !headingStructureOk && (
+        <p className="ggp-preview-error" role="alert">
+          副標題要 2–4 個，各自獨立成行用 [h2]2–60 字純文字[/h2]；行內、巢狀或多出嘅 H2 標記都唔合格。
         </p>
       )}
       {showPreview && (

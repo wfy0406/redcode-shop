@@ -352,6 +352,221 @@
   outline-offset: 2px;
 }
 
+/* ===== v2.5.13「呢件商品嘅精選配搭」（pd-guides 系列） =====
+   雜誌式橫排清單：01/02 mono 編號＋真實已批准封面（固定比例裁切，尺寸穩定）＋
+   標題（CJK serif）＋香港日期＋主題 pill＋摘要＋「閱讀全文」直達。
+   材質同小筆記一致：space-2 深空底＋glass 細框＋桃紅點綴，唔用淺色 gg-page。
+   每張卡係單一 <a>（無 nested anchor）；互動只係 150ms transition。 */
+.pd-guides {
+  margin-top: 56px;
+}
+
+.pd-guides-kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--pink-soft);
+}
+
+.pd-guides-kicker::before {
+  content: '';
+  flex: none;
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--pink);
+}
+
+.pd-guides-title {
+  margin: 0;
+  font-family: var(--font-serif-tc);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text-1);
+}
+
+.pd-guides-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 22px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pd-guides-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 20px;
+  background: var(--space-2);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.pd-guides-card:hover {
+  border-color: var(--pink-soft);
+  background: var(--glass-bg);
+}
+
+.pd-guides-card:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.pd-guides-num {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--gold-soft);
+  padding-top: 2px;
+}
+
+.pd-guides-thumb {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: var(--space-3);
+}
+
+.pd-guides-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pd-guides-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pd-guides-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+.pd-guides-theme {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 77, 141, 0.38);
+  border-radius: 9999px;
+  padding: 1px 10px;
+  background: rgba(255, 0, 84, 0.07);
+  color: var(--pink-tint);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.pd-guides-name {
+  font-family: var(--font-serif-tc);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--text-1);
+  transition: color 150ms ease;
+}
+
+.pd-guides-card:hover .pd-guides-name {
+  color: var(--pink-tint);
+}
+
+.pd-guides-excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-2);
+}
+
+.pd-guides-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--pink-soft);
+  transition: color 150ms ease;
+}
+
+.pd-guides-card:hover .pd-guides-cta {
+  color: var(--pink);
+}
+
+/* 桌面（≥768px）：編號｜縮圖｜文字 三欄橫排；縮圖固定 180×135（4:3），CLS 穩定 */
+@media (min-width: 768px) {
+  .pd-guides-card {
+    grid-template-columns: auto 180px minmax(0, 1fr);
+    gap: 22px;
+    align-items: center;
+    padding: 22px 24px;
+  }
+
+  .pd-guides-card-no-cover {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pd-guides-thumb {
+    width: 180px;
+    height: 135px;
+  }
+}
+
+/* 手機單欄：編號＋文字一row，封面全寬 16:10 放最頂 */
+@media (max-width: 767px) {
+  .pd-guides-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 16px;
+  }
+
+  .pd-guides-thumb {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+  }
+
+  .pd-guides-num {
+    grid-row: 2;
+  }
+
+  .pd-guides-body {
+    grid-row: 2;
+  }
+
+  .pd-guides-title {
+    font-size: 21px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ps-story,
   .ps-story *,
@@ -362,7 +577,10 @@
   .ps-live-link,
   .ps-live-arrow,
   .pd-back,
-  .pd-cat {
+  .pd-cat,
+  .pd-guides-card,
+  .pd-guides-name,
+  .pd-guides-cta {
     transition: none !important;
     animation: none !important;
   }

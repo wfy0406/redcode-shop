@@ -22,6 +22,7 @@ import {
   toCardProduct,
 } from '@/components/shop/shop-utils';
 import ProductStory from '@/components/shop/ProductStory';
+import ProductGuideLinks from '@/components/shop/ProductGuideLinks';
 import { useReveal } from '@/hooks/useReveal';
 import { useRevealDep } from '@/components/shop/useRevealDep';
 import { addToGuestCart } from '@/lib/guestCart';
@@ -50,6 +51,12 @@ export default function ProductDetail() {
     { enabled: validProductId, retry: 1 },
   );
   const relatedQuery = trpc.products.list.useQuery(undefined, { retry: 1 });
+  // 呢件商品嘅已發布 Glo Glo 指南（v2.5.13）：server 只回 published 精簡 DTO；
+  // error／loading／empty 一律唔出區塊，唔出示範內容。
+  const guidesQuery = trpc.gloGuide.byProduct.useQuery(
+    { productId },
+    { enabled: validProductId, retry: 1 },
+  );
 
   const productNotFound = isProductNotFoundError(productQuery.error);
 
@@ -617,6 +624,10 @@ export default function ProductDetail() {
           </div>
         </div>
       </div>
+
+      {/* 呢件商品嘅精選配搭（v2.5.13）：主商品區之後、相關商品之前；
+          query 成功且有真 published 指南先出，error／loading／empty 全區唔出。 */}
+      {guidesQuery.data && <ProductGuideLinks items={guidesQuery.data.items} />}
 
       {/* 相關商品：只顯示公開 API 真資料，故障時成區收起，唔用示範商品補位。 */}
       {related.length > 0 && (

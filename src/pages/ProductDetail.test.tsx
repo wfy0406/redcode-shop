@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   listQuery: { data: [] as unknown[], refetch: vi.fn() },
+  // v2.5.13 gloGuide.byProduct：預設有 data 空清單（唔出區塊）；各測試可覆寫
+  byProductQuery: { data: { items: [] as unknown[] } as { items: unknown[] } | undefined },
   addMutation: { isPending: false, mutate: vi.fn() },
   utils: { cart: { list: { invalidate: vi.fn() } } },
 }));
@@ -31,6 +33,9 @@ vi.mock('@/providers/trpc', () => ({
     products: {
       byId: { useQuery: () => mocks.byIdQuery },
       list: { useQuery: () => mocks.listQuery },
+    },
+    gloGuide: {
+      byProduct: { useQuery: () => mocks.byProductQuery },
     },
     cart: { add: { useMutation: () => mocks.addMutation } },
   },
@@ -43,6 +48,7 @@ vi.mock('@/hooks/useAuth', () => ({
 const DESCRIPTION = '黑色背心身配啡色翻領，領位同左胸口袋都係啡色。\n\n襯長袖底衫或高領打底都好有層次感。';
 
 function renderDetail(overrides: Record<string, unknown> = {}) {
+  mocks.byProductQuery.data = { items: [] };
   mocks.byIdQuery.data = {
     id: 1,
     sku: 'B249',
@@ -185,6 +191,126 @@ describe('U01 返回掣', () => {
     const block = html.slice(Math.max(0, start - 300), start + 1200);
     expect(block).toContain('href="/products"');
     expect(block).toContain('返回');
+  });
+});
+
+describe('v2.5.13 呢件商品嘅精選配搭（gloGuide.byProduct）', () => {
+  const GUIDE = {
+    slug: 'glo-guide-20261116-ab12',
+    title: '轉季上班點襯好',
+    excerpt: '一件背心點樣襯出層次感。',
+    theme: '轉季上班',
+    publishedAt: '2026-11-16T01:00:00.000Z',
+    coverImage: {
+      id: 9,
+      path: '/uploads/glo-guide/a.png',
+      alt: '轉季上班點襯好｜Glo Glo 配搭圖',
+      width: 1024,
+      height: 1536,
+      position: 0,
+      productId: 1,
+    },
+  };
+
+  function renderWithGuides(data: { items: unknown[] } | undefined) {
+    mocks.byProductQuery.data = data;
+    mocks.byIdQuery.data = {
+      id: 1,
+      sku: 'B249',
+      name: '黑拼啡領拉鏈背心外套',
+      description: DESCRIPTION,
+      image: '/product-1.jpg',
+      price: 168,
+      discountPrice: null,
+      sizes: null,
+      sizeEnabled: false,
+      category: 'top',
+      listedDate: new Date('2026-11-12T00:00:00Z'),
+      stock: 20,
+      isActive: true,
+      aiTags: [],
+      liveDate: null,
+      liveSession: null,
+    };
+    return renderToString(
+      <MemoryRouter initialEntries={['/products/1']}>
+        <Routes>
+          <Route path="/products/:id" element={<ProductDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it('有真指南：標題／香港日期／主題／摘要／縮圖／直達 Link 全部出，01 編號有', () => {
+    const html = renderWithGuides({ items: [GUIDE] });
+    expect(html).toContain('pd-guides');
+    expect(html).toContain('呢件商品嘅精選配搭');
+    expect(html).toContain('轉季上班點襯好');
+    expect(html).toContain('2026年11月16日');
+    expect(html).toContain('轉季上班');
+    expect(html).toContain('一件背心點樣襯出層次感。');
+    expect(html).toContain('href="/glo-guide/glo-guide-20261116-ab12"');
+    expect(html).toContain('01');
+    // 真實縮圖：derivative srcset＋正確 alt
+    expect(html).toContain('/uploads/glo-guide/a.png?w=');
+    expect(html).toContain('轉季上班點襯好｜Glo Glo 配搭圖');
+  });
+
+  it('區塊喺主商品區之後、相關商品之前', () => {
+    mocks.listQuery.data = [
+      {
+        id: 2,
+        sku: 'C100',
+        name: '同類上衣乙',
+        image: '/p2.jpg',
+        price: 100,
+        discountPrice: null,
+        category: 'top',
+        stock: 5,
+        isActive: true,
+      },
+    ];
+    const html = renderWithGuides({ items: [GUIDE] });
+    const mainIdx = html.indexOf('pd-price');
+    const guidesIdx = html.indexOf('pd-guides');
+    const relatedIdx = html.indexOf('你可能都鍾意');
+    expect(mainIdx).toBeGreaterThan(-1);
+    expect(guidesIdx).toBeGreaterThan(-1);
+    expect(relatedIdx).toBeGreaterThan(-1);
+    expect(guidesIdx).toBeGreaterThan(mainIdx);
+    expect(guidesIdx).toBeLessThan(relatedIdx);
+    mocks.listQuery.data = [];
+  });
+
+  it('冇 nested &lt;a&gt;：指南卡開 tag 之後唔會有第二個 anchor', () => {
+    const html = renderWithGuides({ items: [GUIDE] });
+    const start = html.indexOf('pd-guides-card');
+    expect(start).toBeGreaterThan(-1);
+    const openEnd = html.indexOf('>', start);
+    const end = html.indexOf('</a>', start);
+    const inner = html.slice(openEnd, end);
+    expect(inner).not.toContain('href=');
+    expect(inner).not.toContain('<a ');
+    expect(inner).toContain('閱讀全文');
+  });
+
+  it('冇已批准封面都保留文字連結，並用兩欄 class 避免正文逼入圖片欄', () => {
+    const html = renderWithGuides({ items: [{ ...GUIDE, coverImage: null }] });
+    expect(html).toContain('pd-guides-card-no-cover');
+    expect(html).toContain('轉季上班點襯好');
+    expect(html).not.toContain('pd-guides-thumb');
+  });
+
+  it('empty items → 全區唔出（唔出示範內容）', () => {
+    const html = renderWithGuides({ items: [] });
+    expect(html).not.toContain('pd-guides');
+    expect(html).not.toContain('精選配搭');
+  });
+
+  it('query error／loading（data undefined）→ 全區唔出，商品頁照舊', () => {
+    const html = renderWithGuides(undefined);
+    expect(html).not.toContain('pd-guides');
+    expect(html).toContain('黑拼啡領拉鏈背心外套');
   });
 });
 

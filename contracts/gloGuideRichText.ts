@@ -3,10 +3,11 @@
  *
  * 只支援 [b]、[gold]、[pink]、[tag] 及對應 closing tag；唔係 HTML sanitizer，
  * 任何 <script>、URL、event handler 都只會當普通文字並喺輸出端 escape。
+ * 另支援獨立成段嘅 [h2]副標題[/h2]（2–60 字、唔准再巢狀標記），供正文層級使用。
  * body DB 欄位維持純字串，舊 AI／人手純文字唔使遷移。
  */
 
-export const GLO_GUIDE_RICH_TAGS = ["b", "gold", "pink", "tag"] as const;
+export const GLO_GUIDE_RICH_TAGS = ["b", "gold", "pink", "tag", "h2"] as const;
 export type GloGuideRichTag = (typeof GLO_GUIDE_RICH_TAGS)[number];
 export type GloGuideTextColor = "gold" | "pink";
 
@@ -24,7 +25,7 @@ export interface GloGuideRichTextResult {
   error: string | null;
 }
 
-const TOKEN = /\[(b|gold|pink|tag)\]|\[\/(b|gold|pink|tag)\]/g;
+const TOKEN = /\[(b|gold|pink|tag|h2)\]|\[\/(b|gold|pink|tag|h2)\]/g;
 
 function sameStyle(a: GloGuideRichSegment, b: GloGuideRichSegment): boolean {
   return a.bold === b.bold && a.color === b.color && a.tag === b.tag;
@@ -99,6 +100,18 @@ export function escapeGloGuideHtml(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
+/**
+ * 獨立副標題：只接受成段 [h2]純文字[/h2]，2–60 code points。
+ * 其餘寫法（行內、巢狀、跨行、空標題）一律唔係有效副標題，由發布閘拒絕。
+ */
+export function gloGuideHeadingText(paragraph: string): string | null {
+  const match = /^\[h2\]([^\[\]\r\n]+)\[\/h2\]$/.exec(paragraph.trim());
+  if (!match) return null;
+  const text = match[1]!.trim();
+  const length = [...text].length;
+  return length >= 2 && length <= 60 ? text : null;
+}
+
 /** 單段 whitelist HTML；所有文字先 escape，標籤只由 parser 自己產生。 */
 export function renderGloGuideInlineHtml(paragraph: string): string {
   const parsed = parseGloGuideRichText(paragraph);
@@ -120,7 +133,12 @@ export function renderGloGuideBodyHtml(body: string): string {
     .split(/\n{2,}|\n/)
     .map((paragraph) => paragraph.trim())
     .filter(Boolean)
-    .map((paragraph) => `<p>${renderGloGuideInlineHtml(paragraph)}</p>`)
+    .map((paragraph) => {
+      const heading = gloGuideHeadingText(paragraph);
+      return heading !== null
+        ? `<h2>${escapeGloGuideHtml(heading)}</h2>`
+        : `<p>${renderGloGuideInlineHtml(paragraph)}</p>`;
+    })
     .join("");
 }
 

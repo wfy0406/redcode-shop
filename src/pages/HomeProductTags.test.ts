@@ -34,3 +34,16 @@ describe('首頁 DB 商品 mapper 重點標籤', () => {
     expect(mapDbProduct({ ...base, aiTags: ['', '   '] }).aiTags).toBeUndefined();
   });
 });
+
+describe('首頁 DB 商品 mapper 直播場次', () => {
+  it('將真實日期同場次帶入共用 ProductCard 資料', () => {
+    const product = mapDbProduct({ ...base, liveDate: '20261110', liveSession: '2' });
+    expect(product).toMatchObject({ liveDate: '20261110', liveSession: '2' });
+  });
+
+  it('只得日期都保留；無場次或 null 唔會變成假資料', () => {
+    expect(mapDbProduct({ ...base, liveDate: '20261110', liveSession: null }))
+      .toMatchObject({ liveDate: '20261110', liveSession: null });
+    expect(mapDbProduct(base)).toMatchObject({ liveDate: null, liveSession: null });
+  });
+});

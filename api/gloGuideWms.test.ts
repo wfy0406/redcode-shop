@@ -101,6 +101,23 @@ describe("dispatch 權限矩陣", () => {
   });
 });
 
+describe("官網後台／WMS 生成規則單一服務閘", () => {
+  it("WMS generate／regenerate／update 全部直入官網同一組 service，唔准另起生成規則", async () => {
+    const { deps, calls } = mockDeps();
+    await dispatchGloGuideAction(staff, "article.generate", { productIds: [1, 2], themeHint: "返工" }, deps);
+    await dispatchGloGuideAction(staff, "article.regenerate", { id: 7, themeHint: "週末" }, deps);
+    await dispatchGloGuideAction(staff, "article.update", {
+      id: 7,
+      title: "返工穿搭",
+      body: "正文由官網服務驗證",
+      theme: "返工",
+      productIds: [1, 2],
+    }, deps);
+    expect(calls.map((call) => call.fn)).toEqual(["generateArticle", "regenerateArticle", "updateArticle"]);
+    expect(calls[2]!.args[1]).toMatchObject({ id: 7, body: "正文由官網服務驗證" });
+  });
+});
+
 describe("第 3 輪商品選擇 dispatch（SPEC 凍結 contract；同 WMS trpc gloGuide.* 對齊）", () => {
   it("contract：products.list payload＝filter object 本身（WMS products.useQuery(filter)）；空 payload → 兼容舊版本週可選", async () => {
     const { deps, calls } = mockDeps();

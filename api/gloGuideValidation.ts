@@ -2,7 +2,8 @@
  * Glo Glo 精選配搭指南——純邏輯校驗／閘口模組（唔掂 DB、唔掂 network）。
  *
  * SPEC v1 硬閘（iteration 4 更新）：
- * ─ 文章 NFC＋控制字元清理；title 4–80、body 250–550 Unicode code points（空白唔計）、theme 2–80。
+ * ─ 文章 NFC＋控制字元清理；title 4–80、body 400–800 Unicode code points（空白唔計）、theme 2–80。
+ * ─ body 要有 2–4 個獨立 [h2]…[/h2] 副標題；CSR／SSR 都輸出真正 <h2>，唔係齋換字體。
  * ─ themeKey 對最近 8 篇非 archived 文章不可重複。
  * ─ 最少 2 件不重複商品（手動指定冇上限；自動／無指定先隨機抽 2–3 件）。
  * ─ 圖片唔再設全局 3–5 數量閘：每件已選商品最少一張 completed＋source-drift-safe
@@ -13,7 +14,7 @@
  * AI 生成驗證（gloGuideAi.ts）全部共用呢度嘅規則；測試直接抽純函數驗。
  */
 
-import { gloGuideRichTextPlain, parseGloGuideRichText } from "@contracts/gloGuideRichText";
+import { gloGuideHeadingText, gloGuideRichTextPlain, parseGloGuideRichText } from "@contracts/gloGuideRichText";
 
 // ──────────────────────────── 共用錯誤型 ────────────────────────────
 
@@ -62,8 +63,8 @@ export function countBodyCodePoints(body: string): number {
 
 export const GLO_GUIDE_TITLE_MIN = 4;
 export const GLO_GUIDE_TITLE_MAX = 80;
-export const GLO_GUIDE_BODY_MIN = 250;
-export const GLO_GUIDE_BODY_MAX = 550;
+export const GLO_GUIDE_BODY_MIN = 400;
+export const GLO_GUIDE_BODY_MAX = 800;
 export const GLO_GUIDE_THEME_MIN = 2;
 export const GLO_GUIDE_THEME_MAX = 80;
 
@@ -85,10 +86,18 @@ export function validateGloGuideTheme(theme: string): string | null {
   return null;
 }
 
-/** body 校驗（已清理）：格式標記先過結構閘，再計 250–550 個純文字 code points。 */
+/** body 校驗（已清理）：格式標記先過結構閘，再計 400–800 個純文字 code points。 */
 export function validateGloGuideBody(body: string): string | null {
   const markupError = parseGloGuideRichText(body).error;
   if (markupError) return `內文格式錯誤：${markupError}`;
+  const blocks = body.split(/\n{2,}|\n/).map((part) => part.trim()).filter(Boolean);
+  const markedHeadings = blocks.filter((part) => part.includes("[h2]") || part.includes("[/h2]"));
+  if (markedHeadings.some((part) => gloGuideHeadingText(part) === null)) {
+    return "副標題要獨立成行，用 [h2]2–60 字純文字[/h2]，唔可以巢狀或跨段";
+  }
+  if (markedHeadings.length < 2 || markedHeadings.length > 4) {
+    return `內文要 2–4 個 [h2]副標題[/h2]（而家 ${markedHeadings.length} 個）`;
+  }
   const len = countBodyCodePoints(body);
   if (len < GLO_GUIDE_BODY_MIN || len > GLO_GUIDE_BODY_MAX) {
     return `內文要 ${GLO_GUIDE_BODY_MIN}–${GLO_GUIDE_BODY_MAX} 字（空白唔計，而家 ${len} 字）`;
@@ -448,12 +457,32 @@ export function modelImageDefaultAfterDelete(
 // ──────────────────────────── slug／excerpt ────────────────────────────
 
 /**
- * slug：`glo-guide-<YYYYMMDD>-<rand4>`（rand4 由 caller 俾，確保 unique 靠 DB 撞重再試）。
- * 標題係中文，唔做假拼音；日期段令 URL 可讀兼避撞。
+ * 新文章 slug：真實場景提示＋已選商品類別＋日期＋隨機後綴。
+ * 只用明確白名單英文字，唔將中文標題假拼音或憑空推斷季節／品牌；舊 slug 永不改寫。
+ * 例：glo-guide-hk-work-top-pants-20261119-a1b2c3。
  */
-export function buildGloGuideSlug(dateYmd: string, rand: string): string {
+export function buildGloGuideSlug(
+  dateYmd: string,
+  rand: string,
+  categories: readonly string[] = [],
+  themeHint = "",
+): string {
   const cleanRand = rand.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8);
-  return `glo-guide-${dateYmd}-${cleanRand || "x"}`;
+  const sceneRules: readonly [RegExp, string][] = [
+    [/返工|上班|通勤/u, "work"],
+    [/放假|週末|周末/u, "weekend"],
+    [/約會|晚宴|聚會/u, "occasion"],
+    [/雨天|微雨/u, "rainy-day"],
+    [/轉季|換季/u, "transitional"],
+    [/秋冬|冬季|秋天/u, "autumn-winter"],
+    [/夏天|夏季|夏日/u, "summer"],
+    [/旅行|旅遊/u, "travel"],
+  ];
+  const scene = sceneRules.find(([pattern]) => pattern.test(themeHint))?.[1];
+  const allowedCategories = new Set(["top", "pants", "dress", "shoes", "accessory"]);
+  const categoryParts = [...new Set(categories.filter((category) => allowedCategories.has(category)))].slice(0, 3);
+  const semantic = ["hk", ...(scene ? [scene] : []), ...(categoryParts.length ? categoryParts : ["styling"])];
+  return `glo-guide-${semantic.join("-")}-${dateYmd}-${cleanRand || "x"}`.slice(0, 180);
 }
 
 /** 列表 excerpt：只取純文字，唔會將 [b]／[tag] 等格式標記洩到搜尋摘要。 */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  gloGuideHeadingText,
   gloGuideRichTextPlain,
   parseGloGuideRichText,
   renderGloGuideBodyHtml,
@@ -37,6 +38,17 @@ describe("gloGuideRichText", () => {
   it("body renderer 保留段落及安全重點", () => {
     expect(renderGloGuideBodyHtml("第一段[tag]重點[/tag]\n\n第二段[b]粗體[/b]")).toBe(
       '<p>第一段<mark class="gg-key-tag">重點</mark></p><p>第二段<strong>粗體</strong></p>',
+    );
+  });
+
+  it("副標題輸出真正 h2，標記唔入純文字，HTML 照樣 escape", () => {
+    const body = "開頭答案。\n\n[h2]返工 <點襯>[/h2]\n第二段[b]重點[/b]";
+    expect(gloGuideHeadingText("[h2]返工點襯[/h2]")).toBe("返工點襯");
+    expect(gloGuideHeadingText("前半[h2]返工[/h2]")).toBeNull();
+    expect(gloGuideHeadingText("[h2][b]返工[/b][/h2]")).toBeNull();
+    expect(gloGuideRichTextPlain(body)).toBe("開頭答案。\n\n返工 <點襯>\n第二段重點");
+    expect(renderGloGuideBodyHtml(body)).toBe(
+      "<p>開頭答案。</p><h2>返工 &lt;點襯&gt;</h2><p>第二段<strong>重點</strong></p>",
     );
   });
 

@@ -71,6 +71,9 @@ const productCardColumns = {
   category: products.category,
   listedDate: products.listedDate,
   stock: products.stock,
+  // 首頁共用 ProductCard：有真實場次先顯示同商品列表一致嘅日期／場次連結
+  liveDate: products.liveDate,
+  liveSession: products.liveSession,
   aiTags: products.aiTags,
   aiTagsEnabled: products.aiTagsEnabled,
 } as const;

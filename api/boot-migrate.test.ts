@@ -547,6 +547,35 @@ describe("products.contentUpdatedAt 真內容修改時間（v2026.11）", () => 
   });
 });
 
+describe("listingBatchItems 商品內容安全還原快照（2026-11-19）", () => {
+  const columns = [
+    "previousDescription", "previousAiTags", "previousContentUpdatedAt",
+    "contentAppliedAt", "contentRestoredAt", "contentRestoredBy",
+  ];
+
+  it("fresh 建表已帶六欄；existing 舊庫逐欄補齊，repeat 零新動作", () => {
+    const fresh = newMockState();
+    expect(() => runMigration(fresh)).not.toThrow();
+    for (const column of columns) {
+      expect(fresh.tables.get("listingBatchItems")?.has(column)).toBe(true);
+      expect(DDL).toContain(`ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "${column}"`);
+    }
+
+    const existing = newMockState();
+    runMigration(existing);
+    for (const column of columns) existing.tables.get("listingBatchItems")!.delete(column);
+    existing.applied = [];
+    expect(() => runMigration(existing)).not.toThrow();
+    for (const column of columns) {
+      expect(existing.tables.get("listingBatchItems")!.has(column)).toBe(true);
+      expect(existing.applied.filter((a) => a === `addcol:listingBatchItems.${column}`)).toHaveLength(1);
+    }
+    const appliedAfterUpgrade = [...existing.applied];
+    expect(() => runMigration(existing)).not.toThrow();
+    expect(existing.applied).toEqual(appliedAfterUpgrade);
+  });
+});
+
 // ── v2026.11.11 L2：productAiTagsTombstones（重點標籤 SKU 級停用 tombstone）──────
 
 describe("productAiTagsTombstones tombstone 表（L2）", () => {

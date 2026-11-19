@@ -252,6 +252,12 @@ CREATE TABLE IF NOT EXISTS "listingBatchItems" (
   sizes varchar(255),
   category varchar(32),
   "imageUrl" varchar(512),
+  "previousDescription" text,
+  "previousAiTags" text,
+  "previousContentUpdatedAt" timestamp,
+  "contentAppliedAt" timestamp,
+  "contentRestoredAt" timestamp,
+  "contentRestoredBy" varchar(255),
   "productId" integer,
   status varchar(16) NOT NULL DEFAULT 'pending',
   error text,
@@ -267,6 +273,15 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS "aiTags" text;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS "aiTagsEnabled" boolean NOT NULL DEFAULT true;
 ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "aiDescription" text;
 ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "aiTags" text;
+
+-- 商品內容專用批安全還原（2026-11-19）：逐件保存真正寫入前快照同本批寫入時間。
+-- 全部 nullable、只加欄唔回填；舊批冇 contentAppliedAt 就會拒絕還原，唔會估舊值。
+ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "previousDescription" text;
+ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "previousAiTags" text;
+ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "previousContentUpdatedAt" timestamp;
+ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "contentAppliedAt" timestamp;
+ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "contentRestoredAt" timestamp;
+ALTER TABLE "listingBatchItems" ADD COLUMN IF NOT EXISTS "contentRestoredBy" varchar(255);
 
 -- v2026.11（SEO report：sitemap-fashion.xml 商品 URL 冇 lastmod）：商品真內容最後修改時間。
 -- 可重跑自癒設計：加欄喺 information_schema guard 入面（已存在就 skip），但回填／

@@ -57,6 +57,8 @@ export function mapDbProduct(p: {
   listedDate: Date;
   image: string;
   stock: number;
+  liveDate?: string | null;
+  liveSession?: string | null;
   aiTags?: string[];
 }): Product {
   const aiTags = normalizeAiTags(p.aiTags);
@@ -70,6 +72,8 @@ export function mapDbProduct(p: {
     listedAt: p.listedDate.toISOString().slice(0, 10),
     image: p.image,
     soldOut: p.stock <= 0,
+    liveDate: p.liveDate ?? null,
+    liveSession: p.liveSession ?? null,
     aiTags: aiTags.length > 0 ? aiTags : undefined,
   };
 }

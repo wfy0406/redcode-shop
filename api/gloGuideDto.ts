@@ -12,6 +12,7 @@ import type {
   GuideImage,
   GuideListItem,
   GuideProduct,
+  GuideProductReference,
 } from "@contracts/gloGuide";
 import { gloGuideExcerpt, isGloGuideImagePath } from "./gloGuideValidation";
 
@@ -140,4 +141,30 @@ export function toGuideDetail(
 ): GuideDetail {
   const item = toGuideListItem(article, productRows, imageRows);
   return { ...item, body: article.body, modelImage: null };
+}
+
+/**
+ * 商品詳情頁反向導航用嘅精簡 DTO（GuideProductReference）：
+ * ─ 封面＝過晒公開閘（toGuideImage：completed＋approved＋未刪＋合法站內 path＋正尺寸）嘅
+ *   position 最細嗰張；全部唔過閘就 null（唔代表文章有问题，淨係冇封面出）；
+ * ─ excerpt 同列表同一來源（gloGuideExcerpt 即場截 body）；
+ * ─ 唔回 id／body／status／updatedAt／products／images 等冇用或內部欄。
+ */
+export function toGuideProductReference(
+  article: DtoArticleRow,
+  imageRows: readonly { row: DtoImageRow; alt: string }[],
+): GuideProductReference {
+  const coverImage =
+    imageRows
+      .map(({ row, alt }) => toGuideImage(row, alt))
+      .filter((x): x is GuideImage => x !== null)
+      .sort((a, b) => a.position - b.position)[0] ?? null;
+  return {
+    slug: article.slug,
+    title: article.title,
+    excerpt: gloGuideExcerpt(article.body),
+    theme: article.theme,
+    publishedAt: iso(article.publishedAt),
+    coverImage,
+  };
 }

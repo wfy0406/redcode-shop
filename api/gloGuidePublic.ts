@@ -20,10 +20,15 @@ import { publicAiTags } from "./productAiContent";
 import {
   toGuideDetail,
   toGuideListItem,
+  toGuideProductReference,
   type DtoImageRow,
   type DtoProductRow,
 } from "./gloGuideDto";
-import type { GuideDetail, GuideListItem } from "@contracts/gloGuide";
+import type {
+  GuideDetail,
+  GuideListItem,
+  GuideProductReference,
+} from "@contracts/gloGuide";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -120,6 +125,52 @@ export async function listPublishedGuides(limit = 12, offset = 0): Promise<Guide
   return items;
 }
 
+/**
+ * 商品詳情頁「呢件商品嘅精選配搭」（前後端共用）：
+ * ─ 只 join gloGuideArticleProducts.productId 同 gloGuideArticles.status='published'，
+ *   publishedAt desc；draft/pending/rejected/archived 絕對唔會出現；
+ * ─ 精簡 DTO：唔回 body／modelImage／status／reviewer 等內部欄；
+ * ─ 最多 limit（clamp 1–4）篇，逐篇取圖行過 toGuideImage 閘（可接受，唔係 N+1 災難）；
+ *   唔取商品行——反向導航唔使回多餘商品資料。
+ */
+export async function listPublishedGuidesForProduct(
+  productId: number,
+  limit = 4,
+): Promise<GuideProductReference[]> {
+  if (!Number.isInteger(productId) || productId <= 0) return [];
+  const db = getDb();
+  const rows = await db
+    .select({ article: gloGuideArticles })
+    .from(gloGuideArticleProducts)
+    .innerJoin(gloGuideArticles, eq(gloGuideArticleProducts.articleId, gloGuideArticles.id))
+    .where(
+      and(
+        eq(gloGuideArticleProducts.productId, productId),
+        eq(gloGuideArticles.status, "published"),
+      ),
+    )
+    .orderBy(desc(gloGuideArticles.publishedAt))
+    .limit(Math.min(Math.max(Math.floor(limit), 1), 4));
+  const items: GuideProductReference[] = [];
+  for (const { article } of rows) {
+    const imageRows = await db
+      .select()
+      .from(gloGuideImages)
+      .where(and(eq(gloGuideImages.articleId, article.id), isNull(gloGuideImages.deletedAt)))
+      .orderBy(gloGuideImages.position, gloGuideImages.id);
+    items.push(
+      toGuideProductReference(
+        article,
+        imageRows.map((row) => ({
+          row: row as DtoImageRow,
+          alt: `${article.title}｜Glo Glo 配搭圖`,
+        })),
+      ),
+    );
+  }
+  return items;
+}
+
 export const gloGuidePublicRouter = createRouter({
   list: publicQuery
     .input(
@@ -137,6 +188,12 @@ export const gloGuidePublicRouter = createRouter({
         items,
         nextCursor: items.length === limit ? cursor + items.length : null,
       };
+    }),
+  /** 商品詳情頁反向導航：邊幾篇 published 指南有用到呢件商品（最多 4 篇） */
+  byProduct: publicQuery
+    .input(z.object({ productId: z.number().int().positive().max(2_147_483_647) }))
+    .query(async ({ input }): Promise<{ items: GuideProductReference[] }> => {
+      return { items: await listPublishedGuidesForProduct(input.productId, 4) };
     }),
   bySlug: publicQuery
     .input(z.object({ slug: z.string().min(1).max(180) }))

@@ -544,7 +544,12 @@ export async function generateArticle(
       }
     | undefined;
   for (let attempt = 0; attempt < 3 && !created; attempt++) {
-    const slug = buildGloGuideSlug(hkTodayYmd(), randomBytes(3).toString("hex"));
+    const slug = buildGloGuideSlug(
+      hkTodayYmd(),
+      randomBytes(3).toString("hex"),
+      chosen.map((product) => product.category),
+      input.themeHint ?? "",
+    );
     try {
       created = await db.transaction(async (tx) => {
         const [article] = await tx

@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from 'react';
-import { parseGloGuideRichText } from '@contracts/gloGuideRichText';
+import { gloGuideHeadingText, parseGloGuideRichText } from '@contracts/gloGuideRichText';
 
 function Inline({ paragraph }: { paragraph: string }) {
   const parsed = parseGloGuideRichText(paragraph);
@@ -28,11 +28,16 @@ export function splitGloGuideBody(body: string): string[] {
 export default function GloGuideRichText({ body, className = '' }: { body: string; className?: string }) {
   return (
     <div className={`gg-body ${className}`.trim()} id="guide-body" data-fairy-target="guide-body">
-      {splitGloGuideBody(body).map((paragraph, index) => (
-        <p key={index}>
-          <Inline paragraph={paragraph} />
-        </p>
-      ))}
+      {splitGloGuideBody(body).map((paragraph, index) => {
+        const heading = gloGuideHeadingText(paragraph);
+        return heading !== null ? (
+          <h2 key={index} className="gg-body-heading">{heading}</h2>
+        ) : (
+          <p key={index}>
+            <Inline paragraph={paragraph} />
+          </p>
+        );
+      })}
     </div>
   );
 }

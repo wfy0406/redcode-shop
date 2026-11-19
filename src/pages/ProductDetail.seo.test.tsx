@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   listQuery: { data: [] as unknown[], refetch: vi.fn() },
+  // v2.5.13 gloGuide.byProduct：固定回空清單（呢個測試唔關指南區事）
+  byProductQuery: { data: { items: [] as unknown[] } },
   addMutation: { isPending: false, mutate: vi.fn() },
   utils: { cart: { list: { invalidate: vi.fn() } } },
 }));
@@ -35,6 +37,9 @@ vi.mock('@/providers/trpc', () => ({
     products: {
       byId: { useQuery: () => mocks.byIdQuery },
       list: { useQuery: () => mocks.listQuery },
+    },
+    gloGuide: {
+      byProduct: { useQuery: () => mocks.byProductQuery },
     },
     cart: { add: { useMutation: () => mocks.addMutation } },
   },

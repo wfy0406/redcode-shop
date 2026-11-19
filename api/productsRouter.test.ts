@@ -25,6 +25,7 @@ const h = vi.hoisted(() => {
     insert: [] as unknown[],
     // liveSummary 全場摘要查詢嘅 select 結果 queue（[]→resolve []；Error→reject）
     selectQueue: [] as unknown[],
+    selectColumns: [] as unknown[],
     updates: [] as Array<{ table: unknown; set?: Record<string, unknown>; ops: string[] }>,
     inserts: [] as Array<{ table: unknown; values?: unknown; ops: string[] }>,
   };
@@ -67,7 +68,10 @@ const h = vi.hoisted(() => {
           state.tombstoneFind.length > 0 ? settle(state.tombstoneFind) : Promise.resolve(null),
       },
     },
-    select: () => chain({ ops: [] }, state.selectQueue),
+    select: (columns?: unknown) => {
+      state.selectColumns.push(columns);
+      return chain({ ops: [] }, state.selectQueue);
+    },
     update: (table: unknown) => {
       const rec = { table, ops: [] as string[] };
       state.updates.push(rec as never);
@@ -116,6 +120,7 @@ beforeEach(() => {
   h.state.update = [];
   h.state.insert = [];
   h.state.selectQueue = [];
+  h.state.selectColumns = [];
   h.state.updates = [];
   h.state.inserts = [];
   h.logAudit.mockClear();
@@ -196,6 +201,32 @@ describe("update — 真內容修改時間 contentUpdatedAt（sitemap-fashion.xm
     expect(detail).toContain("原價");
     expect(detail).not.toContain("contentUpdatedAt");
     expect(detail).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/); // ISO 時間戳唔准混入摘要
+  });
+});
+
+describe("latest — 首頁商品卡直播場次", () => {
+  it("資料庫 selection 同公開 DTO 都保留 liveDate/liveSession", async () => {
+    h.state.selectQueue.push([{
+      id: 261,
+      sku: "B261",
+      name: "直播商品",
+      image: "/uploads/live.jpg",
+      price: 144,
+      discountPrice: null,
+      sizes: "S, M",
+      category: "top",
+      listedDate: new Date("2026-11-10T00:00:00.000Z"),
+      stock: 3,
+      liveDate: "20261110",
+      liveSession: "2",
+      aiTags: null,
+      aiTagsEnabled: true,
+    }]);
+    const res = await caller().latest({ limit: 8 });
+    expect(res[0]).toMatchObject({ liveDate: "20261110", liveSession: "2", aiTags: [] });
+    const columns = h.state.selectColumns.at(-1);
+    expect(columns).toBeTypeOf("object");
+    expect(Object.keys(columns as object)).toEqual(expect.arrayContaining(["liveDate", "liveSession"]));
   });
 });
 

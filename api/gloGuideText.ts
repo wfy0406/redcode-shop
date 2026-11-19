@@ -4,7 +4,7 @@
  * SPEC v1 生成流程第 3–4 步：
  * ─ env：GLO_GUIDE_AI_BASE_URL／GLO_GUIDE_AI_API_KEY／GLO_GUIDE_AI_MODEL 優先，
  *   直接 fallback 現有 DEEPSEEK_API_KEY／DEEPSEEK_BASE／DEEPSEEK_MODEL，再 fallback OPENAI_*；
- * ─ prompt 要求：香港口語廣東話、Glo Glo 第一人稱、250–550 字（空白唔計 code points）、
+ * ─ prompt 要求：香港口語廣東話、Glo Glo 第一人稱、400–800 字（空白唔計 code points）、
  *   SEO 搜尋意圖＋GEO 可引用答案結構、最少三種穿搭／著法、生活場景、自然導購、避開近 8 主題；
  * ─ 只可用輸入商品嘅真 name／category／已批准 aiTags／price／直播場次；品牌／材質無核實欄位就直接略過，
  *   商品名或標籤字眼唔當材質證明；禁止估產地、功能；
@@ -105,15 +105,28 @@ function productFacts(input: GloGuideTextInput): string {
     .join("\n");
 }
 
+function longTailFactSeeds(input: GloGuideTextInput): string[] {
+  return input.products.flatMap((product) => {
+    const label =
+      product.categoryLabel || CATEGORY_LABEL_FALLBACK[product.category] || product.category || "單品";
+    return [
+      `${product.name}點襯`,
+      `${product.name}返工配搭`,
+      `香港${label}場合穿搭`,
+    ];
+  });
+}
+
 function buildSystemPrompt(): string {
   return [
     "你係香港網店 Glo Glo 嘅主筆，用第一人稱（「我哋」／「Glo Glo」）寫每日精選文章，同時兼顧 SEO 搜尋意圖、GEO 可引用內容同真實導購。",
     "硬性要求：",
     "- 用香港口語廣東話書寫，自然、親切，唔好書面語，唔好抄內地用語。",
-    "- body 內文 250–550 字（空白唔計，以 Unicode code points 計），title 4–80 字，theme 2–80 字。",
+    "- body 內文 400–800 字（空白唔計，以 Unicode code points 計），title 4–80 字，theme 2–80 字。",
     "- title 自然帶出真實商品類別或生活場景搜尋意圖；唔好堆關鍵字、重複同義詞、誇張承諾或 clickbait。",
+    "- 自然使用 2–4 個長尾搜尋句：只可由商品全名、真實類別、已批准標籤同生活場景組成，例如「商品全名＋點襯／返工配搭」；最少一個放 title 或副標題，其餘融入相應段落。唔好當種子係實際搜尋量、熱門程度或排名保證。",
     "- body 開頭第一段直接回答今次主題：邊件已選商品適合邊個生活場景、核心襯法係咩；唔好用空泛打招呼或口號開場。",
-    "- 之後用短段落分清楚商品事實、配搭方法同場合，最少寫 3 種明顯唔同嘅穿搭或著法；每件已選商品最少準確點名一次。",
+    "- 開頭之後用 2–4 個獨立 [h2]副標題[/h2] 分成清楚段落（每個 2–60 字純文字，唔准巢狀其他標記），分清楚商品事實、配搭方法同場合；最少寫 3 種明顯唔同嘅穿搭或著法，每件已選商品最少準確點名一次。", 
     "- 每種穿搭要具體講邊件商品配邊類基本單品，再按已知顏色、剪裁、圖案或場景解釋；可寫攝衫、疊穿、摺褲腳、外套披開或全扣、鞋款及飾物轉換等技巧，但要適用於該商品。",
     "- 可建議外加常見白T、恤衫、牛仔褲、半身裙、波鞋或樂福鞋等，但只能寫成配搭方向；唔好暗示外加單品屬套裝內容、隨貨附送或本店有售。",
     "- GEO 內容要易被 AI 摘錄：用完整短句直接答「邊件襯邊件」、「適合咩場合」、「點樣轉換造型」，每段集中一個重點，唔好寫空泛形容詞或虛構問答。",
@@ -122,7 +135,7 @@ function buildSystemPrompt(): string {
     "- 唔好保證顯瘦、增高、修腿、舒適等主觀或穿著效果；即使標籤有類似字眼，都只可以當商品線索，唔可以寫成效果承諾。",
     "- 要落地香港生活場景：返工、放假行街、約會、天氣轉變等；可以帶少少幽默，間中用一兩個 emoji，但唔好濫用。",
     "- body 用 2–4 組 [tag]…[/tag] 包住簡短、具體嘅配搭重點（例如 [tag]雨天通勤[/tag]），供公開重點標籤使用；唔好成段包住。",
-    "- 需要強調時只可用 [b]…[/b]、[gold]…[/gold]、[pink]…[/pink]；標記要正確巢狀、唔可以跨段落，唔准輸出 HTML 或 Markdown。標記唔計入 250–550 字。",
+    "- 需要強調時只可用 [b]…[/b]、[gold]…[/gold]、[pink]…[/pink]；標記要正確巢狀、唔可以跨段落，唔准輸出 HTML 或 Markdown。標記唔計入 400–800 字。",
     "- 會提供香港明日起 7 日天氣（或註明天氣資料暫缺），配搭建議要配合；若註明暫缺，絕對唔好斷言具體天氣。",
     "- 只可以使用輸入商品嘅真實資料：名稱、類別、已批准重點標籤、價錢、直播日期及場次。",
     "- 輸入冇已核實品牌或材質欄位：品牌同材質一律直接略過，唔准斷言，亦唔准寫『品牌不明』、『品牌未知』、『材質不明』、『材質未知』、『未提供』或『以實物為準』等旁白。",
@@ -137,6 +150,9 @@ function buildSystemPrompt(): string {
 function buildUserPrompt(input: GloGuideTextInput): string {
   const sections: string[] = [];
   sections.push(`【今次商品（只准用呢啲真實資料）】\n${productFacts(input)}`);
+  sections.push(
+    `【長尾字事實種子（只係寫作線索，唔代表搜尋量或排名）】\n${longTailFactSeeds(input).join("\n")}`,
+  );
   if (input.weatherLines.length > 0) {
     sections.push(`【香港明日起 7 日天氣】\n${input.weatherLines.join("\n")}`);
   } else {
@@ -210,6 +226,16 @@ export function detectUnsafeFacts(
   return violations;
 }
 
+/** 最少一個副標題／段落要將商品全名同明確穿搭搜尋意圖放埋一齊，唔准齋堆通用關鍵字。 */
+function hasEvidenceLedLongTail(output: GloGuideTextOutput, input: GloGuideTextInput): boolean {
+  const blocks = parseGloGuideRichText(output.body).plainText.split(/\n{2,}|\n/);
+  return blocks.some((block) =>
+    input.products.some((product) =>
+      block.includes(product.name) && /點襯|點著|配搭|穿搭|著法|襯法/u.test(block),
+    ),
+  );
+}
+
 // ──────────────────────────── 回應 parse＋硬閘 ────────────────────────────
 
 function record(value: unknown): Record<string, unknown> {
@@ -247,7 +273,7 @@ function parseStrictJson(content: string): Record<string, unknown> {
   return obj;
 }
 
-/** NFC＋控制字元清理 → 硬閘（title 4–80／body 250–550 code points 空白唔計／theme 2–80）→ 無依據事實檢查 */
+/** NFC＋控制字元清理 → 硬閘（title 4–80／body 400–800 code points 空白唔計／theme 2–80）→ 無依據事實檢查 */
 function validateOutput(raw: Record<string, unknown>, input: GloGuideTextInput): GloGuideTextOutput {
   const output: GloGuideTextOutput = {
     title: sanitizeGloGuideLine(raw.title as string),
@@ -261,6 +287,9 @@ function validateOutput(raw: Record<string, unknown>, input: GloGuideTextInput):
   if (bodyErr) errors.push(bodyErr);
   const highlights = parseGloGuideRichText(output.body).highlights;
   if (highlights.length < 1) errors.push("內文最少要有一個 [tag]…[/tag] 重點標籤");
+  if (!hasEvidenceLedLongTail(output, input)) {
+    errors.push("最少一個長尾句要將商品全名同點襯／配搭／穿搭意圖放埋同一個副標題或段落");
+  }
   const themeErr = validateGloGuideTheme(output.theme);
   if (themeErr) errors.push(themeErr);
   const unsafe = detectUnsafeFacts(output, input);
@@ -392,7 +421,7 @@ export async function generateGloGuideText(
         role: "user",
         content:
           `上次輸出唔合格：${providerError.message}。` +
-          `請嚴格跟返格式同限制重新輸出一次 JSON（body 而家要有 250–550 字，空白唔計）。`,
+          `請嚴格跟返格式同限制重新輸出一次 JSON（body 而家要有 400–800 字，空白唔計）。`,
       });
       await sleep(300 * attempt);
     }

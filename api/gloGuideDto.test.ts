@@ -5,7 +5,7 @@
  * ─ modelImage 永遠 null；日期 ISO；excerpt 截斷；cover＝position 最細合法圖。
  */
 import { describe, expect, it } from "vitest";
-import { toGuideDetail, toGuideImage, toGuideListItem, toGuideProduct, type DtoArticleRow, type DtoImageRow, type DtoProductRow } from "./gloGuideDto";
+import { toGuideDetail, toGuideImage, toGuideListItem, toGuideProduct, toGuideProductReference, type DtoArticleRow, type DtoImageRow, type DtoProductRow } from "./gloGuideDto";
 
 const product = (id: number): DtoProductRow => ({
   id,
@@ -125,5 +125,44 @@ describe("toGuideListItem / toGuideDetail", () => {
     expect(item.excerpt.length).toBeLessThanOrEqual(121);
     expect(item.coverImage).toBeNull();
     expect(item.images).toEqual([]);
+  });
+});
+
+describe("toGuideProductReference（商品詳情頁精簡 DTO，v2.5.13）", () => {
+  it("只回公開精簡欄：slug/title/excerpt/theme/publishedAt/coverImage；內部欄唔出現", () => {
+    const ref = toGuideProductReference(article, [{ row: img({}), alt: "商品1" }]);
+    expect(ref.slug).toBe(article.slug);
+    expect(ref.title).toBe(article.title);
+    expect(ref.theme).toBe(article.theme);
+    expect(ref.publishedAt).toBe("2026-11-16T01:00:00.000Z");
+    expect(ref.excerpt).toBe(toGuideListItem(article, [], []).excerpt);
+    expect(ref.coverImage?.path).toBe("/uploads/glo-guide/a.png");
+    // body／status／updatedAt／modelImage／products／images 等內部或多餘欄唔准洩漏
+    expect(Object.keys(ref).sort()).toEqual(
+      ["coverImage", "excerpt", "publishedAt", "slug", "theme", "title"],
+    );
+  });
+  it("封面同公開閘一致：未批／CDN／已刪／無尺寸一律 null（唔出違規圖）", () => {
+    for (const bad of [
+      img({ reviewStatus: "pending" }),
+      img({ reviewStatus: "rejected" }),
+      img({ status: "failed" }),
+      img({ deletedAt: new Date() }),
+      img({ path: "https://cdn.fashn.ai/x.png" }),
+      img({ path: "/uploads/other/a.png" }),
+      img({ width: 0 }),
+    ]) {
+      const ref = toGuideProductReference(article, [{ row: bad, alt: "x" }]);
+      expect(ref.coverImage).toBeNull();
+      expect(ref.title).toBe(article.title); // 文章本身照出，淨係冇封面
+    }
+  });
+  it("多張合法圖 → 封面係 position 最細嗰張；excerpt 截斷同列表一致", () => {
+    const ref = toGuideProductReference(article, [
+      { row: img({ id: 2, position: 1 }), alt: "商品1" },
+      { row: img({ id: 1, position: 0 }), alt: "商品1" },
+    ]);
+    expect(ref.coverImage?.id).toBe(1);
+    expect(ref.excerpt.length).toBeLessThanOrEqual(121);
   });
 });

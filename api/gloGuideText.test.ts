@@ -43,14 +43,19 @@ function makeInput(): GloGuideTextInput {
   };
 }
 
-/** 產生一個啱硬閘嘅輸出（body 250–550 code points，空白唔計） */
+/** 產生一個啱硬閘嘅輸出（body 400–800 code points，空白唔計，含兩個真副標題） */
 function validOutput(overrides: Partial<{ title: string; body: string; theme: string }> = {}) {
   return {
     title: "夏日返工咁著最醒",
     body:
       "我哋 Glo Glo 今期用荷葉邊雪紡感上衣同高腰闊腳褲，示範[tag]返工至周末[/tag]三種襯法。" +
+      "想直接參考，可以先由上衣嘅領口細節同褲款嘅高腰剪裁入手，再按返工、放假或晚飯場合轉換鞋款同外套。" +
+      "\n\n[h2]荷葉邊雪紡感上衣返工點襯[/h2]\n" +
       "第一種係返工：將上衣攝入褲頭，加對樂福鞋；荷葉邊已經有細節，飾物保持簡潔，重點放喺領口同高腰剪裁。" +
+      "如果想再整齊少少，可以将頭髮束起，令領位線條更清楚；袋款揀結構簡潔嘅手提或肩背款，避免太多裝飾搶走重點。" +
+      "\n\n[h2]高腰闊腳褲放假配搭[/h2]\n" +
       "第二種係[tag]放假休閒[/tag]：上衣襯牛仔褲同波鞋，褲腳輕輕摺起；高腰闊腳褲亦可分開配淨色T恤，兩件單品唔一定要一套著。" +
+      "周末去海濱或者咖啡店，可以用波鞋取代樂福鞋，再將外套隨身帶住；入到室內除低外套，上身重點仍然保留。" +
       "第三種適合晚飯聚會：上衣外面加淨色外套，披開時保留領口層次；褲款就配短款外套同平底鞋，由日頭返工轉成晚間造型。" +
       "聽日 26–30°C、大致多雲，外套揀易穿脫嘅款式，出入室內外都方便增減。" +
       "上衣而家 HK$159（原價 HK$199），曾喺 2025-06-11 晚市場次出現；想重溫可以睇相關場次，再入商品詳情睇兩件單品。", 
@@ -84,8 +89,8 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(result.title).toBe("夏日返工咁著最醒");
     expect(result.theme).toBe("夏日返工輕盈配搭");
     const len = gloGuideBodyLength(result.body);
-    expect(len).toBeGreaterThanOrEqual(250);
-    expect(len).toBeLessThanOrEqual(550);
+    expect(len).toBeGreaterThanOrEqual(400);
+    expect(len).toBeLessThanOrEqual(800);
 
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe("https://ai.example.com/v1/chat/completions");
@@ -95,7 +100,7 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(payload.response_format).toEqual({ type: "json_object" });
   });
 
-  it("prompt 含全部硬要求：廣東話、250–550 字、SEO／GEO、三種穿搭、真實導購、禁估資料", async () => {
+  it("prompt 含全部硬要求：廣東話、400–800 字、SEO／GEO、三種穿搭、真實導購、禁估資料", async () => {
     let system = "";
     let user = "";
     const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -109,7 +114,7 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(system).toContain("廣東話");
     expect(system).toContain("Glo Glo");
     expect(system).toContain("第一人稱");
-    expect(system).toContain("250–550");
+    expect(system).toContain("400–800");
     expect(system).not.toContain("150–300");
     expect(system).toContain("SEO");
     expect(system).toContain("GEO");
@@ -123,12 +128,18 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     expect(system).toContain("唔可以當成材質證明");
     expect(system).toContain("emoji");
     expect(system).toContain("[tag]…[/tag]");
+    expect(system).toContain("[h2]副標題[/h2]");
+    expect(system).toContain("長尾搜尋句");
+    expect(system).toContain("實際搜尋量、熱門程度或排名保證");
     expect(system).toContain("JSON");
     // user prompt：真實商品 facts（名／類別／標籤／價錢）
     expect(user).toContain("荷葉邊雪紡感上衣");
     expect(user).toContain("顯瘦");
     expect(user).toContain("HK$159");
     expect(user).toContain("原價 HK$199");
+    expect(user).toContain("長尾字事實種子");
+    expect(user).toContain("荷葉邊雪紡感上衣點襯");
+    expect(user).toContain("唔代表搜尋量或排名");
     // 近 8 主題＋開頭＋天氣
     expect(user).toContain("返工穿搭");
     expect(user).toContain("最近天氣熱辣辣");
@@ -144,7 +155,9 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
   });
 
   it("body 太短 → 有限重試（附失敗原因），全部唔合格最後 throw AI_VALIDATION", async () => {
-    const short = validOutput({ body: "太短" });
+    const short = validOutput({
+      body: "[h2]荷葉邊雪紡感上衣點襯[/h2]\n[h2]放假配搭[/h2]\n太短[tag]重點[/tag]",
+    });
     const fetchImpl = vi.fn(async (_url: string | URL, _init?: RequestInit) => chatResponse(short));
     await expect(
       generateGloGuideText(makeInput(), { fetchImpl, env: ENV, sleep: noSleep }),
@@ -155,8 +168,8 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
     const lastPayload = JSON.parse(String(fetchImpl.mock.calls[2]![1]?.body));
     const lastMessage = lastPayload.messages[lastPayload.messages.length - 1].content;
     expect(lastMessage).toContain("上次輸出唔合格");
-    expect(lastMessage).toContain("內文要 250–550 字");
-    expect(lastMessage).toContain("250–550 字，空白唔計");
+    expect(lastMessage).toContain("內文要 400–800 字");
+    expect(lastMessage).toContain("400–800 字，空白唔計");
   });
 
   it("自動稿冇重點標籤 → 唔會當成功，會要求改正", async () => {
@@ -168,6 +181,22 @@ describe("gloGuideText（OpenAI-compatible server-only）", () => {
       generateGloGuideText(makeInput(), { fetchImpl, env: ENV, sleep: noSleep, maxAttempts: 1 }),
     ).rejects.toMatchObject({ code: "AI_VALIDATION" });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("長尾句冇商品全名＋穿搭意圖 → 唔當成功；冇副標題一樣會擋", async () => {
+    const generic = validOutput({
+      body: validOutput().body
+        .replaceAll("荷葉邊雪紡感上衣", "呢件上衣")
+        .replaceAll("高腰闊腳褲", "呢款褲"),
+    });
+    const noHeadings = validOutput({ body: validOutput().body.replaceAll("[h2]", "").replaceAll("[/h2]", "") });
+    const fetchImpl = vi.fn()
+      .mockImplementationOnce(async () => chatResponse(generic))
+      .mockImplementationOnce(async () => chatResponse(noHeadings));
+    await expect(generateGloGuideText(makeInput(), { fetchImpl, env: ENV, sleep: noSleep, maxAttempts: 1 }))
+      .rejects.toMatchObject({ code: "AI_VALIDATION", message: expect.stringContaining("長尾句") });
+    await expect(generateGloGuideText(makeInput(), { fetchImpl, env: ENV, sleep: noSleep, maxAttempts: 1 }))
+      .rejects.toMatchObject({ code: "AI_VALIDATION", message: expect.stringContaining("2–4 個") });
   });
 
   it("壞 JSON → 重試後仍壞 → throw AI_BAD_JSON，唔會照收", async () => {

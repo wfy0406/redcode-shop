@@ -1,6 +1,6 @@
 /**
  * GloGuidePanel 純邏輯測試——唔掂 trpc／DOM，淨係驗面板用嘅閘口規則：
- * ─ 純文字字數（剝 [b]/[gold]/[pink]/[tag] 標記、空白唔計）同 service 250–550 閘一致；
+ * ─ 純文字字數（剝 [b]/[gold]/[pink]/[tag] 標記、空白唔計）同 service 400–800 閘一致；
  * ─ 編輯／提交／批准／落架嘅狀態閘（published 唔准改、生成中鎖住等）；
  * ─ 上傳檔 client 檢查（格式／10MB）＋ dataURL→base64。
  */
@@ -11,6 +11,7 @@ import {
   BODY_MAX,
   BODY_MIN,
   bodyCountOk,
+  bodyHeadingStructureOk,
   buildGenerateSelection,
   canApproveArticle,
   canArchiveArticle,
@@ -38,17 +39,35 @@ describe('plainBodyCharCount（同 service countBodyCodePoints 同一規則）',
     expect(plainBodyCharCount('[b]未閉合')).toBe(3);
   });
 
-  it('巢狀標記只計文字一次', () => {
+  it('巢狀標記只計文字一次，h2 標記唔計但副標題文字照計', () => {
     expect(plainBodyCharCount('[b][gold]四個字呀[/gold][/b]')).toBe(4);
+    expect(plainBodyCharCount('[h2]返工點襯[/h2]')).toBe(4);
   });
 });
 
-describe('bodyCountOk（250–550 硬閘）', () => {
-  it('邊界：249 唔得、250 得、550 得、551 唔得', () => {
+describe('bodyCountOk（400–800 硬閘）', () => {
+  it('邊界：399 唔得、400 得、800 得、801 唔得', () => {
+    expect(BODY_MIN).toBe(400);
+    expect(BODY_MAX).toBe(800);
     expect(bodyCountOk(BODY_MIN - 1)).toBe(false);
     expect(bodyCountOk(BODY_MIN)).toBe(true);
     expect(bodyCountOk(BODY_MAX)).toBe(true);
     expect(bodyCountOk(BODY_MAX + 1)).toBe(false);
+  });
+});
+
+describe('bodyHeadingStructureOk（同 server 副標題結構閘一致）', () => {
+  it('2–4 個獨立 H2 先合格', () => {
+    expect(bodyHeadingStructureOk('[h2]返工點襯[/h2]\n內文\n[h2]週末點著[/h2]')).toBe(true);
+    expect(bodyHeadingStructureOk('[h2]只有一個[/h2]')).toBe(false);
+    expect(bodyHeadingStructureOk('[h2]一[/h2]\n[h2]二[/h2]')).toBe(false);
+  });
+
+  it('唔准齋數有效 H2：行內、巢狀、未閉合都要令整體唔合格', () => {
+    const valid = '[h2]返工點襯[/h2]\n[h2]週末點著[/h2]';
+    expect(bodyHeadingStructureOk(`${valid}\n呢段行內[h2]唔算[/h2]`)).toBe(false);
+    expect(bodyHeadingStructureOk(`${valid}\n[h2][b]巢狀[/b][/h2]`)).toBe(false);
+    expect(bodyHeadingStructureOk(`${valid}\n[h2]未閉合`)).toBe(false);
   });
 });
 

@@ -55,6 +55,21 @@ export interface GuideDetail extends GuideListItem {
   modelImage: null;
 }
 
+/**
+ * 商品詳情頁「呢件商品嘅精選配搭」用嘅精簡公開 DTO：
+ * ─ 只有反向導航需要嘅欄位；body、modelImage、status、reviewer 等內部欄永遠唔出現；
+ * ─ 封面沿用 GuideImage（同公開 media 閘一致：completed＋approved＋未刪＋合法站內 path＋正尺寸）；
+ * ─ 日期一律 ISO string；excerpt 由 body 即場截（同列表同一來源）。
+ */
+export interface GuideProductReference {
+  slug: string;
+  title: string;
+  excerpt: string;
+  theme: string;
+  publishedAt: string;
+  coverImage: GuideImage | null;
+}
+
 // ──────────────────────────── 公開圖片 derivative（R05）────────────────────────────
 //
 // 可撤回媒體嘅多尺寸 AVIF/WebP 方案（server 同 client 共用呢一份事實）：

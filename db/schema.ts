@@ -174,6 +174,14 @@ export const listingBatchItems = pgTable("listingBatchItems", {
   // AI 內容已批准快照（WMS 推送合約 v2）：淨係 approved 內容先落嚟；冇帶／未批准＝NULL
   aiDescription: text("aiDescription"),
   aiTags: text("aiTags"), // JSON array 字串（已清理 tags）
+  // 商品內容專用批 compare-and-restore：只喺真正 updated 嗰件留低寫入前原值；
+  // null previousDescription／previousAiTags 都係合法原值，有冇快照以 contentAppliedAt 為準。
+  previousDescription: text("previousDescription"),
+  previousAiTags: text("previousAiTags"),
+  previousContentUpdatedAt: timestamp("previousContentUpdatedAt"),
+  contentAppliedAt: timestamp("contentAppliedAt"),
+  contentRestoredAt: timestamp("contentRestoredAt"),
+  contentRestoredBy: varchar("contentRestoredBy", { length: 255 }),
   productId: integer("productId"), // upsert 成功後寫返
   status: varchar("status", { length: 16 }).notNull().default("pending"), // 'created'|'updated'|'failed'（rejected 批留 'pending'）
   error: text("error"),
