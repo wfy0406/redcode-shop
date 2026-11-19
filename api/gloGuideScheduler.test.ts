@@ -12,13 +12,24 @@ import { describe, expect, it, vi } from "vitest";
 const schedulerRecovery = vi.hoisted(() => ({
   recover: vi.fn(async () => ({ requeued: 0, resumed: 0, failed: 0 })),
 }));
+const schedulerGuards = vi.hoisted(() => ({
+  getDb: vi.fn(),
+  generate: vi.fn(),
+  recordFailed: vi.fn(),
+}));
 vi.mock("./gloGuideOrchestrator", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./gloGuideOrchestrator")>();
   return { ...actual, recoverGloGuideJobs: schedulerRecovery.recover };
 });
+vi.mock("./queries/connection", () => ({ getDb: schedulerGuards.getDb }));
+vi.mock("./gloGuideService", () => ({
+  generateArticle: schedulerGuards.generate,
+  recordFailedScheduledSlot: schedulerGuards.recordFailed,
+}));
 
 import {
   gloGuideAutomationEnabled,
+  gloGuideSchedulerTick,
   gloGuideSlotHour,
   runScheduledSlot,
   shouldCreateScheduledArticle,
@@ -101,14 +112,30 @@ describe("同日 slot 重複防止", () => {
   });
 });
 
-describe("env 閘", () => {
-  it("GLO_GUIDE_AUTOMATION_ENABLED=true 先開", () => {
+describe("只准人工產生", () => {
+  it("自動建文已退役：舊 env 無論 unset／1／true 都一律閂", () => {
     delete process.env.GLO_GUIDE_AUTOMATION_ENABLED;
     expect(gloGuideAutomationEnabled()).toBe(false);
     process.env.GLO_GUIDE_AUTOMATION_ENABLED = "1";
     expect(gloGuideAutomationEnabled()).toBe(false);
     process.env.GLO_GUIDE_AUTOMATION_ENABLED = "true";
-    expect(gloGuideAutomationEnabled()).toBe(true);
+    expect(gloGuideAutomationEnabled()).toBe(false);
+    delete process.env.GLO_GUIDE_AUTOMATION_ENABLED;
+  });
+  it("到期週一＋舊 env=true 都只 recovery；唔讀 DB、唔建文、唔記排程失敗", async () => {
+    process.env.GLO_GUIDE_AUTOMATION_ENABLED = "true";
+    schedulerRecovery.recover.mockClear();
+    schedulerGuards.getDb.mockClear();
+    schedulerGuards.generate.mockClear();
+    schedulerGuards.recordFailed.mockClear();
+
+    // 2026-11-16 01:00 UTC＝香港週一 09:00，舊邏輯本應到期。
+    await gloGuideSchedulerTick(new Date("2026-11-16T01:00:00.000Z"));
+
+    expect(schedulerRecovery.recover).toHaveBeenCalledTimes(1);
+    expect(schedulerGuards.getDb).not.toHaveBeenCalled();
+    expect(schedulerGuards.generate).not.toHaveBeenCalled();
+    expect(schedulerGuards.recordFailed).not.toHaveBeenCalled();
     delete process.env.GLO_GUIDE_AUTOMATION_ENABLED;
   });
   it("自動 slot 閂咗都照啟動手動 job recovery loop", async () => {

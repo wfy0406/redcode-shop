@@ -1,11 +1,8 @@
 /**
- * Glo Glo 指南——自動排程（SPEC v1「自動排程」）：
- * ─ 每 5 分鐘檢查＋boot 後即檢查一次；
- * ─ 香港週一、週五 09:00（GLO_GUIDE_SCHEDULE_HOUR 可改）觸發自動生成；
- * ─ 同日重啟可補跑（hour >= slot 即成）；以香港日期 slot 做 unique idempotency key
- *   ＋ Postgres advisory lock，多 instance 都唔會重複生成；
- * ─ GLO_GUIDE_AUTOMATION_ENABLED=true 先開自動 slot；手動 job recovery 唔受開關影響；
- *   失敗留 DB（job.error／generationError），唔補舊 slot、唔洗版、唔會靜默。
+ * Glo Glo 指南——2026-11-19 起只准人工按「產生」建文：
+ * ─ 自動開新文章已停用；舊 GLO_GUIDE_AUTOMATION_ENABLED=true 亦唔可以再開。
+ * ─ 每 5 分鐘檢查只恢復人工生成中斷／卡住嘅 job，唔會建立新文章。
+ * ─ 舊 slot helper 保留作歷史兼容，但 production tick 會喺自動閘直接返回。
  */
 import { eq } from "drizzle-orm";
 import { getDb } from "./queries/connection";
@@ -28,7 +25,8 @@ export function gloGuideSlotHour(): number {
 }
 
 export function gloGuideAutomationEnabled(): boolean {
-  return process.env.GLO_GUIDE_AUTOMATION_ENABLED === "true";
+  // 硬閘：無論舊 Render env 係咩值，都唔准自動開新文章；人工 generate 唔經呢個閘。
+  return false;
 }
 
 /**
@@ -88,7 +86,7 @@ export async function gloGuideSchedulerTick(now: Date = new Date()): Promise<voi
       );
     }
 
-    // 手動生成嘅 job recovery 永遠要跑；env 閘只控制自動開新 slot。
+    // 手動生成嘅 job recovery 永遠要跑；自動開新 slot 已由硬閘永久停止。
     if (!gloGuideAutomationEnabled()) return;
     const parts = hkParts(now);
     if (!isGloGuideSlotDue(parts, gloGuideSlotHour())) return;
@@ -132,14 +130,10 @@ export async function gloGuideSchedulerTick(now: Date = new Date()): Promise<voi
   }
 }
 
-/** 開動每 5 分鐘 recovery loop；env 閘只停自動 slot，唔停手動 job recovery。 */
+/** 開動每 5 分鐘人工 job recovery loop；自動開新文章已永久停用。 */
 export function startGloGuideScheduler(): void {
   if (timer) return;
-  if (gloGuideAutomationEnabled()) {
-    console.log(`[glo-guide] 自動排程已啟動：香港週一/週五 ${String(gloGuideSlotHour()).padStart(2, "0")}:00，每 5 分鐘檢查`);
-  } else {
-    console.log("[glo-guide] 自動排程未啟用；手動生成 job recovery 仍會每 5 分鐘運行");
-  }
+  console.log("[glo-guide] 只准人工產生；自動排程已停用，人工生成 job recovery 仍會每 5 分鐘運行");
   void gloGuideSchedulerTick();
   timer = setInterval(() => void gloGuideSchedulerTick(), TICK_MS);
   if (typeof timer.unref === "function") timer.unref();
